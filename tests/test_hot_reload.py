@@ -4,7 +4,9 @@ These tests verify that the hot-reload system correctly detects changes to
 source files and reloads modules without crashing the TUI.
 """
 
+import ast
 import time
+from pathlib import Path
 
 import pytest
 
@@ -256,3 +258,72 @@ class TestHotReloadStability:
 
         # Process should exit cleanly
         # Note: is_alive() might still be True briefly, so we just check it doesn't hang
+
+
+class TestImportValidation:
+    """Test import validation to prevent stale references."""
+
+    def test_import_validation(self):
+        """Validate that stable modules use module-level imports, not direct imports.
+
+        Stable boundary modules (app.py, proxy.py) must use 'import module' pattern
+        instead of 'from module import func' to avoid stale references after hot-reload.
+        """
+        # Find project root
+        test_dir = Path(__file__).parent
+        project_root = test_dir.parent
+        src_dir = project_root / "src" / "cc_dump"
+
+        # Stable boundary modules to check
+        stable_modules = [
+            src_dir / "tui" / "app.py",
+            src_dir / "proxy.py",
+        ]
+
+        # Reloadable modules that stable boundaries interact with
+        forbidden_modules = {
+            "cc_dump.formatting",
+            "cc_dump.colors",
+            "cc_dump.analysis",
+            "cc_dump.tui.rendering",
+            "cc_dump.tui.panel_renderers",
+            "cc_dump.tui.event_handlers",
+            "cc_dump.tui.widget_factory",
+            "cc_dump.tui.protocols",
+        }
+
+        violations = []
+
+        for module_path in stable_modules:
+            if not module_path.exists():
+                continue
+
+            with open(module_path) as f:
+                try:
+                    tree = ast.parse(f.read(), filename=str(module_path))
+                except SyntaxError as e:
+                    # If there's a syntax error, we can't parse - skip this file
+                    continue
+
+            # Walk the AST looking for ImportFrom nodes
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    # node.module is the module being imported from (e.g., "cc_dump.formatting")
+                    if node.module in forbidden_modules:
+                        # Found a forbidden direct import
+                        imported_names = [alias.name for alias in node.names]
+                        violations.append(
+                            f"{module_path.name}:{node.lineno}: "
+                            f"from {node.module} import {', '.join(imported_names)}\n"
+                            f"  → Use 'import {node.module}' instead to avoid stale references"
+                        )
+
+        # Assert no violations
+        if violations:
+            violation_msg = "\n\n".join(violations)
+            pytest.fail(
+                f"Found {len(violations)} import violations in stable boundary modules:\n\n"
+                f"{violation_msg}\n\n"
+                f"Stable modules must use 'import module' pattern, not 'from module import ...'.\n"
+                f"See HOT_RELOAD_ARCHITECTURE.md for details."
+            )
