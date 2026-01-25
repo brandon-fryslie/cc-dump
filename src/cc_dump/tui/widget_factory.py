@@ -14,7 +14,6 @@ from rich.text import Text
 import cc_dump.analysis
 import cc_dump.tui.rendering
 import cc_dump.tui.panel_renderers
-import cc_dump.tui.protocols
 
 
 class ConversationView(RichLog):
@@ -217,21 +216,21 @@ class TimelinePanel(Static):
 
 
 # Factory functions for creating widgets
-def create_conversation_view() -> cc_dump.tui.protocols.HotSwappableWidget:
+def create_conversation_view() -> ConversationView:
     """Create a new ConversationView instance."""
     return ConversationView()
 
 
-def create_stats_panel() -> cc_dump.tui.protocols.HotSwappableWidget:
+def create_stats_panel() -> StatsPanel:
     """Create a new StatsPanel instance."""
     return StatsPanel()
 
 
-def create_economics_panel() -> cc_dump.tui.protocols.HotSwappableWidget:
+def create_economics_panel() -> ToolEconomicsPanel:
     """Create a new ToolEconomicsPanel instance."""
     return ToolEconomicsPanel()
 
 
-def create_timeline_panel() -> cc_dump.tui.protocols.HotSwappableWidget:
+def create_timeline_panel() -> TimelinePanel:
     """Create a new TimelinePanel instance."""
     return TimelinePanel()

@@ -59,3 +59,36 @@ class HotSwappableWidget(Protocol):
                    Should handle missing keys gracefully with defaults.
         """
         ...
+
+
+def validate_widget_protocol(widget) -> None:
+    """Validate that a widget implements the HotSwappableWidget protocol.
+
+    This function performs runtime validation using duck typing to ensure
+    a widget has the required methods for hot-swapping.
+
+    Args:
+        widget: Widget instance to validate
+
+    Raises:
+        TypeError: If widget is missing required methods or they're not callable
+
+    Example:
+        >>> widget = MyWidget()
+        >>> validate_widget_protocol(widget)  # Raises if invalid
+    """
+    required_methods = ["get_state", "restore_state"]
+
+    for method_name in required_methods:
+        if not hasattr(widget, method_name):
+            raise TypeError(
+                f"Widget {type(widget).__name__} does not implement HotSwappableWidget protocol: "
+                f"missing method '{method_name}()'"
+            )
+
+        method = getattr(widget, method_name)
+        if not callable(method):
+            raise TypeError(
+                f"Widget {type(widget).__name__} does not implement HotSwappableWidget protocol: "
+                f"'{method_name}' exists but is not callable"
+            )

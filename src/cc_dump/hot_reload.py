@@ -14,12 +14,11 @@ from pathlib import Path
 _RELOAD_ORDER = [
     "cc_dump.colors",      # no deps within project
     "cc_dump.analysis",    # no deps within project
-    "cc_dump.tui.protocols",  # no deps within project (protocol definition)
     "cc_dump.formatting",  # depends on: colors, analysis
     "cc_dump.tui.rendering",  # depends on: formatting, colors
     "cc_dump.tui.panel_renderers",  # depends on: analysis
     "cc_dump.tui.event_handlers",  # depends on: analysis, formatting
-    "cc_dump.tui.widget_factory",  # depends on: analysis, rendering, panel_renderers, protocols
+    "cc_dump.tui.widget_factory",  # depends on: analysis, rendering, panel_renderers
 ]
 
 # Additional modules reloaded only if they themselves changed

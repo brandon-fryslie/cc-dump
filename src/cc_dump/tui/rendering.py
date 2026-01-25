@@ -3,6 +3,8 @@
 Converts structured IR from formatting.py into Rich Text objects for display.
 """
 
+from typing import Callable
+
 from rich.text import Text
 
 from cc_dump.formatting import (
@@ -36,143 +38,214 @@ TAG_STYLES = [
 MSG_COLORS = ["cyan", "green", "yellow", "magenta", "blue", "red"]
 
 
+# Type alias for render function signature
+BlockRenderer = Callable[[FormattedBlock, dict], Text | None]
+
+
+def _render_separator(block: SeparatorBlock, filters: dict) -> Text | None:
+    """Render a separator line."""
+    if not filters.get("headers", False):
+        return None
+    char = "\u2500" if block.style == "heavy" else "\u2504"
+    return Text(char * 70, style="dim")
+
+
+def _render_header(block: HeaderBlock, filters: dict) -> Text | None:
+    """Render a request/response header."""
+    if not filters.get("headers", False):
+        return None
+    if block.header_type == "request":
+        t = Text()
+        t.append(" {} ".format(block.label), style="bold cyan")
+        t.append(" ({})".format(block.timestamp), style="dim")
+        return t
+    else:
+        t = Text()
+        t.append(" RESPONSE ", style="bold green")
+        t.append(" ({})".format(block.timestamp), style="dim")
+        return t
+
+
+def _render_metadata(block: MetadataBlock, filters: dict) -> Text | None:
+    """Render metadata block with model, max_tokens, stream, etc."""
+    if not filters.get("metadata", False):
+        return None
+    parts = []
+    parts.append("model: ")
+    parts.append(("{}".format(block.model), "bold"))
+    parts.append(" | max_tokens: {}".format(block.max_tokens))
+    parts.append(" | stream: {}".format(block.stream))
+    if block.tool_count:
+        parts.append(" | tools: {}".format(block.tool_count))
+
+    t = Text()
+    t.append("  ", style="dim")
+    for part in parts:
+        if isinstance(part, tuple):
+            t.append(part[0], style=part[1])
+        else:
+            t.append(part)
+    t.stylize("dim")
+    return t
+
+
+def _render_turn_budget_block(block: TurnBudgetBlock, filters: dict) -> Text | None:
+    """Render turn budget block (wrapper for filter check)."""
+    if not filters.get("expand", False):
+        return None
+    return _render_turn_budget(block)
+
+
+def _render_system_label(block: SystemLabelBlock, filters: dict) -> Text | None:
+    """Render system label."""
+    if not filters.get("system", False):
+        return None
+    return Text("SYSTEM:", style="bold yellow")
+
+
+def _render_tracked_content_block(block: TrackedContentBlock, filters: dict) -> Text | None:
+    """Render tracked content block (wrapper for filter check)."""
+    # System content is controlled by "system" filter
+    if not filters.get("system", False):
+        return None
+    return _render_tracked_content(block, filters)
+
+
+def _render_role(block: RoleBlock, filters: dict) -> Text | None:
+    """Render role label (USER, ASSISTANT, SYSTEM)."""
+    role_lower = block.role.lower()
+    if role_lower == "system" and not filters.get("system", False):
+        return None
+    style = ROLE_STYLES.get(role_lower, "bold magenta")
+    return Text(block.role.upper(), style=style)
+
+
+def _render_text_content(block: TextContentBlock, filters: dict) -> Text | None:
+    """Render text content with proper indentation."""
+    if not block.text:
+        return None
+    return _indent_text(block.text, block.indent)
+
+
+def _render_tool_use(block: ToolUseBlock, filters: dict) -> Text | None:
+    """Render tool use block."""
+    if not filters.get("tools", False):
+        return None
+    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    t = Text("  ")
+    t.append("[tool_use]", style="bold {}".format(color))
+    t.append(" {} ({} bytes)".format(block.name, block.input_size))
+    return t
+
+
+def _render_tool_result(block: ToolResultBlock, filters: dict) -> Text | None:
+    """Render tool result block."""
+    if not filters.get("tools", False):
+        return None
+    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    label = "[tool_result:error]" if block.is_error else "[tool_result]"
+    t = Text("  ")
+    t.append(label, style="bold {}".format(color))
+    t.append(" ({} bytes)".format(block.size))
+    return t
+
+
+def _render_image(block: ImageBlock, filters: dict) -> Text | None:
+    """Render image block placeholder."""
+    return Text("  [image: {}]".format(block.media_type), style="dim")
+
+
+def _render_unknown_type(block: UnknownTypeBlock, filters: dict) -> Text | None:
+    """Render unknown block type."""
+    return Text("  [{}]".format(block.block_type), style="dim")
+
+
+def _render_stream_info(block: StreamInfoBlock, filters: dict) -> Text | None:
+    """Render stream info block."""
+    if not filters.get("metadata", False):
+        return None
+    t = Text("  ", style="dim")
+    t.append("model: ")
+    t.append(block.model, style="bold")
+    return t
+
+
+def _render_stream_tool_use(block: StreamToolUseBlock, filters: dict) -> Text | None:
+    """Render stream tool use block."""
+    if not filters.get("tools", False):
+        return None
+    t = Text("\n  ")
+    t.append("[tool_use]", style="bold cyan")
+    t.append(" " + block.name)
+    return t
+
+
+def _render_text_delta(block: TextDeltaBlock, filters: dict) -> Text | None:
+    """Render text delta block."""
+    return Text(block.text)
+
+
+def _render_stop_reason(block: StopReasonBlock, filters: dict) -> Text | None:
+    """Render stop reason block."""
+    if not filters.get("metadata", False):
+        return None
+    return Text("\n  stop: " + block.reason, style="dim")
+
+
+def _render_error(block: ErrorBlock, filters: dict) -> Text | None:
+    """Render error block."""
+    return Text("\n  [HTTP {} {}]".format(block.code, block.reason), style="bold red")
+
+
+def _render_proxy_error(block: ProxyErrorBlock, filters: dict) -> Text | None:
+    """Render proxy error block."""
+    return Text("\n  [PROXY ERROR: {}]".format(block.error), style="bold red")
+
+
+def _render_log(block: LogBlock, filters: dict) -> Text | None:
+    """Render log block."""
+    return Text("  {} {} {}".format(block.command, block.path, block.status), style="dim")
+
+
+def _render_newline(block: NewlineBlock, filters: dict) -> Text | None:
+    """Render newline block."""
+    return Text("")
+
+
+# Registry mapping block type to renderer function
+BLOCK_RENDERERS: dict[type[FormattedBlock], BlockRenderer] = {
+    SeparatorBlock: _render_separator,
+    HeaderBlock: _render_header,
+    MetadataBlock: _render_metadata,
+    TurnBudgetBlock: _render_turn_budget_block,
+    SystemLabelBlock: _render_system_label,
+    TrackedContentBlock: _render_tracked_content_block,
+    RoleBlock: _render_role,
+    TextContentBlock: _render_text_content,
+    ToolUseBlock: _render_tool_use,
+    ToolResultBlock: _render_tool_result,
+    ImageBlock: _render_image,
+    UnknownTypeBlock: _render_unknown_type,
+    StreamInfoBlock: _render_stream_info,
+    StreamToolUseBlock: _render_stream_tool_use,
+    TextDeltaBlock: _render_text_delta,
+    StopReasonBlock: _render_stop_reason,
+    ErrorBlock: _render_error,
+    ProxyErrorBlock: _render_proxy_error,
+    LogBlock: _render_log,
+    NewlineBlock: _render_newline,
+}
+
+
 def render_block(block: FormattedBlock, filters: dict) -> Text | None:
     """Render a FormattedBlock to a Rich Text object.
 
     Returns None if the block should be filtered out based on filters dict.
     """
-
-    if isinstance(block, SeparatorBlock):
-        if not filters.get("headers", False):
-            return None
-        char = "\u2500" if block.style == "heavy" else "\u2504"
-        return Text(char * 70, style="dim")
-
-    if isinstance(block, HeaderBlock):
-        if not filters.get("headers", False):
-            return None
-        if block.header_type == "request":
-            t = Text()
-            t.append(" {} ".format(block.label), style="bold cyan")
-            t.append(" ({})".format(block.timestamp), style="dim")
-            return t
-        else:
-            t = Text()
-            t.append(" RESPONSE ", style="bold green")
-            t.append(" ({})".format(block.timestamp), style="dim")
-            return t
-
-    if isinstance(block, MetadataBlock):
-        if not filters.get("metadata", False):
-            return None
-        parts = []
-        parts.append("model: ")
-        parts.append(("{}".format(block.model), "bold"))
-        parts.append(" | max_tokens: {}".format(block.max_tokens))
-        parts.append(" | stream: {}".format(block.stream))
-        if block.tool_count:
-            parts.append(" | tools: {}".format(block.tool_count))
-
-        t = Text()
-        t.append("  ", style="dim")
-        for part in parts:
-            if isinstance(part, tuple):
-                t.append(part[0], style=part[1])
-            else:
-                t.append(part)
-        t.stylize("dim")
-        return t
-
-    if isinstance(block, TurnBudgetBlock):
-        if not filters.get("expand", False):
-            return None
-        return _render_turn_budget(block)
-
-    if isinstance(block, SystemLabelBlock):
-        if not filters.get("system", False):
-            return None
-        return Text("SYSTEM:", style="bold yellow")
-
-    if isinstance(block, TrackedContentBlock):
-        # System content is controlled by "system" filter
-        if not filters.get("system", False):
-            return None
-        return _render_tracked_content(block, filters)
-
-    if isinstance(block, RoleBlock):
-        role_lower = block.role.lower()
-        if role_lower == "system" and not filters.get("system", False):
-            return None
-        style = ROLE_STYLES.get(role_lower, "bold magenta")
-        return Text(block.role.upper(), style=style)
-
-    if isinstance(block, TextContentBlock):
-        if not block.text:
-            return None
-        return _indent_text(block.text, block.indent)
-
-    if isinstance(block, ToolUseBlock):
-        if not filters.get("tools", False):
-            return None
-        color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
-        t = Text("  ")
-        t.append("[tool_use]", style="bold {}".format(color))
-        t.append(" {} ({} bytes)".format(block.name, block.input_size))
-        return t
-
-    if isinstance(block, ToolResultBlock):
-        if not filters.get("tools", False):
-            return None
-        color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
-        label = "[tool_result:error]" if block.is_error else "[tool_result]"
-        t = Text("  ")
-        t.append(label, style="bold {}".format(color))
-        t.append(" ({} bytes)".format(block.size))
-        return t
-
-    if isinstance(block, ImageBlock):
-        return Text("  [image: {}]".format(block.media_type), style="dim")
-
-    if isinstance(block, UnknownTypeBlock):
-        return Text("  [{}]".format(block.block_type), style="dim")
-
-    if isinstance(block, StreamInfoBlock):
-        if not filters.get("metadata", False):
-            return None
-        t = Text("  ", style="dim")
-        t.append("model: ")
-        t.append(block.model, style="bold")
-        return t
-
-    if isinstance(block, StreamToolUseBlock):
-        if not filters.get("tools", False):
-            return None
-        t = Text("\n  ")
-        t.append("[tool_use]", style="bold cyan")
-        t.append(" " + block.name)
-        return t
-
-    if isinstance(block, TextDeltaBlock):
-        return Text(block.text)
-
-    if isinstance(block, StopReasonBlock):
-        if not filters.get("metadata", False):
-            return None
-        return Text("\n  stop: " + block.reason, style="dim")
-
-    if isinstance(block, ErrorBlock):
-        return Text("\n  [HTTP {} {}]".format(block.code, block.reason), style="bold red")
-
-    if isinstance(block, ProxyErrorBlock):
-        return Text("\n  [PROXY ERROR: {}]".format(block.error), style="bold red")
-
-    if isinstance(block, LogBlock):
-        return Text("  {} {} {}".format(block.command, block.path, block.status), style="dim")
-
-    if isinstance(block, NewlineBlock):
-        return Text("")
-
-    return None
+    renderer = BLOCK_RENDERERS.get(type(block))
+    if renderer is None:
+        return None  # Unknown block type - graceful degradation
+    return renderer(block, filters)
 
 
 def render_blocks(blocks: list[FormattedBlock], filters: dict) -> list[Text]:

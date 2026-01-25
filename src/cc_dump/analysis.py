@@ -35,10 +35,11 @@ class TurnBudget:
     tool_result_tokens_est: int = 0
     total_est: int = 0
 
-    # Actual token counts (filled from message_start usage data)
-    actual_input_tokens: int = 0
-    actual_cache_read_tokens: int = 0
-    actual_cache_creation_tokens: int = 0
+    # Actual token counts (filled from message_start and message_delta usage data)
+    actual_input_tokens: int = 0        # fresh input tokens (not from cache)
+    actual_cache_read_tokens: int = 0   # input tokens served from cache
+    actual_cache_creation_tokens: int = 0  # input tokens added to cache
+    actual_output_tokens: int = 0       # output tokens generated (always fresh)
 
     @property
     def cache_hit_ratio(self) -> float:
@@ -49,9 +50,14 @@ class TurnBudget:
         return self.actual_cache_read_tokens / total
 
     @property
-    def fresh_tokens(self) -> int:
-        """Tokens that were not cached (had to be processed fresh)."""
+    def fresh_input_tokens(self) -> int:
+        """Input tokens that were not cached (had to be processed fresh)."""
         return self.actual_input_tokens
+
+    @property
+    def total_input_tokens(self) -> int:
+        """Total input tokens (fresh + cached)."""
+        return self.actual_input_tokens + self.actual_cache_read_tokens
 
     @property
     def conversation_tokens_est(self) -> int:

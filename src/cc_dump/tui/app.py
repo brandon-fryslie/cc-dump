@@ -10,7 +10,8 @@ from textual.widgets import Footer, Header
 # Use module-level imports so hot-reload takes effect
 import cc_dump.analysis
 import cc_dump.formatting
-from cc_dump.tui.widgets import ConversationView, StatsPanel, ToolEconomicsPanel, TimelinePanel
+import cc_dump.tui.widget_factory
+import cc_dump.tui.event_handlers
 
 
 class CcDumpApp(App):
@@ -45,18 +46,39 @@ class CcDumpApp(App):
         self._state = state
         self._router = router
         self._closing = False
-        # Track budgets per turn for timeline
-        self._turn_budgets: list[cc_dump.analysis.TurnBudget] = []
-        self._current_budget: cc_dump.analysis.TurnBudget | None = None
-        # Track all tool invocations for economics
-        self._all_invocations: list[cc_dump.analysis.ToolInvocation] = []
+
+        # App-level state (preserved across hot-reloads)
+        self._app_state = {
+            "turn_budgets": [],
+            "current_budget": None,
+            "all_invocations": [],
+        }
+
+        # Widget IDs for querying (set after compose)
+        self._conv_id = "conversation-view"
+        self._stats_id = "stats-panel"
+        self._economics_id = "economics-panel"
+        self._timeline_id = "timeline-panel"
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield ConversationView()
-        yield ToolEconomicsPanel()
-        yield TimelinePanel()
-        yield StatsPanel()
+        # Create widgets from factory with IDs for later lookup
+        conv = cc_dump.tui.widget_factory.create_conversation_view()
+        conv.id = self._conv_id
+        yield conv
+
+        economics = cc_dump.tui.widget_factory.create_economics_panel()
+        economics.id = self._economics_id
+        yield economics
+
+        timeline = cc_dump.tui.widget_factory.create_timeline_panel()
+        timeline.id = self._timeline_id
+        yield timeline
+
+        stats = cc_dump.tui.widget_factory.create_stats_panel()
+        stats.id = self._stats_id
+        yield stats
+
         yield Footer()
 
     def on_mount(self):
@@ -65,9 +87,22 @@ class CcDumpApp(App):
         self.run_worker(self._drain_events, thread=True, exclusive=False)
 
         # Set initial panel visibility
-        self.query_one(StatsPanel).display = self.show_stats
-        self.query_one(ToolEconomicsPanel).display = self.show_economics
-        self.query_one(TimelinePanel).display = self.show_timeline
+        self._get_stats().display = self.show_stats
+        self._get_economics().display = self.show_economics
+        self._get_timeline().display = self.show_timeline
+
+    # Widget accessors - use query by ID so we can swap widgets
+    def _get_conv(self):
+        return self.query_one("#" + self._conv_id)
+
+    def _get_stats(self):
+        return self.query_one("#" + self._stats_id)
+
+    def _get_economics(self):
+        return self.query_one("#" + self._economics_id)
+
+    def _get_timeline(self):
+        return self.query_one("#" + self._timeline_id)
 
     def _drain_events(self):
         """Worker: drain event queue and post to app main thread."""
@@ -91,97 +126,127 @@ class CcDumpApp(App):
     def _check_hot_reload(self):
         """Check for file changes and reload modules if necessary."""
         import cc_dump.hot_reload
-        if cc_dump.hot_reload.check():
-            # Notify user
-            self.notify("[hot-reload] modules reloaded", severity="information")
-            # Re-render with new code
-            if self.is_running:
-                self.query_one(ConversationView).rerender(self.active_filters)
+        reloaded_modules = cc_dump.hot_reload.check_and_get_reloaded()
+
+        if not reloaded_modules:
+            return
+
+        # Notify user
+        self.notify("[hot-reload] modules reloaded", severity="information")
+
+        # Check if widget_factory was reloaded - if so, replace widgets
+        if "cc_dump.tui.widget_factory" in reloaded_modules:
+            self._replace_all_widgets()
+        elif self.is_running:
+            # Just re-render with new code (for rendering/formatting changes)
+            self._get_conv().rerender(self.active_filters)
+
+    def _replace_all_widgets(self):
+        """Replace all widgets with fresh instances from the reloaded factory."""
+        if not self.is_running:
+            return
+
+        # Get current widget states
+        conv_state = self._get_conv().get_state()
+        stats_state = self._get_stats().get_state()
+        economics_state = self._get_economics().get_state()
+        timeline_state = self._get_timeline().get_state()
+
+        # Remember visibility
+        stats_visible = self._get_stats().display
+        economics_visible = self._get_economics().display
+        timeline_visible = self._get_timeline().display
+
+        # Remove old widgets
+        old_conv = self._get_conv()
+        old_stats = self._get_stats()
+        old_economics = self._get_economics()
+        old_timeline = self._get_timeline()
+
+        # Create new widgets from reloaded factory
+        new_conv = cc_dump.tui.widget_factory.create_conversation_view()
+        new_conv.id = self._conv_id
+        new_conv.restore_state(conv_state)
+
+        new_stats = cc_dump.tui.widget_factory.create_stats_panel()
+        new_stats.id = self._stats_id
+        new_stats.restore_state(stats_state)
+        new_stats.display = stats_visible
+
+        new_economics = cc_dump.tui.widget_factory.create_economics_panel()
+        new_economics.id = self._economics_id
+        new_economics.restore_state(economics_state)
+        new_economics.display = economics_visible
+
+        new_timeline = cc_dump.tui.widget_factory.create_timeline_panel()
+        new_timeline.id = self._timeline_id
+        new_timeline.restore_state(timeline_state)
+        new_timeline.display = timeline_visible
+
+        # Swap widgets - mount new before removing old to maintain layout
+        old_conv.remove()
+        old_stats.remove()
+        old_economics.remove()
+        old_timeline.remove()
+
+        # Mount in correct order after header
+        header = self.query_one(Header)
+        self.mount(new_conv, after=header)
+        self.mount(new_economics, after=new_conv)
+        self.mount(new_timeline, after=new_economics)
+        self.mount(new_stats, after=new_timeline)
+
+        # Re-render the conversation with current filters
+        new_conv.rerender(self.active_filters)
+
+        self.notify("[hot-reload] widgets replaced", severity="information")
 
     def _handle_event(self, event):
-        """Process event on main thread."""
+        """Process event on main thread using reloadable handlers."""
         kind = event[0]
-        conv = self.query_one(ConversationView)
-        stats = self.query_one(StatsPanel)
+
+        # Build widget dict for handlers
+        widgets = {
+            "conv": self._get_conv(),
+            "stats": self._get_stats(),
+            "filters": self.active_filters,
+            "show_expand": self.show_expand,
+        }
+
+        # Build refresh callbacks
+        refresh_callbacks = {
+            "refresh_economics": self._refresh_economics,
+            "refresh_timeline": self._refresh_timeline,
+        }
 
         if kind == "request":
-            body = event[1]
-            blocks = cc_dump.formatting.format_request(body, self._state)
-            for block in blocks:
-                conv.append_block(block, self.active_filters)
-                # Capture the budget for this turn
-                if isinstance(block, cc_dump.formatting.TurnBudgetBlock):
-                    self._current_budget = block.budget
-            conv.finish_turn()
-
-            # Correlate tool invocations from this request
-            messages = body.get("messages", [])
-            invocations = cc_dump.analysis.correlate_tools(messages)
-            self._all_invocations.extend(invocations)
-
-            # Update stats
-            stats.update_stats(requests=self._state["request_counter"])
+            self._app_state = cc_dump.tui.event_handlers.handle_request(
+                event, self._state, widgets, self._app_state
+            )
 
         elif kind == "response_start":
             # Response starts are implicit in streaming events
             pass
 
         elif kind == "response_event":
-            event_type, data = event[1], event[2]
-            blocks = cc_dump.formatting.format_response_event(event_type, data)
-
-            for block in blocks:
-                conv.append_block(block, self.active_filters)
-
-                # Extract stats from message_start and message_delta
-                if isinstance(block, cc_dump.formatting.StreamInfoBlock):
-                    stats.update_stats(model=block.model)
-                elif event_type == "message_start":
-                    msg = data.get("message", {})
-                    usage = msg.get("usage", {})
-                    input_tokens = usage.get("input_tokens", 0)
-                    cache_read = usage.get("cache_read_input_tokens", 0)
-                    cache_create = usage.get("cache_creation_input_tokens", 0)
-                    stats.update_stats(
-                        input_tokens=input_tokens,
-                        cache_read_tokens=cache_read,
-                        cache_creation_tokens=cache_create,
-                    )
-                    # Fill actual data into current budget
-                    if self._current_budget:
-                        self._current_budget.actual_input_tokens = input_tokens
-                        self._current_budget.actual_cache_read_tokens = cache_read
-                        self._current_budget.actual_cache_creation_tokens = cache_create
-                elif event_type == "message_delta":
-                    usage = data.get("usage", {})
-                    stats.update_stats(
-                        output_tokens=usage.get("output_tokens", 0),
-                    )
+            self._app_state = cc_dump.tui.event_handlers.handle_response_event(
+                event, self._state, widgets, self._app_state
+            )
 
         elif kind == "response_done":
-            conv.finish_turn()
-            # Finalize turn budget and update panels
-            if self._current_budget:
-                self._turn_budgets.append(self._current_budget)
-                # Re-render expand view to show cache data
-                if self.show_expand:
-                    conv.rerender(self.active_filters)
-                self._current_budget = None
-            # Update economics and timeline panels
-            self._refresh_economics()
-            self._refresh_timeline()
+            self._app_state = cc_dump.tui.event_handlers.handle_response_done(
+                event, self._state, widgets, self._app_state, refresh_callbacks
+            )
 
         elif kind == "error":
-            code, reason = event[1], event[2]
-            block = cc_dump.formatting.ErrorBlock(code=code, reason=reason)
-            conv.append_block(block, self.active_filters)
-            conv.finish_turn()
+            self._app_state = cc_dump.tui.event_handlers.handle_error(
+                event, self._state, widgets, self._app_state
+            )
 
         elif kind == "proxy_error":
-            err = event[1]
-            block = cc_dump.formatting.ProxyErrorBlock(error=err)
-            conv.append_block(block, self.active_filters)
-            conv.finish_turn()
+            self._app_state = cc_dump.tui.event_handlers.handle_proxy_error(
+                event, self._state, widgets, self._app_state
+            )
 
         elif kind == "log":
             # Logs are less important in TUI, skip for now
@@ -217,17 +282,17 @@ class CcDumpApp(App):
 
     def action_toggle_stats(self):
         self.show_stats = not self.show_stats
-        self.query_one(StatsPanel).display = self.show_stats
+        self._get_stats().display = self.show_stats
 
     def action_toggle_economics(self):
         self.show_economics = not self.show_economics
-        self.query_one(ToolEconomicsPanel).display = self.show_economics
+        self._get_economics().display = self.show_economics
         if self.show_economics:
             self._refresh_economics()
 
     def action_toggle_timeline(self):
         self.show_timeline = not self.show_timeline
-        self.query_one(TimelinePanel).display = self.show_timeline
+        self._get_timeline().display = self.show_timeline
         if self.show_timeline:
             self._refresh_timeline()
 
@@ -235,23 +300,23 @@ class CcDumpApp(App):
         """Update tool economics panel with current data."""
         if not self.is_running:
             return
-        panel = self.query_one(ToolEconomicsPanel)
-        aggregates = cc_dump.analysis.aggregate_tools(self._all_invocations)
+        panel = self._get_economics()
+        aggregates = cc_dump.analysis.aggregate_tools(self._app_state["all_invocations"])
         panel.update_data(aggregates)
 
     def _refresh_timeline(self):
         """Update timeline panel with current turn budgets."""
         if not self.is_running:
             return
-        panel = self.query_one(TimelinePanel)
-        panel.update_data(self._turn_budgets)
+        panel = self._get_timeline()
+        panel.update_data(self._app_state["turn_budgets"])
 
     # Reactive watchers - trigger re-render when filters change
 
     def _rerender_if_mounted(self):
         """Re-render conversation if the app is mounted."""
         if self.is_running:
-            self.query_one(ConversationView).rerender(self.active_filters)
+            self._get_conv().rerender(self.active_filters)
 
     def watch_show_headers(self, value):
         self._rerender_if_mounted()
