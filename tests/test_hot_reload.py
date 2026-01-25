@@ -327,3 +327,338 @@ class TestImportValidation:
                 f"Stable modules must use 'import module' pattern, not 'from module import ...'.\n"
                 f"See HOT_RELOAD_ARCHITECTURE.md for details."
             )
+
+
+# ============================================================================
+# UNIT TESTS - Fast tests without TUI interaction
+# ============================================================================
+
+
+class TestWidgetProtocolValidation:
+    """Unit tests for widget protocol validation."""
+
+    def test_validate_all_widgets_implement_protocol(self):
+        """All widget classes implement HotSwappableWidget protocol."""
+        from cc_dump.tui.widget_factory import (
+            ConversationView,
+            StatsPanel,
+            TimelinePanel,
+            ToolEconomicsPanel,
+        )
+        from cc_dump.tui.protocols import validate_widget_protocol
+
+        widgets = [
+            ConversationView(),
+            StatsPanel(),
+            TimelinePanel(),
+            ToolEconomicsPanel(),
+        ]
+
+        for widget in widgets:
+            # Should not raise
+            validate_widget_protocol(widget)
+
+    def test_validate_widget_protocol_rejects_missing_get_state(self):
+        """Protocol validation fails for widget missing get_state()."""
+        from cc_dump.tui.protocols import validate_widget_protocol
+
+        class InvalidWidget:
+            def restore_state(self, state):
+                pass
+
+        widget = InvalidWidget()
+        with pytest.raises(TypeError, match="missing method 'get_state\\(\\)'"):
+            validate_widget_protocol(widget)
+
+    def test_validate_widget_protocol_rejects_missing_restore_state(self):
+        """Protocol validation fails for widget missing restore_state()."""
+        from cc_dump.tui.protocols import validate_widget_protocol
+
+        class InvalidWidget:
+            def get_state(self):
+                return {}
+
+        widget = InvalidWidget()
+        with pytest.raises(TypeError, match="missing method 'restore_state\\(\\)'"):
+            validate_widget_protocol(widget)
+
+    def test_validate_widget_protocol_rejects_non_callable(self):
+        """Protocol validation fails when method exists but is not callable."""
+        from cc_dump.tui.protocols import validate_widget_protocol
+
+        class InvalidWidget:
+            get_state = "not_a_function"
+            restore_state = None
+
+        widget = InvalidWidget()
+        with pytest.raises(TypeError, match="not callable"):
+            validate_widget_protocol(widget)
+
+
+class TestWidgetStatePreservation:
+    """Unit tests for widget state get/restore cycle."""
+
+    def test_stats_panel_state_roundtrip(self):
+        """StatsPanel state survives get_state/restore_state cycle."""
+        from cc_dump.tui.widget_factory import StatsPanel
+
+        # Create widget with state
+        widget = StatsPanel()
+        widget.update_stats(
+            requests=10,
+            input_tokens=1000,
+            output_tokens=500,
+            cache_read_tokens=100,
+            cache_creation_tokens=200,
+            model="claude-3-opus"
+        )
+        widget.models_seen.add("claude-3-sonnet")
+
+        # Extract state
+        state = widget.get_state()
+
+        # Create new widget and restore
+        new_widget = StatsPanel()
+        new_widget.restore_state(state)
+
+        # Verify state preserved
+        assert new_widget.request_count == 10
+        assert new_widget.input_tokens == 1000
+        assert new_widget.output_tokens == 500
+        assert new_widget.cache_read_tokens == 100
+        assert new_widget.cache_creation_tokens == 200
+        assert "claude-3-opus" in new_widget.models_seen
+        assert "claude-3-sonnet" in new_widget.models_seen
+
+    def test_conversation_view_state_roundtrip(self):
+        """ConversationView state survives get_state/restore_state cycle."""
+        from cc_dump.tui.widget_factory import ConversationView
+        from cc_dump.formatting import TextDeltaBlock
+
+        # Create widget with state
+        widget = ConversationView()
+        widget._turn_blocks = [
+            [TextDeltaBlock(text="Hello")],
+            [TextDeltaBlock(text="World")]
+        ]
+        widget._current_turn_blocks = [TextDeltaBlock(text="Current")]
+        widget._text_delta_buffer = ["Buffer", "Text"]
+
+        # Extract state
+        state = widget.get_state()
+
+        # Create new widget and restore
+        new_widget = ConversationView()
+        new_widget.restore_state(state)
+
+        # Verify state preserved
+        assert len(new_widget._turn_blocks) == 2
+        assert len(new_widget._current_turn_blocks) == 1
+        assert new_widget._text_delta_buffer == ["Buffer", "Text"]
+
+    def test_economics_panel_state_roundtrip(self):
+        """ToolEconomicsPanel state survives get_state/restore_state cycle."""
+        from cc_dump.tui.widget_factory import ToolEconomicsPanel
+        from cc_dump.analysis import ToolAggregates
+
+        # Create widget with state
+        widget = ToolEconomicsPanel()
+        aggregates = [
+            ToolAggregates(
+                name="test_tool",
+                calls=5,
+                input_tokens_est=100,
+                result_tokens_est=50
+            )
+        ]
+        widget.update_data(aggregates)
+
+        # Extract state
+        state = widget.get_state()
+
+        # Create new widget and restore
+        new_widget = ToolEconomicsPanel()
+        new_widget.restore_state(state)
+
+        # Verify state preserved
+        assert len(new_widget._aggregates) == 1
+        assert new_widget._aggregates[0].name == "test_tool"
+        assert new_widget._aggregates[0].calls == 5
+
+    def test_timeline_panel_state_roundtrip(self):
+        """TimelinePanel state survives get_state/restore_state cycle."""
+        from cc_dump.tui.widget_factory import TimelinePanel
+        from cc_dump.analysis import TurnBudget
+
+        # Create widget with state
+        widget = TimelinePanel()
+        budgets = [
+            TurnBudget(
+                actual_input_tokens=100,
+                actual_output_tokens=50,
+                actual_cache_read_tokens=10,
+                actual_cache_creation_tokens=20
+            )
+        ]
+        widget.update_data(budgets)
+
+        # Extract state
+        state = widget.get_state()
+
+        # Create new widget and restore
+        new_widget = TimelinePanel()
+        new_widget.restore_state(state)
+
+        # Verify state preserved
+        assert len(new_widget._budgets) == 1
+        assert new_widget._budgets[0].actual_input_tokens == 100
+        assert new_widget._budgets[0].actual_output_tokens == 50
+
+
+class TestHotReloadModuleStructure:
+    """Unit tests for hot-reload module configuration."""
+
+    def test_reload_order_is_defined(self):
+        """Reload order list is properly defined."""
+        from cc_dump.hot_reload import _RELOAD_ORDER
+
+        assert isinstance(_RELOAD_ORDER, list)
+        assert len(_RELOAD_ORDER) > 0
+
+        # Verify expected modules are in the list
+        expected_modules = [
+            "cc_dump.formatting",
+            "cc_dump.tui.rendering",
+            "cc_dump.tui.widget_factory",
+        ]
+        for mod in expected_modules:
+            assert mod in _RELOAD_ORDER, f"Expected module {mod} in reload order"
+
+    def test_reload_if_changed_is_defined(self):
+        """Reload-if-changed list is properly defined."""
+        from cc_dump.hot_reload import _RELOAD_IF_CHANGED
+
+        assert isinstance(_RELOAD_IF_CHANGED, list)
+
+        # These modules should only reload if they themselves changed
+        expected_modules = ["cc_dump.schema", "cc_dump.store", "cc_dump.router"]
+        for mod in expected_modules:
+            assert mod in _RELOAD_IF_CHANGED
+
+    def test_excluded_files_contain_stable_boundaries(self):
+        """Excluded files list contains stable boundary modules."""
+        from cc_dump.hot_reload import _EXCLUDED_FILES
+
+        assert isinstance(_EXCLUDED_FILES, set)
+
+        # These files should never be reloaded
+        required_exclusions = ["proxy.py", "cli.py", "hot_reload.py"]
+        for exc in required_exclusions:
+            assert exc in _EXCLUDED_FILES, f"Expected {exc} to be excluded"
+
+    def test_excluded_modules_contain_live_instances(self):
+        """Excluded modules list contains live instance modules."""
+        from cc_dump.hot_reload import _EXCLUDED_MODULES
+
+        assert isinstance(_EXCLUDED_MODULES, set)
+
+        # These modules hold live instances and can't be reloaded
+        required_exclusions = ["tui/app.py", "tui/widgets.py"]
+        for exc in required_exclusions:
+            assert exc in _EXCLUDED_MODULES, f"Expected {exc} to be excluded"
+
+    def test_reload_order_respects_dependencies(self):
+        """Reload order lists leaf modules before dependents."""
+        from cc_dump.hot_reload import _RELOAD_ORDER
+
+        # colors and analysis have no internal deps, should come first
+        colors_idx = _RELOAD_ORDER.index("cc_dump.colors")
+        analysis_idx = _RELOAD_ORDER.index("cc_dump.analysis")
+
+        # formatting depends on colors and analysis
+        formatting_idx = _RELOAD_ORDER.index("cc_dump.formatting")
+        assert formatting_idx > colors_idx, "formatting should come after colors"
+        assert formatting_idx > analysis_idx, "formatting should come after analysis"
+
+        # rendering depends on formatting
+        rendering_idx = _RELOAD_ORDER.index("cc_dump.tui.rendering")
+        assert rendering_idx > formatting_idx, "rendering should come after formatting"
+
+        # widget_factory depends on rendering
+        widget_factory_idx = _RELOAD_ORDER.index("cc_dump.tui.widget_factory")
+        assert widget_factory_idx > rendering_idx, "widget_factory should come after rendering"
+
+
+class TestHotReloadFileDetection:
+    """Unit tests for hot-reload file change detection."""
+
+    def test_init_sets_watch_dirs(self):
+        """init() properly sets watch directories."""
+        import cc_dump.hot_reload as hr
+        from pathlib import Path
+
+        test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
+        hr.init(str(test_dir))
+
+        # Should have at least the package dir
+        assert len(hr._watch_dirs) > 0
+        assert str(test_dir) in hr._watch_dirs
+
+    def test_scan_mtimes_populates_cache(self):
+        """_scan_mtimes() populates the mtime cache."""
+        import cc_dump.hot_reload as hr
+        from pathlib import Path
+
+        test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
+        hr.init(str(test_dir))
+
+        # Should have mtimes for several files
+        assert len(hr._mtimes) > 0
+
+        # Should have at least formatting.py
+        formatting_paths = [p for p in hr._mtimes.keys() if "formatting.py" in p]
+        assert len(formatting_paths) > 0, "Should have mtime for formatting.py"
+
+    def test_get_changed_files_returns_empty_initially(self):
+        """_get_changed_files() returns empty set when nothing changed."""
+        import cc_dump.hot_reload as hr
+        from pathlib import Path
+
+        test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
+        hr.init(str(test_dir))
+
+        # Call twice - second call should see no changes
+        hr._get_changed_files()
+        changed = hr._get_changed_files()
+
+        assert isinstance(changed, set)
+        assert len(changed) == 0, "No files should have changed"
+
+    def test_check_returns_false_when_no_changes(self):
+        """check() returns False when no files have changed."""
+        import cc_dump.hot_reload as hr
+        from pathlib import Path
+
+        test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
+        hr.init(str(test_dir))
+
+        # First call scans, second call should return False
+        hr.check()
+        result = hr.check()
+
+        assert result is False, "Should return False when no changes detected"
+
+    def test_check_and_get_reloaded_returns_empty_list_when_no_changes(self):
+        """check_and_get_reloaded() returns empty list when no changes."""
+        import cc_dump.hot_reload as hr
+        from pathlib import Path
+
+        test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
+        hr.init(str(test_dir))
+
+        # Stabilize mtimes
+        hr.check_and_get_reloaded()
+        reloaded = hr.check_and_get_reloaded()
+
+        assert isinstance(reloaded, list)
+        assert len(reloaded) == 0, "Should return empty list when no changes"
