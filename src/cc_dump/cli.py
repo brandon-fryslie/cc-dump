@@ -54,6 +54,11 @@ def main():
 
     router.start()
 
+    # Initialize hot-reload watcher
+    import cc_dump.hot_reload
+    package_dir = os.path.dirname(os.path.abspath(__file__))
+    cc_dump.hot_reload.init(package_dir)
+
     # Launch TUI
     from cc_dump.tui.app import CcDumpApp
 

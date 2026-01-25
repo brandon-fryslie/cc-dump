@@ -2,8 +2,9 @@
 
 from textual.widgets import RichLog, Static
 
-from cc_dump.analysis import TurnBudget, ToolAggregates
-from cc_dump.tui.rendering import render_blocks
+# Use module-level imports so hot-reload takes effect
+import cc_dump.analysis
+import cc_dump.tui.rendering
 
 
 class ConversationView(RichLog):
@@ -16,9 +17,8 @@ class ConversationView(RichLog):
 
     def append_block(self, block, filters: dict):
         """Append a single block to the current turn."""
-        from cc_dump.tui.rendering import render_block
         self._current_turn_blocks.append(block)
-        rendered = render_block(block, filters)
+        rendered = cc_dump.tui.rendering.render_block(block, filters)
         if rendered is not None:
             self.write(rendered)
 
@@ -32,7 +32,7 @@ class ConversationView(RichLog):
         """Re-render all stored turns with new filters."""
         self.clear()
         for blocks in self._turn_blocks:
-            rendered = render_blocks(blocks, filters)
+            rendered = cc_dump.tui.rendering.render_blocks(blocks, filters)
             for text in rendered:
                 self.write(text)
 
@@ -96,9 +96,9 @@ class ToolEconomicsPanel(Static):
 
     def __init__(self):
         super().__init__("")
-        self._aggregates: list[ToolAggregates] = []
+        self._aggregates: list[cc_dump.analysis.ToolAggregates] = []
 
-    def update_data(self, aggregates: list[ToolAggregates]):
+    def update_data(self, aggregates: list[cc_dump.analysis.ToolAggregates]):
         """Update with new aggregate data."""
         self._aggregates = aggregates
         self._refresh_display()
@@ -131,9 +131,9 @@ class TimelinePanel(Static):
 
     def __init__(self):
         super().__init__("")
-        self._budgets: list[TurnBudget] = []
+        self._budgets: list[cc_dump.analysis.TurnBudget] = []
 
-    def update_data(self, budgets: list[TurnBudget]):
+    def update_data(self, budgets: list[cc_dump.analysis.TurnBudget]):
         """Update with new budget timeline data."""
         self._budgets = list(budgets)
         self._refresh_display()

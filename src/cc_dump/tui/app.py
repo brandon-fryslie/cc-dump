@@ -7,14 +7,10 @@ from textual.binding import Binding
 from textual.reactive import reactive
 from textual.widgets import Footer, Header
 
-from cc_dump.analysis import (
-    TurnBudget, correlate_tools, aggregate_tools, ToolInvocation,
-)
+# Use module-level imports so hot-reload takes effect
+import cc_dump.analysis
+import cc_dump.formatting
 from cc_dump.tui.widgets import ConversationView, StatsPanel, ToolEconomicsPanel, TimelinePanel
-from cc_dump.formatting import (
-    format_request, format_response_event,
-    StreamInfoBlock, TurnBudgetBlock,
-)
 
 
 class CcDumpApp(App):
@@ -50,10 +46,10 @@ class CcDumpApp(App):
         self._router = router
         self._closing = False
         # Track budgets per turn for timeline
-        self._turn_budgets: list[TurnBudget] = []
-        self._current_budget: TurnBudget | None = None
+        self._turn_budgets: list[cc_dump.analysis.TurnBudget] = []
+        self._current_budget: cc_dump.analysis.TurnBudget | None = None
         # Track all tool invocations for economics
-        self._all_invocations: list[ToolInvocation] = []
+        self._all_invocations: list[cc_dump.analysis.ToolInvocation] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -77,16 +73,30 @@ class CcDumpApp(App):
         """Worker: drain event queue and post to app main thread."""
         while not self._closing:
             try:
-                event = self._event_queue.get(timeout=0.5)
+                event = self._event_queue.get(timeout=1.0)
             except queue.Empty:
+                # Check for hot reload even when idle
+                self.call_from_thread(self._check_hot_reload)
                 continue
             except Exception:
                 if self._closing:
                     break
                 continue
 
+            # Check for hot reload before processing event
+            self.call_from_thread(self._check_hot_reload)
             # Post to main thread for handling
             self.call_from_thread(self._handle_event, event)
+
+    def _check_hot_reload(self):
+        """Check for file changes and reload modules if necessary."""
+        import cc_dump.hot_reload
+        if cc_dump.hot_reload.check():
+            # Notify user
+            self.notify("[hot-reload] modules reloaded", severity="information")
+            # Re-render with new code
+            if self.is_running:
+                self.query_one(ConversationView).rerender(self.active_filters)
 
     def _handle_event(self, event):
         """Process event on main thread."""
@@ -96,17 +106,17 @@ class CcDumpApp(App):
 
         if kind == "request":
             body = event[1]
-            blocks = format_request(body, self._state)
+            blocks = cc_dump.formatting.format_request(body, self._state)
             for block in blocks:
                 conv.append_block(block, self.active_filters)
                 # Capture the budget for this turn
-                if isinstance(block, TurnBudgetBlock):
+                if isinstance(block, cc_dump.formatting.TurnBudgetBlock):
                     self._current_budget = block.budget
             conv.finish_turn()
 
             # Correlate tool invocations from this request
             messages = body.get("messages", [])
-            invocations = correlate_tools(messages)
+            invocations = cc_dump.analysis.correlate_tools(messages)
             self._all_invocations.extend(invocations)
 
             # Update stats
@@ -118,13 +128,13 @@ class CcDumpApp(App):
 
         elif kind == "response_event":
             event_type, data = event[1], event[2]
-            blocks = format_response_event(event_type, data)
+            blocks = cc_dump.formatting.format_response_event(event_type, data)
 
             for block in blocks:
                 conv.append_block(block, self.active_filters)
 
                 # Extract stats from message_start and message_delta
-                if isinstance(block, StreamInfoBlock):
+                if isinstance(block, cc_dump.formatting.StreamInfoBlock):
                     stats.update_stats(model=block.model)
                 elif event_type == "message_start":
                     msg = data.get("message", {})
@@ -162,16 +172,14 @@ class CcDumpApp(App):
             self._refresh_timeline()
 
         elif kind == "error":
-            from cc_dump.formatting import ErrorBlock
             code, reason = event[1], event[2]
-            block = ErrorBlock(code=code, reason=reason)
+            block = cc_dump.formatting.ErrorBlock(code=code, reason=reason)
             conv.append_block(block, self.active_filters)
             conv.finish_turn()
 
         elif kind == "proxy_error":
-            from cc_dump.formatting import ProxyErrorBlock
             err = event[1]
-            block = ProxyErrorBlock(error=err)
+            block = cc_dump.formatting.ProxyErrorBlock(error=err)
             conv.append_block(block, self.active_filters)
             conv.finish_turn()
 
@@ -228,7 +236,7 @@ class CcDumpApp(App):
         if not self.is_running:
             return
         panel = self.query_one(ToolEconomicsPanel)
-        aggregates = aggregate_tools(self._all_invocations)
+        aggregates = cc_dump.analysis.aggregate_tools(self._all_invocations)
         panel.update_data(aggregates)
 
     def _refresh_timeline(self):
