@@ -47,9 +47,12 @@ def main():
     router.add_subscriber(display_sub)
 
     # SQLite writer (direct subscriber, inline writes)
+    session_id = None
+    db_path = None
     if not args.no_db:
         session_id = uuid.uuid4().hex
-        writer = SQLiteWriter(args.db, session_id)
+        db_path = args.db
+        writer = SQLiteWriter(db_path, session_id)
         router.add_subscriber(DirectSubscriber(writer.on_event))
 
     router.start()
@@ -59,10 +62,10 @@ def main():
     package_dir = os.path.dirname(os.path.abspath(__file__))
     cc_dump.hot_reload.init(package_dir)
 
-    # Launch TUI
+    # Launch TUI with database context
     from cc_dump.tui.app import CcDumpApp
 
-    app = CcDumpApp(display_sub.queue, state, router)
+    app = CcDumpApp(display_sub.queue, state, router, db_path=db_path, session_id=session_id)
     try:
         app.run()
     finally:

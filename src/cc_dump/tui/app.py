@@ -1,6 +1,7 @@
 """Main TUI application using Textual."""
 
 import queue
+from typing import Optional
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -40,18 +41,19 @@ class CcDumpApp(App):
     show_economics = reactive(False)
     show_timeline = reactive(False)
 
-    def __init__(self, event_queue, state, router):
+    def __init__(self, event_queue, state, router, db_path: Optional[str] = None, session_id: Optional[str] = None):
         super().__init__()
         self._event_queue = event_queue
         self._state = state
         self._router = router
+        self._db_path = db_path
+        self._session_id = session_id
         self._closing = False
 
         # App-level state (preserved across hot-reloads)
+        # Only track minimal in-progress turn data for real-time streaming feedback
         self._app_state = {
-            "turn_budgets": [],
-            "current_budget": None,
-            "all_invocations": [],
+            "current_turn_usage": {},  # Token counts for incomplete turn
         }
 
         # Widget IDs for querying (set after compose)
@@ -221,6 +223,12 @@ class CcDumpApp(App):
             "show_expand": self.show_expand,
         }
 
+        # Build database context for handlers
+        db_context = {
+            "db_path": self._db_path,
+            "session_id": self._session_id,
+        }
+
         # Build refresh callbacks
         refresh_callbacks = {
             "refresh_economics": self._refresh_economics,
@@ -243,7 +251,7 @@ class CcDumpApp(App):
 
         elif kind == "response_done":
             self._app_state = cc_dump.tui.event_handlers.handle_response_done(
-                event, self._state, widgets, self._app_state, refresh_callbacks
+                event, self._state, widgets, self._app_state, refresh_callbacks, db_context
             )
 
         elif kind == "error":
@@ -305,19 +313,18 @@ class CcDumpApp(App):
             self._refresh_timeline()
 
     def _refresh_economics(self):
-        """Update tool economics panel with current data."""
-        if not self.is_running:
+        """Update tool economics panel with current data from database."""
+        if not self.is_running or not self._db_path or not self._session_id:
             return
         panel = self._get_economics()
-        aggregates = cc_dump.analysis.aggregate_tools(self._app_state["all_invocations"])
-        panel.update_data(aggregates)
+        panel.refresh_from_db(self._db_path, self._session_id)
 
     def _refresh_timeline(self):
-        """Update timeline panel with current turn budgets."""
-        if not self.is_running:
+        """Update timeline panel with current data from database."""
+        if not self.is_running or not self._db_path or not self._session_id:
             return
         panel = self._get_timeline()
-        panel.update_data(self._app_state["turn_budgets"])
+        panel.refresh_from_db(self._db_path, self._session_id)
 
     # Reactive watchers - trigger re-render when filters change
 
