@@ -1,0 +1,65 @@
+"""CLI entry point for cc-dump."""
+
+import argparse
+import http.server
+import os
+import queue
+import threading
+import uuid
+
+from cc_dump.proxy import ProxyHandler
+from cc_dump.router import EventRouter, QueueSubscriber, DirectSubscriber
+from cc_dump.store import SQLiteWriter
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Claude Code API monitor proxy")
+    parser.add_argument("--port", type=int, default=3344)
+    parser.add_argument("--target", type=str, default="https://api.anthropic.com")
+    parser.add_argument("--db", type=str, default=os.path.expanduser("~/.local/share/cc-dump/sessions.db"), help="SQLite database path")
+    parser.add_argument("--no-db", action="store_true", help="Disable persistence (no database)")
+    args = parser.parse_args()
+
+    ProxyHandler.target_host = args.target.rstrip("/")
+
+    event_q = queue.Queue()
+    ProxyHandler.event_queue = event_q
+
+    server = http.server.HTTPServer(("127.0.0.1", args.port), ProxyHandler)
+
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    # State dict for content tracking (used by formatting layer)
+    state = {
+        "positions": {},
+        "known_hashes": {},
+        "next_id": 0,
+        "next_color": 0,
+        "request_counter": 0,
+    }
+
+    # Set up event router with subscribers
+    router = EventRouter(event_q)
+
+    # Display subscriber (queue-based for async consumption)
+    display_sub = QueueSubscriber()
+    router.add_subscriber(display_sub)
+
+    # SQLite writer (direct subscriber, inline writes)
+    if not args.no_db:
+        session_id = uuid.uuid4().hex
+        writer = SQLiteWriter(args.db, session_id)
+        router.add_subscriber(DirectSubscriber(writer.on_event))
+
+    router.start()
+
+    # Launch TUI
+    from cc_dump.tui.app import CcDumpApp
+
+    app = CcDumpApp(display_sub.queue, state, router)
+    try:
+        app.run()
+    finally:
+        router.stop()
+        server.shutdown()

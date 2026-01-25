@@ -1,0 +1,38 @@
+Screen {
+    layout: vertical;
+}
+
+ConversationView {
+    height: 1fr;
+    border: solid $primary;
+}
+
+ToolEconomicsPanel {
+    height: auto;
+    max-height: 12;
+    dock: bottom;
+    background: $surface;
+    padding: 0 1;
+    border: solid $accent;
+}
+
+TimelinePanel {
+    height: auto;
+    max-height: 12;
+    dock: bottom;
+    background: $surface;
+    padding: 0 1;
+    border: solid $accent;
+}
+
+StatsPanel {
+    height: 3;
+    dock: bottom;
+    background: $surface;
+    padding: 0 1;
+    border: solid $primary;
+}
+
+Footer {
+    dock: bottom;
+}
