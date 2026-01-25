@@ -126,7 +126,12 @@ class CcDumpApp(App):
     def _check_hot_reload(self):
         """Check for file changes and reload modules if necessary."""
         import cc_dump.hot_reload
-        reloaded_modules = cc_dump.hot_reload.check_and_get_reloaded()
+
+        try:
+            reloaded_modules = cc_dump.hot_reload.check_and_get_reloaded()
+        except Exception as e:
+            self.notify(f"[hot-reload] error checking: {e}", severity="error")
+            return
 
         if not reloaded_modules:
             return
@@ -135,11 +140,14 @@ class CcDumpApp(App):
         self.notify("[hot-reload] modules reloaded", severity="information")
 
         # Check if widget_factory was reloaded - if so, replace widgets
-        if "cc_dump.tui.widget_factory" in reloaded_modules:
-            self._replace_all_widgets()
-        elif self.is_running:
-            # Just re-render with new code (for rendering/formatting changes)
-            self._get_conv().rerender(self.active_filters)
+        try:
+            if "cc_dump.tui.widget_factory" in reloaded_modules:
+                self._replace_all_widgets()
+            elif self.is_running:
+                # Just re-render with new code (for rendering/formatting changes)
+                self._get_conv().rerender(self.active_filters)
+        except Exception as e:
+            self.notify(f"[hot-reload] error applying: {e}", severity="error")
 
     def _replace_all_widgets(self):
         """Replace all widgets with fresh instances from the reloaded factory."""
