@@ -14,8 +14,12 @@ from pathlib import Path
 _RELOAD_ORDER = [
     "cc_dump.colors",      # no deps within project
     "cc_dump.analysis",    # no deps within project
+    "cc_dump.tui.protocols",  # no deps within project (protocol definition)
     "cc_dump.formatting",  # depends on: colors, analysis
     "cc_dump.tui.rendering",  # depends on: formatting, colors
+    "cc_dump.tui.panel_renderers",  # depends on: analysis
+    "cc_dump.tui.event_handlers",  # depends on: analysis, formatting
+    "cc_dump.tui.widget_factory",  # depends on: analysis, rendering, panel_renderers, protocols
 ]
 
 # Additional modules reloaded only if they themselves changed
@@ -67,9 +71,18 @@ def check() -> bool:
     Returns:
         True if any module was reloaded, False otherwise.
     """
+    return bool(check_and_get_reloaded())
+
+
+def check_and_get_reloaded() -> list[str]:
+    """Check for file changes and reload if necessary.
+
+    Returns:
+        List of module names that were reloaded, empty if none.
+    """
     changed_files = _get_changed_files()
     if not changed_files:
-        return False
+        return []
 
     # Log what changed
     for path in changed_files:
@@ -99,9 +112,8 @@ def check() -> bool:
 
     if reloaded:
         print(f"[hot-reload] reloaded {len(reloaded)} module(s): {', '.join(reloaded)}", file=sys.stderr)
-        return True
 
-    return False
+    return reloaded
 
 
 def _scan_mtimes() -> None:
