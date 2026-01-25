@@ -7,6 +7,7 @@ Widget classes are defined here, not in widgets.py. The widgets.py module
 becomes a thin non-reloadable shell that just holds the current instances.
 """
 
+import json
 from textual.widgets import RichLog, Static
 from rich.text import Text
 
@@ -174,57 +175,101 @@ class StatsPanel(Static):
 
 
 class ToolEconomicsPanel(Static):
-    """Panel showing per-tool token usage aggregates."""
+    """Panel showing per-tool token usage aggregates.
+
+    Queries database as single source of truth.
+    """
 
     def __init__(self):
         super().__init__("")
-        self._aggregates: list[cc_dump.analysis.ToolAggregates] = []
 
-    def update_data(self, aggregates: list[cc_dump.analysis.ToolAggregates]):
-        """Update with new aggregate data."""
-        self._aggregates = aggregates
-        self._refresh_display()
+    def refresh_from_db(self, db_path: str, session_id: str):
+        """Refresh panel data from database.
 
-    def _refresh_display(self):
+        Args:
+            db_path: Path to SQLite database
+            session_id: Session identifier
+        """
+        if not db_path or not session_id:
+            self._refresh_display([])
+            return
+
+        # Query tool invocations from database
+        invocations = cc_dump.db_queries.get_tool_invocations(db_path, session_id)
+
+        # Aggregate using existing analysis function
+        aggregates = cc_dump.analysis.aggregate_tools(invocations)
+
+        self._refresh_display(aggregates)
+
+    def _refresh_display(self, aggregates: list[cc_dump.analysis.ToolAggregates]):
         """Rebuild the economics table."""
-        text = cc_dump.tui.panel_renderers.render_economics_panel(self._aggregates)
+        text = cc_dump.tui.panel_renderers.render_economics_panel(aggregates)
         self.update(text)
 
     def get_state(self) -> dict:
         """Extract state for transfer to a new instance."""
-        return {"aggregates": self._aggregates}
+        return {}  # No state to preserve - queries DB on demand
 
     def restore_state(self, state: dict):
         """Restore state from a previous instance."""
-        self._aggregates = state.get("aggregates", [])
-        self._refresh_display()
+        self._refresh_display([])
 
 
 class TimelinePanel(Static):
-    """Panel showing per-turn context growth over time."""
+    """Panel showing per-turn context growth over time.
+
+    Queries database as single source of truth.
+    """
 
     def __init__(self):
         super().__init__("")
-        self._budgets: list[cc_dump.analysis.TurnBudget] = []
 
-    def update_data(self, budgets: list[cc_dump.analysis.TurnBudget]):
-        """Update with new budget timeline data."""
-        self._budgets = list(budgets)
-        self._refresh_display()
+    def refresh_from_db(self, db_path: str, session_id: str):
+        """Refresh panel data from database.
 
-    def _refresh_display(self):
+        Args:
+            db_path: Path to SQLite database
+            session_id: Session identifier
+        """
+        if not db_path or not session_id:
+            self._refresh_display([])
+            return
+
+        # Query turn timeline from database
+        turn_data = cc_dump.db_queries.get_turn_timeline(db_path, session_id)
+
+        # Reconstruct TurnBudget objects from database data
+        budgets = []
+        for row in turn_data:
+            # Parse request JSON to compute budget estimates
+            request_json = row["request_json"]
+            request_body = json.loads(request_json) if request_json else {}
+
+            budget = cc_dump.analysis.compute_turn_budget(request_body)
+
+            # Fill in actual token counts from database
+            budget.actual_input_tokens = row["input_tokens"]
+            budget.actual_cache_read_tokens = row["cache_read_tokens"]
+            budget.actual_cache_creation_tokens = row["cache_creation_tokens"]
+            budget.actual_output_tokens = row["output_tokens"]
+
+            budgets.append(budget)
+
+        self._refresh_display(budgets)
+
+    def _refresh_display(self, budgets: list[cc_dump.analysis.TurnBudget]):
         """Rebuild the timeline table."""
-        text = cc_dump.tui.panel_renderers.render_timeline_panel(self._budgets)
+        text = cc_dump.tui.panel_renderers.render_timeline_panel(budgets)
         self.update(text)
 
     def get_state(self) -> dict:
         """Extract state for transfer to a new instance."""
-        return {"budgets": self._budgets}
+        return {}  # No state to preserve - queries DB on demand
 
     def restore_state(self, state: dict):
         """Restore state from a previous instance."""
-        self._budgets = state.get("budgets", [])
-        self._refresh_display()
+        self._refresh_display([])
 
 
 # Factory functions for creating widgets
