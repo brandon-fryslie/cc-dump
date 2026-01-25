@@ -14,6 +14,7 @@ from rich.text import Text
 import cc_dump.analysis
 import cc_dump.tui.rendering
 import cc_dump.tui.panel_renderers
+import cc_dump.db_queries
 
 
 class ConversationView(RichLog):
@@ -99,42 +100,60 @@ class ConversationView(RichLog):
 
 
 class StatsPanel(Static):
-    """Live statistics display showing request counts, tokens, and models."""
+    """Live statistics display showing request counts, tokens, and models.
+
+    Queries database as single source of truth for token counts.
+    Only tracks request_count and models_seen in memory (not in DB).
+    """
 
     def __init__(self):
         super().__init__("")
         self.request_count = 0
-        self.input_tokens = 0
-        self.output_tokens = 0
-        self.cache_read_tokens = 0
-        self.cache_creation_tokens = 0
         self.models_seen: set = set()
 
     def update_stats(self, **kwargs):
-        """Update statistics and refresh display."""
+        """Update statistics and refresh display.
+
+        Only updates in-memory fields (requests, models).
+        Token counts come from database via refresh_from_db().
+        """
         if "requests" in kwargs:
             self.request_count = kwargs["requests"]
-        if "input_tokens" in kwargs:
-            self.input_tokens += kwargs["input_tokens"]
-        if "output_tokens" in kwargs:
-            self.output_tokens += kwargs["output_tokens"]
-        if "cache_read_tokens" in kwargs:
-            self.cache_read_tokens += kwargs["cache_read_tokens"]
-        if "cache_creation_tokens" in kwargs:
-            self.cache_creation_tokens += kwargs["cache_creation_tokens"]
         if "model" in kwargs and kwargs["model"]:
             self.models_seen.add(kwargs["model"])
 
-        self._refresh_display()
+        # No longer accumulating token counts here - they come from DB
 
-    def _refresh_display(self):
+    def refresh_from_db(self, db_path: str, session_id: str, current_turn: dict = None):
+        """Refresh token counts from database.
+
+        Args:
+            db_path: Path to SQLite database
+            session_id: Session identifier
+            current_turn: Optional dict with in-progress turn data to merge for real-time display
+        """
+        if not db_path or not session_id:
+            # No database - show only in-memory fields
+            self._refresh_display(0, 0, 0, 0)
+            return
+
+        stats = cc_dump.db_queries.get_session_stats(db_path, session_id, current_turn)
+        self._refresh_display(
+            stats["input_tokens"],
+            stats["output_tokens"],
+            stats["cache_read_tokens"],
+            stats["cache_creation_tokens"],
+        )
+
+    def _refresh_display(self, input_tokens: int, output_tokens: int,
+                        cache_read_tokens: int, cache_creation_tokens: int):
         """Rebuild the display text."""
         text = cc_dump.tui.panel_renderers.render_stats_panel(
             self.request_count,
-            self.input_tokens,
-            self.output_tokens,
-            self.cache_read_tokens,
-            self.cache_creation_tokens,
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_creation_tokens,
             self.models_seen,
         )
         self.update(text)
@@ -143,22 +162,15 @@ class StatsPanel(Static):
         """Extract state for transfer to a new instance."""
         return {
             "request_count": self.request_count,
-            "input_tokens": self.input_tokens,
-            "output_tokens": self.output_tokens,
-            "cache_read_tokens": self.cache_read_tokens,
-            "cache_creation_tokens": self.cache_creation_tokens,
             "models_seen": set(self.models_seen),
         }
 
     def restore_state(self, state: dict):
         """Restore state from a previous instance."""
         self.request_count = state.get("request_count", 0)
-        self.input_tokens = state.get("input_tokens", 0)
-        self.output_tokens = state.get("output_tokens", 0)
-        self.cache_read_tokens = state.get("cache_read_tokens", 0)
-        self.cache_creation_tokens = state.get("cache_creation_tokens", 0)
         self.models_seen = state.get("models_seen", set())
-        self._refresh_display()
+        # Trigger display refresh (will need DB query to get token counts)
+        self._refresh_display(0, 0, 0, 0)
 
 
 class ToolEconomicsPanel(Static):

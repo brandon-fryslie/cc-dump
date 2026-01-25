@@ -16,7 +16,7 @@ def handle_request(event, state, widgets, app_state):
         event: The event tuple ("request", body)
         state: The content tracking state dict
         widgets: Dict with widget references (conv, stats, timeline, economics)
-        app_state: Dict with app-level state (turn_budgets, current_budget, all_invocations)
+        app_state: Dict with app-level state (current_turn_usage)
 
     Returns:
         Updated app_state dict
@@ -30,18 +30,10 @@ def handle_request(event, state, widgets, app_state):
 
     for block in blocks:
         conv.append_block(block, filters)
-        # Capture the budget for this turn
-        if isinstance(block, cc_dump.formatting.TurnBudgetBlock):
-            app_state["current_budget"] = block.budget
 
     conv.finish_turn()
 
-    # Correlate tool invocations from this request
-    messages = body.get("messages", [])
-    invocations = cc_dump.analysis.correlate_tools(messages)
-    app_state["all_invocations"].extend(invocations)
-
-    # Update stats
+    # Update stats (only request count and model tracking - not tokens)
     stats.update_stats(requests=state["request_counter"])
 
     return app_state
@@ -72,37 +64,28 @@ def handle_response_event(event, state, widgets, app_state):
         # Extract stats from message_start and message_delta
         if isinstance(block, cc_dump.formatting.StreamInfoBlock):
             stats.update_stats(model=block.model)
-            # StreamInfoBlock is created from message_start event
-            # Extract usage data here since message_start creates StreamInfoBlock
+            # Extract usage data from message_start for current turn tracking
             if event_type == "message_start":
                 msg = data.get("message", {})
                 usage = msg.get("usage", {})
-                input_tokens = usage.get("input_tokens", 0)
-                cache_read = usage.get("cache_read_input_tokens", 0)
-                cache_create = usage.get("cache_creation_input_tokens", 0)
-
-                stats.update_stats(
-                    input_tokens=input_tokens,
-                    cache_read_tokens=cache_read,
-                    cache_creation_tokens=cache_create,
-                )
-                # Fill actual data into current budget
-                current_budget = app_state.get("current_budget")
-                if current_budget:
-                    current_budget.actual_input_tokens = input_tokens
-                    current_budget.actual_cache_read_tokens = cache_read
-                    current_budget.actual_cache_creation_tokens = cache_create
+                # Track current turn usage for real-time display
+                current_turn = app_state.get("current_turn_usage", {})
+                current_turn["input_tokens"] = usage.get("input_tokens", 0)
+                current_turn["cache_read_tokens"] = usage.get("cache_read_input_tokens", 0)
+                current_turn["cache_creation_tokens"] = usage.get("cache_creation_input_tokens", 0)
+                app_state["current_turn_usage"] = current_turn
 
         elif event_type == "message_delta":
             usage = data.get("usage", {})
-            stats.update_stats(
-                output_tokens=usage.get("output_tokens", 0),
-            )
+            # Track output tokens for current turn
+            current_turn = app_state.get("current_turn_usage", {})
+            current_turn["output_tokens"] = usage.get("output_tokens", 0)
+            app_state["current_turn_usage"] = current_turn
 
     return app_state
 
 
-def handle_response_done(event, state, widgets, app_state, refresh_callbacks):
+def handle_response_done(event, state, widgets, app_state, refresh_callbacks, db_context):
     """Handle response_done event.
 
     Args:
@@ -111,26 +94,32 @@ def handle_response_done(event, state, widgets, app_state, refresh_callbacks):
         widgets: Dict with widget references
         app_state: Dict with app-level state
         refresh_callbacks: Dict with refresh functions (economics, timeline)
+        db_context: Dict with db_path and session_id for database access
 
     Returns:
         Updated app_state dict
     """
     conv = widgets["conv"]
+    stats = widgets["stats"]
     filters = widgets["filters"]
     show_expand = widgets.get("show_expand", False)
 
     conv.finish_turn()
 
-    # Finalize turn budget and update panels
-    current_budget = app_state.get("current_budget")
-    if current_budget:
-        app_state["turn_budgets"].append(current_budget)
-        # Re-render expand view to show cache data
-        if show_expand:
-            conv.rerender(filters)
-        app_state["current_budget"] = None
+    # Clear current turn usage (turn is now committed to DB)
+    app_state["current_turn_usage"] = {}
 
-    # Update economics and timeline panels
+    # Refresh stats panel from database (merges current turn if streaming)
+    db_path = db_context.get("db_path")
+    session_id = db_context.get("session_id")
+    if db_path and session_id:
+        stats.refresh_from_db(db_path, session_id, current_turn=None)
+
+    # Re-render expand view to show cache data
+    if show_expand:
+        conv.rerender(filters)
+
+    # Update economics and timeline panels (these query database)
     if "refresh_economics" in refresh_callbacks:
         refresh_callbacks["refresh_economics"]()
     if "refresh_timeline" in refresh_callbacks:
