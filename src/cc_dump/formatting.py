@@ -1,8 +1,7 @@
 """Request and response formatting — structured intermediate representation.
 
-Returns FormattedBlock dataclasses that can be rendered by different backends:
-  - formatting_ansi.py  → terminal ANSI strings (--no-tui mode)
-  - tui/rendering.py    → Rich renderables (TUI mode)
+Returns FormattedBlock dataclasses that can be rendered by different backends
+(e.g., tui/rendering.py for Rich renderables in TUI mode).
 """
 
 import difflib

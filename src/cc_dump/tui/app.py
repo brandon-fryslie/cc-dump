@@ -13,7 +13,7 @@ from cc_dump.analysis import (
 from cc_dump.tui.widgets import ConversationView, StatsPanel, ToolEconomicsPanel, TimelinePanel
 from cc_dump.formatting import (
     format_request, format_response_event,
-    TextDeltaBlock, HeaderBlock, MetadataBlock, StreamInfoBlock, TurnBudgetBlock,
+    StreamInfoBlock, TurnBudgetBlock,
 )
 
 

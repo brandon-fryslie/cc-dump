@@ -6,7 +6,7 @@ Each subscriber can choose how to receive events (queue-based or direct callback
 
 import queue
 import threading
-from typing import Any, Protocol
+from typing import Protocol
 
 Event = tuple  # event tuples from proxy: ("request", ...), ("response_event", ...), etc.
 

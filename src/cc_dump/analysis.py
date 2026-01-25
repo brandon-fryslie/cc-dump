@@ -5,7 +5,7 @@ cc_dump modules.
 """
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 # ─── Token Estimation ─────────────────────────────────────────────────────────

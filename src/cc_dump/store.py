@@ -6,7 +6,6 @@ to blob storage, and maintains FTS index for search.
 
 import hashlib
 import json
-import sqlite3
 import sys
 
 from cc_dump.analysis import correlate_tools
