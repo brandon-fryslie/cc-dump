@@ -14,3 +14,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cc_dump"]
+
+[dependency-groups]
+dev = [
+    "ptydriver>=0.2.0",
+    "pytest>=9.0.2",
+]
