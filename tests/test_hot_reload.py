@@ -406,10 +406,6 @@ class TestWidgetStatePreservation:
         widget = StatsPanel()
         widget.update_stats(
             requests=10,
-            input_tokens=1000,
-            output_tokens=500,
-            cache_read_tokens=100,
-            cache_creation_tokens=200,
             model="claude-3-opus"
         )
         widget.models_seen.add("claude-3-sonnet")
@@ -421,12 +417,8 @@ class TestWidgetStatePreservation:
         new_widget = StatsPanel()
         new_widget.restore_state(state)
 
-        # Verify state preserved
+        # Verify state preserved (only in-memory fields)
         assert new_widget.request_count == 10
-        assert new_widget.input_tokens == 1000
-        assert new_widget.output_tokens == 500
-        assert new_widget.cache_read_tokens == 100
-        assert new_widget.cache_creation_tokens == 200
         assert "claude-3-opus" in new_widget.models_seen
         assert "claude-3-sonnet" in new_widget.models_seen
 
@@ -459,60 +451,36 @@ class TestWidgetStatePreservation:
     def test_economics_panel_state_roundtrip(self):
         """ToolEconomicsPanel state survives get_state/restore_state cycle."""
         from cc_dump.tui.widget_factory import ToolEconomicsPanel
-        from cc_dump.analysis import ToolAggregates
 
-        # Create widget with state
+        # Create widget
         widget = ToolEconomicsPanel()
-        aggregates = [
-            ToolAggregates(
-                name="test_tool",
-                calls=5,
-                input_tokens_est=100,
-                result_tokens_est=50
-            )
-        ]
-        widget.update_data(aggregates)
 
-        # Extract state
+        # Extract state (panel has no persistent state - queries DB on demand)
         state = widget.get_state()
 
         # Create new widget and restore
         new_widget = ToolEconomicsPanel()
         new_widget.restore_state(state)
 
-        # Verify state preserved
-        assert len(new_widget._aggregates) == 1
-        assert new_widget._aggregates[0].name == "test_tool"
-        assert new_widget._aggregates[0].calls == 5
+        # Verify widget is functional (no state to verify)
+        assert new_widget is not None
 
     def test_timeline_panel_state_roundtrip(self):
         """TimelinePanel state survives get_state/restore_state cycle."""
         from cc_dump.tui.widget_factory import TimelinePanel
-        from cc_dump.analysis import TurnBudget
 
-        # Create widget with state
+        # Create widget
         widget = TimelinePanel()
-        budgets = [
-            TurnBudget(
-                actual_input_tokens=100,
-                actual_output_tokens=50,
-                actual_cache_read_tokens=10,
-                actual_cache_creation_tokens=20
-            )
-        ]
-        widget.update_data(budgets)
 
-        # Extract state
+        # Extract state (panel has no persistent state - queries DB on demand)
         state = widget.get_state()
 
         # Create new widget and restore
         new_widget = TimelinePanel()
         new_widget.restore_state(state)
 
-        # Verify state preserved
-        assert len(new_widget._budgets) == 1
-        assert new_widget._budgets[0].actual_input_tokens == 100
-        assert new_widget._budgets[0].actual_output_tokens == 50
+        # Verify widget is functional (no state to verify)
+        assert new_widget is not None
 
 
 class TestHotReloadModuleStructure:

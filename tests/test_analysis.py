@@ -206,10 +206,10 @@ def test_turn_budget_cache_hit_ratio_half():
     assert budget.cache_hit_ratio == 0.5
 
 
-def test_turn_budget_fresh_tokens():
-    """Fresh tokens property returns actual_input_tokens."""
+def test_turn_budget_fresh_input_tokens():
+    """Fresh input tokens property returns actual_input_tokens."""
     budget = TurnBudget(actual_input_tokens=42)
-    assert budget.fresh_tokens == 42
+    assert budget.fresh_input_tokens == 42
 
 
 def test_turn_budget_conversation_tokens_est():
