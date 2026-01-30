@@ -246,7 +246,7 @@ _RELOAD_ORDER = [
 To catch stale reference bugs early, run the import validation test:
 
 ```bash
-pytest tests/test_hot_reload.py::test_import_validation -v
+uv run pytest tests/test_hot_reload.py::test_import_validation -v
 ```
 
 This test scans stable boundary modules (`app.py`, `proxy.py`) for forbidden `from ... import` patterns that would create stale references to reloadable code.

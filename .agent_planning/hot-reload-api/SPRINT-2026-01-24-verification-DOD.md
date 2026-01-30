@@ -22,13 +22,13 @@
 ## Verification Commands
 ```bash
 # Run all hot-reload tests
-python -m pytest tests/test_hot_reload.py -v
+uv run pytest tests/test_hot_reload.py -v
 
 # Run with timing
-python -m pytest tests/test_hot_reload.py -v --durations=5
+uv run pytest tests/test_hot_reload.py -v --durations=5
 
 # Verify no flakiness
-for i in {1..10}; do python -m pytest tests/test_hot_reload.py -q || echo "FAILED on run $i"; done
+for i in {1..10}; do uv run pytest tests/test_hot_reload.py -q || echo "FAILED on run $i"; done
 ```
 
 ## Test Coverage Checklist

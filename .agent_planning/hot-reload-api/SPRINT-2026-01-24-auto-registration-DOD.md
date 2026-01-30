@@ -25,7 +25,7 @@
 ## Verification Commands
 ```bash
 # Run hot-reload and verify all modules discovered
-python -c "
+uv run python -c "
 import cc_dump.hot_reload as hr
 hr.init('src/cc_dump')
 modules = hr._discover_modules()
@@ -33,7 +33,7 @@ print('Discovered:', modules)
 "
 
 # Verify dependency order
-python -c "
+uv run python -c "
 import cc_dump.hot_reload as hr
 hr.init('src/cc_dump')
 order = hr._compute_reload_order()
@@ -41,7 +41,7 @@ print('Reload order:', order)
 "
 
 # Integration test
-python -m pytest tests/test_hot_reload.py::test_auto_registration -v
+uv run pytest tests/test_hot_reload.py::test_auto_registration -v
 ```
 
 ## Not In Scope

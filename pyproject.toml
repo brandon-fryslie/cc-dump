@@ -21,3 +21,6 @@ dev = [
     "pytest>=9.0.2",
     "requests>=2.31.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

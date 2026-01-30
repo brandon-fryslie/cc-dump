@@ -24,10 +24,10 @@
 ## Verification Commands
 ```bash
 # Type check protocols (if mypy installed)
-python -m mypy src/cc_dump/tui/protocols.py
+uv run mypy src/cc_dump/tui/protocols.py
 
 # Run import validation
-python -m pytest tests/test_hot_reload.py -v
+uv run pytest tests/test_hot_reload.py -v
 
 # Verify docs exist
 cat HOT_RELOAD_ARCHITECTURE.md | head -20
