@@ -827,3 +827,194 @@ class TestToolUseBlockDetail:
         tool_blocks = [b for b in blocks if isinstance(b, ToolUseBlock)]
         assert len(tool_blocks) == 1
         assert tool_blocks[0].detail == ""
+
+
+# ─── Tool Correlation Tests ───────────────────────────────────────────────────
+
+
+class TestToolCorrelation:
+    """Tests for tool_use_id correlation between ToolUseBlock and ToolResultBlock."""
+
+    def test_tool_use_id_populated(self, fresh_state):
+        """ToolUseBlock and ToolResultBlock have tool_use_id populated."""
+        body = {
+            "model": "claude-3-opus",
+            "max_tokens": 4096,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "tu_123", "name": "Read", "input": {"file_path": "/a.txt"}},
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "tu_123", "content": "file contents"},
+                    ],
+                },
+            ],
+        }
+        blocks = format_request(body, fresh_state)
+        tool_uses = [b for b in blocks if isinstance(b, ToolUseBlock)]
+        tool_results = [b for b in blocks if isinstance(b, ToolResultBlock)]
+
+        assert len(tool_uses) == 1
+        assert len(tool_results) == 1
+        assert tool_uses[0].tool_use_id == "tu_123"
+        assert tool_results[0].tool_use_id == "tu_123"
+
+    def test_tool_result_name_populated(self, fresh_state):
+        """ToolResultBlock has tool_name populated from matching ToolUseBlock."""
+        body = {
+            "model": "claude-3-opus",
+            "max_tokens": 4096,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "tu_123", "name": "Read", "input": {"file_path": "/a.txt"}},
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "tu_123", "content": "file contents"},
+                    ],
+                },
+            ],
+        }
+        blocks = format_request(body, fresh_state)
+        tool_results = [b for b in blocks if isinstance(b, ToolResultBlock)]
+
+        assert len(tool_results) == 1
+        assert tool_results[0].tool_name == "Read"
+
+    def test_tool_result_detail_populated(self, fresh_state):
+        """ToolResultBlock has detail copied from matching ToolUseBlock."""
+        body = {
+            "model": "claude-3-opus",
+            "max_tokens": 4096,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "tu_123", "name": "Read", "input": {"file_path": "/Users/foo/bar/baz/very/deep/nested/directory/file.ts"}},
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "tu_123", "content": "file contents"},
+                    ],
+                },
+            ],
+        }
+        blocks = format_request(body, fresh_state)
+        tool_results = [b for b in blocks if isinstance(b, ToolResultBlock)]
+
+        assert len(tool_results) == 1
+        assert tool_results[0].detail != ""
+        assert "file.ts" in tool_results[0].detail
+
+    def test_color_correlation(self, fresh_state):
+        """Matching ToolUseBlock and ToolResultBlock share the same msg_color_idx."""
+        body = {
+            "model": "claude-3-opus",
+            "max_tokens": 4096,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "tu_1", "name": "Read", "input": {}},
+                        {"type": "tool_use", "id": "tu_2", "name": "Bash", "input": {}},
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "tu_1", "content": "r1"},
+                        {"type": "tool_result", "tool_use_id": "tu_2", "content": "r2"},
+                    ],
+                },
+            ],
+        }
+        blocks = format_request(body, fresh_state)
+        uses = {b.tool_use_id: b for b in blocks if isinstance(b, ToolUseBlock)}
+        results = {b.tool_use_id: b for b in blocks if isinstance(b, ToolResultBlock)}
+
+        # Matching pairs share color
+        assert uses["tu_1"].msg_color_idx == results["tu_1"].msg_color_idx
+        assert uses["tu_2"].msg_color_idx == results["tu_2"].msg_color_idx
+
+        # Different pairs have different colors
+        assert uses["tu_1"].msg_color_idx != uses["tu_2"].msg_color_idx
+
+    def test_color_assignment_deterministic(self, fresh_state):
+        """Same request produces same color assignments."""
+        body = {
+            "model": "claude-3-opus",
+            "max_tokens": 4096,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "tu_1", "name": "Read", "input": {}},
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "tu_1", "content": "r1"},
+                    ],
+                },
+            ],
+        }
+
+        # Format twice
+        blocks1 = format_request(body, fresh_state)
+        uses1 = [b for b in blocks1 if isinstance(b, ToolUseBlock)]
+
+        # Reset state but format again
+        fresh_state["request_counter"] = 0
+        blocks2 = format_request(body, fresh_state)
+        uses2 = [b for b in blocks2 if isinstance(b, ToolUseBlock)]
+
+        # Should have same color
+        assert uses1[0].msg_color_idx == uses2[0].msg_color_idx
+
+    def test_missing_tool_use_fallback(self, fresh_state):
+        """ToolResultBlock without matching ToolUseBlock uses fallback color."""
+        body = {
+            "model": "claude-3-opus",
+            "max_tokens": 4096,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "missing_id", "content": "result"},
+                    ],
+                },
+            ],
+        }
+        blocks = format_request(body, fresh_state)
+        tool_results = [b for b in blocks if isinstance(b, ToolResultBlock)]
+
+        assert len(tool_results) == 1
+        # Should have tool_use_id set but tool_name empty
+        assert tool_results[0].tool_use_id == "missing_id"
+        assert tool_results[0].tool_name == ""
+        # Should have a color assigned (fallback to message color)
+        assert isinstance(tool_results[0].msg_color_idx, int)
+
+    def test_default_fields_work(self, fresh_state):
+        """Existing code creating blocks without new fields works with defaults."""
+        # ToolUseBlock without tool_use_id
+        block1 = ToolUseBlock(name="Read", input_size=100, msg_color_idx=0)
+        assert block1.tool_use_id == ""
+
+        # ToolResultBlock without new fields
+        block2 = ToolResultBlock(size=500, is_error=False, msg_color_idx=0)
+        assert block2.tool_use_id == ""
+        assert block2.tool_name == ""
+        assert block2.detail == ""
