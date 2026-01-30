@@ -92,9 +92,10 @@ class TestRenderTurnToStrips:
         filters = {}
         blocks = []
 
-        strips = render_turn_to_strips(blocks, filters, console, width=80)
+        strips, block_map = render_turn_to_strips(blocks, filters, console, width=80)
 
         assert strips == []
+        assert block_map == {}
 
     def test_filtered_out_blocks_return_empty_strips(self):
         """All blocks filtered out should return empty strip list."""
@@ -105,10 +106,11 @@ class TestRenderTurnToStrips:
             HeaderBlock(header_type="request", label="REQUEST 1", timestamp="12:00:00"),
         ]
 
-        strips = render_turn_to_strips(blocks, filters, console, width=80)
+        strips, block_map = render_turn_to_strips(blocks, filters, console, width=80)
 
         # Both blocks are filtered out, should get empty list
         assert strips == []
+        assert block_map == {}
 
     def test_basic_rendering_produces_strips(self):
         """Basic text content should produce strips."""
@@ -118,12 +120,14 @@ class TestRenderTurnToStrips:
             TextContentBlock(text="Hello, world!", indent=""),
         ]
 
-        strips = render_turn_to_strips(blocks, filters, console, width=80)
+        strips, block_map = render_turn_to_strips(blocks, filters, console, width=80)
 
         # Should produce at least one strip
         assert len(strips) > 0
         # Each strip should be a Strip object with cell_length
         assert all(hasattr(strip, 'cell_length') for strip in strips)
+        # Block map should map block 0 to strip 0
+        assert block_map == {0: 0}
 
     def test_multiline_text_produces_multiple_strips(self):
         """Multi-line text should produce multiple strips."""
@@ -133,10 +137,11 @@ class TestRenderTurnToStrips:
             TextContentBlock(text="Line 1\nLine 2\nLine 3", indent=""),
         ]
 
-        strips = render_turn_to_strips(blocks, filters, console, width=80)
+        strips, block_map = render_turn_to_strips(blocks, filters, console, width=80)
 
         # Should produce 3 strips (one per line)
         assert len(strips) == 3
+        assert block_map == {0: 0}
 
     def test_mixed_filtered_and_visible_blocks(self):
         """Mix of filtered and visible blocks should only render visible ones."""
@@ -148,10 +153,15 @@ class TestRenderTurnToStrips:
             ToolUseBlock(name="read_file", input_size=100, msg_color_idx=0),  # visible
         ]
 
-        strips = render_turn_to_strips(blocks, filters, console, width=80)
+        strips, block_map = render_turn_to_strips(blocks, filters, console, width=80)
 
         # Should have at least 2 strips (text + tool)
         assert len(strips) >= 2
+        # Block 0 (header) filtered out, blocks 1 and 2 visible
+        assert 0 not in block_map
+        assert 1 in block_map
+        assert 2 in block_map
+        assert block_map[1] == 0  # text block starts at strip 0
 
 
 class TestTurnDataReRender:

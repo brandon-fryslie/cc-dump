@@ -29,6 +29,7 @@ class TurnData:
     turn_index: int
     blocks: list             # list[FormattedBlock] - source of truth
     strips: list             # list[Strip] - pre-rendered lines
+    block_strip_map: dict = field(default_factory=dict)  # block_index → first strip line
     relevant_filter_keys: set = field(default_factory=set)
     line_offset: int = 0     # start line in virtual space
     _last_filter_snapshot: dict = field(default_factory=dict)
@@ -52,10 +53,14 @@ class TurnData:
         if snapshot == self._last_filter_snapshot:
             return False
         self._last_filter_snapshot = snapshot
-        self.strips = cc_dump.tui.rendering.render_turn_to_strips(
+        self.strips, self.block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
             self.blocks, filters, console, width
         )
         return True
+
+    def strip_offset_for_block(self, block_index: int) -> int | None:
+        """Return the first strip line for a given block index, or None if filtered out."""
+        return self.block_strip_map.get(block_index)
 
 
 class StreamingRichLog(RichLog):
@@ -214,12 +219,14 @@ class ConversationView(ScrollView):
         width = self.scrollable_content_region.width if self._size_known else self._last_width
         console = self.app.console
 
+        strips, block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
+            blocks, filters, console, width
+        )
         td = TurnData(
             turn_index=len(self._turns),
             blocks=blocks,
-            strips=cc_dump.tui.rendering.render_turn_to_strips(
-                blocks, filters, console, width
-            ),
+            strips=strips,
+            block_strip_map=block_strip_map,
         )
         td.compute_relevant_keys()
         td._last_filter_snapshot = {
@@ -231,10 +238,13 @@ class ConversationView(ScrollView):
         if self._follow_mode:
             self.scroll_end(animate=False, immediate=False, x_axis=False)
 
-    def _find_viewport_anchor(self) -> tuple[int, int] | None:
-        """Find turn at top of viewport and offset within it.
+    def _find_viewport_anchor(self) -> tuple[int, int, int] | None:
+        """Find stable anchor: (turn_index, block_index, line_within_block).
 
-        Returns (turn_index, offset_within_turn) or None if no turns exist.
+        block_index refers to an index in turn.blocks (stable across re-renders).
+        line_within_block is the offset within that block's rendered strips.
+        This survives filter changes because block indices don't move — only
+        their visibility and strip counts change.
         """
         if not self._turns:
             return None
@@ -242,33 +252,57 @@ class ConversationView(ScrollView):
         scroll_y = int(self.scroll_offset.y)
         turn = self._find_turn_for_line(scroll_y)
         if turn is None:
-            return None
+            return (self._turns[-1].turn_index, 0, 0) if self._turns else None
 
-        offset_within = scroll_y - turn.line_offset
-        return (turn.turn_index, offset_within)
+        # Find which block owns the line at scroll_y
+        local_y = scroll_y - turn.line_offset
+        # Walk block_strip_map to find the block containing local_y
+        best_block_idx = 0
+        best_strip_start = 0
+        for block_idx, strip_start in sorted(turn.block_strip_map.items()):
+            if strip_start <= local_y:
+                best_block_idx = block_idx
+                best_strip_start = strip_start
+            else:
+                break
 
-    def _restore_anchor(self, anchor: tuple[int, int]):
-        """Restore scroll position to anchor turn.
+        line_within_block = local_y - best_strip_start
+        return (turn.turn_index, best_block_idx, line_within_block)
 
-        If the anchor turn is now invisible (filtered out), finds the nearest
-        visible turn and scrolls to it instead.
+    def _restore_anchor(self, anchor: tuple[int, int, int] | None):
+        """Restore scroll to the same block content after re-render.
+
+        Looks up the anchor block in the new block_strip_map. If that block
+        is now filtered out, falls back to the nearest visible block in the
+        same turn, then to the nearest visible turn.
         """
         if anchor is None:
             return
 
-        turn_index, offset_within = anchor
+        turn_index, block_index, line_within_block = anchor
 
-        # Try to restore to the exact anchor position
-        if turn_index < len(self._turns):
-            turn = self._turns[turn_index]
-            if turn.line_count > 0:
-                # Clamp offset to valid range within the turn
-                target_y = turn.line_offset + min(offset_within, turn.line_count - 1)
-                self.scroll_to(y=target_y, animate=False)
-                return
+        if turn_index >= len(self._turns):
+            return
 
-        # Anchor turn is invisible — find nearest visible turn
-        # Search in expanding radius from the anchor
+        turn = self._turns[turn_index]
+
+        # Try exact block match
+        strip_offset = turn.strip_offset_for_block(block_index)
+        if strip_offset is not None:
+            target_y = turn.line_offset + strip_offset + min(line_within_block, max(turn.line_count - strip_offset - 1, 0))
+            self.scroll_to(y=target_y, animate=False)
+            return
+
+        # Block is filtered out — find nearest visible block in same turn
+        if turn.block_strip_map:
+            # Find closest visible block by index distance
+            visible = sorted(turn.block_strip_map.keys())
+            closest = min(visible, key=lambda bi: abs(bi - block_index))
+            target_y = turn.line_offset + turn.block_strip_map[closest]
+            self.scroll_to(y=target_y, animate=False)
+            return
+
+        # Entire turn is empty — find nearest visible turn
         for delta in range(1, len(self._turns)):
             for idx in [turn_index + delta, turn_index - delta]:
                 if 0 <= idx < len(self._turns) and self._turns[idx].line_count > 0:
@@ -317,7 +351,7 @@ class ConversationView(ScrollView):
             self._last_width = width
             console = self.app.console
             for td in self._turns:
-                td.strips = cc_dump.tui.rendering.render_turn_to_strips(
+                td.strips, td.block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
                     td.blocks, self._last_filters, console, width
                 )
             self._recalculate_offsets()

@@ -331,8 +331,11 @@ def render_turn_to_strips(
     console,
     width: int,
     wrap: bool = True,
-) -> list:
+) -> tuple[list, dict[int, int]]:
     """Render blocks to Strip objects for Line API storage.
+
+    Renders each block individually to track block-to-strip boundaries,
+    enabling stable scroll anchoring across filter changes.
 
     Args:
         blocks: FormattedBlock list for one turn
@@ -342,32 +345,36 @@ def render_turn_to_strips(
         wrap: Enable word wrapping
 
     Returns:
-        list[Strip] — pre-rendered lines for this turn
+        (strips, block_strip_map) — pre-rendered lines and a dict mapping
+        block index (in the blocks list) to its first strip line index.
     """
     from rich.segment import Segment
     from textual.strip import Strip
-
-    texts = render_blocks(blocks, filters)
-    if not texts:
-        return []
-
-    combined = combine_rendered_texts(texts)
 
     render_options = console.options
     if not wrap:
         render_options = render_options.update(overflow="ignore", no_wrap=True)
     render_options = render_options.update_width(width)
 
-    segments = console.render(combined, render_options)
-    lines = list(Segment.split_lines(segments))
+    all_strips: list[Strip] = []
+    block_strip_map: dict[int, int] = {}
 
-    if not lines:
-        return [Strip.blank(width)]
+    for i, block in enumerate(blocks):
+        text = render_block(block, filters)
+        if text is None:
+            continue
 
-    strips = Strip.from_lines(lines)
-    for strip in strips:
-        strip.adjust_cell_length(width)
-    return strips
+        block_strip_map[i] = len(all_strips)
+
+        segments = console.render(text, render_options)
+        lines = list(Segment.split_lines(segments))
+        if lines:
+            block_strips = Strip.from_lines(lines)
+            for strip in block_strips:
+                strip.adjust_cell_length(width)
+            all_strips.extend(block_strips)
+
+    return all_strips, block_strip_map
 
 
 def _render_tracked_content(block: TrackedContentBlock, filters: dict) -> Text:
