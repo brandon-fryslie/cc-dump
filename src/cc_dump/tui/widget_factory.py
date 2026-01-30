@@ -140,12 +140,8 @@ class ConversationView(ScrollView):
     """
 
     def __init__(self):
-        # Initialize anchor fields BEFORE super().__init__() because
-        # Textual sets scroll_y during init, which fires watch_scroll_y.
-        self._anchor: tuple[int, int, int] | None = None
-        self._suppress_anchor_update: bool = False
-        self._turns: list[TurnData] = []
         super().__init__()
+        self._turns: list[TurnData] = []
         self._total_lines: int = 0
         self._widest_line: int = 0
         self._line_cache: LRUCache = LRUCache(1024)
@@ -153,14 +149,13 @@ class ConversationView(ScrollView):
         self._last_width: int = 78
         self._follow_mode: bool = True
         self._pending_restore: dict | None = None
+        # Saved anchor: set when a filter hides the anchor block, so we
+        # can restore to the exact position when the block reappears.
+        # Cleared when the saved block becomes visible again.
+        self._saved_anchor: tuple[int, int, int] | None = None
 
-    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
-        """Update sticky anchor when the user scrolls (not programmatic)."""
-        if not self._suppress_anchor_update:
-            self._anchor = self._compute_anchor()
-
-    def _compute_anchor(self) -> tuple[int, int, int] | None:
-        """Compute anchor from current scroll position."""
+    def _compute_anchor_from_scroll(self) -> tuple[int, int, int] | None:
+        """Compute (turn_index, block_index, line_within_block) from current scroll position."""
         if not self._turns:
             return None
 
@@ -270,74 +265,59 @@ class ConversationView(ScrollView):
         if self._follow_mode:
             self.scroll_end(animate=False, immediate=False, x_axis=False)
 
-    def _restore_anchor(self):
-        """Restore scroll to the sticky anchor after re-render.
-
-        Uses self._anchor which is only updated on user scroll, not
-        programmatic scrolls. This means hide→show cycles are deterministic:
-        if you hide a block and re-show it, you return to the exact same
-        line within that block.
-
-        When the anchor block is filtered out, falls back to the nearest
-        visible block but preserves the original anchor for when the block
-        reappears.
-        """
-        anchor = self._anchor
-        if anchor is None:
-            return
-
+    def _scroll_to_anchor(self, anchor: tuple[int, int, int]) -> bool:
+        """Try to scroll to an anchor position. Returns True if the block was visible."""
         turn_index, block_index, line_within_block = anchor
 
         if turn_index >= len(self._turns):
-            return
+            return False
 
         turn = self._turns[turn_index]
 
-        # Try exact block match — anchor block is visible
+        # Try exact block match
         strip_offset = turn.strip_offset_for_block(block_index)
         if strip_offset is not None:
             target_y = turn.line_offset + strip_offset + min(
                 line_within_block,
                 max(turn.line_count - strip_offset - 1, 0),
             )
-            self._scroll_programmatic(target_y)
-            # Anchor stays as-is (block visible, exact restore)
-            return
+            self.scroll_to(y=target_y, animate=False)
+            return True
 
-        # Block is filtered out — fall back but KEEP original anchor
+        # Block is filtered out — fall back to nearest visible block
         if turn.block_strip_map:
             visible = sorted(turn.block_strip_map.keys())
             closest = min(visible, key=lambda bi: abs(bi - block_index))
             target_y = turn.line_offset + turn.block_strip_map[closest]
-            self._scroll_programmatic(target_y)
-            # Do NOT update self._anchor — preserve it for when block reappears
-            return
+            self.scroll_to(y=target_y, animate=False)
+            return False
 
-        # Entire turn is empty — find nearest visible turn
+        # Entire turn empty — find nearest visible turn
         for delta in range(1, len(self._turns)):
             for idx in [turn_index + delta, turn_index - delta]:
                 if 0 <= idx < len(self._turns) and self._turns[idx].line_count > 0:
-                    self._scroll_programmatic(self._turns[idx].line_offset)
-                    return
+                    self.scroll_to(y=self._turns[idx].line_offset, animate=False)
+                    return False
 
-    def _scroll_programmatic(self, y: int):
-        """Scroll without updating the sticky anchor."""
-        self._suppress_anchor_update = True
-        self.scroll_to(y=y, animate=False)
-        self._suppress_anchor_update = False
+        return False
 
     def rerender(self, filters: dict):
         """Re-render affected turns in place. Preserves scroll position.
 
-        Uses the sticky anchor (updated only on user scroll) so that
-        hide→show filter cycles are deterministic.
+        On each rerender:
+        1. If we have a saved anchor (from a previous fallback), check if
+           its block is now visible. If so, restore to it exactly.
+        2. Otherwise, compute a fresh anchor from current scroll position.
+        3. If the anchor block is filtered out, save it for later.
         """
         self._last_filters = filters
 
-        # Rebuild from pending restore if needed
         if self._pending_restore is not None:
             self._rebuild_from_state(filters)
             return
+
+        # Compute fresh anchor BEFORE re-rendering changes the strips
+        fresh_anchor = self._compute_anchor_from_scroll()
 
         width = self.scrollable_content_region.width if self._size_known else self._last_width
         console = self.app.console
@@ -345,9 +325,22 @@ class ConversationView(ScrollView):
         for td in self._turns:
             if td.re_render(filters, console, width):
                 changed = True
+
         if changed:
             self._recalculate_offsets()
-            self._restore_anchor()
+
+        # Try saved anchor first (from a previous filter-out).
+        # Check even when nothing changed — the saved block may now be
+        # visible due to external state changes.
+        if self._saved_anchor is not None:
+            if self._scroll_to_anchor(self._saved_anchor):
+                self._saved_anchor = None
+            return
+
+        # No saved anchor — use fresh (only if strips actually changed)
+        if changed and fresh_anchor is not None:
+            if not self._scroll_to_anchor(fresh_anchor):
+                self._saved_anchor = fresh_anchor
 
     def _rebuild_from_state(self, filters: dict):
         """Rebuild from restored state."""
