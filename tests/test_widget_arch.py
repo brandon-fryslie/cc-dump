@@ -5,10 +5,13 @@ Tests the new widget architecture components:
 - render_turn_to_strips output
 - TurnData.re_render skip logic
 - ConversationView._find_turn_for_line binary search
+- Sticky scroll anchor determinism across filter hide/show cycles
 """
 
 import pytest
+from unittest.mock import patch, PropertyMock, MagicMock
 from rich.console import Console
+from textual.geometry import Offset
 
 from cc_dump.formatting import (
     SeparatorBlock,
@@ -33,7 +36,7 @@ from cc_dump.formatting import (
     NewlineBlock,
 )
 from cc_dump.tui.rendering import BLOCK_RENDERERS, BLOCK_FILTER_KEY, render_turn_to_strips
-from cc_dump.tui.widget_factory import TurnData
+from cc_dump.tui.widget_factory import TurnData, ConversationView
 
 
 class TestBlockFilterKeyCompleteness:
@@ -403,3 +406,221 @@ class TestConversationViewBinarySearch:
         # Test last line of each turn
         assert conv._find_turn_for_line(2).turn_index == 0
         assert conv._find_turn_for_line(5).turn_index == 1
+
+
+class TestStickyScrollAnchor:
+    """Test that hide→show filter cycles preserve scroll position.
+
+    The sticky anchor is only updated on user scroll, not programmatic
+    scrolls from filter restores. This makes filter toggling deterministic:
+    hiding a block then showing it returns to the exact same line.
+    """
+
+    def _make_conv(self, console: Console, blocks: list, filters: dict) -> ConversationView:
+        """Create a ConversationView with one turn, mocking Textual internals."""
+        conv = ConversationView()
+
+        strips, block_strip_map = render_turn_to_strips(blocks, filters, console, width=80)
+        td = TurnData(
+            turn_index=0,
+            blocks=blocks,
+            strips=strips,
+            block_strip_map=block_strip_map,
+        )
+        td.compute_relevant_keys()
+        td._last_filter_snapshot = {k: filters.get(k, False) for k in td.relevant_filter_keys}
+
+        conv._turns.append(td)
+        conv._total_lines = len(strips)
+        conv._last_filters = dict(filters)
+        conv._last_width = 80
+        return conv
+
+    def _patch_scroll(self, conv, scroll_y=0):
+        """Context manager that mocks scroll infrastructure on ConversationView.
+
+        Patches class-level properties (scroll_offset, scrollable_content_region,
+        app) since Textual defines them as properties/descriptors.
+        """
+        import contextlib
+        region_mock = MagicMock()
+        region_mock.width = 80
+        app_mock = MagicMock(console=Console())
+        cls = type(conv)
+
+        @contextlib.contextmanager
+        def _ctx():
+            conv.scroll_to = MagicMock()
+            with patch.object(cls, 'scroll_offset', new_callable=PropertyMock, return_value=Offset(0, scroll_y)), \
+                 patch.object(cls, 'scrollable_content_region', new_callable=PropertyMock, return_value=region_mock), \
+                 patch.object(cls, 'app', new_callable=PropertyMock, return_value=app_mock):
+                yield
+
+        return _ctx()
+
+    def test_compute_anchor_identifies_block_and_line(self):
+        """_compute_anchor should return (turn_index, block_index, line_within_block)."""
+        console = Console()
+        blocks = [
+            RoleBlock(role="user", msg_index=0),
+            TextContentBlock(text="Line 0\nLine 1\nLine 2\nLine 3\nLine 4", indent=""),
+        ]
+        filters = {}
+
+        conv = self._make_conv(console, blocks, filters)
+        td = conv._turns[0]
+
+        # Verify block map: block 0 (RoleBlock) at strip 0, block 1 (TextContent) at some offset
+        assert 0 in td.block_strip_map
+        assert 1 in td.block_strip_map
+        text_block_start = td.block_strip_map[1]
+
+        # Simulate scroll to line 2 within the text block
+        target_scroll_y = text_block_start + 2
+        with self._patch_scroll(conv, scroll_y=target_scroll_y):
+            anchor = conv._compute_anchor()
+
+        assert anchor is not None
+        turn_idx, block_idx, line_in_block = anchor
+        assert turn_idx == 0
+        assert block_idx == 1  # TextContentBlock
+        assert line_in_block == 2  # 3rd line within the block
+
+    def test_anchor_not_overwritten_on_programmatic_scroll(self):
+        """When _suppress_anchor_update is True, watch_scroll_y must not change _anchor."""
+        conv = ConversationView()
+        original_anchor = (0, 3, 25)
+        conv._anchor = original_anchor
+
+        # Simulate programmatic scroll (suppress flag set)
+        conv._suppress_anchor_update = True
+        conv.watch_scroll_y(0.0, 100.0)
+        conv._suppress_anchor_update = False
+
+        assert conv._anchor == original_anchor
+
+    def test_anchor_updated_on_user_scroll(self):
+        """When _suppress_anchor_update is False, watch_scroll_y updates _anchor."""
+        console = Console()
+        blocks = [
+            TextContentBlock(text="Line\n" * 10, indent=""),
+        ]
+        filters = {}
+
+        conv = self._make_conv(console, blocks, filters)
+
+        # Simulate user scrolling to line 5
+        with self._patch_scroll(conv, scroll_y=5):
+            conv._suppress_anchor_update = False
+            conv.watch_scroll_y(0.0, 5.0)
+
+        assert conv._anchor is not None
+        assert conv._anchor[2] == 5  # line 5 within block 0
+
+    def test_anchor_survives_hide_show_cycle(self):
+        """Core invariant: hide block → show block → same scroll position.
+
+        Scenario: user is at line 1 within a system content block (which
+        renders to 2 strips: tag line + collapsed content). They hide
+        system (block disappears), then show system again.
+        The anchor should be preserved exactly.
+        """
+        console = Console()
+        blocks = [
+            RoleBlock(role="user", msg_index=0),
+            TextContentBlock(text="User says hello", indent=""),
+            SystemLabelBlock(),
+            TrackedContentBlock(
+                status="new", tag_id="sys", color_idx=0,
+                content="System content here",
+            ),
+        ]
+        filters_show = {"system": True}
+
+        conv = self._make_conv(console, blocks, filters_show)
+        td = conv._turns[0]
+
+        # Verify system blocks are visible
+        assert 2 in td.block_strip_map  # SystemLabelBlock
+        assert 3 in td.block_strip_map  # TrackedContentBlock
+        system_block_start = td.block_strip_map[2]
+
+        # --- Step 1: User is viewing the system label block (line 0 within it) ---
+        original_anchor = (0, 2, 0)
+        conv._anchor = original_anchor
+
+        # --- Step 2: Hide system filter ---
+        filters_hide = {"system": False}
+        with self._patch_scroll(conv, scroll_y=system_block_start):
+            conv.rerender(filters_hide)
+
+        # System blocks should now be filtered out
+        assert 2 not in conv._turns[0].block_strip_map
+        assert 3 not in conv._turns[0].block_strip_map
+        # Anchor must be preserved (not overwritten by fallback scroll)
+        assert conv._anchor == original_anchor, (
+            f"Anchor was overwritten during hide! Got {conv._anchor}, expected {original_anchor}"
+        )
+
+        # --- Step 3: Show system filter again ---
+        with self._patch_scroll(conv, scroll_y=0):  # currently at fallback position
+            conv.rerender(filters_show)
+
+        # System blocks should be visible again
+        assert 2 in conv._turns[0].block_strip_map
+        # Anchor must still be the original
+        assert conv._anchor == original_anchor, (
+            f"Anchor was overwritten during show! Got {conv._anchor}, expected {original_anchor}"
+        )
+
+        # Verify scroll_to was called with the correct target on show
+        new_system_start = conv._turns[0].block_strip_map[2]
+        expected_y = conv._turns[0].line_offset + new_system_start + 0
+        conv.scroll_to.assert_called_with(y=expected_y, animate=False)
+
+    def test_anchor_updates_after_user_scrolls_post_restore(self):
+        """After a restore, if the user scrolls, the anchor updates normally."""
+        console = Console()
+        blocks = [
+            TextContentBlock(text="\n".join(f"Line {i}" for i in range(20)), indent=""),
+        ]
+        filters = {}
+
+        conv = self._make_conv(console, blocks, filters)
+        conv._anchor = (0, 0, 10)
+
+        # Simulate user scrolling to line 5 (not suppressed)
+        with self._patch_scroll(conv, scroll_y=5):
+            conv._suppress_anchor_update = False
+            conv.watch_scroll_y(10.0, 5.0)
+
+        assert conv._anchor is not None
+        assert conv._anchor == (0, 0, 5)
+
+    def test_multiple_hide_show_cycles_are_stable(self):
+        """Repeated hide→show should always return to same position."""
+        console = Console()
+        blocks = [
+            TextContentBlock(text="Visible text", indent=""),
+            SystemLabelBlock(),
+            TrackedContentBlock(
+                status="new", tag_id="sys", color_idx=0,
+                content="System content",
+            ),
+        ]
+        filters_show = {"system": True}
+
+        conv = self._make_conv(console, blocks, filters_show)
+        # Anchor at the SystemLabelBlock
+        original_anchor = (0, 1, 0)
+        conv._anchor = original_anchor
+
+        # Cycle 3 times: hide → show
+        for cycle in range(3):
+            with self._patch_scroll(conv, scroll_y=0):
+                conv.rerender({"system": False})
+            assert conv._anchor == original_anchor, f"Anchor lost on hide cycle {cycle}"
+
+            with self._patch_scroll(conv, scroll_y=0):
+                conv.rerender({"system": True})
+            assert conv._anchor == original_anchor, f"Anchor lost on show cycle {cycle}"

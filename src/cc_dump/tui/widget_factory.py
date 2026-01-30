@@ -140,8 +140,12 @@ class ConversationView(ScrollView):
     """
 
     def __init__(self):
-        super().__init__()
+        # Initialize anchor fields BEFORE super().__init__() because
+        # Textual sets scroll_y during init, which fires watch_scroll_y.
+        self._anchor: tuple[int, int, int] | None = None
+        self._suppress_anchor_update: bool = False
         self._turns: list[TurnData] = []
+        super().__init__()
         self._total_lines: int = 0
         self._widest_line: int = 0
         self._line_cache: LRUCache = LRUCache(1024)
@@ -149,10 +153,6 @@ class ConversationView(ScrollView):
         self._last_width: int = 78
         self._follow_mode: bool = True
         self._pending_restore: dict | None = None
-        # Sticky anchor: preserved across filter changes so hide→show
-        # returns to the same position. Only updated on user scroll.
-        self._anchor: tuple[int, int, int] | None = None
-        self._suppress_anchor_update: bool = False
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         """Update sticky anchor when the user scrolls (not programmatic)."""
