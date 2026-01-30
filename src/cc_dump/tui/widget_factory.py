@@ -764,7 +764,6 @@ class FilterStatusBar(Static):
         Args:
             filters: Dict with filter states (headers, tools, system, expand, metadata)
         """
-        from rich.text import Text
 
         # Filter names and their colors (matching FILTER_INDICATORS in rendering.py)
         filter_info = [
@@ -814,7 +813,6 @@ class LogsPanel(RichLog):
             level: Log level (DEBUG, INFO, WARNING, ERROR)
             message: Log message
         """
-        from rich.text import Text
         import datetime
 
         timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
