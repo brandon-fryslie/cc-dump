@@ -371,13 +371,23 @@ class CcDumpApp(App):
         # Build log callback
         log_callback = self._log
 
-        if kind == "request":
+        if kind == "request_headers":
+            self._app_state = cc_dump.tui.event_handlers.handle_request_headers(
+                event, self._state, widgets, self._app_state, log_callback
+            )
+
+        elif kind == "request":
             self._app_state = cc_dump.tui.event_handlers.handle_request(
                 event, self._state, widgets, self._app_state, log_callback
             )
 
+        elif kind == "response_headers":
+            self._app_state = cc_dump.tui.event_handlers.handle_response_headers(
+                event, self._state, widgets, self._app_state, log_callback
+            )
+
         elif kind == "response_start":
-            # Response starts are implicit in streaming events
+            # Response starts are now handled by response_headers event
             pass
 
         elif kind == "response_event":

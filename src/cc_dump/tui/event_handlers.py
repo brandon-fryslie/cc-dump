@@ -9,6 +9,28 @@ import cc_dump.analysis
 import cc_dump.formatting
 
 
+def handle_request_headers(event, state, widgets, app_state, log_fn):
+    """Handle request_headers event.
+
+    Stores request headers in app_state to be included with the request turn.
+
+    Args:
+        event: The event tuple ("request_headers", headers_dict)
+        state: The content tracking state dict
+        widgets: Dict with widget references
+        app_state: Dict with app-level state
+        log_fn: Function to log application messages
+
+    Returns:
+        Updated app_state dict
+    """
+    headers_dict = event[1]
+    # Store headers temporarily - will be consumed by handle_request
+    app_state["pending_request_headers"] = headers_dict
+    log_fn("DEBUG", f"Stored request headers: {len(headers_dict)} headers")
+    return app_state
+
+
 def handle_request(event, state, widgets, app_state, log_fn):
     """Handle a request event.
 
@@ -27,6 +49,23 @@ def handle_request(event, state, widgets, app_state, log_fn):
     try:
         blocks = cc_dump.formatting.format_request(body, state)
 
+        # Inject request headers if they were captured
+        pending_headers = app_state.pop("pending_request_headers", None)
+        if pending_headers:
+            # Insert HttpHeadersBlock after MetadataBlock (which is typically at index 5)
+            # Find MetadataBlock position
+            meta_idx = None
+            for i, block in enumerate(blocks):
+                if isinstance(block, cc_dump.formatting.MetadataBlock):
+                    meta_idx = i
+                    break
+
+            if meta_idx is not None:
+                # Insert after MetadataBlock
+                header_blocks = cc_dump.formatting.format_request_headers(pending_headers)
+                blocks[meta_idx+1:meta_idx+1] = header_blocks
+                log_fn("DEBUG", f"Injected request headers after MetadataBlock at index {meta_idx}")
+
         conv = widgets["conv"]
         stats = widgets["stats"]
 
@@ -39,6 +78,39 @@ def handle_request(event, state, widgets, app_state, log_fn):
         log_fn("DEBUG", f"Request #{state['request_counter']} processed")
     except Exception as e:
         log_fn("ERROR", f"Error handling request: {e}")
+        raise
+
+    return app_state
+
+
+def handle_response_headers(event, state, widgets, app_state, log_fn):
+    """Handle response_headers event.
+
+    Formats and displays HTTP response headers at the start of streaming response.
+
+    Args:
+        event: The event tuple ("response_headers", status_code, headers_dict)
+        state: The content tracking state dict
+        widgets: Dict with widget references
+        app_state: Dict with app-level state
+        log_fn: Function to log application messages
+
+    Returns:
+        Updated app_state dict
+    """
+    status_code = event[1]
+    headers_dict = event[2]
+
+    try:
+        blocks = cc_dump.formatting.format_response_headers(status_code, headers_dict)
+        if blocks:
+            streaming = widgets["streaming"]
+            filters = widgets["filters"]
+            for block in blocks:
+                streaming.append_block(block, filters)
+            log_fn("DEBUG", f"Displayed response headers: HTTP {status_code}, {len(headers_dict)} headers")
+    except Exception as e:
+        log_fn("ERROR", f"Error handling response headers: {e}")
         raise
 
     return app_state

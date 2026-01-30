@@ -39,6 +39,14 @@ class HeaderBlock(FormattedBlock):
 
 
 @dataclass
+class HttpHeadersBlock(FormattedBlock):
+    """HTTP request or response headers."""
+    headers: dict = field(default_factory=dict)
+    header_type: str = "request"  # "request" or "response"
+    status_code: int = 0  # only for response headers
+
+
+@dataclass
 class MetadataBlock(FormattedBlock):
     """Key-value metadata (model, max_tokens, etc.)."""
     model: str = ""
@@ -487,3 +495,17 @@ def format_response_event(event_type, data):
         return []
 
     return []
+
+
+def format_request_headers(headers_dict: dict) -> list:
+    """Format HTTP request headers as blocks."""
+    if not headers_dict:
+        return []
+    return [HttpHeadersBlock(headers=headers_dict, header_type="request")]
+
+
+def format_response_headers(status_code: int, headers_dict: dict) -> list:
+    """Format HTTP response headers as blocks."""
+    if not headers_dict:
+        return []
+    return [HttpHeadersBlock(headers=headers_dict, header_type="response", status_code=status_code)]

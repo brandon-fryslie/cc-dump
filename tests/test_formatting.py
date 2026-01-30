@@ -7,6 +7,7 @@ from cc_dump.formatting import (
     ErrorBlock,
     FormattedBlock,
     HeaderBlock,
+    HttpHeadersBlock,
     ImageBlock,
     LogBlock,
     MetadataBlock,
@@ -26,7 +27,9 @@ from cc_dump.formatting import (
     TurnBudgetBlock,
     UnknownTypeBlock,
     format_request,
+    format_request_headers,
     format_response_event,
+    format_response_headers,
     make_diff_lines,
     track_content,
     _tool_detail,
@@ -364,6 +367,65 @@ def test_format_response_event_message_stop():
     assert len(blocks) == 0
 
 
+# ─── HTTP Headers Tests ───────────────────────────────────────────────────────
+
+
+def test_format_request_headers_empty():
+    """Empty headers dict returns empty list."""
+    blocks = format_request_headers({})
+    assert blocks == []
+
+
+def test_format_request_headers_with_headers():
+    """Request headers formatted as HttpHeadersBlock."""
+    headers = {"Content-Type": "application/json", "User-Agent": "test/1.0"}
+    blocks = format_request_headers(headers)
+
+    assert len(blocks) == 1
+    assert isinstance(blocks[0], HttpHeadersBlock)
+    assert blocks[0].headers == headers
+    assert blocks[0].header_type == "request"
+    assert blocks[0].status_code == 0
+
+
+def test_format_response_headers_empty():
+    """Empty headers dict returns empty list."""
+    blocks = format_response_headers(200, {})
+    assert blocks == []
+
+
+def test_format_response_headers_with_headers():
+    """Response headers formatted as HttpHeadersBlock with status code."""
+    headers = {"Content-Type": "text/event-stream", "x-request-id": "abc123"}
+    blocks = format_response_headers(200, headers)
+
+    assert len(blocks) == 1
+    assert isinstance(blocks[0], HttpHeadersBlock)
+    assert blocks[0].headers == headers
+    assert blocks[0].header_type == "response"
+    assert blocks[0].status_code == 200
+
+
+def test_http_headers_block_instantiation():
+    """HttpHeadersBlock can be instantiated with all fields."""
+    block = HttpHeadersBlock(
+        headers={"key": "value"},
+        header_type="request",
+        status_code=404
+    )
+    assert block.headers == {"key": "value"}
+    assert block.header_type == "request"
+    assert block.status_code == 404
+
+
+def test_http_headers_block_defaults():
+    """HttpHeadersBlock has correct default values."""
+    block = HttpHeadersBlock()
+    assert block.headers == {}
+    assert block.header_type == "request"
+    assert block.status_code == 0
+
+
 # ─── track_content Tests ──────────────────────────────────────────────────────
 
 
@@ -514,6 +576,7 @@ def test_block_types_can_be_instantiated():
     # Test a sampling of block types
     assert isinstance(SeparatorBlock(style="heavy"), FormattedBlock)
     assert isinstance(HeaderBlock(label="TEST"), FormattedBlock)
+    assert isinstance(HttpHeadersBlock(headers={"key": "value"}), FormattedBlock)
     assert isinstance(MetadataBlock(model="claude"), FormattedBlock)
     assert isinstance(SystemLabelBlock(), FormattedBlock)
     assert isinstance(RoleBlock(role="user"), FormattedBlock)

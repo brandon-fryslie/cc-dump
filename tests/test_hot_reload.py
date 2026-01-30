@@ -25,7 +25,7 @@ class TestHotReloadBasics:
 
         # Verify we can see the TUI (check for common elements)
         content = proc.get_content()
-        assert "cc-dump" in content or "Quit" in content or "Headers" in content, \
+        assert "cc-dump" in content or "Quit" in content or "headers" in content, \
             f"Expected TUI elements in output. Got:\n{content}"
 
     def test_hot_reload_detection_comment(self, start_cc_dump, formatting_py):

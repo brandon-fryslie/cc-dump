@@ -8,7 +8,7 @@ from typing import Callable
 from rich.text import Text
 
 from cc_dump.formatting import (
-    FormattedBlock, SeparatorBlock, HeaderBlock, MetadataBlock,
+    FormattedBlock, SeparatorBlock, HeaderBlock, HttpHeadersBlock, MetadataBlock,
     SystemLabelBlock, TrackedContentBlock, RoleBlock, TextContentBlock,
     ToolUseBlock, ToolResultBlock, ImageBlock, UnknownTypeBlock,
     StreamInfoBlock, StreamToolUseBlock, TextDeltaBlock, StopReasonBlock,
@@ -85,6 +85,26 @@ def _render_header(block: HeaderBlock, filters: dict) -> Text | None:
         t.append(" RESPONSE ", style="bold green")
         t.append(" ({})".format(block.timestamp), style="dim")
         return _add_filter_indicator(t, "headers")
+
+
+def _render_http_headers(block: HttpHeadersBlock, filters: dict) -> Text | None:
+    """Render HTTP request or response headers."""
+    if not filters.get("headers", False):
+        return None
+
+    t = Text()
+    if block.header_type == "response":
+        t.append("  HTTP {} ".format(block.status_code), style="bold cyan")
+    else:
+        t.append("  HTTP Headers ", style="bold cyan")
+
+    # Render headers sorted alphabetically
+    for key in sorted(block.headers.keys()):
+        value = block.headers[key]
+        t.append("\n    {}: ".format(key), style="dim cyan")
+        t.append(value, style="dim")
+
+    return _add_filter_indicator(t, "headers")
 
 
 def _render_metadata(block: MetadataBlock, filters: dict) -> Text | None:
@@ -262,6 +282,7 @@ def _render_newline(block: NewlineBlock, filters: dict) -> Text | None:
 BLOCK_RENDERERS: dict[type[FormattedBlock], BlockRenderer] = {
     SeparatorBlock: _render_separator,
     HeaderBlock: _render_header,
+    HttpHeadersBlock: _render_http_headers,
     MetadataBlock: _render_metadata,
     TurnBudgetBlock: _render_turn_budget_block,
     SystemLabelBlock: _render_system_label,
@@ -289,6 +310,7 @@ BLOCK_RENDERERS: dict[type[FormattedBlock], BlockRenderer] = {
 BLOCK_FILTER_KEY: dict[type[FormattedBlock], str | None] = {
     SeparatorBlock: "headers",
     HeaderBlock: "headers",
+    HttpHeadersBlock: "headers",
     MetadataBlock: "metadata",
     TurnBudgetBlock: "expand",
     SystemLabelBlock: "system",

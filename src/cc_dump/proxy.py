@@ -7,6 +7,22 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
+# Headers to exclude from emitted events (security + noise reduction)
+_EXCLUDED_HEADERS = frozenset({
+    "authorization",
+    "x-api-key",
+    "cookie",
+    "set-cookie",
+    "host",
+    "content-length",
+    "transfer-encoding",
+})
+
+
+def _safe_headers(headers):
+    """Filter out sensitive and noisy headers."""
+    return {k: v for k, v in headers.items() if k.lower() not in _EXCLUDED_HEADERS}
+
 
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
     target_host = "https://api.anthropic.com"
@@ -42,6 +58,9 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         if body_bytes and request_path.startswith("/v1/messages"):
             try:
                 body = json.loads(body_bytes)
+                # Emit request headers before request body
+                safe_req_headers = _safe_headers(self.headers)
+                self.event_queue.put(("request_headers", safe_req_headers))
                 self.event_queue.put(("request", body))
             except json.JSONDecodeError:
                 pass
@@ -82,13 +101,17 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
         if is_stream:
+            # Emit response headers before streaming
+            safe_resp_headers = _safe_headers(resp.headers)
+            self.event_queue.put(("response_headers", resp.status, safe_resp_headers))
             self._stream_response(resp)
         else:
             data = resp.read()
             self.wfile.write(data)
 
     def _stream_response(self, resp):
-        self.event_queue.put(("response_start",))
+        # Note: response_start event has been replaced by response_headers above
+        # Old code: self.event_queue.put(("response_start",))
 
         for raw_line in resp:
             self.wfile.write(raw_line)
