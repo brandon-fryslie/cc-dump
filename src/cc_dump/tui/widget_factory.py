@@ -231,6 +231,50 @@ class ConversationView(ScrollView):
         if self._follow_mode:
             self.scroll_end(animate=False, immediate=False, x_axis=False)
 
+    def _find_viewport_anchor(self) -> tuple[int, int] | None:
+        """Find turn at top of viewport and offset within it.
+
+        Returns (turn_index, offset_within_turn) or None if no turns exist.
+        """
+        if not self._turns:
+            return None
+
+        scroll_y = int(self.scroll_offset.y)
+        turn = self._find_turn_for_line(scroll_y)
+        if turn is None:
+            return None
+
+        offset_within = scroll_y - turn.line_offset
+        return (turn.turn_index, offset_within)
+
+    def _restore_anchor(self, anchor: tuple[int, int]):
+        """Restore scroll position to anchor turn.
+
+        If the anchor turn is now invisible (filtered out), finds the nearest
+        visible turn and scrolls to it instead.
+        """
+        if anchor is None:
+            return
+
+        turn_index, offset_within = anchor
+
+        # Try to restore to the exact anchor position
+        if turn_index < len(self._turns):
+            turn = self._turns[turn_index]
+            if turn.line_count > 0:
+                # Clamp offset to valid range within the turn
+                target_y = turn.line_offset + min(offset_within, turn.line_count - 1)
+                self.scroll_to(y=target_y, animate=False)
+                return
+
+        # Anchor turn is invisible — find nearest visible turn
+        # Search in expanding radius from the anchor
+        for delta in range(1, len(self._turns)):
+            for idx in [turn_index + delta, turn_index - delta]:
+                if 0 <= idx < len(self._turns) and self._turns[idx].line_count > 0:
+                    self.scroll_to(y=self._turns[idx].line_offset, animate=False)
+                    return
+
     def rerender(self, filters: dict):
         """Re-render affected turns in place. Preserves scroll position."""
         self._last_filters = filters
@@ -240,6 +284,9 @@ class ConversationView(ScrollView):
             self._rebuild_from_state(filters)
             return
 
+        # Save viewport anchor before re-rendering
+        anchor = self._find_viewport_anchor()
+
         width = self.scrollable_content_region.width if self._size_known else self._last_width
         console = self.app.console
         changed = False
@@ -248,6 +295,8 @@ class ConversationView(ScrollView):
                 changed = True
         if changed:
             self._recalculate_offsets()
+            # Restore scroll position after recalculating offsets
+            self._restore_anchor(anchor)
 
     def _rebuild_from_state(self, filters: dict):
         """Rebuild from restored state."""
