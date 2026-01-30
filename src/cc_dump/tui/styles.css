@@ -33,6 +33,15 @@ StatsPanel {
     border: solid $primary;
 }
 
+FilterStatusBar {
+    height: auto;
+    min-height: 1;
+    dock: bottom;
+    background: $surface;
+    padding: 0 1;
+    border: solid $accent;
+}
+
 Footer {
     dock: bottom;
 }

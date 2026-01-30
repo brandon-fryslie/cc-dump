@@ -37,9 +37,30 @@ TAG_STYLES = [
 
 MSG_COLORS = ["cyan", "green", "yellow", "magenta", "blue", "red"]
 
+# Filter indicator styles - maps filter name to (symbol, color)
+FILTER_INDICATORS = {
+    "headers": ("▌", "cyan"),
+    "tools": ("▌", "blue"),
+    "system": ("▌", "yellow"),
+    "expand": ("▌", "green"),
+    "metadata": ("▌", "magenta"),
+}
+
 
 # Type alias for render function signature
 BlockRenderer = Callable[[FormattedBlock, dict], Text | None]
+
+
+def _add_filter_indicator(text: Text, filter_name: str) -> Text:
+    """Add a colored indicator to show which filter controls this content."""
+    if filter_name not in FILTER_INDICATORS:
+        return text
+
+    symbol, color = FILTER_INDICATORS[filter_name]
+    indicator = Text()
+    indicator.append(symbol + " ", style=f"bold {color}")
+    indicator.append(text)
+    return indicator
 
 
 def _render_separator(block: SeparatorBlock, filters: dict) -> Text | None:
@@ -58,12 +79,12 @@ def _render_header(block: HeaderBlock, filters: dict) -> Text | None:
         t = Text()
         t.append(" {} ".format(block.label), style="bold cyan")
         t.append(" ({})".format(block.timestamp), style="dim")
-        return t
+        return _add_filter_indicator(t, "headers")
     else:
         t = Text()
         t.append(" RESPONSE ", style="bold green")
         t.append(" ({})".format(block.timestamp), style="dim")
-        return t
+        return _add_filter_indicator(t, "headers")
 
 
 def _render_metadata(block: MetadataBlock, filters: dict) -> Text | None:
@@ -86,7 +107,7 @@ def _render_metadata(block: MetadataBlock, filters: dict) -> Text | None:
         else:
             t.append(part)
     t.stylize("dim")
-    return t
+    return _add_filter_indicator(t, "metadata")
 
 
 def _render_turn_budget_block(block: TurnBudgetBlock, filters: dict) -> Text | None:
@@ -100,7 +121,8 @@ def _render_system_label(block: SystemLabelBlock, filters: dict) -> Text | None:
     """Render system label."""
     if not filters.get("system", False):
         return None
-    return Text("SYSTEM:", style="bold yellow")
+    t = Text("SYSTEM:", style="bold yellow")
+    return _add_filter_indicator(t, "system")
 
 
 def _render_tracked_content_block(block: TrackedContentBlock, filters: dict) -> Text | None:
@@ -135,7 +157,7 @@ def _render_tool_use(block: ToolUseBlock, filters: dict) -> Text | None:
     t = Text("  ")
     t.append("[tool_use]", style="bold {}".format(color))
     t.append(" {} ({} bytes)".format(block.name, block.input_size))
-    return t
+    return _add_filter_indicator(t, "tools")
 
 
 def _render_tool_result(block: ToolResultBlock, filters: dict) -> Text | None:
@@ -147,7 +169,7 @@ def _render_tool_result(block: ToolResultBlock, filters: dict) -> Text | None:
     t = Text("  ")
     t.append(label, style="bold {}".format(color))
     t.append(" ({} bytes)".format(block.size))
-    return t
+    return _add_filter_indicator(t, "tools")
 
 
 def _render_image(block: ImageBlock, filters: dict) -> Text | None:
@@ -167,7 +189,7 @@ def _render_stream_info(block: StreamInfoBlock, filters: dict) -> Text | None:
     t = Text("  ", style="dim")
     t.append("model: ")
     t.append(block.model, style="bold")
-    return t
+    return _add_filter_indicator(t, "metadata")
 
 
 def _render_stream_tool_use(block: StreamToolUseBlock, filters: dict) -> Text | None:
@@ -177,7 +199,7 @@ def _render_stream_tool_use(block: StreamToolUseBlock, filters: dict) -> Text | 
     t = Text("\n  ")
     t.append("[tool_use]", style="bold cyan")
     t.append(" " + block.name)
-    return t
+    return _add_filter_indicator(t, "tools")
 
 
 def _render_text_delta(block: TextDeltaBlock, filters: dict) -> Text | None:
@@ -189,7 +211,8 @@ def _render_stop_reason(block: StopReasonBlock, filters: dict) -> Text | None:
     """Render stop reason block."""
     if not filters.get("metadata", False):
         return None
-    return Text("\n  stop: " + block.reason, style="dim")
+    t = Text("\n  stop: " + block.reason, style="dim")
+    return _add_filter_indicator(t, "metadata")
 
 
 def _render_error(block: ErrorBlock, filters: dict) -> Text | None:
@@ -272,13 +295,13 @@ def _render_tracked_content(block: TrackedContentBlock, filters: dict) -> Text:
             t.append(_indent_text(block.content, block.indent + "    "))
         else:
             t.append(Text(block.indent + "    ...", style="dim"))
-        return t
+        return _add_filter_indicator(t, "system")
 
     elif block.status == "ref":
         t = Text(block.indent + "  ")
         t.append(" {} ".format(block.tag_id), style=tag_style)
         t.append(" (unchanged)")
-        return t
+        return _add_filter_indicator(t, "system")
 
     elif block.status == "changed":
         old_len = len(block.old_content)
@@ -291,7 +314,7 @@ def _render_tracked_content(block: TrackedContentBlock, filters: dict) -> Text:
             t.append(_render_diff(diff_lines, block.indent + "    "))
         else:
             t.append(Text(block.indent + "    ...", style="dim"))
-        return t
+        return _add_filter_indicator(t, "system")
 
     return Text("")
 
@@ -377,4 +400,4 @@ def _render_turn_budget(block: TurnBudgetBlock) -> Text:
             t.append(" | {} created".format(_fmt_tokens(b.actual_cache_creation_tokens)), style="dim yellow")
         t.append(" | {} fresh".format(_fmt_tokens(b.actual_input_tokens)), style="dim")
 
-    return t
+    return _add_filter_indicator(t, "expand")

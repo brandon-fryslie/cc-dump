@@ -1,0 +1,71 @@
+ visibility is a view concern, not a lifecycle concern. When finish_turn() creates a TurnWidget, it
+  should create it with all the blocks. The TurnWidget then decides what to show based on current filters at render time
+  — the same way rerender(filters) already works for the whole conversation.
+
+  If you bake filter state into TurnWidget at creation time, you've coupled two things that change at different rates:
+  - Turn completion happens once per turn
+  - Filter state changes whenever the user toggles a filter
+
+  That means every TurnWidget would need to be re-constructed or have an update_filters() method anyway — which is just
+  rerender by another name.
+
+  Design for the future TurnWidget:
+  1. finish_turn() → creates TurnWidget(blocks=self._current_turn_blocks), mounts it
+  2. TurnWidget.render() consults current filters (passed via rerender() or reactive state)
+  3. Filter changes call rerender(filters) which propagates to each TurnWidget
+
+  This keeps the plan's architecture intact while avoiding the unnecessary parameter coupling. The 4 call sites stay
+  clean, and filter logic stays in the rendering path where it belongs.
+
+===
+
+Re-evaluate this:
+
+### 5. BLOCK_FILTER_KEY Mapping Completeness
+**Status**: NOT_STARTED
+**Evidence**: The plan at lines 55-68 defines `BLOCK_FILTER_KEY` covering 10 block types. There are 18 block types in `formatting.py`. The unmapped types (RoleBlock, TextContentBlock, ImageBlock, UnknownTypeBlock, ErrorBlock, ProxyErrorBlock, LogBlock, NewlineBlock) are commented as "always visible, never filtered."
+
+**Verification**: Cross-checked against `rendering.py` BLOCK_RENDERERS:
+- `RoleBlock` -- filters system role, but the plan maps it to None. Actually, `_render_role` at line 139 checks `filters["system"]` for system roles. This is a **partial filter** -- it depends on the role value, not just block type. The `BLOCK_FILTER_KEY` approach of mapping type->filter is insufficient here.
+- `TextContentBlock` -- always shown, correct
+- `ImageBlock` -- always shown, correct
+- `ErrorBlock`, `ProxyErrorBlock` -- always shown, correct
+- `LogBlock` -- always shown, correct
+- `NewlineBlock` -- always shown, correct
+
+**Issue**: `RoleBlock` filtering depends on `block.role == "system"`, not just block type. The `BLOCK_FILTER_KEY` optimization that skips re-render when "no relevant filter changed" will miss this case. If `show_system` changes but the turn has no blocks mapped to "system" in `BLOCK_FILTER_KEY`, the turn won't re-render, but it actually should because `RoleBlock(role="system")` should appear/disappear.
+
+**Impact**: MEDIUM -- the optimization will produce incorrect results for turns containing system role blocks. Need either:
+- Map `RoleBlock` to "system" in `BLOCK_FILTER_KEY` (over-rerenders non-system roles but correct)
+- Use a more granular check that inspects block data
+
+===
+
+For this, determine whether simply performancing optimizations are necessary, and plan them
+
+### 7. Scroll Anchor on Filter Toggle (Phase 4)
+**Status**: NOT_STARTED (design complete)
+**Evidence**: Plan lines 136-143 describe finding a "viewport anchor" turn before applying filters, then scrolling it back into view afterward.
+
+**Issue**: `_find_viewport_anchor()` is not specified in detail. Textual's `ScrollableContainer` does not have a built-in "find first visible child" method. Implementation requires:
+1. Get current scroll offset (`self.scroll_y`)
+2. Iterate children, check if their `region.y` intersects with viewport
+3. Return the first matching turn's ID
+
+This is feasible but requires understanding Textual's coordinate system (widget regions are relative to the container's virtual space, not the screen). The `scroll_to_widget()` method exists for the restore step.
+
+**Impact**: LOW -- Textual provides sufficient API; implementation is straightforward.
+
+===
+
+This is important to get right: ### 8. Follow Mode Detection
+
+If I am scrolled to the bottom, it should follow.  If I am not, it should maintain the same scroll position
+
+| follow_mode auto-disable | Which scroll actions disable follow? | Only keyboard scroll-up | LOW -- should be all scroll sources |
+
+Mouse compatibility is required as that is the common case (scroll wheel up/down)
+
+===
+
+

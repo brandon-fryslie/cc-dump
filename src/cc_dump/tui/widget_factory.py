@@ -272,6 +272,99 @@ class TimelinePanel(Static):
         self._refresh_display([])
 
 
+class FilterStatusBar(Static):
+    """Status bar showing which filters are currently active with colored indicators."""
+
+    def __init__(self):
+        # Initialize with placeholder text so widget is visible
+        super().__init__("Active: (initializing...)")
+
+    def update_filters(self, filters: dict):
+        """Update the status bar to show active filters.
+
+        Args:
+            filters: Dict with filter states (headers, tools, system, expand, metadata)
+        """
+        from rich.text import Text
+
+        # Filter names and their colors (matching FILTER_INDICATORS in rendering.py)
+        filter_info = [
+            ("h", "Headers", "cyan", filters.get("headers", False)),
+            ("t", "Tools", "blue", filters.get("tools", False)),
+            ("s", "System", "yellow", filters.get("system", False)),
+            ("e", "Context", "green", filters.get("expand", False)),
+            ("m", "Metadata", "magenta", filters.get("metadata", False)),
+        ]
+
+        text = Text()
+        text.append("Active: ", style="dim")
+
+        active_filters = [(key, name, color) for key, name, color, active in filter_info if active]
+
+        if not active_filters:
+            text.append("none", style="dim")
+        else:
+            for i, (key, name, color) in enumerate(active_filters):
+                if i > 0:
+                    text.append(" ", style="dim")
+                # Add colored indicator bar
+                text.append("▌", style=f"bold {color}")
+                text.append(f"{name}", style=color)
+
+        self.update(text)
+
+    def get_state(self) -> dict:
+        """Extract state for transfer to a new instance."""
+        return {}
+
+    def restore_state(self, state: dict):
+        """Restore state from a previous instance."""
+        pass
+
+
+class LogsPanel(RichLog):
+    """Panel showing cc-dump application logs (debug, errors, internal messages)."""
+
+    def __init__(self):
+        super().__init__(highlight=False, markup=False, wrap=True, max_lines=1000)
+
+    def log(self, level: str, message: str):
+        """Add an application log entry.
+
+        Args:
+            level: Log level (DEBUG, INFO, WARNING, ERROR)
+            message: Log message
+        """
+        from rich.text import Text
+        import datetime
+
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
+        log_text = Text()
+        log_text.append(f"[{timestamp}] ", style="dim")
+
+        # Color-code by level
+        if level == "ERROR":
+            log_text.append(f"{level:7s} ", style="bold red")
+        elif level == "WARNING":
+            log_text.append(f"{level:7s} ", style="bold yellow")
+        elif level == "INFO":
+            log_text.append(f"{level:7s} ", style="bold cyan")
+        else:  # DEBUG
+            log_text.append(f"{level:7s} ", style="dim")
+
+        log_text.append(message)
+        self.write(log_text)
+
+    def get_state(self) -> dict:
+        """Extract state for transfer to a new instance."""
+        return {}  # Logs don't need to be preserved across hot-reload
+
+    def restore_state(self, state: dict):
+        """Restore state from a previous instance."""
+        pass  # Nothing to restore
+
+
 # Factory functions for creating widgets
 def create_conversation_view() -> ConversationView:
     """Create a new ConversationView instance."""
@@ -291,3 +384,13 @@ def create_economics_panel() -> ToolEconomicsPanel:
 def create_timeline_panel() -> TimelinePanel:
     """Create a new TimelinePanel instance."""
     return TimelinePanel()
+
+
+def create_logs_panel() -> LogsPanel:
+    """Create a new LogsPanel instance."""
+    return LogsPanel()
+
+
+def create_filter_status_bar() -> FilterStatusBar:
+    """Create a new FilterStatusBar instance."""
+    return FilterStatusBar()

@@ -10,6 +10,8 @@ from cc_dump.tui.widget_factory import (
     StatsPanel,
     ToolEconomicsPanel,
     TimelinePanel,
+    LogsPanel,
+    FilterStatusBar,
 )
 
 __all__ = [
@@ -17,4 +19,6 @@ __all__ = [
     "StatsPanel",
     "ToolEconomicsPanel",
     "TimelinePanel",
+    "LogsPanel",
+    "FilterStatusBar",
 ]

@@ -19,4 +19,5 @@ packages = ["src/cc_dump"]
 dev = [
     "ptydriver>=0.2.0",
     "pytest>=9.0.2",
+    "requests>=2.31.0",
 ]

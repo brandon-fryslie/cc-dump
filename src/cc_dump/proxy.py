@@ -5,6 +5,7 @@ import json
 import ssl
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 
 
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
@@ -18,7 +19,27 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         content_len = int(self.headers.get("Content-Length", 0))
         body_bytes = self.rfile.read(content_len) if content_len else b""
 
-        if body_bytes and self.path.startswith("/v1/messages"):
+        # Detect proxy mode and determine target URL
+        if self.path.startswith("http://") or self.path.startswith("https://"):
+            # Forward proxy mode - absolute URI
+            parsed = urlparse(self.path)
+            request_path = parsed.path
+            # Upgrade to HTTPS for security
+            url = self.path
+            if url.startswith("http://"):
+                url = "https://" + url[7:]
+        else:
+            # Reverse proxy mode - relative URI
+            request_path = self.path
+            if not self.target_host:
+                self.event_queue.put(("error", 500, "No target_host configured for reverse proxy mode"))
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(b"No target configured. Use --target or send absolute URIs.")
+                return
+            url = self.target_host + self.path
+
+        if body_bytes and request_path.startswith("/v1/messages"):
             try:
                 body = json.loads(body_bytes)
                 self.event_queue.put(("request", body))
@@ -26,7 +47,6 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 pass
 
         # Forward
-        url = self.target_host + self.path
         headers = {k: v for k, v in self.headers.items()
                    if k.lower() not in ("host", "content-length")}
         headers["Content-Length"] = str(len(body_bytes))

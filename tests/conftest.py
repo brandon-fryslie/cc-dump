@@ -62,19 +62,31 @@ def start_cc_dump():
     """Factory fixture to start cc-dump TUI and return PtyProcess."""
     processes = []
 
-    def _start(port=None, timeout=10):
+    def _start(port=None, timeout=10, db_path=None, session_id=None):
         """Start cc-dump on specified port and wait for it to be ready.
 
         Args:
             port: Port number to use (None = random port between 10000-60000)
             timeout: Timeout in seconds for startup
+            db_path: Optional path to database file (if None, uses --no-db)
+            session_id: Optional session ID for database
         """
         if port is None:
             # Use a random port to avoid conflicts
             port = random.randint(10000, 60000)
 
+        # Build command
+        cmd = ["uv", "run", "cc-dump", "--port", str(port)]
+
+        if db_path is None:
+            cmd.append("--no-db")
+        else:
+            cmd.extend(["--db", str(db_path)])
+            if session_id:
+                cmd.extend(["--session-id", session_id])
+
         # Use uv run to execute in the project's virtual environment
-        proc = PtyProcess(["uv", "run", "cc-dump", "--port", str(port), "--no-db"], timeout=timeout)
+        proc = PtyProcess(cmd, timeout=timeout)
         processes.append(proc)
 
         # Wait for TUI to initialize - look for header or footer
@@ -115,6 +127,21 @@ def start_cc_dump():
                     proc.terminate()
             except Exception:
                 pass
+
+
+@pytest.fixture
+def temp_db():
+    """Create a temporary database file for testing."""
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.db', delete=False) as f:
+        db_path = f.name
+
+    yield db_path
+
+    # Cleanup
+    try:
+        os.unlink(db_path)
+    except FileNotFoundError:
+        pass
 
 
 @contextmanager

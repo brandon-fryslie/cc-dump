@@ -6,7 +6,10 @@ from typing import Optional
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.reactive import reactive
-from textual.widgets import Footer, Header
+from textual.widgets import Header
+
+# Use custom footer with Rich markup support
+from cc_dump.tui.custom_footer import StyledFooter
 
 # Use module-level imports so hot-reload takes effect
 import cc_dump.analysis
@@ -21,15 +24,15 @@ class CcDumpApp(App):
     CSS_PATH = "styles.css"
 
     BINDINGS = [
-        Binding("h", "toggle_headers", "Headers", show=True),
-        Binding("t", "toggle_tools", "Tools", show=True),
-        Binding("s", "toggle_system", "System", show=True),
-        Binding("e", "toggle_expand", "Context", show=True),
-        Binding("m", "toggle_metadata", "Metadata", show=True),
-        Binding("p", "toggle_stats", "Stats", show=True),
-        Binding("x", "toggle_economics", "Economics", show=True),
-        Binding("l", "toggle_timeline", "Timeline", show=True),
-        Binding("q", "quit", "Quit", show=True),
+        Binding("h", "toggle_headers", "h|eaders", show=True),
+        Binding("t", "toggle_tools", "t|ools", show=True),
+        Binding("s", "toggle_system", "s|ystem", show=True),
+        Binding("e", "toggle_expand", "cont|e|xt", show=True),
+        Binding("m", "toggle_metadata", "m|etadata", show=True),
+        Binding("a", "toggle_stats", "st|a|ts", show=True),
+        Binding("c", "toggle_economics", "c|ost", show=True),
+        Binding("l", "toggle_timeline", "time|l|ine", show=True),
+        Binding("ctrl+l", "toggle_logs", "Logs", show=False),
     ]
 
     show_headers = reactive(False)
@@ -40,14 +43,18 @@ class CcDumpApp(App):
     show_stats = reactive(True)
     show_economics = reactive(False)
     show_timeline = reactive(False)
+    show_logs = reactive(False)
 
-    def __init__(self, event_queue, state, router, db_path: Optional[str] = None, session_id: Optional[str] = None):
+    def __init__(self, event_queue, state, router, db_path: Optional[str] = None, session_id: Optional[str] = None, host: str = "127.0.0.1", port: int = 3344, target: Optional[str] = None):
         super().__init__()
         self._event_queue = event_queue
         self._state = state
         self._router = router
         self._db_path = db_path
         self._session_id = session_id
+        self._host = host
+        self._port = port
+        self._target = target
         self._closing = False
 
         # App-level state (preserved across hot-reloads)
@@ -61,6 +68,8 @@ class CcDumpApp(App):
         self._stats_id = "stats-panel"
         self._economics_id = "economics-panel"
         self._timeline_id = "timeline-panel"
+        self._logs_id = "logs-panel"
+        self._filter_status_id = "filter-status-bar"
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -77,14 +86,39 @@ class CcDumpApp(App):
         timeline.id = self._timeline_id
         yield timeline
 
+        logs = cc_dump.tui.widget_factory.create_logs_panel()
+        logs.id = self._logs_id
+        yield logs
+
         stats = cc_dump.tui.widget_factory.create_stats_panel()
         stats.id = self._stats_id
         yield stats
 
-        yield Footer()
+        filter_status = cc_dump.tui.widget_factory.create_filter_status_bar()
+        filter_status.id = self._filter_status_id
+        yield filter_status
+
+        yield StyledFooter()
 
     def on_mount(self):
         """Initialize app after mounting."""
+        # Log startup messages (mirror what was printed to console)
+        self._log("INFO", "🚀 cc-dump proxy started")
+        self._log("INFO", f"Listening on: http://{self._host}:{self._port}")
+
+        if self._target:
+            self._log("INFO", f"Reverse proxy mode: {self._target}")
+            self._log("INFO", f"Usage: ANTHROPIC_BASE_URL=http://{self._host}:{self._port} claude")
+        else:
+            self._log("INFO", "Forward proxy mode (dynamic targets)")
+            self._log("INFO", f"Usage: HTTP_PROXY=http://{self._host}:{self._port} ANTHROPIC_BASE_URL=http://api.minimax.com claude")
+
+        if self._db_path and self._session_id:
+            self._log("INFO", f"Database: {self._db_path}")
+            self._log("INFO", f"Session: {self._session_id}")
+        else:
+            self._log("WARNING", "Database disabled (--no-db)")
+
         # Start worker to drain events
         self.run_worker(self._drain_events, thread=True, exclusive=False)
 
@@ -92,6 +126,10 @@ class CcDumpApp(App):
         self._get_stats().display = self.show_stats
         self._get_economics().display = self.show_economics
         self._get_timeline().display = self.show_timeline
+        self._get_logs().display = self.show_logs
+
+        # Initialize filter status bar
+        self._update_filter_status()
 
     # Widget accessors - use query by ID so we can swap widgets
     def _get_conv(self):
@@ -106,6 +144,39 @@ class CcDumpApp(App):
     def _get_timeline(self):
         return self.query_one("#" + self._timeline_id)
 
+    def _get_logs(self):
+        return self.query_one("#" + self._logs_id)
+
+    def _get_filter_status(self):
+        return self.query_one("#" + self._filter_status_id)
+
+    def _get_footer(self):
+        return self.query_one(StyledFooter)
+
+    def _log(self, level: str, message: str):
+        """Log a message to the application logs panel."""
+        try:
+            if self.is_running:
+                self._get_logs().log(level, message)
+        except Exception:
+            pass  # Don't crash if logs panel isn't available
+
+    def _update_filter_status(self):
+        """Update the filter status bar to show active filters."""
+        try:
+            if self.is_running:
+                self._get_filter_status().update_filters(self.active_filters)
+        except Exception:
+            pass  # Don't crash if filter status bar isn't available
+
+    def _update_footer_state(self):
+        """Update the footer to show active filter/panel states."""
+        try:
+            if self.is_running:
+                self._get_footer().update_active_state(self.active_filters)
+        except Exception:
+            pass  # Don't crash if footer isn't available
+
     def _drain_events(self):
         """Worker: drain event queue and post to app main thread."""
         while not self._closing:
@@ -115,9 +186,10 @@ class CcDumpApp(App):
                 # Check for hot reload even when idle
                 self.call_from_thread(self._check_hot_reload)
                 continue
-            except Exception:
+            except Exception as e:
                 if self._closing:
                     break
+                self.call_from_thread(self._log, "ERROR", f"Event queue error: {e}")
                 continue
 
             # Check for hot reload before processing event
@@ -133,6 +205,7 @@ class CcDumpApp(App):
             reloaded_modules = cc_dump.hot_reload.check_and_get_reloaded()
         except Exception as e:
             self.notify(f"[hot-reload] error checking: {e}", severity="error")
+            self._log("ERROR", f"Hot-reload error checking: {e}")
             return
 
         if not reloaded_modules:
@@ -140,6 +213,7 @@ class CcDumpApp(App):
 
         # Notify user
         self.notify("[hot-reload] modules reloaded", severity="information")
+        self._log("INFO", f"Hot-reload: {', '.join(reloaded_modules)}")
 
         # Check if widget_factory was reloaded - if so, replace widgets
         try:
@@ -150,6 +224,7 @@ class CcDumpApp(App):
                 self._get_conv().rerender(self.active_filters)
         except Exception as e:
             self.notify(f"[hot-reload] error applying: {e}", severity="error")
+            self._log("ERROR", f"Hot-reload error applying: {e}")
 
     def _replace_all_widgets(self):
         """Replace all widgets with fresh instances from the reloaded factory."""
@@ -161,17 +236,22 @@ class CcDumpApp(App):
         stats_state = self._get_stats().get_state()
         economics_state = self._get_economics().get_state()
         timeline_state = self._get_timeline().get_state()
+        logs_state = self._get_logs().get_state()
+        filter_status_state = self._get_filter_status().get_state()
 
         # Remember visibility
         stats_visible = self._get_stats().display
         economics_visible = self._get_economics().display
         timeline_visible = self._get_timeline().display
+        logs_visible = self._get_logs().display
 
         # Remove old widgets
         old_conv = self._get_conv()
         old_stats = self._get_stats()
         old_economics = self._get_economics()
         old_timeline = self._get_timeline()
+        old_logs = self._get_logs()
+        old_filter_status = self._get_filter_status()
 
         # Create new widgets from reloaded factory
         new_conv = cc_dump.tui.widget_factory.create_conversation_view()
@@ -193,26 +273,54 @@ class CcDumpApp(App):
         new_timeline.restore_state(timeline_state)
         new_timeline.display = timeline_visible
 
+        new_logs = cc_dump.tui.widget_factory.create_logs_panel()
+        new_logs.id = self._logs_id
+        new_logs.restore_state(logs_state)
+        new_logs.display = logs_visible
+
+        new_filter_status = cc_dump.tui.widget_factory.create_filter_status_bar()
+        new_filter_status.id = self._filter_status_id
+        new_filter_status.restore_state(filter_status_state)
+
         # Swap widgets - mount new before removing old to maintain layout
         old_conv.remove()
         old_stats.remove()
         old_economics.remove()
         old_timeline.remove()
+        old_logs.remove()
+        old_filter_status.remove()
 
         # Mount in correct order after header
         header = self.query_one(Header)
         self.mount(new_conv, after=header)
         self.mount(new_economics, after=new_conv)
         self.mount(new_timeline, after=new_economics)
-        self.mount(new_stats, after=new_timeline)
+        self.mount(new_logs, after=new_timeline)
+        self.mount(new_stats, after=new_logs)
+        self.mount(new_filter_status, after=new_stats)
 
         # Re-render the conversation with current filters
         new_conv.rerender(self.active_filters)
+
+        # Update filter status bar
+        new_filter_status.update_filters(self.active_filters)
 
         self.notify("[hot-reload] widgets replaced", severity="information")
 
     def _handle_event(self, event):
         """Process event on main thread using reloadable handlers."""
+        try:
+            self._handle_event_inner(event)
+        except Exception as e:
+            self._log("ERROR", f"Uncaught exception handling event: {e}")
+            import traceback
+            tb = traceback.format_exc()
+            for line in tb.split('\n'):
+                if line:
+                    self._log("ERROR", f"  {line}")
+
+    def _handle_event_inner(self, event):
+        """Inner event handler with exception boundary."""
         kind = event[0]
 
         # Build widget dict for handlers
@@ -235,9 +343,12 @@ class CcDumpApp(App):
             "refresh_timeline": self._refresh_timeline,
         }
 
+        # Build log callback
+        log_callback = self._log
+
         if kind == "request":
             self._app_state = cc_dump.tui.event_handlers.handle_request(
-                event, self._state, widgets, self._app_state
+                event, self._state, widgets, self._app_state, log_callback
             )
 
         elif kind == "response_start":
@@ -246,27 +357,28 @@ class CcDumpApp(App):
 
         elif kind == "response_event":
             self._app_state = cc_dump.tui.event_handlers.handle_response_event(
-                event, self._state, widgets, self._app_state
+                event, self._state, widgets, self._app_state, log_callback
             )
 
         elif kind == "response_done":
             self._app_state = cc_dump.tui.event_handlers.handle_response_done(
-                event, self._state, widgets, self._app_state, refresh_callbacks, db_context
+                event, self._state, widgets, self._app_state, refresh_callbacks, db_context, log_callback
             )
 
         elif kind == "error":
             self._app_state = cc_dump.tui.event_handlers.handle_error(
-                event, self._state, widgets, self._app_state
+                event, self._state, widgets, self._app_state, log_callback
             )
 
         elif kind == "proxy_error":
             self._app_state = cc_dump.tui.event_handlers.handle_proxy_error(
-                event, self._state, widgets, self._app_state
+                event, self._state, widgets, self._app_state, log_callback
             )
 
         elif kind == "log":
-            # Logs are less important in TUI, skip for now
-            pass
+            # HTTP proxy logs - log them to app logs
+            _, method, path, status = event
+            self._log("DEBUG", f"HTTP {method} {path} -> {status}")
 
     @property
     def active_filters(self):
@@ -277,6 +389,9 @@ class CcDumpApp(App):
             "system": self.show_system,
             "expand": self.show_expand,
             "metadata": self.show_metadata,
+            "stats": self.show_stats,
+            "economics": self.show_economics,
+            "timeline": self.show_timeline,
         }
 
     # Action handlers for key bindings
@@ -312,6 +427,10 @@ class CcDumpApp(App):
         if self.show_timeline:
             self._refresh_timeline()
 
+    def action_toggle_logs(self):
+        self.show_logs = not self.show_logs
+        self._get_logs().display = self.show_logs
+
     def _refresh_economics(self):
         """Update tool economics panel with current data from database."""
         if not self.is_running or not self._db_path or not self._session_id:
@@ -332,6 +451,8 @@ class CcDumpApp(App):
         """Re-render conversation if the app is mounted."""
         if self.is_running:
             self._get_conv().rerender(self.active_filters)
+            self._update_filter_status()
+            self._update_footer_state()
 
     def watch_show_headers(self, value):
         self._rerender_if_mounted()
@@ -348,13 +469,20 @@ class CcDumpApp(App):
     def watch_show_metadata(self, value):
         self._rerender_if_mounted()
 
+    def watch_show_stats(self, value):
+        self._update_footer_state()
+
     def watch_show_economics(self, value):
-        pass  # visibility handled in action handler
+        self._update_footer_state()
 
     def watch_show_timeline(self, value):
+        self._update_footer_state()
+
+    def watch_show_logs(self, value):
         pass  # visibility handled in action handler
 
     def on_unmount(self):
         """Clean up when app exits."""
+        self._log("INFO", "cc-dump TUI shutting down")
         self._closing = True
         self._router.stop()
