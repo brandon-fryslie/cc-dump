@@ -78,6 +78,7 @@ class RoleBlock(FormattedBlock):
     """A message role header (USER, ASSISTANT, SYSTEM)."""
     role: str = ""
     msg_index: int = 0
+    timestamp: str = ""
 
 
 @dataclass
@@ -337,7 +338,7 @@ def format_request(body, state):
         content = msg.get("content", "")
         msg_color_idx = i % MSG_COLOR_CYCLE
 
-        blocks.append(RoleBlock(role=role, msg_index=i))
+        blocks.append(RoleBlock(role=role, msg_index=i, timestamp=_get_timestamp()))
 
         if isinstance(content, str):
             if content:

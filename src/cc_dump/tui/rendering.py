@@ -139,7 +139,10 @@ def _render_role(block: RoleBlock, filters: dict) -> Text | None:
     if role_lower == "system" and not filters.get("system", False):
         return None
     style = ROLE_STYLES.get(role_lower, "bold magenta")
-    return Text(block.role.upper(), style=style)
+    t = Text(block.role.upper(), style=style)
+    if block.timestamp:
+        t.append(f"  {block.timestamp}", style="dim")
+    return t
 
 
 def _render_text_content(block: TextContentBlock, filters: dict) -> Text | None:
