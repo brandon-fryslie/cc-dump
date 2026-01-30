@@ -425,16 +425,11 @@ class TestWidgetStatePreservation:
     def test_conversation_view_state_roundtrip(self):
         """ConversationView state survives get_state/restore_state cycle."""
         from cc_dump.tui.widget_factory import ConversationView
-        from cc_dump.formatting import TextDeltaBlock
 
-        # Create widget with state
+        # Create widget and set state fields
         widget = ConversationView()
-        widget._turn_blocks = [
-            [TextDeltaBlock(text="Hello")],
-            [TextDeltaBlock(text="World")]
-        ]
-        widget._current_turn_blocks = [TextDeltaBlock(text="Current")]
-        widget._text_delta_buffer = ["Buffer", "Text"]
+        widget._follow_mode = False
+        widget._selected_turn = 2
 
         # Extract state
         state = widget.get_state()
@@ -444,9 +439,8 @@ class TestWidgetStatePreservation:
         new_widget.restore_state(state)
 
         # Verify state preserved
-        assert len(new_widget._turn_blocks) == 2
-        assert len(new_widget._current_turn_blocks) == 1
-        assert new_widget._text_delta_buffer == ["Buffer", "Text"]
+        assert new_widget._follow_mode is False
+        assert new_widget._selected_turn == 2
 
     def test_economics_panel_state_roundtrip(self):
         """ToolEconomicsPanel state survives get_state/restore_state cycle."""
