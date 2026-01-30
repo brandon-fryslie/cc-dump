@@ -33,6 +33,14 @@ class CcDumpApp(App):
         Binding("c", "toggle_economics", "c|ost", show=True),
         Binding("l", "toggle_timeline", "time|l|ine", show=True),
         Binding("ctrl+l", "toggle_logs", "Logs", show=False),
+        # Sprint 2: Follow mode and navigation
+        Binding("f", "toggle_follow", "f|ollow", show=True),
+        Binding("j", "next_turn", "next", show=False),
+        Binding("k", "prev_turn", "prev", show=False),
+        Binding("n", "next_tool_turn", "next tool", show=False),
+        Binding("N", "prev_tool_turn", "prev tool", show=False),
+        Binding("g", "first_turn", "top", show=False),
+        Binding("G", "last_turn", "bottom", show=False),
     ]
 
     show_headers = reactive(False)
@@ -447,6 +455,29 @@ class CcDumpApp(App):
     def action_toggle_logs(self):
         self.show_logs = not self.show_logs
         self._get_logs().display = self.show_logs
+
+    # Sprint 2: Follow mode and navigation action handlers
+
+    def action_toggle_follow(self):
+        self._get_conv().toggle_follow()
+
+    def action_next_turn(self):
+        self._get_conv().select_next_turn(forward=True)
+
+    def action_prev_turn(self):
+        self._get_conv().select_next_turn(forward=False)
+
+    def action_next_tool_turn(self):
+        self._get_conv().next_tool_turn(forward=True)
+
+    def action_prev_tool_turn(self):
+        self._get_conv().next_tool_turn(forward=False)
+
+    def action_first_turn(self):
+        self._get_conv().jump_to_first()
+
+    def action_last_turn(self):
+        self._get_conv().jump_to_last()
 
     def _refresh_economics(self):
         """Update tool economics panel with current data from database."""

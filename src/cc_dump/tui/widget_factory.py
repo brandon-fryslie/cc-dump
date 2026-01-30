@@ -15,6 +15,7 @@ from textual.strip import Strip
 from textual.cache import LRUCache
 from textual.geometry import Size
 from rich.text import Text
+from rich.style import Style
 
 # Use module-level imports for hot-reload
 import cc_dump.analysis
@@ -139,6 +140,8 @@ class ConversationView(ScrollView):
     }
     """
 
+    _SELECTED_STYLE = Style(bgcolor="grey15")
+
     def __init__(self):
         super().__init__()
         self._turns: list[TurnData] = []
@@ -153,6 +156,9 @@ class ConversationView(ScrollView):
         # can restore to the exact position when the block reappears.
         # Cleared when the saved block becomes visible again.
         self._saved_anchor: tuple[int, int, int] | None = None
+        # Sprint 2: selection and programmatic scroll guard
+        self._selected_turn: int | None = None
+        self._scrolling_programmatically: bool = False
 
     def _compute_anchor_from_scroll(self) -> tuple[int, int, int] | None:
         """Compute (turn_index, block_index, line_within_block) from current scroll position."""
@@ -186,7 +192,8 @@ class ConversationView(ScrollView):
         if actual_y >= self._total_lines:
             return Strip.blank(width, self.rich_style)
 
-        key = (actual_y, scroll_x, width, self._widest_line)
+        # Cache key includes selection state
+        key = (actual_y, scroll_x, width, self._widest_line, self._selected_turn)
         if key in self._line_cache:
             return self._line_cache[key].apply_style(self.rich_style)
 
@@ -203,8 +210,15 @@ class ConversationView(ScrollView):
         else:
             strip = Strip.blank(width, self.rich_style)
 
+        # Apply base style
+        strip = strip.apply_style(self.rich_style)
+
+        # Apply selection highlight
+        if self._selected_turn is not None and self._selected_turn == turn.turn_index:
+            strip = strip.apply_style(self._SELECTED_STYLE)
+
         self._line_cache[key] = strip
-        return strip.apply_style(self.rich_style)
+        return strip
 
     def _find_turn_for_line(self, line_y: int) -> TurnData | None:
         """Binary search for turn containing virtual line y."""
@@ -263,7 +277,9 @@ class ConversationView(ScrollView):
         self._recalculate_offsets()
 
         if self._follow_mode:
+            self._scrolling_programmatically = True
             self.scroll_end(animate=False, immediate=False, x_axis=False)
+            self._scrolling_programmatically = False
 
     def _scroll_to_anchor(self, anchor: tuple[int, int, int]) -> bool:
         """Try to scroll to an anchor position. Returns True if the block was visible."""
@@ -301,6 +317,33 @@ class ConversationView(ScrollView):
 
         return False
 
+    def _find_viewport_anchor(self) -> tuple[int, int] | None:
+        """Find turn at top of viewport and offset within it (turn-level anchor for filter toggles)."""
+        if not self._turns:
+            return None
+        scroll_y = int(self.scroll_offset.y)
+        turn = self._find_turn_for_line(scroll_y)
+        if turn is None:
+            return None
+        offset_within = scroll_y - turn.line_offset
+        return (turn.turn_index, offset_within)
+
+    def _restore_anchor(self, anchor: tuple[int, int]):
+        """Restore scroll position to anchor turn after re-render (turn-level anchor for filter toggles)."""
+        turn_index, offset_within = anchor
+        if turn_index < len(self._turns):
+            turn = self._turns[turn_index]
+            if turn.line_count > 0:
+                target_y = turn.line_offset + min(offset_within, turn.line_count - 1)
+                self.scroll_to(y=target_y, animate=False)
+                return
+        # Anchor turn invisible — find nearest visible
+        for delta in range(1, len(self._turns)):
+            for idx in [turn_index + delta, turn_index - delta]:
+                if 0 <= idx < len(self._turns) and self._turns[idx].line_count > 0:
+                    self.scroll_to(y=self._turns[idx].line_offset, animate=False)
+                    return
+
     def rerender(self, filters: dict):
         """Re-render affected turns in place. Preserves scroll position.
 
@@ -316,7 +359,10 @@ class ConversationView(ScrollView):
             self._rebuild_from_state(filters)
             return
 
-        # Compute fresh anchor BEFORE re-rendering changes the strips
+        # Capture turn-level anchor before re-render (for scroll position preservation)
+        anchor = self._find_viewport_anchor() if not self._follow_mode else None
+
+        # Compute fresh block-level anchor BEFORE re-rendering changes the strips
         fresh_anchor = self._compute_anchor_from_scroll()
 
         width = self.scrollable_content_region.width if self._size_known else self._last_width
@@ -336,6 +382,10 @@ class ConversationView(ScrollView):
             if self._scroll_to_anchor(self._saved_anchor):
                 self._saved_anchor = None
             return
+
+        # Restore turn-level anchor if not in follow mode
+        if changed and anchor is not None:
+            self._restore_anchor(anchor)
 
         # No saved anchor — use fresh (only if strips actually changed)
         if changed and fresh_anchor is not None:
@@ -366,16 +416,167 @@ class ConversationView(ScrollView):
                 )
             self._recalculate_offsets()
 
+    # ─── Sprint 2: Follow mode ───────────────────────────────────────────────
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Detect scroll position changes from ALL sources.
+
+        CRITICAL: Must call super() to preserve scrollbar sync and refresh.
+        CRITICAL: Signature is (old_value, new_value), not (value).
+        """
+        super().watch_scroll_y(old_value, new_value)
+        if self._scrolling_programmatically:
+            return
+        if self.is_vertical_scroll_end:
+            self._follow_mode = True
+        else:
+            self._follow_mode = False
+
+    def toggle_follow(self):
+        """Toggle follow mode."""
+        self._follow_mode = not self._follow_mode
+        if self._follow_mode:
+            self._scrolling_programmatically = True
+            self.scroll_end(animate=False)
+            self._scrolling_programmatically = False
+
+    def scroll_to_bottom(self):
+        """Scroll to bottom and enable follow mode."""
+        self._follow_mode = True
+        self._scrolling_programmatically = True
+        self.scroll_end(animate=False)
+        self._scrolling_programmatically = False
+
+    # ─── Sprint 2: Turn selection ────────────────────────────────────────────
+
+    def select_turn(self, turn_index: int):
+        """Select a turn by index. Refreshes affected line ranges."""
+        old_selected = self._selected_turn
+        self._selected_turn = turn_index
+
+        # Clear line cache (selection state changes rendered output)
+        self._line_cache.clear()
+
+        # Refresh old selection line range
+        if old_selected is not None and old_selected < len(self._turns):
+            old_turn = self._turns[old_selected]
+            if old_turn.line_count > 0:
+                self.refresh_lines(old_turn.line_offset, old_turn.line_count)
+
+        # Refresh new selection line range
+        if turn_index < len(self._turns):
+            new_turn = self._turns[turn_index]
+            if new_turn.line_count > 0:
+                self.refresh_lines(new_turn.line_offset, new_turn.line_count)
+
+    def deselect(self):
+        """Clear selection."""
+        if self._selected_turn is not None:
+            old = self._selected_turn
+            self._selected_turn = None
+            self._line_cache.clear()
+            if old < len(self._turns):
+                turn = self._turns[old]
+                if turn.line_count > 0:
+                    self.refresh_lines(turn.line_offset, turn.line_count)
+
+    def on_click(self, event) -> None:
+        """Select turn at click position."""
+        # event.y is viewport-relative; add scroll offset for content-space
+        content_y = int(event.y + self.scroll_offset.y)
+        turn = self._find_turn_for_line(content_y)
+        if turn is not None:
+            self.select_turn(turn.turn_index)
+
+    # ─── Sprint 2: Turn navigation ───────────────────────────────────────────
+
+    def _visible_turns(self) -> list[TurnData]:
+        """Returns turns with line_count > 0 (not fully filtered out)."""
+        return [t for t in self._turns if t.line_count > 0]
+
+    def select_next_turn(self, forward: bool = True):
+        """Select next/prev visible turn."""
+        visible = self._visible_turns()
+        if not visible:
+            return
+        self._follow_mode = False
+
+        if self._selected_turn is None:
+            # Nothing selected — pick first or last
+            target = visible[0] if forward else visible[-1]
+        else:
+            # Find current position in visible list
+            current_idx = None
+            for i, t in enumerate(visible):
+                if t.turn_index == self._selected_turn:
+                    current_idx = i
+                    break
+            if current_idx is None:
+                target = visible[0] if forward else visible[-1]
+            else:
+                next_idx = current_idx + (1 if forward else -1)
+                next_idx = max(0, min(next_idx, len(visible) - 1))
+                target = visible[next_idx]
+
+        self.select_turn(target.turn_index)
+        self.scroll_to(y=target.line_offset, animate=False)
+
+    def next_tool_turn(self, forward: bool = True):
+        """Select next/prev turn containing tool blocks."""
+        from cc_dump.formatting import ToolUseBlock, ToolResultBlock, StreamToolUseBlock
+        tool_types = (ToolUseBlock, ToolResultBlock, StreamToolUseBlock)
+
+        visible = self._visible_turns()
+        tool_turns = [t for t in visible if any(isinstance(b, tool_types) for b in t.blocks)]
+        if not tool_turns:
+            return
+        self._follow_mode = False
+
+        if self._selected_turn is None:
+            target = tool_turns[0] if forward else tool_turns[-1]
+        else:
+            if forward:
+                later = [t for t in tool_turns if t.turn_index > self._selected_turn]
+                target = later[0] if later else tool_turns[0]
+            else:
+                earlier = [t for t in tool_turns if t.turn_index < self._selected_turn]
+                target = earlier[-1] if earlier else tool_turns[-1]
+
+        self.select_turn(target.turn_index)
+        self.scroll_to(y=target.line_offset, animate=False)
+
+    def jump_to_first(self):
+        """Select first visible turn."""
+        visible = self._visible_turns()
+        if visible:
+            self._follow_mode = False
+            self.select_turn(visible[0].turn_index)
+            self.scroll_to(y=visible[0].line_offset, animate=False)
+
+    def jump_to_last(self):
+        """Select last visible turn and re-enable follow mode."""
+        visible = self._visible_turns()
+        if visible:
+            self.select_turn(visible[-1].turn_index)
+            self._follow_mode = True
+            self._scrolling_programmatically = True
+            self.scroll_end(animate=False)
+            self._scrolling_programmatically = False
+
+    # ─── State management ────────────────────────────────────────────────────
+
     def get_state(self) -> dict:
         return {
             "all_blocks": [td.blocks for td in self._turns],
             "follow_mode": self._follow_mode,
+            "selected_turn": self._selected_turn,
             "turn_count": len(self._turns),
         }
 
     def restore_state(self, state: dict):
         self._pending_restore = state
         self._follow_mode = state.get("follow_mode", True)
+        self._selected_turn = state.get("selected_turn", None)
 
 
 class StatsPanel(Static):
