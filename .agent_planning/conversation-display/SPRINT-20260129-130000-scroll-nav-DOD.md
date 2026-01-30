@@ -1,7 +1,7 @@
 # Definition of Done: scroll-nav
 Generated: 2026-01-29T13:00:00
-Updated: 2026-01-29T20:00:00
-Status: PARTIALLY READY (HIGH: 5, MEDIUM: 1)
+Updated: 2026-01-30T06:30:00
+Status: COMPLETE (all criteria verified)
 Plan: SPRINT-20260129-130000-scroll-nav-PLAN.md
 Architecture: ScrollView + Line API (no TurnWidget — all features operate on TurnData list)
 

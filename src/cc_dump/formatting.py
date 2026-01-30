@@ -95,6 +95,7 @@ class ToolUseBlock(FormattedBlock):
     input_size: int = 0
     msg_color_idx: int = 0
     detail: str = ""  # Tool-specific enrichment (file path, skill name, command preview)
+    tool_use_id: str = ""  # Tool use ID for correlation
 
 
 @dataclass
@@ -103,6 +104,9 @@ class ToolResultBlock(FormattedBlock):
     size: int = 0
     is_error: bool = False
     msg_color_idx: int = 0
+    tool_use_id: str = ""  # Tool use ID for correlation
+    tool_name: str = ""  # Tool name for summary display
+    detail: str = ""  # Tool-specific detail (copied from corresponding ToolUseBlock)
 
 
 @dataclass
@@ -372,6 +376,10 @@ def format_request(body, state):
                 blocks.append(_make_tracked_block(result))
         blocks.append(SeparatorBlock(style="thin"))
 
+    # Tool correlation state (per-request, not persistent)
+    tool_id_map: dict[str, tuple[str, int, str]] = {}  # tool_use_id -> (name, color_idx, detail)
+    tool_color_counter = 0
+
     # Messages
     messages = body.get("messages", [])
     for i, msg in enumerate(messages):
@@ -401,8 +409,19 @@ def format_request(body, state):
                     name = cblock.get("name", "?")
                     tool_input = cblock.get("input", {})
                     input_size = len(json.dumps(tool_input))
+                    tool_use_id = cblock.get("id", "")
                     detail = _tool_detail(name, tool_input)
-                    blocks.append(ToolUseBlock(name=name, input_size=input_size, msg_color_idx=msg_color_idx, detail=detail))
+                    # Assign correlation color
+                    tool_color_idx = tool_color_counter % MSG_COLOR_CYCLE
+                    tool_color_counter += 1
+                    if tool_use_id:
+                        tool_id_map[tool_use_id] = (name, tool_color_idx, detail)
+                    blocks.append(ToolUseBlock(
+                        name=name, input_size=input_size,
+                        msg_color_idx=tool_color_idx,
+                        detail=detail,
+                        tool_use_id=tool_use_id,
+                    ))
                 elif btype == "tool_result":
                     content_val = cblock.get("content", "")
                     if isinstance(content_val, list):
@@ -412,7 +431,20 @@ def format_request(body, state):
                     else:
                         size = len(json.dumps(content_val))
                     is_error = cblock.get("is_error", False)
-                    blocks.append(ToolResultBlock(size=size, is_error=is_error, msg_color_idx=msg_color_idx))
+                    tool_use_id = cblock.get("tool_use_id", "")
+                    # Look up correlated name, color, and detail
+                    tool_name = ""
+                    tool_color_idx = msg_color_idx  # fallback to message color
+                    detail = ""
+                    if tool_use_id and tool_use_id in tool_id_map:
+                        tool_name, tool_color_idx, detail = tool_id_map[tool_use_id]
+                    blocks.append(ToolResultBlock(
+                        size=size, is_error=is_error,
+                        msg_color_idx=tool_color_idx,
+                        tool_use_id=tool_use_id,
+                        tool_name=tool_name,
+                        detail=detail,
+                    ))
                 elif btype == "image":
                     source = cblock.get("source", {})
                     blocks.append(ImageBlock(media_type=source.get("media_type", "?")))

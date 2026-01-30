@@ -167,15 +167,32 @@ def _render_tool_use(block: ToolUseBlock, filters: dict) -> Text | None:
 
 
 def _render_tool_result(block: ToolResultBlock, filters: dict) -> Text | None:
-    """Render tool result block."""
-    if not filters.get("tools", False):
-        return None
+    """Render tool result block. Shows full or summary based on tools filter."""
     color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
-    label = "[tool_result:error]" if block.is_error else "[tool_result]"
-    t = Text("  ")
-    t.append(label, style="bold {}".format(color))
-    t.append(" ({} bytes)".format(block.size))
-    return _add_filter_indicator(t, "tools")
+
+    if filters.get("tools", False):
+        # Full mode: detailed display
+        label = "[tool_result:error]" if block.is_error else "[tool_result]"
+        t = Text("  ")
+        t.append(label, style="bold {}".format(color))
+        if block.tool_name:
+            t.append(" {}".format(block.tool_name))
+        if block.detail:
+            t.append(" {}".format(block.detail), style="dim")
+        t.append(" ({} bytes)".format(block.size))
+        return _add_filter_indicator(t, "tools")
+    else:
+        # Summary mode: compact, dimmed
+        if block.tool_name:
+            label = "[{}:error]".format(block.tool_name) if block.is_error else "[{}]".format(block.tool_name)
+        else:
+            label = "[tool_result:error]" if block.is_error else "[tool_result]"
+        t = Text("  ")
+        t.append(label, style="dim {}".format(color))
+        if block.detail:
+            t.append(" {}".format(block.detail), style="dim")
+        t.append(" ({} bytes)".format(block.size), style="dim")
+        return t
 
 
 def _render_image(block: ImageBlock, filters: dict) -> Text | None:
@@ -279,7 +296,7 @@ BLOCK_FILTER_KEY: dict[type[FormattedBlock], str | None] = {
     RoleBlock: "system",             # _render_role checks filters["system"] for system roles
     TextContentBlock: None,
     ToolUseBlock: "tools",
-    ToolResultBlock: "tools",
+    ToolResultBlock: None,  # Always visible (summary or full based on tools filter)
     ImageBlock: None,
     UnknownTypeBlock: None,
     StreamInfoBlock: "metadata",
