@@ -71,7 +71,7 @@ class TestBlockFilterKeyCompleteness:
         assert BLOCK_FILTER_KEY[TrackedContentBlock] == "system"
         assert BLOCK_FILTER_KEY[RoleBlock] == "system"  # filters system roles
         assert BLOCK_FILTER_KEY[ToolUseBlock] == "tools"
-        assert BLOCK_FILTER_KEY[ToolResultBlock] == "tools"
+        assert BLOCK_FILTER_KEY[ToolResultBlock] is None  # always visible; renderer shows summary when filter off
         assert BLOCK_FILTER_KEY[StreamInfoBlock] == "metadata"
         assert BLOCK_FILTER_KEY[StreamToolUseBlock] == "tools"
         assert BLOCK_FILTER_KEY[StopReasonBlock] == "metadata"
