@@ -260,6 +260,33 @@ BLOCK_RENDERERS: dict[type[FormattedBlock], BlockRenderer] = {
 }
 
 
+# Mapping: block type -> filter key that controls its visibility.
+# None means always visible (never filtered out).
+# Used by TurnData.re_render() to skip re-render when irrelevant filters change.
+BLOCK_FILTER_KEY: dict[type[FormattedBlock], str | None] = {
+    SeparatorBlock: "headers",
+    HeaderBlock: "headers",
+    MetadataBlock: "metadata",
+    TurnBudgetBlock: "expand",
+    SystemLabelBlock: "system",
+    TrackedContentBlock: "system",
+    RoleBlock: "system",             # _render_role checks filters["system"] for system roles
+    TextContentBlock: None,
+    ToolUseBlock: "tools",
+    ToolResultBlock: "tools",
+    ImageBlock: None,
+    UnknownTypeBlock: None,
+    StreamInfoBlock: "metadata",
+    StreamToolUseBlock: "tools",
+    TextDeltaBlock: None,
+    StopReasonBlock: "metadata",
+    ErrorBlock: None,
+    ProxyErrorBlock: None,
+    LogBlock: None,
+    NewlineBlock: None,
+}
+
+
 def render_block(block: FormattedBlock, filters: dict) -> Text | None:
     """Render a FormattedBlock to a Rich Text object.
 
@@ -279,6 +306,65 @@ def render_blocks(blocks: list[FormattedBlock], filters: dict) -> list[Text]:
         if r is not None:
             rendered.append(r)
     return rendered
+
+
+def combine_rendered_texts(texts: list[Text]) -> Text:
+    """Join rendered Text objects into a single Text with newline separators."""
+    if not texts:
+        return Text()
+    if len(texts) == 1:
+        return texts[0]
+    combined = Text()
+    for i, t in enumerate(texts):
+        if i > 0:
+            combined.append("\n")
+        combined.append(t)
+    return combined
+
+
+def render_turn_to_strips(
+    blocks: list[FormattedBlock],
+    filters: dict,
+    console,
+    width: int,
+    wrap: bool = True,
+) -> list:
+    """Render blocks to Strip objects for Line API storage.
+
+    Args:
+        blocks: FormattedBlock list for one turn
+        filters: Current filter state
+        console: Rich Console instance (from app.console)
+        width: Render width in cells
+        wrap: Enable word wrapping
+
+    Returns:
+        list[Strip] — pre-rendered lines for this turn
+    """
+    from rich.segment import Segment
+    from textual.strip import Strip
+
+    texts = render_blocks(blocks, filters)
+    if not texts:
+        return []
+
+    combined = combine_rendered_texts(texts)
+
+    render_options = console.options
+    if not wrap:
+        render_options = render_options.update(overflow="ignore", no_wrap=True)
+    render_options = render_options.update_width(width)
+
+    segments = console.render(combined, render_options)
+    lines = list(Segment.split_lines(segments))
+
+    if not lines:
+        return [Strip.blank(width)]
+
+    strips = Strip.from_lines(lines)
+    for strip in strips:
+        strip.adjust_cell_length(width)
+    return strips
 
 
 def _render_tracked_content(block: TrackedContentBlock, filters: dict) -> Text:

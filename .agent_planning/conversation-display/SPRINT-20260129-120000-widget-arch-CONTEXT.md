@@ -4,7 +4,7 @@ Updated: 2026-01-29T18:30:00
 Confidence: PARTIALLY READY (HIGH: 6, MEDIUM: 2)
 Source: EVALUATION-20260129.md
 Plan: SPRINT-20260129-120000-widget-arch-PLAN.md
-
+    
 ## Architecture Overview
 
 **Key Insight**: RichLog extends ScrollView (Line API). Content is `list[Strip]`, `render_line(y)` returns one strip per visible line per frame. This is true virtual rendering. ScrollableContainer with Static children does NOT virtualize.
@@ -321,20 +321,6 @@ class ConversationView(ScrollView):
         self.virtual_size = Size(self._widest_line, self._total_lines)
         self._line_cache.clear()
 
-    def append_block(self, block, filters: dict):
-        """Delegate to StreamingRichLog (managed by app layout)."""
-        self._last_filters = filters
-        # StreamingRichLog is a sibling widget, not managed here.
-        # This method exists for API compatibility; the app routes
-        # append_block to the StreamingRichLog directly.
-        # See app.py _handle_event for routing.
-        pass
-
-    def finish_turn(self, filters=None):
-        """Add a finalized turn from blocks."""
-        # Called by app after StreamingRichLog.finalize() returns blocks
-        pass
-
     def add_turn(self, blocks: list, filters: dict = None):
         """Add a completed turn from block list."""
         if filters is None:
@@ -413,7 +399,7 @@ class ConversationView(ScrollView):
         self._follow_mode = state.get("follow_mode", True)
 ```
 
-**NOTE**: The public API changes slightly. `append_block()` and `finish_turn()` on ConversationView become stubs — the app will route streaming to StreamingRichLog and call `conv.add_turn(blocks, filters)` after finalize. This is a MEDIUM-confidence item that needs the app.py routing to be designed.
+**NOTE**: The public API changes. `append_block()` and `finish_turn()` are removed from ConversationView — the app routes streaming blocks to StreamingRichLog directly, and calls `conv.add_turn(blocks)` after finalize. Event handlers use `streaming.append_block(block, filters)` for incremental display and `conv.add_turn(blocks)` for finalized turns.
 
 ### Factory function updates
 

@@ -117,7 +117,7 @@ Rewrite `ConversationView` to extend `ScrollView` instead of `RichLog`. Stores t
 - [ ] `virtual_size` is updated when turns are added or filters change line counts
 - [ ] `rerender(filters)` re-renders affected TurnData in place, updates line offsets and virtual_size, preserves scroll position
 - [ ] Smooth line-level scrolling (no atomic jumping between turns)
-- [ ] Public API backward-compatible with `event_handlers.py` and `app.py`
+- [ ] Public API: `add_turn`, `rerender`, `get_state`, `restore_state`. Event handlers route streaming to StreamingRichLog, finalized turns to `conv.add_turn(blocks)`
 - [ ] LRU line cache for rendered strips (mirrors RichLog's caching pattern)
 
 #### Unknowns to Resolve

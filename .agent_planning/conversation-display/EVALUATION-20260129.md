@@ -121,40 +121,33 @@ This is feasible but requires understanding Textual's coordinate system (widget 
 
 **Impact**: LOW -- design choice, both approaches work.
 
-## Ambiguities Found
+## Ambiguities Found (Original)
 
-| Area | Question | How Plan Guessed | Impact |
-|------|----------|-----------------|--------|
-| RoleBlock filtering | Should BLOCK_FILTER_KEY handle value-dependent filters? | Omitted RoleBlock from map (None = always visible) | MEDIUM -- system role blocks won't hide/show correctly with the optimization |
-| Streaming performance | Is Static.update() fast enough for per-delta updates? | Not addressed | MEDIUM -- needs benchmarking |
-| Turn boundary definition | What constitutes a "turn"? Request blocks vs response blocks? | Plan shows request turn + response turn alternating | LOW -- follows current `finish_turn()` semantics |
-| follow_mode auto-disable | Which scroll actions disable follow? | Only keyboard scroll-up | LOW -- should be all scroll sources |
-| Hot-reload mid-transition | What happens if state keys change between versions? | Not addressed | LOW -- edge case |
+| Area | Question | How Plan Guessed | Impact | Resolution |
+|------|----------|-----------------|--------|------------|
+| RoleBlock filtering | Should BLOCK_FILTER_KEY handle value-dependent filters? | Omitted RoleBlock from map | MEDIUM | **RESOLVED**: Map `RoleBlock -> "system"` (over-approximation). Updated in Sprint 1 PLAN and CONTEXT. |
+| Streaming performance | Is Static.update() fast enough for per-delta updates? | Not addressed | MEDIUM | **RESOLVED by architecture change**: StreamingRichLog uses native RichLog.write() (O(1) append), not Static.update(). No performance concern. |
+| Turn boundary definition | What constitutes a "turn"? | Plan shows alternating | LOW | **RESOLVED**: Follows current `finish_turn()` semantics. Request = one turn, response = one turn. |
+| follow_mode auto-disable | Which scroll actions disable follow? | Only keyboard scroll-up | LOW | **RESOLVED**: Use `watch_scroll_y` (catches ALL sources). Correct 2-arg signature verified against scroll_view.py:52. |
+| Hot-reload mid-transition | State key mismatch between versions? | Not addressed | LOW | **Accepted risk**: User chose not to add migration shim. First hot-reload after deploy may lose conversation display (data preserved in DB). |
+| Sprint 2 architecture mismatch | Sprint 2 designed for TurnWidget, Sprint 1 uses Line API | TurnWidget references throughout | CRITICAL | **RESOLVED**: Sprint 2 fully rewritten for Line API (2026-01-29T20:00:00). All features use TurnData list + line offsets. |
+| watch_scroll_y signature | Sprint 2 used wrong 1-arg signature | `(self, value)` | HIGH | **RESOLVED**: Correct signature `(self, old_value, new_value)` with `super()` call. Verified against scroll_view.py:52. |
 
 ## Missing Checks / Tests Needed
 
-1. **Unit test for TurnWidget.apply_filters()** -- verify that changing a filter correctly updates or skips rendering
-2. **Benchmark test for StreamingTurnWidget** -- measure update latency with 500+ deltas
-3. **Integration test for scroll position preservation** -- toggle filter while scrolled to middle, verify anchor
-4. **Test for BLOCK_FILTER_KEY correctness** -- verify all block types that check filters are in the map
-5. **Test for follow-mode behavior** -- verify scroll-to-bottom re-enables, manual scroll disables
+1. **Unit test for TurnData.re_render()** -- verify that changing a filter correctly updates or skips strip re-rendering
+2. **Integration test for scroll position preservation** -- toggle filter while scrolled to middle, verify anchor
+3. **Test for BLOCK_FILTER_KEY correctness** -- verify all block types that check filters are in the map
+4. **Test for follow-mode behavior** -- verify scroll-to-bottom re-enables, manual scroll disables via watch_scroll_y
+5. **Test for turn selection rendering** -- verify render_line() applies selection style to correct line range
+6. **Test for click-to-select** -- verify event.y + scroll_offset maps to correct turn
 
-## Recommendations
+## Remaining MEDIUM Confidence Item
 
-1. **Resolve RoleBlock filter mapping** before implementation. Either map `RoleBlock -> "system"` (safe, slightly over-renders) or add a data-dependent check. The simpler option is better for Phase 1.
-
-2. **Benchmark StreamingTurnWidget** early. Create a prototype that calls `Static.update()` in a loop with increasing text sizes. If it's too slow (>16ms per update for typical sizes), plan a buffered update strategy.
-
-3. **Implement phases sequentially as designed.** Phase 1 (replace internals) is self-contained and testable. Phases 2-4 are additive. Do not start Phase 2 until Phase 1 passes all existing PTY integration tests.
-
-4. **Use `watch_scroll_y`** instead of `on_scroll_up` for follow-mode detection. This catches all scroll sources (keyboard, mouse, programmatic).
-
-5. **Add `_combine_texts(texts: list[Text]) -> Text`** helper to `rendering.py` for joining rendered blocks into a single Text with newlines. This is the missing piece between `render_blocks()` output and `Static.update()` input.
-
-6. **Keep `finish_turn()` backward-compatible** during implementation. Accept `filters` as optional kwarg with default `None`. If `None`, use the last-known filter state stored on the ConversationView. This avoids a breaking change in the event_handlers interface.
+**Scroll anchor timing** (Sprint 2): Does `scroll_to(y=N)` work immediately after updating `virtual_size`? ScrollView's `scroll_to` calls `_scroll_to` directly (no deferred layout). Should work — verify with test script in Sprint 2 CONTEXT.
 
 ## Verdict
-- [x] CONTINUE - Issues clear, implementer can fix
+- [x] CONTINUE - All critical issues resolved
 - [ ] PAUSE - Ambiguities need clarification
 
-The design is feasible. The Textual API supports all proposed operations. The main risks are streaming performance (benchmarkable) and the RoleBlock filter optimization (resolvable with a simple mapping choice). All existing PTY tests should pass since they test through the terminal, not widget internals. The phased approach is sound -- Phase 1 is a clean replacement of ConversationView internals with no external API changes.
+Sprint 1 is internally consistent and ready for implementation. Sprint 2 has been rewritten for the Line API architecture (2026-01-29T20:00:00) with one remaining MEDIUM confidence item (scroll anchor timing) that can be resolved during implementation via the provided test script.

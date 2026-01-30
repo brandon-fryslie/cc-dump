@@ -35,7 +35,7 @@ Plan: SPRINT-20260129-120000-widget-arch-PLAN.md
 - [ ] `on_resize()` re-renders all strips at new width
 - [ ] Smooth line-level scrolling — no atomic jumping between turns
 - [ ] Performant for 500+ turns (O(viewport_height) per frame, O(log N) per line lookup)
-- [ ] Public API: `append_block`, `finish_turn`, `add_turn`, `rerender`, `get_state`, `restore_state`
+- [ ] Public API: `add_turn`, `rerender`, `get_state`, `restore_state` (no `append_block` or `finish_turn` — streaming goes to StreamingRichLog)
 
 ### StreamingRichLog
 - [ ] Extends `RichLog` (leverages native Line API virtual rendering + incremental append)
