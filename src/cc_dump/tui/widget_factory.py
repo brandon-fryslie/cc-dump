@@ -101,14 +101,42 @@ class StreamingRichLog(RichLog):
             self._text_delta_buffer.clear()
 
     def finalize(self) -> list:
-        """Return accumulated blocks, clear state, hide widget."""
+        """Return accumulated blocks, clear state, hide widget.
+
+        Consolidates consecutive TextDeltaBlock objects into TextContentBlock objects.
+        """
+        from cc_dump.formatting import TextDeltaBlock, TextContentBlock
+
         self._flush_text_buffer()
-        blocks = self._blocks
+
+        # Consolidate consecutive TextDeltaBlock runs into TextContentBlock
+        consolidated = []
+        delta_buffer = []
+
+        for block in self._blocks:
+            if isinstance(block, TextDeltaBlock):
+                delta_buffer.append(block.text)
+            else:
+                # Flush accumulated deltas as a single TextContentBlock
+                if delta_buffer:
+                    combined_text = "".join(delta_buffer)
+                    consolidated.append(TextContentBlock(text=combined_text))
+                    delta_buffer.clear()
+                # Add the non-delta block
+                consolidated.append(block)
+
+        # Flush any remaining deltas
+        if delta_buffer:
+            combined_text = "".join(delta_buffer)
+            consolidated.append(TextContentBlock(text=combined_text))
+
+        # Clear state
         self._blocks = []
         self._text_delta_buffer = []
         self.clear()
         self.display = False
-        return blocks
+
+        return consolidated
 
     def get_state(self) -> dict:
         return {
