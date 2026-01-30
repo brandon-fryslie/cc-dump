@@ -29,6 +29,8 @@ from cc_dump.formatting import (
     format_response_event,
     make_diff_lines,
     track_content,
+    _tool_detail,
+    _front_ellipse_path,
 )
 
 
@@ -579,3 +581,249 @@ def test_content_tracking_preserves_color_across_refs(fresh_state):
 
     # Should have same color
     assert color1 == color2
+
+
+# ─── Tool Detail Tests ────────────────────────────────────────────────────────
+
+
+class TestToolDetail:
+    """Tests for _tool_detail helper function."""
+
+    def test_read_with_long_file_path(self):
+        """Read tool extracts and ellipses long file path."""
+        result = _tool_detail("Read", {"file_path": "/Users/foo/bar/baz/very/deep/nested/directory/file.ts"})
+        assert "file.ts" in result
+        assert result.startswith("...")
+
+    def test_read_short_path_no_ellipsis(self):
+        """Read tool with short path returns it unchanged."""
+        result = _tool_detail("Read", {"file_path": "/Users/foo/bar/baz/file.ts"})
+        assert result == "/Users/foo/bar/baz/file.ts"
+        assert not result.startswith("...")
+
+    def test_read_no_path(self):
+        """Read tool with no file_path returns empty string."""
+        assert _tool_detail("Read", {}) == ""
+
+    def test_read_very_short_path(self):
+        """Read tool with very short path returns it unchanged."""
+        result = _tool_detail("Read", {"file_path": "/a/b.ts"})
+        assert result == "/a/b.ts"
+
+    def test_skill_name(self):
+        """Skill tool extracts skill name."""
+        assert _tool_detail("Skill", {"skill": "commit"}) == "commit"
+
+    def test_skill_no_name(self):
+        """Skill tool with no skill field returns empty string."""
+        assert _tool_detail("Skill", {}) == ""
+
+    def test_bash_command(self):
+        """Bash tool extracts command."""
+        assert _tool_detail("Bash", {"command": "git status"}) == "git status"
+
+    def test_bash_multiline(self):
+        """Bash tool extracts only first line of multiline command."""
+        result = _tool_detail("Bash", {"command": "line1\nline2"})
+        assert result == "line1"
+
+    def test_bash_truncation(self):
+        """Bash tool truncates long commands."""
+        long_cmd = "x" * 100
+        result = _tool_detail("Bash", {"command": long_cmd})
+        assert len(result) <= 60
+        assert result.endswith("...")
+
+    def test_bash_no_command(self):
+        """Bash tool with no command returns empty string."""
+        assert _tool_detail("Bash", {}) == ""
+
+    def test_unknown_tool(self):
+        """Unknown tool returns empty string."""
+        assert _tool_detail("WebSearch", {"query": "test"}) == ""
+
+    def test_mcp_read_tool(self):
+        """MCP Read tool also extracts file path."""
+        result = _tool_detail(
+            "mcp__plugin_repomix-mcp_repomix__file_system_read_file",
+            {"file_path": "/Users/foo/bar/baz/very/deep/nested/directory/file.ts"}
+        )
+        assert "file.ts" in result
+        assert result.startswith("...")
+
+
+class TestFrontEllipsePath:
+    """Tests for _front_ellipse_path helper function."""
+
+    def test_short_path_unchanged(self):
+        """Short paths are returned unchanged."""
+        assert _front_ellipse_path("/a/b.ts", max_len=40) == "/a/b.ts"
+
+    def test_long_path_ellipsed(self):
+        """Long paths are front-ellipsed."""
+        result = _front_ellipse_path("/Users/foo/code/project/src/deep/file.ts", max_len=30)
+        assert result.startswith("...")
+        assert result.endswith("file.ts")
+        assert len(result) <= 33  # max_len + "..."
+
+    def test_path_at_limit(self):
+        """Path exactly at max_len is unchanged."""
+        path = "a" * 40
+        result = _front_ellipse_path(path, max_len=40)
+        assert result == path
+
+    def test_very_long_filename(self):
+        """Very long filename gets ellipsed."""
+        long_filename = "x" * 100
+        result = _front_ellipse_path("/" + long_filename, max_len=40)
+        assert result.startswith("...")
+        assert len(result) <= 43
+
+    def test_empty_path(self):
+        """Empty path returns empty string (shorter than max_len)."""
+        result = _front_ellipse_path("", max_len=40)
+        # Empty string split on "/" gives [""], so we get "..." prepended to empty
+        assert result == ""
+
+    def test_root_path(self):
+        """Root path handled correctly."""
+        result = _front_ellipse_path("/", max_len=40)
+        assert result == "/"
+
+
+class TestToolUseBlockDetail:
+    """Tests for ToolUseBlock detail field."""
+
+    def test_tool_use_block_with_detail(self):
+        """ToolUseBlock can be created with detail."""
+        block = ToolUseBlock(name="Read", input_size=100, msg_color_idx=0, detail="...path/file.ts")
+        assert block.name == "Read"
+        assert block.input_size == 100
+        assert block.msg_color_idx == 0
+        assert block.detail == "...path/file.ts"
+
+    def test_tool_use_block_without_detail(self):
+        """ToolUseBlock can be created without detail (defaults to empty)."""
+        block = ToolUseBlock(name="Read", input_size=100, msg_color_idx=0)
+        assert block.detail == ""
+
+    def test_format_request_populates_read_detail_long_path(self, fresh_state):
+        """format_request populates detail for Read tool with long path."""
+        body = {
+            "model": "claude-3-opus",
+            "max_tokens": 4096,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "1",
+                            "name": "Read",
+                            "input": {"file_path": "/Users/foo/bar/baz/very/deep/nested/directory/file.ts"},
+                        },
+                    ],
+                },
+            ],
+        }
+        blocks = format_request(body, fresh_state)
+        tool_blocks = [b for b in blocks if isinstance(b, ToolUseBlock)]
+        assert len(tool_blocks) == 1
+        assert "file.ts" in tool_blocks[0].detail
+        assert tool_blocks[0].detail.startswith("...")
+
+    def test_format_request_populates_read_detail_short_path(self, fresh_state):
+        """format_request populates detail for Read tool with short path (no ellipsis)."""
+        body = {
+            "model": "claude-3-opus",
+            "max_tokens": 4096,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "1",
+                            "name": "Read",
+                            "input": {"file_path": "/a/b.ts"},
+                        },
+                    ],
+                },
+            ],
+        }
+        blocks = format_request(body, fresh_state)
+        tool_blocks = [b for b in blocks if isinstance(b, ToolUseBlock)]
+        assert len(tool_blocks) == 1
+        assert tool_blocks[0].detail == "/a/b.ts"
+
+    def test_format_request_populates_skill_detail(self, fresh_state):
+        """format_request populates detail for Skill tool."""
+        body = {
+            "model": "claude-3-opus",
+            "max_tokens": 4096,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "1",
+                            "name": "Skill",
+                            "input": {"skill": "commit"},
+                        },
+                    ],
+                },
+            ],
+        }
+        blocks = format_request(body, fresh_state)
+        tool_blocks = [b for b in blocks if isinstance(b, ToolUseBlock)]
+        assert len(tool_blocks) == 1
+        assert tool_blocks[0].detail == "commit"
+
+    def test_format_request_populates_bash_detail(self, fresh_state):
+        """format_request populates detail for Bash tool."""
+        body = {
+            "model": "claude-3-opus",
+            "max_tokens": 4096,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "1",
+                            "name": "Bash",
+                            "input": {"command": "git status"},
+                        },
+                    ],
+                },
+            ],
+        }
+        blocks = format_request(body, fresh_state)
+        tool_blocks = [b for b in blocks if isinstance(b, ToolUseBlock)]
+        assert len(tool_blocks) == 1
+        assert tool_blocks[0].detail == "git status"
+
+    def test_format_request_unknown_tool_empty_detail(self, fresh_state):
+        """format_request sets empty detail for unknown tools."""
+        body = {
+            "model": "claude-3-opus",
+            "max_tokens": 4096,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "1",
+                            "name": "UnknownTool",
+                            "input": {"anything": "value"},
+                        },
+                    ],
+                },
+            ],
+        }
+        blocks = format_request(body, fresh_state)
+        tool_blocks = [b for b in blocks if isinstance(b, ToolUseBlock)]
+        assert len(tool_blocks) == 1
+        assert tool_blocks[0].detail == ""

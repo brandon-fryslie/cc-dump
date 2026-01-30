@@ -159,7 +159,10 @@ def _render_tool_use(block: ToolUseBlock, filters: dict) -> Text | None:
     color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
     t = Text("  ")
     t.append("[tool_use]", style="bold {}".format(color))
-    t.append(" {} ({} bytes)".format(block.name, block.input_size))
+    t.append(" {}".format(block.name))
+    if block.detail:
+        t.append(" {}".format(block.detail), style="dim")
+    t.append(" ({} bytes)".format(block.input_size))
     return _add_filter_indicator(t, "tools")
 
 

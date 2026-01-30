@@ -94,6 +94,7 @@ class ToolUseBlock(FormattedBlock):
     name: str = ""
     input_size: int = 0
     msg_color_idx: int = 0
+    detail: str = ""  # Tool-specific enrichment (file path, skill name, command preview)
 
 
 @dataclass
@@ -279,6 +280,46 @@ def _get_timestamp():
     return datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
 
+def _front_ellipse_path(path: str, max_len: int = 40) -> str:
+    """Front-ellipse a file path: /a/b/c/d/file.ts -> ...c/d/file.ts"""
+    if len(path) <= max_len:
+        return path
+    parts = path.split("/")
+    # Build from the end until we exceed max_len
+    result = ""
+    for i in range(len(parts) - 1, -1, -1):
+        candidate = "/".join(parts[i:])
+        if len(candidate) + 3 > max_len:  # 3 for "..."
+            break
+        result = candidate
+    if not result:
+        # Even the filename alone is too long
+        result = parts[-1]
+        if len(result) > max_len - 3:
+            result = result[-(max_len - 3):]
+    return "..." + result
+
+
+def _tool_detail(name: str, tool_input: dict) -> str:
+    """Extract tool-specific detail string for display enrichment."""
+    if name == "Read" or name == "mcp__plugin_repomix-mcp_repomix__file_system_read_file":
+        file_path = tool_input.get("file_path", "")
+        if not file_path:
+            return ""
+        return _front_ellipse_path(file_path, max_len=40)
+    if name == "Skill":
+        return tool_input.get("skill", "")
+    if name == "Bash":
+        command = tool_input.get("command", "")
+        if not command:
+            return ""
+        first_line = command.split("\n", 1)[0]
+        if len(first_line) > 60:
+            return first_line[:57] + "..."
+        return first_line
+    return ""
+
+
 MSG_COLOR_CYCLE = 6  # matches the 6-color cycle in the ANSI renderer
 
 
@@ -360,7 +401,8 @@ def format_request(body, state):
                     name = cblock.get("name", "?")
                     tool_input = cblock.get("input", {})
                     input_size = len(json.dumps(tool_input))
-                    blocks.append(ToolUseBlock(name=name, input_size=input_size, msg_color_idx=msg_color_idx))
+                    detail = _tool_detail(name, tool_input)
+                    blocks.append(ToolUseBlock(name=name, input_size=input_size, msg_color_idx=msg_color_idx, detail=detail))
                 elif btype == "tool_result":
                     content_val = cblock.get("content", "")
                     if isinstance(content_val, list):
