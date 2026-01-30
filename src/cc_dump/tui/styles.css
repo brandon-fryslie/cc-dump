@@ -7,6 +7,12 @@ ConversationView {
     border: solid $primary;
 }
 
+StreamingRichLog {
+    height: auto;
+    max-height: 50%;
+    border: solid $accent;
+}
+
 ToolEconomicsPanel {
     height: auto;
     max-height: 12;

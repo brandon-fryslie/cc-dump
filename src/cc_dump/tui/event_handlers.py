@@ -15,7 +15,7 @@ def handle_request(event, state, widgets, app_state, log_fn):
     Args:
         event: The event tuple ("request", body)
         state: The content tracking state dict
-        widgets: Dict with widget references (conv, stats, timeline, economics)
+        widgets: Dict with widget references (conv, streaming, stats, timeline, economics)
         app_state: Dict with app-level state (current_turn_usage)
         log_fn: Function to log application messages
 
@@ -29,12 +29,9 @@ def handle_request(event, state, widgets, app_state, log_fn):
 
         conv = widgets["conv"]
         stats = widgets["stats"]
-        filters = widgets["filters"]
 
-        for block in blocks:
-            conv.append_block(block, filters)
-
-        conv.finish_turn()
+        # Non-streaming: add turn directly to ConversationView
+        conv.add_turn(blocks)
 
         # Update stats (only request count and model tracking - not tokens)
         stats.update_stats(requests=state["request_counter"])
@@ -65,12 +62,13 @@ def handle_response_event(event, state, widgets, app_state, log_fn):
     try:
         blocks = cc_dump.formatting.format_response_event(event_type, data)
 
-        conv = widgets["conv"]
+        streaming = widgets["streaming"]
         stats = widgets["stats"]
         filters = widgets["filters"]
 
         for block in blocks:
-            conv.append_block(block, filters)
+            # Stream to StreamingRichLog for immediate display
+            streaming.append_block(block, filters)
 
             # Extract stats from message_start and message_delta
             if isinstance(block, cc_dump.formatting.StreamInfoBlock):
@@ -115,12 +113,16 @@ def handle_response_done(event, state, widgets, app_state, refresh_callbacks, db
         Updated app_state dict
     """
     try:
+        streaming = widgets["streaming"]
         conv = widgets["conv"]
         stats = widgets["stats"]
         filters = widgets["filters"]
         show_expand = widgets.get("show_expand", False)
 
-        conv.finish_turn()
+        # Finalize streaming: get blocks and add as turn to ConversationView
+        blocks = streaming.finalize()
+        if blocks:
+            conv.add_turn(blocks)
 
         # Clear current turn usage (turn is now committed to DB)
         app_state["current_turn_usage"] = {}
@@ -169,10 +171,9 @@ def handle_error(event, state, widgets, app_state, log_fn):
     block = cc_dump.formatting.ErrorBlock(code=code, reason=reason)
 
     conv = widgets["conv"]
-    filters = widgets["filters"]
 
-    conv.append_block(block, filters)
-    conv.finish_turn()
+    # Single block, non-streaming: add directly
+    conv.add_turn([block])
 
     return app_state
 
@@ -197,9 +198,8 @@ def handle_proxy_error(event, state, widgets, app_state, log_fn):
     block = cc_dump.formatting.ProxyErrorBlock(error=err)
 
     conv = widgets["conv"]
-    filters = widgets["filters"]
 
-    conv.append_block(block, filters)
-    conv.finish_turn()
+    # Single block, non-streaming: add directly
+    conv.add_turn([block])
 
     return app_state
