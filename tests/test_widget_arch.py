@@ -1,0 +1,395 @@
+"""Unit tests for Sprint 1 widget architecture.
+
+Tests the new widget architecture components:
+- BLOCK_FILTER_KEY completeness
+- render_turn_to_strips output
+- TurnData.re_render skip logic
+- ConversationView._find_turn_for_line binary search
+"""
+
+import pytest
+from rich.console import Console
+
+from cc_dump.formatting import (
+    SeparatorBlock,
+    HeaderBlock,
+    MetadataBlock,
+    TurnBudgetBlock,
+    SystemLabelBlock,
+    TrackedContentBlock,
+    RoleBlock,
+    TextContentBlock,
+    ToolUseBlock,
+    ToolResultBlock,
+    ImageBlock,
+    UnknownTypeBlock,
+    StreamInfoBlock,
+    StreamToolUseBlock,
+    TextDeltaBlock,
+    StopReasonBlock,
+    ErrorBlock,
+    ProxyErrorBlock,
+    LogBlock,
+    NewlineBlock,
+)
+from cc_dump.tui.rendering import BLOCK_RENDERERS, BLOCK_FILTER_KEY, render_turn_to_strips
+from cc_dump.tui.widget_factory import TurnData
+
+
+class TestBlockFilterKeyCompleteness:
+    """Test that BLOCK_FILTER_KEY covers all block types from BLOCK_RENDERERS."""
+
+    def test_all_renderer_types_have_filter_keys(self):
+        """Every block type in BLOCK_RENDERERS must have an entry in BLOCK_FILTER_KEY."""
+        renderer_types = set(BLOCK_RENDERERS.keys())
+        filter_key_types = set(BLOCK_FILTER_KEY.keys())
+
+        assert renderer_types == filter_key_types, (
+            f"BLOCK_FILTER_KEY missing types: {renderer_types - filter_key_types}\n"
+            f"BLOCK_FILTER_KEY extra types: {filter_key_types - renderer_types}"
+        )
+
+    def test_filter_key_count_matches_block_count(self):
+        """BLOCK_FILTER_KEY should have 20 entries (18+ block types)."""
+        # Verify we have all expected block types
+        assert len(BLOCK_FILTER_KEY) >= 18, (
+            f"Expected at least 18 block types in BLOCK_FILTER_KEY, got {len(BLOCK_FILTER_KEY)}"
+        )
+
+    def test_filter_key_mappings_are_correct(self):
+        """Verify key filter mappings match renderer behavior."""
+        # Blocks that check specific filters
+        assert BLOCK_FILTER_KEY[SeparatorBlock] == "headers"
+        assert BLOCK_FILTER_KEY[HeaderBlock] == "headers"
+        assert BLOCK_FILTER_KEY[MetadataBlock] == "metadata"
+        assert BLOCK_FILTER_KEY[TurnBudgetBlock] == "expand"
+        assert BLOCK_FILTER_KEY[SystemLabelBlock] == "system"
+        assert BLOCK_FILTER_KEY[TrackedContentBlock] == "system"
+        assert BLOCK_FILTER_KEY[RoleBlock] == "system"  # filters system roles
+        assert BLOCK_FILTER_KEY[ToolUseBlock] == "tools"
+        assert BLOCK_FILTER_KEY[ToolResultBlock] == "tools"
+        assert BLOCK_FILTER_KEY[StreamInfoBlock] == "metadata"
+        assert BLOCK_FILTER_KEY[StreamToolUseBlock] == "tools"
+        assert BLOCK_FILTER_KEY[StopReasonBlock] == "metadata"
+
+        # Blocks that are always visible (never filtered)
+        assert BLOCK_FILTER_KEY[TextContentBlock] is None
+        assert BLOCK_FILTER_KEY[ImageBlock] is None
+        assert BLOCK_FILTER_KEY[UnknownTypeBlock] is None
+        assert BLOCK_FILTER_KEY[TextDeltaBlock] is None
+        assert BLOCK_FILTER_KEY[ErrorBlock] is None
+        assert BLOCK_FILTER_KEY[ProxyErrorBlock] is None
+        assert BLOCK_FILTER_KEY[LogBlock] is None
+        assert BLOCK_FILTER_KEY[NewlineBlock] is None
+
+
+class TestRenderTurnToStrips:
+    """Test render_turn_to_strips rendering pipeline."""
+
+    def test_empty_block_list_returns_empty_strips(self):
+        """Empty block list should return empty strip list."""
+        console = Console()
+        filters = {}
+        blocks = []
+
+        strips = render_turn_to_strips(blocks, filters, console, width=80)
+
+        assert strips == []
+
+    def test_filtered_out_blocks_return_empty_strips(self):
+        """All blocks filtered out should return empty strip list."""
+        console = Console()
+        filters = {"headers": False}  # Filter out headers
+        blocks = [
+            SeparatorBlock(style="light"),
+            HeaderBlock(header_type="request", label="REQUEST 1", timestamp="12:00:00"),
+        ]
+
+        strips = render_turn_to_strips(blocks, filters, console, width=80)
+
+        # Both blocks are filtered out, should get empty list
+        assert strips == []
+
+    def test_basic_rendering_produces_strips(self):
+        """Basic text content should produce strips."""
+        console = Console()
+        filters = {}
+        blocks = [
+            TextContentBlock(text="Hello, world!", indent=""),
+        ]
+
+        strips = render_turn_to_strips(blocks, filters, console, width=80)
+
+        # Should produce at least one strip
+        assert len(strips) > 0
+        # Each strip should be a Strip object with cell_length
+        assert all(hasattr(strip, 'cell_length') for strip in strips)
+
+    def test_multiline_text_produces_multiple_strips(self):
+        """Multi-line text should produce multiple strips."""
+        console = Console()
+        filters = {}
+        blocks = [
+            TextContentBlock(text="Line 1\nLine 2\nLine 3", indent=""),
+        ]
+
+        strips = render_turn_to_strips(blocks, filters, console, width=80)
+
+        # Should produce 3 strips (one per line)
+        assert len(strips) == 3
+
+    def test_mixed_filtered_and_visible_blocks(self):
+        """Mix of filtered and visible blocks should only render visible ones."""
+        console = Console()
+        filters = {"headers": False, "tools": True}
+        blocks = [
+            HeaderBlock(header_type="request", label="REQUEST 1", timestamp="12:00:00"),  # filtered out
+            TextContentBlock(text="User message", indent=""),  # visible
+            ToolUseBlock(name="read_file", input_size=100, msg_color_idx=0),  # visible
+        ]
+
+        strips = render_turn_to_strips(blocks, filters, console, width=80)
+
+        # Should have at least 2 strips (text + tool)
+        assert len(strips) >= 2
+
+
+class TestTurnDataReRender:
+    """Test TurnData.re_render skip logic."""
+
+    def test_compute_relevant_keys_finds_filter_dependencies(self):
+        """compute_relevant_keys should identify which filters affect this turn."""
+        blocks = [
+            TextContentBlock(text="Hello", indent=""),
+            ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
+            MetadataBlock(model="claude-3", max_tokens=100, stream=True, tool_count=0),
+        ]
+        console = Console()
+        td = TurnData(turn_index=0, blocks=blocks, strips=[])
+        td.compute_relevant_keys()
+
+        # Should find "tools" and "metadata" but not "headers" or "system"
+        assert "tools" in td.relevant_filter_keys
+        assert "metadata" in td.relevant_filter_keys
+        assert "headers" not in td.relevant_filter_keys
+        assert "system" not in td.relevant_filter_keys
+
+    def test_re_render_skips_when_irrelevant_filter_changes(self):
+        """re_render should skip when changed filter is not relevant."""
+        blocks = [
+            TextContentBlock(text="Hello", indent=""),
+        ]
+        console = Console()
+        filters1 = {"headers": False, "tools": False}
+
+        td = TurnData(
+            turn_index=0,
+            blocks=blocks,
+            strips=render_turn_to_strips(blocks, filters1, console, width=80),
+        )
+        td.compute_relevant_keys()
+        # Initial render
+        td.re_render(filters1, console, 80)
+
+        # Change a filter that doesn't affect this turn
+        filters2 = {"headers": True, "tools": False}  # headers changed, but no header blocks
+        result = td.re_render(filters2, console, 80)
+
+        # Should skip re-render (return False)
+        assert result is False
+
+    def test_re_render_executes_when_relevant_filter_changes(self):
+        """re_render should execute when a relevant filter changes."""
+        blocks = [
+            TextContentBlock(text="Hello", indent=""),
+            ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
+        ]
+        console = Console()
+        filters1 = {"tools": False}
+
+        td = TurnData(
+            turn_index=0,
+            blocks=blocks,
+            strips=render_turn_to_strips(blocks, filters1, console, width=80),
+        )
+        td.compute_relevant_keys()
+        # Initial render
+        td.re_render(filters1, console, 80)
+
+        # Change a filter that affects this turn
+        filters2 = {"tools": True}  # tools changed, and we have ToolUseBlock
+        result = td.re_render(filters2, console, 80)
+
+        # Should execute re-render (return True)
+        assert result is True
+
+    def test_re_render_updates_strips(self):
+        """re_render should update strips when executed."""
+        blocks = [
+            ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
+        ]
+        console = Console()
+        filters1 = {"tools": False}
+
+        td = TurnData(
+            turn_index=0,
+            blocks=blocks,
+            strips=render_turn_to_strips(blocks, filters1, console, width=80),
+        )
+        td.compute_relevant_keys()
+        td.re_render(filters1, console, 80)
+
+        # Tools filtered out, should have empty strips
+        assert len(td.strips) == 0
+
+        # Enable tools filter
+        filters2 = {"tools": True}
+        td.re_render(filters2, console, 80)
+
+        # Should now have strips for the tool block
+        assert len(td.strips) > 0
+
+
+class TestConversationViewBinarySearch:
+    """Test ConversationView._find_turn_for_line binary search correctness.
+
+    These are unit tests that directly test the binary search algorithm
+    without requiring a full Textual app context.
+    """
+
+    def test_find_turn_for_line_empty_list(self):
+        """Binary search on empty turns list should return None."""
+        from cc_dump.tui.widget_factory import ConversationView
+
+        conv = ConversationView()
+        result = conv._find_turn_for_line(0)
+        assert result is None
+
+    def test_find_turn_for_line_single_turn_creates_turn_data(self):
+        """Test with a single TurnData directly without app."""
+        from cc_dump.tui.widget_factory import ConversationView
+        from textual.strip import Strip
+
+        conv = ConversationView()
+
+        # Manually create and add TurnData
+        td = TurnData(
+            turn_index=0,
+            blocks=[TextContentBlock(text="Hello", indent="")],
+            strips=[Strip.blank(80), Strip.blank(80)],  # 2 lines
+        )
+        td.line_offset = 0
+        conv._turns.append(td)
+        conv._total_lines = 2
+
+        # Should find the turn for any line within its range
+        turn = conv._find_turn_for_line(0)
+        assert turn is not None
+        assert turn.turn_index == 0
+
+        turn = conv._find_turn_for_line(1)
+        assert turn is not None
+        assert turn.turn_index == 0
+
+    def test_find_turn_for_line_multiple_turns_manual(self):
+        """Binary search with multiple turns should find correct turn."""
+        from cc_dump.tui.widget_factory import ConversationView
+        from textual.strip import Strip
+
+        conv = ConversationView()
+
+        # Create multiple turns with known line counts
+        # Turn 0: 3 lines (line 0-2)
+        td0 = TurnData(
+            turn_index=0,
+            blocks=[TextContentBlock(text="A\nB\nC", indent="")],
+            strips=[Strip.blank(80), Strip.blank(80), Strip.blank(80)],
+        )
+        td0.line_offset = 0
+
+        # Turn 1: 2 lines (line 3-4)
+        td1 = TurnData(
+            turn_index=1,
+            blocks=[TextContentBlock(text="D\nE", indent="")],
+            strips=[Strip.blank(80), Strip.blank(80)],
+        )
+        td1.line_offset = 3
+
+        # Turn 2: 1 line (line 5)
+        td2 = TurnData(
+            turn_index=2,
+            blocks=[TextContentBlock(text="F", indent="")],
+            strips=[Strip.blank(80)],
+        )
+        td2.line_offset = 5
+
+        conv._turns.extend([td0, td1, td2])
+        conv._total_lines = 6
+
+        # Test finding each turn
+        turn0 = conv._find_turn_for_line(0)
+        assert turn0 is not None
+        assert turn0.turn_index == 0
+
+        turn1 = conv._find_turn_for_line(3)
+        assert turn1 is not None
+        assert turn1.turn_index == 1
+
+        turn2 = conv._find_turn_for_line(5)
+        assert turn2 is not None
+        assert turn2.turn_index == 2
+
+    def test_find_turn_for_line_beyond_range(self):
+        """Binary search beyond last line should return None."""
+        from cc_dump.tui.widget_factory import ConversationView
+        from textual.strip import Strip
+
+        conv = ConversationView()
+
+        # Create a turn with 2 lines
+        td = TurnData(
+            turn_index=0,
+            blocks=[TextContentBlock(text="Line 1\nLine 2", indent="")],
+            strips=[Strip.blank(80), Strip.blank(80)],
+        )
+        td.line_offset = 0
+        conv._turns.append(td)
+        conv._total_lines = 2
+
+        # Line 0-1 are valid, line 10 is beyond
+        turn = conv._find_turn_for_line(10)
+        assert turn is None
+
+    def test_find_turn_for_line_boundary_conditions(self):
+        """Test boundary conditions at turn edges."""
+        from cc_dump.tui.widget_factory import ConversationView
+        from textual.strip import Strip
+
+        conv = ConversationView()
+
+        # Turn 0: lines 0-2 (3 lines)
+        td0 = TurnData(
+            turn_index=0,
+            blocks=[TextContentBlock(text="A\nB\nC", indent="")],
+            strips=[Strip.blank(80), Strip.blank(80), Strip.blank(80)],
+        )
+        td0.line_offset = 0
+
+        # Turn 1: lines 3-5 (3 lines)
+        td1 = TurnData(
+            turn_index=1,
+            blocks=[TextContentBlock(text="D\nE\nF", indent="")],
+            strips=[Strip.blank(80), Strip.blank(80), Strip.blank(80)],
+        )
+        td1.line_offset = 3
+
+        conv._turns.extend([td0, td1])
+        conv._total_lines = 6
+
+        # Test first line of each turn
+        assert conv._find_turn_for_line(0).turn_index == 0
+        assert conv._find_turn_for_line(3).turn_index == 1
+
+        # Test last line of each turn
+        assert conv._find_turn_for_line(2).turn_index == 0
+        assert conv._find_turn_for_line(5).turn_index == 1
