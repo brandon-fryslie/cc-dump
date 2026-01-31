@@ -16,35 +16,43 @@ from cc_dump.formatting import (
     make_diff_lines,
 )
 
-# Rich style equivalents of the ANSI color scheme
-ROLE_STYLES = {
-    "user": "bold cyan",
-    "assistant": "bold green",
-    "system": "bold yellow",
-}
+import cc_dump.palette
 
-# Tag color palette (fg, bg) for content tracking
-TAG_STYLES = [
-    ("cyan", "blue"),
-    ("black", "green"),
-    ("black", "yellow"),
-    ("white", "magenta"),
-    ("white", "red"),
-    ("white", "blue"),
-    ("black", "white"),
-    ("black", "cyan"),
-]
 
-MSG_COLORS = ["cyan", "green", "yellow", "magenta", "blue", "red"]
+def _build_role_styles() -> dict[str, str]:
+    p = cc_dump.palette.PALETTE
+    return {
+        "user": f"bold {p.user}",
+        "assistant": f"bold {p.assistant}",
+        "system": f"bold {p.system}",
+    }
 
-# Filter indicator styles - maps filter name to (symbol, color)
-FILTER_INDICATORS = {
-    "headers": ("▌", "cyan"),
-    "tools": ("▌", "blue"),
-    "system": ("▌", "yellow"),
-    "expand": ("▌", "green"),
-    "metadata": ("▌", "magenta"),
-}
+
+def _build_tag_styles() -> list[tuple[str, str]]:
+    p = cc_dump.palette.PALETTE
+    return [p.fg_on_bg(i) for i in range(min(p.count, 12))]
+
+
+def _build_msg_colors() -> list[str]:
+    p = cc_dump.palette.PALETTE
+    return [p.msg_color(i) for i in range(6)]
+
+
+def _build_filter_indicators() -> dict[str, tuple[str, str]]:
+    p = cc_dump.palette.PALETTE
+    return {
+        "headers": ("▌", p.filter_color("headers")),
+        "tools": ("▌", p.filter_color("tools")),
+        "system": ("▌", p.filter_color("system")),
+        "expand": ("▌", p.filter_color("expand")),
+        "metadata": ("▌", p.filter_color("metadata")),
+    }
+
+
+ROLE_STYLES = _build_role_styles()
+TAG_STYLES = _build_tag_styles()
+MSG_COLORS = _build_msg_colors()
+FILTER_INDICATORS = _build_filter_indicators()
 
 
 # Type alias for render function signature
@@ -75,14 +83,15 @@ def _render_header(block: HeaderBlock, filters: dict) -> Text | None:
     """Render a request/response header."""
     if not filters.get("headers", False):
         return None
+    p = cc_dump.palette.PALETTE
     if block.header_type == "request":
         t = Text()
-        t.append(" {} ".format(block.label), style="bold cyan")
+        t.append(" {} ".format(block.label), style=f"bold {p.info}")
         t.append(" ({})".format(block.timestamp), style="dim")
         return _add_filter_indicator(t, "headers")
     else:
         t = Text()
-        t.append(" RESPONSE ", style="bold green")
+        t.append(" RESPONSE ", style=f"bold {p.success}")
         t.append(" ({})".format(block.timestamp), style="dim")
         return _add_filter_indicator(t, "headers")
 
@@ -92,16 +101,17 @@ def _render_http_headers(block: HttpHeadersBlock, filters: dict) -> Text | None:
     if not filters.get("headers", False):
         return None
 
+    p = cc_dump.palette.PALETTE
     t = Text()
     if block.header_type == "response":
-        t.append("  HTTP {} ".format(block.status_code), style="bold cyan")
+        t.append("  HTTP {} ".format(block.status_code), style=f"bold {p.info}")
     else:
-        t.append("  HTTP Headers ", style="bold cyan")
+        t.append("  HTTP Headers ", style=f"bold {p.info}")
 
     # Render headers sorted alphabetically
     for key in sorted(block.headers.keys()):
         value = block.headers[key]
-        t.append("\n    {}: ".format(key), style="dim cyan")
+        t.append("\n    {}: ".format(key), style=f"dim {p.info}")
         t.append(value, style="dim")
 
     return _add_filter_indicator(t, "headers")
@@ -141,7 +151,7 @@ def _render_system_label(block: SystemLabelBlock, filters: dict) -> Text | None:
     """Render system label."""
     if not filters.get("system", False):
         return None
-    t = Text("SYSTEM:", style="bold yellow")
+    t = Text("SYSTEM:", style=f"bold {cc_dump.palette.PALETTE.system}")
     return _add_filter_indicator(t, "system")
 
 
@@ -240,7 +250,7 @@ def _render_stream_tool_use(block: StreamToolUseBlock, filters: dict) -> Text | 
     if not filters.get("tools", False):
         return None
     t = Text("\n  ")
-    t.append("[tool_use]", style="bold cyan")
+    t.append("[tool_use]", style=f"bold {cc_dump.palette.PALETTE.info}")
     t.append(" " + block.name)
     return _add_filter_indicator(t, "tools")
 
@@ -260,12 +270,12 @@ def _render_stop_reason(block: StopReasonBlock, filters: dict) -> Text | None:
 
 def _render_error(block: ErrorBlock, filters: dict) -> Text | None:
     """Render error block."""
-    return Text("\n  [HTTP {} {}]".format(block.code, block.reason), style="bold red")
+    return Text("\n  [HTTP {} {}]".format(block.code, block.reason), style=f"bold {cc_dump.palette.PALETTE.error}")
 
 
 def _render_proxy_error(block: ProxyErrorBlock, filters: dict) -> Text | None:
     """Render proxy error block."""
-    return Text("\n  [PROXY ERROR: {}]".format(block.error), style="bold red")
+    return Text("\n  [PROXY ERROR: {}]".format(block.error), style=f"bold {cc_dump.palette.PALETTE.error}")
 
 
 def _render_log(block: LogBlock, filters: dict) -> Text | None:
@@ -278,57 +288,60 @@ def _render_newline(block: NewlineBlock, filters: dict) -> Text | None:
     return Text("")
 
 
-# Registry mapping block type to renderer function
-BLOCK_RENDERERS: dict[type[FormattedBlock], BlockRenderer] = {
-    SeparatorBlock: _render_separator,
-    HeaderBlock: _render_header,
-    HttpHeadersBlock: _render_http_headers,
-    MetadataBlock: _render_metadata,
-    TurnBudgetBlock: _render_turn_budget_block,
-    SystemLabelBlock: _render_system_label,
-    TrackedContentBlock: _render_tracked_content_block,
-    RoleBlock: _render_role,
-    TextContentBlock: _render_text_content,
-    ToolUseBlock: _render_tool_use,
-    ToolResultBlock: _render_tool_result,
-    ImageBlock: _render_image,
-    UnknownTypeBlock: _render_unknown_type,
-    StreamInfoBlock: _render_stream_info,
-    StreamToolUseBlock: _render_stream_tool_use,
-    TextDeltaBlock: _render_text_delta,
-    StopReasonBlock: _render_stop_reason,
-    ErrorBlock: _render_error,
-    ProxyErrorBlock: _render_proxy_error,
-    LogBlock: _render_log,
-    NewlineBlock: _render_newline,
+# Registry mapping block type NAME to renderer function.
+# Uses class names (strings) instead of class objects so that blocks created
+# before a hot-reload still match after the module is reloaded (class identity
+# changes on reload, but __name__ stays the same).
+BLOCK_RENDERERS: dict[str, BlockRenderer] = {
+    "SeparatorBlock": _render_separator,
+    "HeaderBlock": _render_header,
+    "HttpHeadersBlock": _render_http_headers,
+    "MetadataBlock": _render_metadata,
+    "TurnBudgetBlock": _render_turn_budget_block,
+    "SystemLabelBlock": _render_system_label,
+    "TrackedContentBlock": _render_tracked_content_block,
+    "RoleBlock": _render_role,
+    "TextContentBlock": _render_text_content,
+    "ToolUseBlock": _render_tool_use,
+    "ToolResultBlock": _render_tool_result,
+    "ImageBlock": _render_image,
+    "UnknownTypeBlock": _render_unknown_type,
+    "StreamInfoBlock": _render_stream_info,
+    "StreamToolUseBlock": _render_stream_tool_use,
+    "TextDeltaBlock": _render_text_delta,
+    "StopReasonBlock": _render_stop_reason,
+    "ErrorBlock": _render_error,
+    "ProxyErrorBlock": _render_proxy_error,
+    "LogBlock": _render_log,
+    "NewlineBlock": _render_newline,
 }
 
 
-# Mapping: block type -> filter key that controls its visibility.
+# Mapping: block type NAME -> filter key that controls its visibility.
 # None means always visible (never filtered out).
-# Used by TurnData.re_render() to skip re-render when irrelevant filters change.
-BLOCK_FILTER_KEY: dict[type[FormattedBlock], str | None] = {
-    SeparatorBlock: "headers",
-    HeaderBlock: "headers",
-    HttpHeadersBlock: "headers",
-    MetadataBlock: "metadata",
-    TurnBudgetBlock: "expand",
-    SystemLabelBlock: "system",
-    TrackedContentBlock: "system",
-    RoleBlock: "system",             # _render_role checks filters["system"] for system roles
-    TextContentBlock: None,
-    ToolUseBlock: "tools",
-    ToolResultBlock: None,  # Always visible (summary or full based on tools filter)
-    ImageBlock: None,
-    UnknownTypeBlock: None,
-    StreamInfoBlock: "metadata",
-    StreamToolUseBlock: "tools",
-    TextDeltaBlock: None,
-    StopReasonBlock: "metadata",
-    ErrorBlock: None,
-    ProxyErrorBlock: None,
-    LogBlock: None,
-    NewlineBlock: None,
+# Uses class names for hot-reload safety (same reason as BLOCK_RENDERERS).
+BLOCK_FILTER_KEY: dict[str, str | None] = {
+    "SeparatorBlock": "headers",
+    "HeaderBlock": "headers",
+    "HttpHeadersBlock": "headers",
+    "MetadataBlock": "metadata",
+    "TurnBudgetBlock": "expand",
+    "SystemLabelBlock": "system",
+    "TrackedContentBlock": "system",
+    "RoleBlock": "system",             # _render_role checks filters["system"] for system roles
+    "TextContentBlock": None,
+    "ToolUseBlock": "tools",
+    "ToolResultBlock": None,  # Always visible (summary or full based on tools filter)
+    "ImageBlock": None,
+    "UnknownTypeBlock": None,
+    "StreamInfoBlock": "metadata",
+    "StreamToolUseBlock": "tools",
+    "TextDeltaBlock": None,
+    "StopReasonBlock": "metadata",
+    "ErrorBlock": None,
+    "ProxyErrorBlock": None,
+    "LogBlock": None,
+    "NewlineBlock": None,
 }
 
 
@@ -337,7 +350,7 @@ def render_block(block: FormattedBlock, filters: dict) -> Text | None:
 
     Returns None if the block should be filtered out based on filters dict.
     """
-    renderer = BLOCK_RENDERERS.get(type(block))
+    renderer = BLOCK_RENDERERS.get(type(block).__name__)
     if renderer is None:
         return None  # Unknown block type - graceful degradation
     return renderer(block, filters)
@@ -463,12 +476,13 @@ def _render_diff(diff_lines: list, indent: str) -> Text:
     for i, (kind, text) in enumerate(diff_lines):
         if i > 0:
             t.append("\n")
+        p = cc_dump.palette.PALETTE
         if kind == "hunk":
             t.append(indent + text, style="dim")
         elif kind == "add":
-            t.append(indent + "+ " + text, style="green")
+            t.append(indent + "+ " + text, style=p.success)
         elif kind == "del":
-            t.append(indent + "- " + text, style="red")
+            t.append(indent + "- " + text, style=p.error)
     return t
 
 
@@ -506,12 +520,13 @@ def _render_turn_budget(block: TurnBudgetBlock) -> Text:
     conv_tok = b.conversation_tokens_est
     tool_tok = b.tool_use_tokens_est + b.tool_result_tokens_est
 
+    p = cc_dump.palette.PALETTE
     t = Text("  ")
     t.append("Context: ", style="bold")
     t.append("{} tok".format(_fmt_tokens(total)))
-    t.append(" | sys: {} ({})".format(_fmt_tokens(sys_tok), _pct(sys_tok, total)), style="dim cyan")
-    t.append(" | tools: {} ({})".format(_fmt_tokens(tool_tok), _pct(tool_tok, total)), style="dim yellow")
-    t.append(" | conv: {} ({})".format(_fmt_tokens(conv_tok), _pct(conv_tok, total)), style="dim green")
+    t.append(" | sys: {} ({})".format(_fmt_tokens(sys_tok), _pct(sys_tok, total)), style=f"dim {p.info}")
+    t.append(" | tools: {} ({})".format(_fmt_tokens(tool_tok), _pct(tool_tok, total)), style=f"dim {p.warning}")
+    t.append(" | conv: {} ({})".format(_fmt_tokens(conv_tok), _pct(conv_tok, total)), style=f"dim {p.success}")
 
     # Tool result breakdown by name
     if block.tool_result_by_name:
@@ -533,9 +548,9 @@ def _render_turn_budget(block: TurnBudgetBlock) -> Text:
         t.append("{} read ({})".format(
             _fmt_tokens(b.actual_cache_read_tokens),
             _pct(b.actual_cache_read_tokens, b.actual_input_tokens + b.actual_cache_read_tokens),
-        ), style="dim cyan")
+        ), style=f"dim {p.info}")
         if b.actual_cache_creation_tokens > 0:
-            t.append(" | {} created".format(_fmt_tokens(b.actual_cache_creation_tokens)), style="dim yellow")
+            t.append(" | {} created".format(_fmt_tokens(b.actual_cache_creation_tokens)), style=f"dim {p.warning}")
         t.append(" | {} fresh".format(_fmt_tokens(b.actual_input_tokens)), style="dim")
 
     return _add_filter_indicator(t, "expand")

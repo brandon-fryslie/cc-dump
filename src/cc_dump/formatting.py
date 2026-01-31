@@ -26,7 +26,7 @@ class FormattedBlock:
 @dataclass
 class SeparatorBlock(FormattedBlock):
     """A visual separator line."""
-    style: str = "heavy"  # "heavy" or "thin"
+    style: str = "heavy"  # "heavy" or "thin" [MODIFIED]
 
 
 @dataclass

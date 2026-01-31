@@ -1,4 +1,9 @@
-"""Terminal color constants."""
+"""Terminal color constants.
+
+ANSI formatting escapes and palette-derived 24-bit color escapes.
+"""
+
+import cc_dump.palette
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -6,36 +11,30 @@ DIM = "\033[2m"
 ITALIC = "\033[3m"
 UNDERLINE = "\033[4m"
 
-# Foreground
-BLACK = "\033[30m"
-RED = "\033[31m"
-GREEN = "\033[32m"
-YELLOW = "\033[33m"
-BLUE = "\033[34m"
-MAGENTA = "\033[35m"
-CYAN = "\033[36m"
-WHITE = "\033[97m"
 
-# Background
-BG_RED = "\033[41m"
-BG_GREEN = "\033[42m"
-BG_YELLOW = "\033[43m"
-BG_BLUE = "\033[44m"
-BG_MAGENTA = "\033[45m"
-BG_CYAN = "\033[46m"
-BG_WHITE = "\033[47m"
+def _fg24(hex_color: str) -> str:
+    """Convert #RRGGBB to 24-bit ANSI foreground escape."""
+    r, g, b = cc_dump.palette._hex_to_rgb(hex_color)
+    return f"\033[38;2;{r};{g};{b}m"
 
-# Tag color palette: light foreground on dark background of same hue
-TAG_COLORS = [
-    (CYAN, BG_BLUE),
-    (GREEN, BG_GREEN + BLACK),
-    (YELLOW, BG_YELLOW + BLACK),
-    (MAGENTA, BG_MAGENTA),
-    (RED, BG_RED),
-    (BLUE, BG_BLUE + WHITE),
-    (WHITE, BG_WHITE + BLACK),
-    (CYAN, BG_CYAN + BLACK),
-]
+
+def _bg24(hex_color: str) -> str:
+    """Convert #RRGGBB to 24-bit ANSI background escape."""
+    r, g, b = cc_dump.palette._hex_to_rgb(hex_color)
+    return f"\033[48;2;{r};{g};{b}m"
+
+
+def _build_tag_colors() -> list[tuple[str, str]]:
+    """Build TAG_COLORS from palette: (fg_escape, bg_escape) pairs."""
+    p = cc_dump.palette.PALETTE
+    result = []
+    for i in range(min(p.count, 12)):
+        fg_hex, bg_hex = p.fg_on_bg(i)
+        result.append((_fg24(fg_hex), _bg24(bg_hex)))
+    return result
+
+
+TAG_COLORS = _build_tag_colors()
 
 SEPARATOR = DIM + "\u2500" * 70 + RESET
 THIN_SEP = DIM + "\u2504" * 40 + RESET

@@ -5,6 +5,7 @@ from typing import Optional
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widgets import Header
 
@@ -64,6 +65,7 @@ class CcDumpApp(App):
         self._port = port
         self._target = target
         self._closing = False
+        self._replacing_widgets = False
 
         # App-level state (preserved across hot-reloads)
         # Only track minimal in-progress turn data for real-time streaming feedback
@@ -126,49 +128,66 @@ class CcDumpApp(App):
         self.run_worker(self._drain_events, thread=True, exclusive=False)
 
         # Set initial panel visibility
-        self._get_stats().display = self.show_stats
-        self._get_economics().display = self.show_economics
-        self._get_timeline().display = self.show_timeline
-        self._get_logs().display = self.show_logs
+        stats = self._get_stats()
+        if stats is not None:
+            stats.display = self.show_stats
+        economics = self._get_economics()
+        if economics is not None:
+            economics.display = self.show_economics
+        timeline = self._get_timeline()
+        if timeline is not None:
+            timeline.display = self.show_timeline
+        logs = self._get_logs()
+        if logs is not None:
+            logs.display = self.show_logs
 
         # Initialize footer with current filter state
         self._update_footer_state()
 
 
     # Widget accessors - use query by ID so we can swap widgets
+    # Return None when widget is temporarily missing (e.g., during hot-reload swap)
+    def _query_safe(self, selector):
+        """Query a widget, returning None if not found."""
+        try:
+            return self.query_one(selector)
+        except NoMatches:
+            return None
+
     def _get_conv(self):
-        return self.query_one("#" + self._conv_id)
+        return self._query_safe("#" + self._conv_id)
 
     def _get_stats(self):
-        return self.query_one("#" + self._stats_id)
+        return self._query_safe("#" + self._stats_id)
 
     def _get_economics(self):
-        return self.query_one("#" + self._economics_id)
+        return self._query_safe("#" + self._economics_id)
 
     def _get_timeline(self):
-        return self.query_one("#" + self._timeline_id)
+        return self._query_safe("#" + self._timeline_id)
 
     def _get_logs(self):
-        return self.query_one("#" + self._logs_id)
+        return self._query_safe("#" + self._logs_id)
 
     def _get_footer(self):
-        return self.query_one(StyledFooter)
+        try:
+            return self.query_one(StyledFooter)
+        except NoMatches:
+            return None
 
     def _log(self, level: str, message: str):
         """Log a message to the application logs panel."""
-        try:
-            if self.is_running:
-                self._get_logs().log(level, message)
-        except Exception:
-            pass  # Don't crash if logs panel isn't available
+        if self.is_running:
+            logs = self._get_logs()
+            if logs is not None:
+                logs.log(level, message)
 
     def _update_footer_state(self):
         """Update the footer to show active filter/panel states."""
-        try:
-            if self.is_running:
-                self._get_footer().update_active_state(self.active_filters)
-        except Exception:
-            pass  # Don't crash if footer isn't available
+        if self.is_running:
+            footer = self._get_footer()
+            if footer is not None:
+                footer.update_active_state(self.active_filters)
 
     def _drain_events(self):
         """Worker: drain event queue and post to app main thread."""
@@ -214,73 +233,108 @@ class CcDumpApp(App):
                 self._replace_all_widgets()
             elif self.is_running:
                 # Just re-render with new code (for rendering/formatting changes)
-                self._get_conv().rerender(self.active_filters)
+                conv = self._get_conv()
+                if conv is not None:
+                    conv.rerender(self.active_filters)
         except Exception as e:
             self.notify(f"[hot-reload] error applying: {e}", severity="error")
             self._log("ERROR", f"Hot-reload error applying: {e}")
 
     def _replace_all_widgets(self):
-        """Replace all widgets with fresh instances from the reloaded factory."""
+        """Replace all widgets with fresh instances from the reloaded factory.
+
+        Uses create-before-remove pattern: all new widgets are created and
+        state-restored before any old widgets are touched. If creation fails,
+        old widgets remain in the DOM and the app continues working.
+        """
         if not self.is_running:
             return
 
-        # Get current widget states
-        conv_state = self._get_conv().get_state()
-        stats_state = self._get_stats().get_state()
-        economics_state = self._get_economics().get_state()
-        timeline_state = self._get_timeline().get_state()
-        logs_state = self._get_logs().get_state()
-        # Remember visibility
-        stats_visible = self._get_stats().display
-        economics_visible = self._get_economics().display
-        timeline_visible = self._get_timeline().display
-        logs_visible = self._get_logs().display
+        self._replacing_widgets = True
+        try:
+            self._replace_all_widgets_inner()
+        finally:
+            self._replacing_widgets = False
 
-        # Remove old widgets
+    def _replace_all_widgets_inner(self):
+        """Inner implementation of widget replacement.
+
+        Strategy: Create all new widgets first (without IDs), then remove old
+        widgets, then mount new ones with the correct IDs. The _replacing_widgets
+        flag prevents any code from querying widgets during the gap.
+
+        Textual widget IDs are immutable once set, so we must remove old widgets
+        before mounting new ones with the same IDs.
+        """
+        # 1. Capture state from old widgets
         old_conv = self._get_conv()
         old_stats = self._get_stats()
         old_economics = self._get_economics()
         old_timeline = self._get_timeline()
         old_logs = self._get_logs()
-        # Create new widgets from reloaded factory
+
+        if old_conv is None:
+            return  # Widgets already missing — nothing to replace
+
+        conv_state = old_conv.get_state()
+        stats_state = old_stats.get_state() if old_stats else {}
+        economics_state = old_economics.get_state() if old_economics else {}
+        timeline_state = old_timeline.get_state() if old_timeline else {}
+        logs_state = old_logs.get_state() if old_logs else {}
+
+        stats_visible = old_stats.display if old_stats else self.show_stats
+        economics_visible = old_economics.display if old_economics else self.show_economics
+        timeline_visible = old_timeline.display if old_timeline else self.show_timeline
+        logs_visible = old_logs.display if old_logs else self.show_logs
+
+        # 2. Create ALL new widgets (without IDs yet — set after mounting).
+        #    If any creation or restore_state fails, old widgets remain untouched.
         new_conv = cc_dump.tui.widget_factory.create_conversation_view()
-        new_conv.id = self._conv_id
         new_conv.restore_state(conv_state)
 
         new_stats = cc_dump.tui.widget_factory.create_stats_panel()
-        new_stats.id = self._stats_id
         new_stats.restore_state(stats_state)
-        new_stats.display = stats_visible
 
         new_economics = cc_dump.tui.widget_factory.create_economics_panel()
-        new_economics.id = self._economics_id
         new_economics.restore_state(economics_state)
-        new_economics.display = economics_visible
 
         new_timeline = cc_dump.tui.widget_factory.create_timeline_panel()
-        new_timeline.id = self._timeline_id
         new_timeline.restore_state(timeline_state)
-        new_timeline.display = timeline_visible
 
         new_logs = cc_dump.tui.widget_factory.create_logs_panel()
-        new_logs.id = self._logs_id
         new_logs.restore_state(logs_state)
+
+        # 3. Remove old widgets (DOM gap starts — _replacing_widgets flag protects us)
+        old_conv.remove()
+        if old_stats is not None:
+            old_stats.remove()
+        if old_economics is not None:
+            old_economics.remove()
+        if old_timeline is not None:
+            old_timeline.remove()
+        if old_logs is not None:
+            old_logs.remove()
+
+        # 4. Assign IDs and mount new widgets (IDs must be set before mount)
+        new_conv.id = self._conv_id
+        new_stats.id = self._stats_id
+        new_economics.id = self._economics_id
+        new_timeline.id = self._timeline_id
+        new_logs.id = self._logs_id
+
+        new_stats.display = stats_visible
+        new_economics.display = economics_visible
+        new_timeline.display = timeline_visible
         new_logs.display = logs_visible
 
-        # Swap widgets - mount new before removing old to maintain layout
-        old_conv.remove()
-        old_stats.remove()
-        old_economics.remove()
-        old_timeline.remove()
-        old_logs.remove()
-        # Mount in correct order after header
         header = self.query_one(Header)
         self.mount(new_conv, after=header)
         self.mount(new_economics, after=new_conv)
         self.mount(new_timeline, after=new_economics)
         self.mount(new_logs, after=new_timeline)
         self.mount(new_stats, after=new_logs)
-        # Re-render the conversation with current filters
+
+        # 5. Re-render with current filters
         new_conv.rerender(self.active_filters)
 
         self.notify("[hot-reload] widgets replaced", severity="information")
@@ -299,12 +353,19 @@ class CcDumpApp(App):
 
     def _handle_event_inner(self, event):
         """Inner event handler with exception boundary."""
+        if self._replacing_widgets:
+            return  # Skip events during widget swap
+
         kind = event[0]
 
         # Build widget dict for handlers
+        conv = self._get_conv()
+        stats = self._get_stats()
+        if conv is None or stats is None:
+            return  # Widgets not ready
         widgets = {
-            "conv": self._get_conv(),
-            "stats": self._get_stats(),
+            "conv": conv,
+            "stats": stats,
             "filters": self.active_filters,
             "show_expand": self.show_expand,
         }
@@ -401,67 +462,93 @@ class CcDumpApp(App):
 
     def action_toggle_stats(self):
         self.show_stats = not self.show_stats
-        self._get_stats().display = self.show_stats
+        stats = self._get_stats()
+        if stats is not None:
+            stats.display = self.show_stats
 
     def action_toggle_economics(self):
         self.show_economics = not self.show_economics
-        self._get_economics().display = self.show_economics
+        economics = self._get_economics()
+        if economics is not None:
+            economics.display = self.show_economics
         if self.show_economics:
             self._refresh_economics()
 
     def action_toggle_timeline(self):
         self.show_timeline = not self.show_timeline
-        self._get_timeline().display = self.show_timeline
+        timeline = self._get_timeline()
+        if timeline is not None:
+            timeline.display = self.show_timeline
         if self.show_timeline:
             self._refresh_timeline()
 
     def action_toggle_logs(self):
         self.show_logs = not self.show_logs
-        self._get_logs().display = self.show_logs
+        logs = self._get_logs()
+        if logs is not None:
+            logs.display = self.show_logs
 
     # Sprint 2: Follow mode and navigation action handlers
 
     def action_toggle_follow(self):
-        self._get_conv().toggle_follow()
+        conv = self._get_conv()
+        if conv is not None:
+            conv.toggle_follow()
 
     def action_next_turn(self):
-        self._get_conv().select_next_turn(forward=True)
+        conv = self._get_conv()
+        if conv is not None:
+            conv.select_next_turn(forward=True)
 
     def action_prev_turn(self):
-        self._get_conv().select_next_turn(forward=False)
+        conv = self._get_conv()
+        if conv is not None:
+            conv.select_next_turn(forward=False)
 
     def action_next_tool_turn(self):
-        self._get_conv().next_tool_turn(forward=True)
+        conv = self._get_conv()
+        if conv is not None:
+            conv.next_tool_turn(forward=True)
 
     def action_prev_tool_turn(self):
-        self._get_conv().next_tool_turn(forward=False)
+        conv = self._get_conv()
+        if conv is not None:
+            conv.next_tool_turn(forward=False)
 
     def action_first_turn(self):
-        self._get_conv().jump_to_first()
+        conv = self._get_conv()
+        if conv is not None:
+            conv.jump_to_first()
 
     def action_last_turn(self):
-        self._get_conv().jump_to_last()
+        conv = self._get_conv()
+        if conv is not None:
+            conv.jump_to_last()
 
     def _refresh_economics(self):
         """Update tool economics panel with current data from database."""
         if not self.is_running or not self._db_path or not self._session_id:
             return
         panel = self._get_economics()
-        panel.refresh_from_db(self._db_path, self._session_id)
+        if panel is not None:
+            panel.refresh_from_db(self._db_path, self._session_id)
 
     def _refresh_timeline(self):
         """Update timeline panel with current data from database."""
         if not self.is_running or not self._db_path or not self._session_id:
             return
         panel = self._get_timeline()
-        panel.refresh_from_db(self._db_path, self._session_id)
+        if panel is not None:
+            panel.refresh_from_db(self._db_path, self._session_id)
 
     # Reactive watchers - trigger re-render when filters change
 
     def _rerender_if_mounted(self):
         """Re-render conversation if the app is mounted."""
-        if self.is_running:
-            self._get_conv().rerender(self.active_filters)
+        if self.is_running and not self._replacing_widgets:
+            conv = self._get_conv()
+            if conv is not None:
+                conv.rerender(self.active_filters)
             self._update_footer_state()
 
     def watch_show_headers(self, value):

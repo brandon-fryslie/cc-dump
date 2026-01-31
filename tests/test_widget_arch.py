@@ -61,30 +61,33 @@ class TestBlockFilterKeyCompleteness:
         )
 
     def test_filter_key_mappings_are_correct(self):
-        """Verify key filter mappings match renderer behavior."""
+        """Verify key filter mappings match renderer behavior.
+
+        BLOCK_FILTER_KEY uses class name strings as keys (for hot-reload safety).
+        """
         # Blocks that check specific filters
-        assert BLOCK_FILTER_KEY[SeparatorBlock] == "headers"
-        assert BLOCK_FILTER_KEY[HeaderBlock] == "headers"
-        assert BLOCK_FILTER_KEY[MetadataBlock] == "metadata"
-        assert BLOCK_FILTER_KEY[TurnBudgetBlock] == "expand"
-        assert BLOCK_FILTER_KEY[SystemLabelBlock] == "system"
-        assert BLOCK_FILTER_KEY[TrackedContentBlock] == "system"
-        assert BLOCK_FILTER_KEY[RoleBlock] == "system"  # filters system roles
-        assert BLOCK_FILTER_KEY[ToolUseBlock] == "tools"
-        assert BLOCK_FILTER_KEY[ToolResultBlock] is None  # always visible; renderer shows summary when filter off
-        assert BLOCK_FILTER_KEY[StreamInfoBlock] == "metadata"
-        assert BLOCK_FILTER_KEY[StreamToolUseBlock] == "tools"
-        assert BLOCK_FILTER_KEY[StopReasonBlock] == "metadata"
+        assert BLOCK_FILTER_KEY["SeparatorBlock"] == "headers"
+        assert BLOCK_FILTER_KEY["HeaderBlock"] == "headers"
+        assert BLOCK_FILTER_KEY["MetadataBlock"] == "metadata"
+        assert BLOCK_FILTER_KEY["TurnBudgetBlock"] == "expand"
+        assert BLOCK_FILTER_KEY["SystemLabelBlock"] == "system"
+        assert BLOCK_FILTER_KEY["TrackedContentBlock"] == "system"
+        assert BLOCK_FILTER_KEY["RoleBlock"] == "system"  # filters system roles
+        assert BLOCK_FILTER_KEY["ToolUseBlock"] == "tools"
+        assert BLOCK_FILTER_KEY["ToolResultBlock"] is None  # always visible; renderer shows summary when filter off
+        assert BLOCK_FILTER_KEY["StreamInfoBlock"] == "metadata"
+        assert BLOCK_FILTER_KEY["StreamToolUseBlock"] == "tools"
+        assert BLOCK_FILTER_KEY["StopReasonBlock"] == "metadata"
 
         # Blocks that are always visible (never filtered)
-        assert BLOCK_FILTER_KEY[TextContentBlock] is None
-        assert BLOCK_FILTER_KEY[ImageBlock] is None
-        assert BLOCK_FILTER_KEY[UnknownTypeBlock] is None
-        assert BLOCK_FILTER_KEY[TextDeltaBlock] is None
-        assert BLOCK_FILTER_KEY[ErrorBlock] is None
-        assert BLOCK_FILTER_KEY[ProxyErrorBlock] is None
-        assert BLOCK_FILTER_KEY[LogBlock] is None
-        assert BLOCK_FILTER_KEY[NewlineBlock] is None
+        assert BLOCK_FILTER_KEY["TextContentBlock"] is None
+        assert BLOCK_FILTER_KEY["ImageBlock"] is None
+        assert BLOCK_FILTER_KEY["UnknownTypeBlock"] is None
+        assert BLOCK_FILTER_KEY["TextDeltaBlock"] is None
+        assert BLOCK_FILTER_KEY["ErrorBlock"] is None
+        assert BLOCK_FILTER_KEY["ProxyErrorBlock"] is None
+        assert BLOCK_FILTER_KEY["LogBlock"] is None
+        assert BLOCK_FILTER_KEY["NewlineBlock"] is None
 
 
 class TestRenderTurnToStrips:

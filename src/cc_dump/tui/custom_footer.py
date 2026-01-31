@@ -8,6 +8,8 @@ from textual.app import ComposeResult
 from textual.widgets import Footer
 from textual.widgets._footer import FooterKey, KeyGroup, FooterLabel
 
+import cc_dump.palette
+
 
 class StyledFooterKey(FooterKey):
     """FooterKey that supports Rich markup in the description."""
@@ -58,43 +60,37 @@ class StyledFooter(Footer):
     """
 
     # Maps toggle action -> (filter key, CSS class suffix)
-    ACTION_TO_FILTER = {
-        "toggle_headers": ("headers", "cyan"),
-        "toggle_tools": ("tools", "blue"),
-        "toggle_system": ("system", "yellow"),
-        "toggle_expand": ("expand", "green"),
-        "toggle_metadata": ("metadata", "magenta"),
-        "toggle_stats": ("stats", "bright-cyan"),
-        "toggle_economics": ("economics", "bright-magenta"),
-        "toggle_timeline": ("timeline", "bright-yellow"),
-    }
+    # Built dynamically at class load time from palette
+    ACTION_TO_FILTER: dict = {}
+    DEFAULT_CSS: str = ""
 
-    DEFAULT_CSS = """
-    StyledFooterKey.-active-cyan {
-        background: darkcyan;
-    }
-    StyledFooterKey.-active-blue {
-        background: darkblue;
-    }
-    StyledFooterKey.-active-yellow {
-        background: olive;
-    }
-    StyledFooterKey.-active-green {
-        background: darkgreen;
-    }
-    StyledFooterKey.-active-magenta {
-        background: purple;
-    }
-    StyledFooterKey.-active-bright-cyan {
-        background: teal;
-    }
-    StyledFooterKey.-active-bright-magenta {
-        background: darkmagenta;
-    }
-    StyledFooterKey.-active-bright-yellow {
-        background: darkolivegreen;
-    }
-    """
+    @classmethod
+    def _init_palette_colors(cls):
+        """Initialize ACTION_TO_FILTER and DEFAULT_CSS from palette."""
+        p = cc_dump.palette.PALETTE
+        _filter_names = [
+            ("toggle_headers", "headers"),
+            ("toggle_tools", "tools"),
+            ("toggle_system", "system"),
+            ("toggle_expand", "expand"),
+            ("toggle_metadata", "metadata"),
+            ("toggle_stats", "stats"),
+            ("toggle_economics", "economics"),
+            ("toggle_timeline", "timeline"),
+        ]
+        action_map = {}
+        css_parts = []
+        for action, filter_key in _filter_names:
+            # Use filter_key as CSS class suffix
+            action_map[action] = (filter_key, filter_key)
+            bg_hex = p.filter_bg(filter_key)
+            css_parts.append(
+                f"    StyledFooterKey.-active-{filter_key} {{\n"
+                f"        background: {bg_hex};\n"
+                f"    }}"
+            )
+        cls.ACTION_TO_FILTER = action_map
+        cls.DEFAULT_CSS = "\n".join(css_parts)
 
     def __init__(
         self,
@@ -217,11 +213,15 @@ class StyledFooter(Footer):
                     tooltip=binding.tooltip or binding.description,
                 )
 
+    def _get_accent_color(self) -> str:
+        """Get the accent color hex from palette."""
+        return cc_dump.palette.PALETTE.accent
+
     def _style_description(self, description: str) -> str:
         """Convert pipe markers to rich markup for bold orange styling.
 
-        "x|yz" -> "[bold #FF8800]x[/bold #FF8800]yz"
-        "ab|c|de" -> "ab[bold #FF8800]c[/bold #FF8800]de"
+        "x|yz" -> "[bold <accent>]x[/bold <accent>]yz"
+        "ab|c|de" -> "ab[bold <accent>]c[/bold <accent>]de"
         """
         parts = description.split("|")
 
@@ -230,10 +230,14 @@ class StyledFooter(Footer):
             return description
         elif len(parts) == 2:
             # Simple case: "x|yz"
-            return f"[bold #FF8800]{parts[0]}[/bold #FF8800]{parts[1]}"
+            return f"[bold {self._get_accent_color()}]{parts[0]}[/bold {self._get_accent_color()}]{parts[1]}"
         elif len(parts) == 3:
             # Middle marker: "ab|c|de"
-            return f"{parts[0]}[bold #FF8800]{parts[1]}[/bold #FF8800]{parts[2]}"
+            return f"{parts[0]}[bold {self._get_accent_color()}]{parts[1]}[/bold {self._get_accent_color()}]{parts[2]}"
         else:
             # Fallback: remove all markers
             return "".join(parts)
+
+
+# Initialize palette colors at module load time
+StyledFooter._init_palette_colors()

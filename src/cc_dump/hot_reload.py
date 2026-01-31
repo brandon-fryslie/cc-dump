@@ -12,7 +12,8 @@ from pathlib import Path
 
 # Modules to reload in dependency order (leaves first, dependents after)
 _RELOAD_ORDER = [
-    "cc_dump.colors",      # no deps within project
+    "cc_dump.palette",     # no deps within project, base for all colors
+    "cc_dump.colors",      # depends on: palette
     "cc_dump.analysis",    # no deps within project
     "cc_dump.formatting",  # depends on: colors, analysis
     "cc_dump.tui.rendering",  # depends on: formatting, colors

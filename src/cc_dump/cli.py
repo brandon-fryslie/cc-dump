@@ -21,7 +21,13 @@ def main():
                         help="Upstream API URL for reverse proxy mode (default: https://api.anthropic.com)")
     parser.add_argument("--db", type=str, default=os.path.expanduser("~/.local/share/cc-dump/sessions.db"), help="SQLite database path")
     parser.add_argument("--no-db", action="store_true", help="Disable persistence (no database)")
+    parser.add_argument("--seed-hue", type=float, default=None,
+                        help="Seed hue (0-360) for color palette (default: 190, cyan). Env: CC_DUMP_SEED_HUE")
     args = parser.parse_args()
+
+    # Initialize color palette before anything else imports it
+    import cc_dump.palette
+    cc_dump.palette.init_palette(args.seed_hue)
 
     ProxyHandler.target_host = args.target.rstrip("/") if args.target else None
 

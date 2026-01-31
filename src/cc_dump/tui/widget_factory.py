@@ -18,6 +18,7 @@ from rich.text import Text
 from rich.style import Style
 
 # Use module-level imports for hot-reload
+import cc_dump.palette
 import cc_dump.analysis
 import cc_dump.tui.rendering
 import cc_dump.tui.panel_renderers
@@ -44,10 +45,14 @@ class TurnData:
         return len(self.strips)
 
     def compute_relevant_keys(self):
-        """Compute which filter keys affect this turn's blocks."""
+        """Compute which filter keys affect this turn's blocks.
+
+        Uses type(block).__name__ for lookup so blocks created before a
+        hot-reload still match filter keys from the reloaded module.
+        """
         keys = set()
         for block in self.blocks:
-            key = cc_dump.tui.rendering.BLOCK_FILTER_KEY.get(type(block))
+            key = cc_dump.tui.rendering.BLOCK_FILTER_KEY.get(type(block).__name__)
             if key is not None:
                 keys.add(key)
         self.relevant_filter_keys = keys
@@ -347,8 +352,6 @@ class ConversationView(ScrollView):
         Handles TextDeltaBlock (buffer + render delta tail) and
         non-delta blocks (flush + render + stable prefix).
         """
-        from cc_dump.formatting import TextDeltaBlock
-
         if filters is None:
             filters = self._last_filters
 
@@ -361,7 +364,8 @@ class ConversationView(ScrollView):
         # Add block to blocks list
         td.blocks.append(block)
 
-        if isinstance(block, TextDeltaBlock):
+        # Use class name for hot-reload safety (isinstance fails across reloads)
+        if type(block).__name__ == "TextDeltaBlock":
             # Buffer the delta text
             td._text_delta_buffer.append(block.text)
 
@@ -406,7 +410,8 @@ class ConversationView(ScrollView):
 
         Returns the consolidated block list.
         """
-        from cc_dump.formatting import TextDeltaBlock, TextContentBlock
+        # Import the CURRENT TextContentBlock class (post-reload) for creating new blocks
+        from cc_dump.formatting import TextContentBlock
 
         if not self._turns or not self._turns[-1].is_streaming:
             return []
@@ -414,11 +419,12 @@ class ConversationView(ScrollView):
         td = self._turns[-1]
 
         # Consolidate consecutive TextDeltaBlock runs into TextContentBlock
+        # Use class name for hot-reload safety
         consolidated = []
         delta_buffer = []
 
         for block in td.blocks:
-            if isinstance(block, TextDeltaBlock):
+            if type(block).__name__ == "TextDeltaBlock":
                 delta_buffer.append(block.text)
             else:
                 # Flush accumulated deltas as a single TextContentBlock
@@ -710,11 +716,11 @@ class ConversationView(ScrollView):
 
     def next_tool_turn(self, forward: bool = True):
         """Select next/prev turn containing tool blocks."""
-        from cc_dump.formatting import ToolUseBlock, ToolResultBlock, StreamToolUseBlock
-        tool_types = (ToolUseBlock, ToolResultBlock, StreamToolUseBlock)
+        # Use class names for hot-reload safety (isinstance fails across reloads)
+        _tool_type_names = {"ToolUseBlock", "ToolResultBlock", "StreamToolUseBlock"}
 
         visible = self._visible_turns()
-        tool_turns = [t for t in visible if any(isinstance(b, tool_types) for b in t.blocks)]
+        tool_turns = [t for t in visible if any(type(b).__name__ in _tool_type_names for b in t.blocks)]
         if not tool_turns:
             return
         self._follow_mode = False
@@ -1020,13 +1026,14 @@ class FilterStatusBar(Static):
             filters: Dict with filter states (headers, tools, system, expand, metadata)
         """
 
-        # Filter names and their colors (matching FILTER_INDICATORS in rendering.py)
+        # Filter names and their colors (from palette)
+        p = cc_dump.palette.PALETTE
         filter_info = [
-            ("h", "Headers", "cyan", filters.get("headers", False)),
-            ("t", "Tools", "blue", filters.get("tools", False)),
-            ("s", "System", "yellow", filters.get("system", False)),
-            ("e", "Context", "green", filters.get("expand", False)),
-            ("m", "Metadata", "magenta", filters.get("metadata", False)),
+            ("h", "Headers", p.filter_color("headers"), filters.get("headers", False)),
+            ("t", "Tools", p.filter_color("tools"), filters.get("tools", False)),
+            ("s", "System", p.filter_color("system"), filters.get("system", False)),
+            ("e", "Context", p.filter_color("expand"), filters.get("expand", False)),
+            ("m", "Metadata", p.filter_color("metadata"), filters.get("metadata", False)),
         ]
 
         text = Text()
@@ -1075,13 +1082,14 @@ class LogsPanel(RichLog):
         log_text = Text()
         log_text.append(f"[{timestamp}] ", style="dim")
 
-        # Color-code by level
+        # Color-code by level using palette
+        p = cc_dump.palette.PALETTE
         if level == "ERROR":
-            log_text.append(f"{level:7s} ", style="bold red")
+            log_text.append(f"{level:7s} ", style=f"bold {p.error}")
         elif level == "WARNING":
-            log_text.append(f"{level:7s} ", style="bold yellow")
+            log_text.append(f"{level:7s} ", style=f"bold {p.warning}")
         elif level == "INFO":
-            log_text.append(f"{level:7s} ", style="bold cyan")
+            log_text.append(f"{level:7s} ", style=f"bold {p.info}")
         else:  # DEBUG
             log_text.append(f"{level:7s} ", style="dim")
 

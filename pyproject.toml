@@ -1,9 +1,30 @@
 [project]
 name = "cc-dump"
-version = "0.1.0"
-description = "Transparent proxy for watching Claude Code API traffic"
+version = "0.2.0"
+description = "Transparent HTTP proxy for monitoring Claude Code API traffic with TUI"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Brandon Fryslie", email = "brandon@fryslie.com"}]
 requires-python = ">=3.10"
 dependencies = ["textual>=0.80.0"]
+keywords = ["claude", "anthropic", "proxy", "api", "debugging", "tui"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Debuggers",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/brandon-fryslie/cc-dump"
+Repository = "https://github.com/brandon-fryslie/cc-dump"
+Issues = "https://github.com/brandon-fryslie/cc-dump/issues"
 
 [project.scripts]
 cc-dump = "cc_dump.cli:main"
