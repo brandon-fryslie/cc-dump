@@ -32,7 +32,7 @@ class TestTUIStartupShutdown:
 
         content = proc.get_content()
         # Should see some standard UI elements
-        assert any(x in content for x in ["cc-dump", "Quit", "Headers", "Tools"])
+        assert any(x in content for x in ["cc-dump", "Quit", "headers", "tools"])
 
     def test_tui_quits_cleanly_with_q_key(self, start_cc_dump):
         """Verify pressing 'q' exits the application cleanly."""
@@ -632,8 +632,8 @@ class TestFooterBindings:
 
         content = proc.get_content()
         # Footer should show at least some key bindings
-        # Common ones: Headers, Tools, System, Quit
-        assert any(x in content for x in ["Headers", "Tools", "System", "Quit"])
+        # Common ones: headers, tools, system, quit
+        assert any(x in content for x in ["headers", "tools", "system", "quit"])
 
     def test_footer_persists_during_operation(self, start_cc_dump):
         """Test that footer remains visible during normal operation."""
@@ -648,7 +648,7 @@ class TestFooterBindings:
 
         content = proc.get_content()
         # Footer should still be visible
-        assert "Quit" in content or "Headers" in content
+        assert "quit" in content or "headers" in content
 
         assert proc.is_alive()
 

@@ -1123,6 +1123,3 @@ def create_logs_panel() -> LogsPanel:
     return LogsPanel()
 
 
-def create_filter_status_bar() -> FilterStatusBar:
-    """Create a new FilterStatusBar instance."""
-    return FilterStatusBar()

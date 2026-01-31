@@ -15,7 +15,6 @@ class StyledFooterKey(FooterKey):
     def render(self) -> Text:
         """Render the footer key with markup support in description."""
         key_style = self.get_component_rich_style("footer-key--key")
-        description_style = self.get_component_rich_style("footer-key--description")
         key_display = self.key_display
         key_padding = self.get_component_styles("footer-key--key").padding
         description_padding = self.get_component_styles(
@@ -36,7 +35,7 @@ class StyledFooterKey(FooterKey):
                 )
             label_text.append(" " * description_padding.left)
             label_text.append_text(description_text)  # Append the styled text
-            label_text.append(" " * description_padding.right, style=description_style)
+            label_text.append(" " * description_padding.right)
         else:
             # No description, just show key
             label_text = Text.assemble(
@@ -56,6 +55,45 @@ class StyledFooter(Footer):
     Format: "ab|c|de" means render as "abcde" with "c" in bold orange
 
     This footer ONLY shows the description (with bold styling), NOT the key prefix.
+    """
+
+    # Maps toggle action -> (filter key, CSS class suffix)
+    ACTION_TO_FILTER = {
+        "toggle_headers": ("headers", "cyan"),
+        "toggle_tools": ("tools", "blue"),
+        "toggle_system": ("system", "yellow"),
+        "toggle_expand": ("expand", "green"),
+        "toggle_metadata": ("metadata", "magenta"),
+        "toggle_stats": ("stats", "bright-cyan"),
+        "toggle_economics": ("economics", "bright-magenta"),
+        "toggle_timeline": ("timeline", "bright-yellow"),
+    }
+
+    DEFAULT_CSS = """
+    StyledFooterKey.-active-cyan {
+        background: darkcyan;
+    }
+    StyledFooterKey.-active-blue {
+        background: darkblue;
+    }
+    StyledFooterKey.-active-yellow {
+        background: olive;
+    }
+    StyledFooterKey.-active-green {
+        background: darkgreen;
+    }
+    StyledFooterKey.-active-magenta {
+        background: purple;
+    }
+    StyledFooterKey.-active-bright-cyan {
+        background: teal;
+    }
+    StyledFooterKey.-active-bright-magenta {
+        background: darkmagenta;
+    }
+    StyledFooterKey.-active-bright-yellow {
+        background: darkolivegreen;
+    }
     """
 
     def __init__(
@@ -80,11 +118,15 @@ class StyledFooter(Footer):
         self._active_filters = {}
 
     def update_active_state(self, filters: dict):
-        """Update the active state of bindings and recompose if needed."""
-        if filters != self._active_filters:
-            self._active_filters = filters
-            # Recompose to update styling
-            self.recompose()
+        """Update the active state of bindings by toggling CSS classes."""
+        self._active_filters = filters
+
+        for key_widget in self.query(StyledFooterKey):
+            action = key_widget.action
+            if action in self.ACTION_TO_FILTER:
+                filter_key, color = self.ACTION_TO_FILTER[action]
+                is_active = filters.get(filter_key, False)
+                key_widget.set_class(is_active, f"-active-{color}")
 
     def compose(self) -> ComposeResult:
         """Compose footer with styled bindings (no key prefix shown)."""
@@ -104,18 +146,6 @@ class StyledFooter(Footer):
 
         self.styles.grid_size_columns = len(action_to_bindings)
 
-        # Map actions to filter states and colors
-        action_to_state = {
-            "toggle_headers": ("headers", "cyan"),
-            "toggle_tools": ("tools", "blue"),
-            "toggle_system": ("system", "yellow"),
-            "toggle_expand": ("expand", "green"),
-            "toggle_metadata": ("metadata", "magenta"),
-            "toggle_stats": ("stats", "bright_cyan"),
-            "toggle_economics": ("economics", "bright_magenta"),
-            "toggle_timeline": ("timeline", "bright_yellow"),
-        }
-
         for group, multi_bindings_iterable in groupby(
             action_to_bindings.values(),
             lambda multi_bindings_: multi_bindings_[0][0].group,
@@ -128,12 +158,12 @@ class StyledFooter(Footer):
                         styled_desc = self._style_description(binding.description)
 
                         # Check if this binding is active
-                        filter_key, color = action_to_state.get(binding.action, (None, None))
+                        filter_key, color = self.ACTION_TO_FILTER.get(binding.action, (None, None))
                         is_active = self._active_filters.get(filter_key, False) if filter_key else False
 
                         classes = "-grouped"
-                        if is_active:
-                            classes += f" -active-{color}" if color else " -active"
+                        if is_active and color:
+                            classes += f" -active-{color}"
 
                         yield StyledFooterKey(
                             binding.key,
@@ -151,12 +181,12 @@ class StyledFooter(Footer):
                     styled_desc = self._style_description(binding.description)
 
                     # Check if this binding is active
-                    filter_key, color = action_to_state.get(binding.action, (None, None))
+                    filter_key, color = self.ACTION_TO_FILTER.get(binding.action, (None, None))
                     is_active = self._active_filters.get(filter_key, False) if filter_key else False
 
                     classes = ""
-                    if is_active:
-                        classes = f"-active-{color}" if color else "-active"
+                    if is_active and color:
+                        classes = f"-active-{color}"
 
                     yield StyledFooterKey(
                         binding.key,

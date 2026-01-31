@@ -77,7 +77,6 @@ class CcDumpApp(App):
         self._economics_id = "economics-panel"
         self._timeline_id = "timeline-panel"
         self._logs_id = "logs-panel"
-        self._filter_status_id = "filter-status-bar"
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -101,10 +100,6 @@ class CcDumpApp(App):
         stats = cc_dump.tui.widget_factory.create_stats_panel()
         stats.id = self._stats_id
         yield stats
-
-        filter_status = cc_dump.tui.widget_factory.create_filter_status_bar()
-        filter_status.id = self._filter_status_id
-        yield filter_status
 
         yield StyledFooter()
 
@@ -136,8 +131,9 @@ class CcDumpApp(App):
         self._get_timeline().display = self.show_timeline
         self._get_logs().display = self.show_logs
 
-        # Initialize filter status bar
-        self._update_filter_status()
+        # Initialize footer with current filter state
+        self._update_footer_state()
+
 
     # Widget accessors - use query by ID so we can swap widgets
     def _get_conv(self):
@@ -155,9 +151,6 @@ class CcDumpApp(App):
     def _get_logs(self):
         return self.query_one("#" + self._logs_id)
 
-    def _get_filter_status(self):
-        return self.query_one("#" + self._filter_status_id)
-
     def _get_footer(self):
         return self.query_one(StyledFooter)
 
@@ -168,14 +161,6 @@ class CcDumpApp(App):
                 self._get_logs().log(level, message)
         except Exception:
             pass  # Don't crash if logs panel isn't available
-
-    def _update_filter_status(self):
-        """Update the filter status bar to show active filters."""
-        try:
-            if self.is_running:
-                self._get_filter_status().update_filters(self.active_filters)
-        except Exception:
-            pass  # Don't crash if filter status bar isn't available
 
     def _update_footer_state(self):
         """Update the footer to show active filter/panel states."""
@@ -245,8 +230,6 @@ class CcDumpApp(App):
         economics_state = self._get_economics().get_state()
         timeline_state = self._get_timeline().get_state()
         logs_state = self._get_logs().get_state()
-        filter_status_state = self._get_filter_status().get_state()
-
         # Remember visibility
         stats_visible = self._get_stats().display
         economics_visible = self._get_economics().display
@@ -259,8 +242,6 @@ class CcDumpApp(App):
         old_economics = self._get_economics()
         old_timeline = self._get_timeline()
         old_logs = self._get_logs()
-        old_filter_status = self._get_filter_status()
-
         # Create new widgets from reloaded factory
         new_conv = cc_dump.tui.widget_factory.create_conversation_view()
         new_conv.id = self._conv_id
@@ -286,18 +267,12 @@ class CcDumpApp(App):
         new_logs.restore_state(logs_state)
         new_logs.display = logs_visible
 
-        new_filter_status = cc_dump.tui.widget_factory.create_filter_status_bar()
-        new_filter_status.id = self._filter_status_id
-        new_filter_status.restore_state(filter_status_state)
-
         # Swap widgets - mount new before removing old to maintain layout
         old_conv.remove()
         old_stats.remove()
         old_economics.remove()
         old_timeline.remove()
         old_logs.remove()
-        old_filter_status.remove()
-
         # Mount in correct order after header
         header = self.query_one(Header)
         self.mount(new_conv, after=header)
@@ -305,13 +280,8 @@ class CcDumpApp(App):
         self.mount(new_timeline, after=new_economics)
         self.mount(new_logs, after=new_timeline)
         self.mount(new_stats, after=new_logs)
-        self.mount(new_filter_status, after=new_stats)
-
         # Re-render the conversation with current filters
         new_conv.rerender(self.active_filters)
-
-        # Update filter status bar
-        new_filter_status.update_filters(self.active_filters)
 
         self.notify("[hot-reload] widgets replaced", severity="information")
 
@@ -492,7 +462,6 @@ class CcDumpApp(App):
         """Re-render conversation if the app is mounted."""
         if self.is_running:
             self._get_conv().rerender(self.active_filters)
-            self._update_filter_status()
             self._update_footer_state()
 
     def watch_show_headers(self, value):
