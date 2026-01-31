@@ -34,6 +34,10 @@ class TurnData:
     relevant_filter_keys: set = field(default_factory=set)
     line_offset: int = 0     # start line in virtual space
     _last_filter_snapshot: dict = field(default_factory=dict)
+    # Streaming fields
+    is_streaming: bool = False
+    _text_delta_buffer: list = field(default_factory=list)  # list[str] - accumulated delta text
+    _stable_strip_count: int = 0  # boundary between stable and delta strips
 
     @property
     def line_count(self) -> int:
@@ -62,91 +66,6 @@ class TurnData:
     def strip_offset_for_block(self, block_index: int) -> int | None:
         """Return the first strip line for a given block index, or None if filtered out."""
         return self.block_strip_map.get(block_index)
-
-
-class StreamingRichLog(RichLog):
-    """RichLog used for in-progress streaming turns.
-
-    Accumulates FormattedBlock list alongside RichLog's native append.
-    On finalize(), returns blocks for conversion to TurnData.
-    """
-
-    def __init__(self):
-        super().__init__(highlight=False, markup=False, wrap=True)
-        self._blocks: list = []
-        self._text_delta_buffer: list[str] = []
-        self.display = False
-
-    def append_block(self, block, filters: dict):
-        """Append a block, writing to RichLog for immediate display."""
-        from cc_dump.formatting import TextDeltaBlock
-
-        self._blocks.append(block)
-        self.display = True
-
-        if isinstance(block, TextDeltaBlock):
-            self._text_delta_buffer.append(block.text)
-        else:
-            # Flush text buffer first
-            self._flush_text_buffer()
-            rendered = cc_dump.tui.rendering.render_block(block, filters)
-            if rendered is not None:
-                self.write(rendered)
-
-    def _flush_text_buffer(self):
-        if self._text_delta_buffer:
-            from rich.text import Text as RichText
-            combined = "".join(self._text_delta_buffer)
-            self.write(RichText(combined))
-            self._text_delta_buffer.clear()
-
-    def finalize(self) -> list:
-        """Return accumulated blocks, clear state, hide widget.
-
-        Consolidates consecutive TextDeltaBlock objects into TextContentBlock objects.
-        """
-        from cc_dump.formatting import TextDeltaBlock, TextContentBlock
-
-        self._flush_text_buffer()
-
-        # Consolidate consecutive TextDeltaBlock runs into TextContentBlock
-        consolidated = []
-        delta_buffer = []
-
-        for block in self._blocks:
-            if isinstance(block, TextDeltaBlock):
-                delta_buffer.append(block.text)
-            else:
-                # Flush accumulated deltas as a single TextContentBlock
-                if delta_buffer:
-                    combined_text = "".join(delta_buffer)
-                    consolidated.append(TextContentBlock(text=combined_text))
-                    delta_buffer.clear()
-                # Add the non-delta block
-                consolidated.append(block)
-
-        # Flush any remaining deltas
-        if delta_buffer:
-            combined_text = "".join(delta_buffer)
-            consolidated.append(TextContentBlock(text=combined_text))
-
-        # Clear state
-        self._blocks = []
-        self._text_delta_buffer = []
-        self.clear()
-        self.display = False
-
-        return consolidated
-
-    def get_state(self) -> dict:
-        return {
-            "blocks": list(self._blocks),
-            "text_delta_buffer": list(self._text_delta_buffer),
-        }
-
-    def restore_state(self, state: dict):
-        self._blocks = state.get("blocks", [])
-        self._text_delta_buffer = state.get("text_delta_buffer", [])
 
 
 class ConversationView(ScrollView):
@@ -309,6 +228,240 @@ class ConversationView(ScrollView):
             self.scroll_end(animate=False, immediate=False, x_axis=False)
             self._scrolling_programmatically = False
 
+    # ─── Sprint 6: Inline streaming ──────────────────────────────────────────
+
+    def begin_streaming_turn(self):
+        """Create an empty streaming TurnData at end of turns list.
+
+        Idempotent - if a streaming turn already exists, does nothing.
+        """
+        # Check if we already have a streaming turn
+        if self._turns and self._turns[-1].is_streaming:
+            return
+
+        td = TurnData(
+            turn_index=len(self._turns),
+            blocks=[],
+            strips=[],
+            is_streaming=True,
+        )
+        self._turns.append(td)
+        self._recalculate_offsets()
+
+    def _render_single_block_to_strips(self, text_obj: Text, console, width: int) -> list:
+        """Render a single Rich Text object to Strip list.
+
+        Helper for rendering individual blocks during streaming.
+        """
+        from rich.segment import Segment
+        from textual.strip import Strip
+
+        render_options = console.options.update_width(width)
+        segments = console.render(text_obj, render_options)
+        lines = list(Segment.split_lines(segments))
+        if not lines:
+            return []
+
+        block_strips = Strip.from_lines(lines)
+        for strip in block_strips:
+            strip.adjust_cell_length(width)
+        return block_strips
+
+    def _refresh_streaming_delta(self, td: TurnData):
+        """Re-render delta buffer portion only.
+
+        Replaces strips[_stable_strip_count:] with freshly rendered delta text.
+        """
+        if not td._text_delta_buffer:
+            # No delta text - trim to stable strips only
+            td.strips = td.strips[:td._stable_strip_count]
+            return
+
+        width = self.scrollable_content_region.width if self._size_known else self._last_width
+        console = self.app.console
+
+        # Combine delta buffer into single text
+        combined_text = "".join(td._text_delta_buffer)
+        text_obj = Text(combined_text)
+
+        # Render to strips
+        delta_strips = self._render_single_block_to_strips(text_obj, console, width)
+
+        # Replace delta tail
+        td.strips = td.strips[:td._stable_strip_count] + delta_strips
+
+    def _flush_streaming_delta(self, td: TurnData, filters: dict):
+        """Convert delta buffer to stable strips.
+
+        If delta buffer has content, consolidate it into stable strips
+        and advance _stable_strip_count.
+        """
+        if not td._text_delta_buffer:
+            return
+
+        width = self.scrollable_content_region.width if self._size_known else self._last_width
+        console = self.app.console
+
+        # Render delta buffer to strips
+        combined_text = "".join(td._text_delta_buffer)
+        text_obj = Text(combined_text)
+        delta_strips = self._render_single_block_to_strips(text_obj, console, width)
+
+        # Replace delta tail with stable strips
+        td.strips = td.strips[:td._stable_strip_count] + delta_strips
+
+        # Advance stable boundary
+        td._stable_strip_count = len(td.strips)
+
+        # Clear delta buffer
+        td._text_delta_buffer.clear()
+
+    def _update_streaming_size(self, td: TurnData):
+        """Update total_lines and virtual_size for streaming turn.
+
+        Lighter-weight than full _recalculate_offsets() - only updates
+        the streaming turn's contribution to virtual size.
+        """
+        # Recalculate widest line from all turns
+        widest = 0
+        for turn in self._turns:
+            for strip in turn.strips:
+                w = strip.cell_length
+                if w > widest:
+                    widest = w
+
+        # Recalculate total lines
+        offset = 0
+        for turn in self._turns:
+            turn.line_offset = offset
+            offset += turn.line_count
+
+        self._total_lines = offset
+        self._widest_line = max(widest, self._last_width)
+        self.virtual_size = Size(self._widest_line, self._total_lines)
+        self._line_cache.clear()
+
+    def append_streaming_block(self, block, filters: dict = None):
+        """Append a block to the streaming turn.
+
+        Handles TextDeltaBlock (buffer + render delta tail) and
+        non-delta blocks (flush + render + stable prefix).
+        """
+        from cc_dump.formatting import TextDeltaBlock
+
+        if filters is None:
+            filters = self._last_filters
+
+        # Ensure streaming turn exists
+        if not self._turns or not self._turns[-1].is_streaming:
+            self.begin_streaming_turn()
+
+        td = self._turns[-1]
+
+        # Add block to blocks list
+        td.blocks.append(block)
+
+        if isinstance(block, TextDeltaBlock):
+            # Buffer the delta text
+            td._text_delta_buffer.append(block.text)
+
+            # Re-render delta tail
+            self._refresh_streaming_delta(td)
+
+        else:
+            # Non-delta block: flush delta buffer first
+            self._flush_streaming_delta(td, filters)
+
+            # Render this block
+            rendered = cc_dump.tui.rendering.render_block(block, filters)
+            if rendered is not None:
+                width = self.scrollable_content_region.width if self._size_known else self._last_width
+                console = self.app.console
+                new_strips = self._render_single_block_to_strips(rendered, console, width)
+
+                # Add to stable strips
+                td.strips.extend(new_strips)
+
+                # Update block_strip_map (track where this block starts)
+                block_idx = len(td.blocks) - 1
+                td.block_strip_map[block_idx] = td._stable_strip_count
+
+                # Advance stable boundary
+                td._stable_strip_count = len(td.strips)
+
+        # Update virtual size
+        self._update_streaming_size(td)
+
+        # Auto-scroll if follow mode
+        if self._follow_mode:
+            self._scrolling_programmatically = True
+            self.scroll_end(animate=False, immediate=False, x_axis=False)
+            self._scrolling_programmatically = False
+
+    def finalize_streaming_turn(self) -> list:
+        """Finalize the streaming turn.
+
+        Consolidates TextDeltaBlocks → TextContentBlocks, full re-render
+        from consolidated blocks, marks turn as non-streaming.
+
+        Returns the consolidated block list.
+        """
+        from cc_dump.formatting import TextDeltaBlock, TextContentBlock
+
+        if not self._turns or not self._turns[-1].is_streaming:
+            return []
+
+        td = self._turns[-1]
+
+        # Consolidate consecutive TextDeltaBlock runs into TextContentBlock
+        consolidated = []
+        delta_buffer = []
+
+        for block in td.blocks:
+            if isinstance(block, TextDeltaBlock):
+                delta_buffer.append(block.text)
+            else:
+                # Flush accumulated deltas as a single TextContentBlock
+                if delta_buffer:
+                    combined_text = "".join(delta_buffer)
+                    consolidated.append(TextContentBlock(text=combined_text))
+                    delta_buffer.clear()
+                # Add the non-delta block
+                consolidated.append(block)
+
+        # Flush any remaining deltas
+        if delta_buffer:
+            combined_text = "".join(delta_buffer)
+            consolidated.append(TextContentBlock(text=combined_text))
+
+        # Full re-render from consolidated blocks
+        width = self.scrollable_content_region.width if self._size_known else self._last_width
+        console = self.app.console
+        strips, block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
+            consolidated, self._last_filters, console, width
+        )
+
+        # Update turn data
+        td.blocks = consolidated
+        td.strips = strips
+        td.block_strip_map = block_strip_map
+        td.is_streaming = False
+        td._text_delta_buffer.clear()
+        td._stable_strip_count = 0
+
+        # Compute relevant filter keys
+        td.compute_relevant_keys()
+        td._last_filter_snapshot = {
+            k: self._last_filters.get(k, False) for k in td.relevant_filter_keys
+        }
+
+        # Recalculate offsets
+        self._recalculate_offsets()
+
+        return consolidated
+
+    # ─────────────────────────────────────────────────────────────────────────
+
     def _scroll_to_anchor(self, anchor: tuple[int, int, int]) -> bool:
         """Try to scroll to an anchor position. Returns True if the block was visible."""
         turn_index, block_index, line_within_block = anchor
@@ -397,6 +550,9 @@ class ConversationView(ScrollView):
         console = self.app.console
         changed = False
         for td in self._turns:
+            # Skip streaming turns during filter changes
+            if td.is_streaming:
+                continue
             if td.re_render(filters, console, width):
                 changed = True
 
@@ -439,6 +595,9 @@ class ConversationView(ScrollView):
             self._last_width = width
             console = self.app.console
             for td in self._turns:
+                # Skip re-rendering streaming turns on resize
+                if td.is_streaming:
+                    continue
                 td.strips, td.block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
                     td.blocks, self._last_filters, console, width
                 )
@@ -594,17 +753,85 @@ class ConversationView(ScrollView):
     # ─── State management ────────────────────────────────────────────────────
 
     def get_state(self) -> dict:
+        """Extract state for hot-reload preservation.
+
+        Preserves streaming turn state including blocks, delta buffer, and is_streaming flag.
+        """
+        all_blocks = []
+        streaming_states = []
+
+        for td in self._turns:
+            all_blocks.append(td.blocks)
+            if td.is_streaming:
+                streaming_states.append({
+                    "turn_index": td.turn_index,
+                    "text_delta_buffer": list(td._text_delta_buffer),
+                    "stable_strip_count": td._stable_strip_count,
+                })
+
         return {
-            "all_blocks": [td.blocks for td in self._turns],
+            "all_blocks": all_blocks,
             "follow_mode": self._follow_mode,
             "selected_turn": self._selected_turn,
             "turn_count": len(self._turns),
+            "streaming_states": streaming_states,
         }
 
     def restore_state(self, state: dict):
+        """Restore state from a previous instance.
+
+        Restores streaming turn state and re-renders from preserved blocks.
+        """
         self._pending_restore = state
         self._follow_mode = state.get("follow_mode", True)
         self._selected_turn = state.get("selected_turn", None)
+
+        # Restore streaming states after _rebuild_from_state is called
+        streaming_states = state.get("streaming_states", [])
+        if streaming_states:
+            # Store for application after rebuild
+            self._pending_streaming_states = streaming_states
+
+    def _rebuild_from_state(self, filters: dict):
+        """Rebuild from restored state."""
+        state = self._pending_restore
+        self._pending_restore = None
+        self._turns.clear()
+
+        all_blocks = state.get("all_blocks", [])
+        streaming_states = state.get("streaming_states", [])
+        streaming_by_index = {s["turn_index"]: s for s in streaming_states}
+
+        for turn_idx, block_list in enumerate(all_blocks):
+            if turn_idx in streaming_by_index:
+                # Restore as streaming turn
+                s = streaming_by_index[turn_idx]
+                width = self.scrollable_content_region.width if self._size_known else self._last_width
+                console = self.app.console
+
+                # Render blocks to get initial strips
+                strips, block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
+                    block_list, filters, console, width
+                )
+
+                td = TurnData(
+                    turn_index=turn_idx,
+                    blocks=block_list,
+                    strips=strips,
+                    block_strip_map=block_strip_map,
+                    is_streaming=True,
+                    _text_delta_buffer=s["text_delta_buffer"],
+                    _stable_strip_count=s["stable_strip_count"],
+                )
+                self._turns.append(td)
+
+                # Re-render streaming delta to update display
+                self._refresh_streaming_delta(td)
+            else:
+                # Regular completed turn
+                self.add_turn(block_list, filters)
+
+        self._recalculate_offsets()
 
 
 class StatsPanel(Static):
@@ -874,11 +1101,6 @@ class LogsPanel(RichLog):
 def create_conversation_view() -> ConversationView:
     """Create a new ConversationView instance."""
     return ConversationView()
-
-
-def create_streaming_richlog() -> StreamingRichLog:
-    """Create a new StreamingRichLog instance."""
-    return StreamingRichLog()
 
 
 def create_stats_panel() -> StatsPanel:
