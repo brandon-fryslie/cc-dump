@@ -12,7 +12,6 @@ from cc_dump.tui.widget_factory import (
     TimelinePanel,
     LogsPanel,
     FilterStatusBar,
-    StreamingRichLog,
     TurnData,
 )
 
@@ -23,6 +22,5 @@ __all__ = [
     "TimelinePanel",
     "LogsPanel",
     "FilterStatusBar",
-    "StreamingRichLog",
     "TurnData",
 ]
