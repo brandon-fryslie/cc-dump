@@ -73,7 +73,6 @@ class CcDumpApp(App):
 
         # Widget IDs for querying (set after compose)
         self._conv_id = "conversation-view"
-        self._streaming_id = "streaming-richlog"
         self._stats_id = "stats-panel"
         self._economics_id = "economics-panel"
         self._timeline_id = "timeline-panel"
@@ -86,10 +85,6 @@ class CcDumpApp(App):
         conv = cc_dump.tui.widget_factory.create_conversation_view()
         conv.id = self._conv_id
         yield conv
-
-        streaming = cc_dump.tui.widget_factory.create_streaming_richlog()
-        streaming.id = self._streaming_id
-        yield streaming
 
         economics = cc_dump.tui.widget_factory.create_economics_panel()
         economics.id = self._economics_id
@@ -147,9 +142,6 @@ class CcDumpApp(App):
     # Widget accessors - use query by ID so we can swap widgets
     def _get_conv(self):
         return self.query_one("#" + self._conv_id)
-
-    def _get_streaming(self):
-        return self.query_one("#" + self._streaming_id)
 
     def _get_stats(self):
         return self.query_one("#" + self._stats_id)
@@ -249,7 +241,6 @@ class CcDumpApp(App):
 
         # Get current widget states
         conv_state = self._get_conv().get_state()
-        streaming_state = self._get_streaming().get_state()
         stats_state = self._get_stats().get_state()
         economics_state = self._get_economics().get_state()
         timeline_state = self._get_timeline().get_state()
@@ -264,7 +255,6 @@ class CcDumpApp(App):
 
         # Remove old widgets
         old_conv = self._get_conv()
-        old_streaming = self._get_streaming()
         old_stats = self._get_stats()
         old_economics = self._get_economics()
         old_timeline = self._get_timeline()
@@ -275,10 +265,6 @@ class CcDumpApp(App):
         new_conv = cc_dump.tui.widget_factory.create_conversation_view()
         new_conv.id = self._conv_id
         new_conv.restore_state(conv_state)
-
-        new_streaming = cc_dump.tui.widget_factory.create_streaming_richlog()
-        new_streaming.id = self._streaming_id
-        new_streaming.restore_state(streaming_state)
 
         new_stats = cc_dump.tui.widget_factory.create_stats_panel()
         new_stats.id = self._stats_id
@@ -306,7 +292,6 @@ class CcDumpApp(App):
 
         # Swap widgets - mount new before removing old to maintain layout
         old_conv.remove()
-        old_streaming.remove()
         old_stats.remove()
         old_economics.remove()
         old_timeline.remove()
@@ -316,8 +301,7 @@ class CcDumpApp(App):
         # Mount in correct order after header
         header = self.query_one(Header)
         self.mount(new_conv, after=header)
-        self.mount(new_streaming, after=new_conv)
-        self.mount(new_economics, after=new_streaming)
+        self.mount(new_economics, after=new_conv)
         self.mount(new_timeline, after=new_economics)
         self.mount(new_logs, after=new_timeline)
         self.mount(new_stats, after=new_logs)
@@ -350,7 +334,6 @@ class CcDumpApp(App):
         # Build widget dict for handlers
         widgets = {
             "conv": self._get_conv(),
-            "streaming": self._get_streaming(),
             "stats": self._get_stats(),
             "filters": self.active_filters,
             "show_expand": self.show_expand,

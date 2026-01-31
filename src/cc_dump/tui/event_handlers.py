@@ -37,7 +37,7 @@ def handle_request(event, state, widgets, app_state, log_fn):
     Args:
         event: The event tuple ("request", body)
         state: The content tracking state dict
-        widgets: Dict with widget references (conv, streaming, stats, timeline, economics)
+        widgets: Dict with widget references (conv, stats, timeline, economics)
         app_state: Dict with app-level state (current_turn_usage)
         log_fn: Function to log application messages
 
@@ -104,10 +104,16 @@ def handle_response_headers(event, state, widgets, app_state, log_fn):
     try:
         blocks = cc_dump.formatting.format_response_headers(status_code, headers_dict)
         if blocks:
-            streaming = widgets["streaming"]
+            conv = widgets["conv"]
             filters = widgets["filters"]
+
+            # Begin streaming turn if not started
+            conv.begin_streaming_turn()
+
+            # Append response header blocks
             for block in blocks:
-                streaming.append_block(block, filters)
+                conv.append_streaming_block(block, filters)
+
             log_fn("DEBUG", f"Displayed response headers: HTTP {status_code}, {len(headers_dict)} headers")
     except Exception as e:
         log_fn("ERROR", f"Error handling response headers: {e}")
@@ -134,13 +140,17 @@ def handle_response_event(event, state, widgets, app_state, log_fn):
     try:
         blocks = cc_dump.formatting.format_response_event(event_type, data)
 
-        streaming = widgets["streaming"]
+        conv = widgets["conv"]
         stats = widgets["stats"]
         filters = widgets["filters"]
 
+        # Begin streaming turn if not started
+        if blocks:
+            conv.begin_streaming_turn()
+
         for block in blocks:
-            # Stream to StreamingRichLog for immediate display
-            streaming.append_block(block, filters)
+            # Append to ConversationView streaming turn
+            conv.append_streaming_block(block, filters)
 
             # Extract stats from message_start and message_delta
             if isinstance(block, cc_dump.formatting.StreamInfoBlock):
@@ -185,16 +195,13 @@ def handle_response_done(event, state, widgets, app_state, refresh_callbacks, db
         Updated app_state dict
     """
     try:
-        streaming = widgets["streaming"]
         conv = widgets["conv"]
         stats = widgets["stats"]
         filters = widgets["filters"]
         show_expand = widgets.get("show_expand", False)
 
-        # Finalize streaming: get blocks and add as turn to ConversationView
-        blocks = streaming.finalize()
-        if blocks:
-            conv.add_turn(blocks)
+        # Finalize streaming turn in ConversationView
+        blocks = conv.finalize_streaming_turn()
 
         # Clear current turn usage (turn is now committed to DB)
         app_state["current_turn_usage"] = {}
