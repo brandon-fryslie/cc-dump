@@ -245,7 +245,11 @@ def _get_seed_hue() -> float:
         try:
             return float(env)
         except ValueError:
-            pass
+            import sys
+            sys.stderr.write(
+                f"[palette] invalid CC_DUMP_SEED_HUE={env!r}, using default\n"
+            )
+            sys.stderr.flush()
     return 190.0
 
 

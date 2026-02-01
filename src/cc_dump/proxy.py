@@ -3,6 +3,7 @@
 import http.server
 import json
 import ssl
+import sys
 import urllib.error
 import urllib.request
 from urllib.parse import urlparse
@@ -62,8 +63,9 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 safe_req_headers = _safe_headers(self.headers)
                 self.event_queue.put(("request_headers", safe_req_headers))
                 self.event_queue.put(("request", body))
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as e:
+                sys.stderr.write(f"[proxy] malformed request JSON: {e}\n")
+                sys.stderr.flush()
 
         # Forward
         headers = {k: v for k, v in self.headers.items()
@@ -126,7 +128,9 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 
             try:
                 event = json.loads(json_str)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                sys.stderr.write(f"[proxy] malformed SSE JSON: {e}\n")
+                sys.stderr.flush()
                 continue
 
             event_type = event.get("type", "")

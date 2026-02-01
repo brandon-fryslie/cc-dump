@@ -35,7 +35,9 @@ class SQLiteWriter:
         try:
             self._handle(event)
         except Exception as e:
+            import traceback
             sys.stderr.write("[db] error: {}\n".format(e))
+            traceback.print_exc(file=sys.stderr)
             sys.stderr.flush()
 
     def _handle(self, event):

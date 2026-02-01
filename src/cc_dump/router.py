@@ -77,5 +77,7 @@ class EventRouter:
                 except Exception as e:
                     # Don't let one subscriber's error kill the router
                     import sys
+                    import traceback
                     sys.stderr.write("[router] subscriber error: {}\n".format(e))
+                    traceback.print_exc(file=sys.stderr)
                     sys.stderr.flush()

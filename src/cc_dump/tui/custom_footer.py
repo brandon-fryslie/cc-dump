@@ -68,6 +68,7 @@ class StyledFooter(Footer):
     def _init_palette_colors(cls):
         """Initialize ACTION_TO_FILTER and DEFAULT_CSS from palette."""
         p = cc_dump.palette.PALETTE
+        
         _filter_names = [
             ("toggle_headers", "headers"),
             ("toggle_tools", "tools"),

@@ -137,9 +137,11 @@ def _scan_mtimes() -> None:
 
             try:
                 _mtimes[path] = os.path.getmtime(path)
-            except OSError:
-                # File may have been deleted or is inaccessible
-                pass
+            except FileNotFoundError:
+                pass  # File deleted between listdir and getmtime
+            except OSError as e:
+                sys.stderr.write(f"[hot-reload] cannot stat {path}: {e}\n")
+                sys.stderr.flush()
 
 
 def _get_changed_files() -> set[str]:
@@ -170,8 +172,10 @@ def _get_changed_files() -> set[str]:
                 if path in _mtimes and _mtimes[path] != mtime:
                     changed.add(path)
                 _mtimes[path] = mtime
-            except OSError:
-                # File may have been deleted or is inaccessible
-                pass
+            except FileNotFoundError:
+                pass  # File deleted between listdir and getmtime
+            except OSError as e:
+                sys.stderr.write(f"[hot-reload] cannot stat {path}: {e}\n")
+                sys.stderr.flush()
 
     return changed

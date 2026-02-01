@@ -209,7 +209,7 @@ class CcDumpApp(App):
             # Post to main thread for handling
             self.call_from_thread(self._handle_event, event)
 
-    def _check_hot_reload(self):
+    async def _check_hot_reload(self):
         """Check for file changes and reload modules if necessary."""
         import cc_dump.hot_reload
 
@@ -230,7 +230,7 @@ class CcDumpApp(App):
         # Check if widget_factory was reloaded - if so, replace widgets
         try:
             if "cc_dump.tui.widget_factory" in reloaded_modules:
-                self._replace_all_widgets()
+                await self._replace_all_widgets()
             elif self.is_running:
                 # Just re-render with new code (for rendering/formatting changes)
                 conv = self._get_conv()
@@ -240,7 +240,7 @@ class CcDumpApp(App):
             self.notify(f"[hot-reload] error applying: {e}", severity="error")
             self._log("ERROR", f"Hot-reload error applying: {e}")
 
-    def _replace_all_widgets(self):
+    async def _replace_all_widgets(self):
         """Replace all widgets with fresh instances from the reloaded factory.
 
         Uses create-before-remove pattern: all new widgets are created and
@@ -252,11 +252,11 @@ class CcDumpApp(App):
 
         self._replacing_widgets = True
         try:
-            self._replace_all_widgets_inner()
+            await self._replace_all_widgets_inner()
         finally:
             self._replacing_widgets = False
 
-    def _replace_all_widgets_inner(self):
+    async def _replace_all_widgets_inner(self):
         """Inner implementation of widget replacement.
 
         Strategy: Create all new widgets first (without IDs), then remove old
@@ -305,15 +305,16 @@ class CcDumpApp(App):
         new_logs.restore_state(logs_state)
 
         # 3. Remove old widgets (DOM gap starts — _replacing_widgets flag protects us)
-        old_conv.remove()
+        #    Must await removal so Textual deregisters IDs before we reuse them.
+        await old_conv.remove()
         if old_stats is not None:
-            old_stats.remove()
+            await old_stats.remove()
         if old_economics is not None:
-            old_economics.remove()
+            await old_economics.remove()
         if old_timeline is not None:
-            old_timeline.remove()
+            await old_timeline.remove()
         if old_logs is not None:
-            old_logs.remove()
+            await old_logs.remove()
 
         # 4. Assign IDs and mount new widgets (IDs must be set before mount)
         new_conv.id = self._conv_id
@@ -328,11 +329,11 @@ class CcDumpApp(App):
         new_logs.display = logs_visible
 
         header = self.query_one(Header)
-        self.mount(new_conv, after=header)
-        self.mount(new_economics, after=new_conv)
-        self.mount(new_timeline, after=new_economics)
-        self.mount(new_logs, after=new_timeline)
-        self.mount(new_stats, after=new_logs)
+        await self.mount(new_conv, after=header)
+        await self.mount(new_economics, after=new_conv)
+        await self.mount(new_timeline, after=new_economics)
+        await self.mount(new_logs, after=new_timeline)
+        await self.mount(new_stats, after=new_logs)
 
         # 5. Re-render with current filters
         new_conv.rerender(self.active_filters)
