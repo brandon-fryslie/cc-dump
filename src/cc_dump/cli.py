@@ -21,6 +21,8 @@ def main():
                         help="Upstream API URL for reverse proxy mode (default: https://api.anthropic.com)")
     parser.add_argument("--db", type=str, default=os.path.expanduser("~/.local/share/cc-dump/sessions.db"), help="SQLite database path")
     parser.add_argument("--no-db", action="store_true", help="Disable persistence (no database)")
+    parser.add_argument("--record", type=str, default=None, help="HAR recording output path")
+    parser.add_argument("--no-record", action="store_true", help="Disable HAR recording")
     parser.add_argument("--seed-hue", type=float, default=None,
                         help="Seed hue (0-360) for color palette (default: 190, cyan). Env: CC_DUMP_SEED_HUE")
     args = parser.parse_args()
@@ -77,6 +79,23 @@ def main():
     else:
         print("   Database: disabled (--no-db)")
 
+    # HAR recording subscriber (direct subscriber, inline writes)
+    har_recorder = None
+    if not args.no_record:
+        # Generate session_id if not already created for database
+        if session_id is None:
+            session_id = uuid.uuid4().hex
+
+        import cc_dump.har_recorder
+        record_dir = os.path.expanduser("~/.local/share/cc-dump/recordings")
+        os.makedirs(record_dir, exist_ok=True)
+        record_path = args.record or os.path.join(record_dir, f"recording-{session_id}.har")
+        har_recorder = cc_dump.har_recorder.HARRecordingSubscriber(record_path, session_id)
+        router.add_subscriber(DirectSubscriber(har_recorder.on_event))
+        print(f"   Recording: {record_path}")
+    else:
+        print("   Recording: disabled (--no-record)")
+
     router.start()
 
     # Initialize hot-reload watcher
@@ -101,4 +120,6 @@ def main():
         app.run()
     finally:
         router.stop()
+        if har_recorder:
+            har_recorder.close()
         server.shutdown()
