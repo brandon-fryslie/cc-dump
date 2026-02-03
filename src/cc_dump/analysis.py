@@ -154,6 +154,8 @@ class ToolInvocation:
     result_bytes: int = 0
     input_tokens_est: int = 0
     result_tokens_est: int = 0
+    input_str: str = ""    # Raw input text for token counting
+    result_str: str = ""   # Raw result text for token counting
     is_error: bool = False
 
 
@@ -226,6 +228,8 @@ def correlate_tools(messages: list) -> list[ToolInvocation]:
                     result_bytes=result_bytes,
                     input_tokens_est=estimate_tokens(input_str),
                     result_tokens_est=estimate_tokens(result_str),
+                    input_str=input_str,
+                    result_str=result_str,
                     is_error=block.get("is_error", False),
                 ))
 
