@@ -5,84 +5,90 @@ Status: PARTIALLY READY
 Source: EVALUATION-20260203-120000.md
 
 ## Sprint Goal
-Implement replay of recorded JSONL event streams through the existing pipeline, achieving zero divergence between live and restored sessions.
+Implement HAR replay that loads complete request/response pairs and restores application state directly, with NO streaming simulation.
 
 ## Scope
 **Deliverables:**
-- `replayer.py` module: reads JSONL recording and injects events into the router's source queue
+- `har_replayer.py` module: reads HAR file and processes complete messages
 - CLI `--replay <path>` flag that starts the TUI in replay mode (no proxy server)
-- Replay speed control (instant, 1x realtime, configurable multiplier)
-- Verification that replayed sessions produce identical TUI output to live sessions
+- Batch event processing: load all messages, process immediately, display final state
+- Verification that replayed sessions produce identical final state to live sessions
 
 ## Work Items
 
-### P0 - Event Replayer Module
+### P0 - HAR Loader and Message Parser
 
-**Dependencies**: Sprint 1 (event-recording) - Event Serializer/Deserializer
-**Spec Reference**: ARCHITECTURE.md "Event Flow" - router drains source queue
+**Dependencies**: Sprint 1 (HAR recording) - HAR format structure
+**Spec Reference**: HAR 1.2 Spec, ARCHITECTURE.md "Event Flow"
 **Status Reference**: EVALUATION-20260203-120000.md "Architectural Gap" section
 
 #### Description
-Create `replayer.py` that reads a JSONL recording file and pushes event tuples into a `queue.Queue` -- the same queue that `proxy.py` normally feeds. The replayer is an alternative event source, not a new pipeline.
+Create `har_replayer.py` that loads HAR files and extracts complete request/response pairs. The key difference from Sprint 1 planning: **NO streaming simulation**. We load complete messages and process them as batch data.
 
-The key insight: `EventRouter.__init__` takes a `source: queue.Queue`. In live mode, proxy.py puts events into this queue. In replay mode, the replayer puts events into this same queue. Everything downstream (router fan-out, subscribers, TUI) is identical.
+The loader must:
+- Parse HAR JSON structure (`log.entries[]`)
+- Extract request body (JSON) and response content (complete Claude message)
+- Validate that responses are in non-streaming format (not SSE streams)
+- Return list of (request, response) tuples for processing
 
-The replayer must:
-- Read the session_meta header line and validate format version
-- Read event lines sequentially
-- Push event tuples into the provided queue
-- Support speed modes: instant (no delay), realtime (original timing), multiplied (Nx)
-- Run in a dedicated thread (like proxy's server_thread)
-- Signal completion when all events are replayed
+**Critical design constraint**: This is NOT an event source that feeds the queue. It loads complete data and hands it off for batch processing.
 
 #### Acceptance Criteria
-- [ ] `EventReplayer(path, queue, speed)` constructor validates file and reads header
-- [ ] `start()` method begins replay in background thread
-- [ ] Events are pushed to the queue in original order
-- [ ] Speed modes work: instant (speed=0), realtime (speed=1.0), fast (speed=0.5 = 2x)
-- [ ] Completion callback or event signals end of replay
+- [ ] `load_har(path) -> list[tuple[dict, dict]]` loads HAR and returns request/response pairs
+- [ ] Validates HAR structure (has log.entries, each has request/response)
+- [ ] Parses request postData JSON and response content JSON
+- [ ] Raises clear errors for invalid HAR format or SSE responses (we expect synthetic non-streaming)
+- [ ] Handles large HAR files (multiple conversations, dozens of entries)
 
 #### Technical Notes
-- The replayer is structurally parallel to proxy.py's server_thread. Both produce event tuples into the same queue type.
-- For "instant" mode, push all events with no delay. For timed modes, use `time.sleep(delta)` between events based on timestamp differences.
-- Thread must be daemon=True so it doesn't block app shutdown.
+- Use `json.load()` to parse HAR file
+- Response content should be complete Claude messages (`{"id": "...", "content": [...], "usage": {...}}`)
+- If HAR contains actual SSE streams (from old recordings), need migration path or error message
 
 ---
 
-### P0 - CLI Replay Mode
+### P0 - CLI Replay Mode with Batch Processing
 
-**Dependencies**: Event Replayer
+**Dependencies**: HAR Loader
 **Spec Reference**: PROJECT_SPEC.md "Zero Configuration", CLAUDE.md CLI section
 **Status Reference**: EVALUATION-20260203-120000.md "CLI Bootstrap" section
 
 #### Description
 Add `--replay <path>` flag to cli.py. When specified:
 1. Do NOT start the HTTP proxy server
-2. Create event_q as normal
-3. Create EventReplayer targeting event_q instead of proxy
-4. Create router, subscribers as normal (including SQLite writer for a new session)
-5. Start the TUI as normal
-6. The replayer feeds events; everything else is identical
+2. Load HAR file and extract all request/response pairs
+3. Convert complete messages to event tuples (synthetic events that match live format)
+4. Push ALL events to event_q in batch (no delays, no streaming simulation)
+5. Start router and TUI as normal
+6. Router processes all events immediately, builds final state, displays
 
-This is the architectural keystone: the TUI and all downstream processing code is UNAWARE of whether events come from a live proxy or a replay. One code path.
+**Key architectural decision**: Replay still uses the event pipeline (router → subscribers → formatting) for code reuse, but pushes all events at once instead of streaming them. The TUI processes them in a tight loop until complete, THEN displays.
 
 #### Acceptance Criteria
 - [ ] `--replay <path>` flag accepted by argparse
 - [ ] When --replay is set, no HTTP server is started
-- [ ] Events from the recording file appear in the TUI identically to live capture
-- [ ] SQLite database is populated from replayed events (same as live)
-- [ ] `--replay` + `--record` together works (re-records a replay -- useful for format migration)
-- [ ] Exit cleanly when replay completes (or keep TUI open for browsing)
+- [ ] HAR entries are converted to synthetic event tuples (request, response_event, response_done)
+- [ ] All events pushed to queue immediately (no delays)
+- [ ] Final TUI state matches what live session would produce
+- [ ] SQLite database populated from replayed data (if desired)
+- [ ] TUI stays open after replay completes (for browsing)
 
 #### Technical Notes
 In cli.py, the change is structural:
 
 ```python
 if args.replay:
-    # Replay mode: replayer feeds event_q
-    from cc_dump.replayer import EventReplayer
-    replayer = EventReplayer(args.replay, event_q, speed=args.replay_speed)
-    replayer.start()
+    # Replay mode: load HAR, convert to events, push all to queue
+    from cc_dump.har_replayer import load_har, convert_to_events
+    request_response_pairs = load_har(args.replay)
+
+    # Convert each pair to event tuples
+    for req, resp in request_response_pairs:
+        events = convert_to_events(req, resp)  # Returns list of event tuples
+        for event in events:
+            event_q.put(event)
+
+    # No proxy server - events already in queue
 else:
     # Live mode: proxy feeds event_q
     server = http.server.HTTPServer(...)
@@ -90,70 +96,72 @@ else:
     server_thread.start()
 ```
 
-Everything after this point (router setup, subscriber setup, TUI launch) stays identical.
+Everything after this point (router setup, subscriber setup, TUI launch) stays identical. The router drains the queue, which is already full of events from the HAR file.
 
 ---
 
-### P0 - Content Tracking State Restoration
+### P0 - Message-to-Event Conversion
 
-**Dependencies**: Event Replayer, CLI Replay Mode
+**Dependencies**: HAR Loader, CLI Replay Mode
+**Spec Reference**: ARCHITECTURE.md "Event Flow", formatting.py event handling
+**Status Reference**: EVALUATION-20260203-120000.md "Event Pipeline" section
+
+#### Description
+Create `convert_to_events(request, response)` function that takes a complete request/response pair and generates synthetic event tuples that match the live pipeline format.
+
+**Synthetic events to generate:**
+1. `("request_headers", {...})` - extracted from HAR request headers
+2. `("request", {...})` - request postData parsed as JSON
+3. `("response_headers", status, {...})` - extracted from HAR response
+4. `("response_event", "message_start", {...})` - synthetic message_start with message metadata
+5. `("response_event", "content_block_start", {...})` - for each content block
+6. `("response_event", "content_block_delta", {...})` - for each text segment (no actual deltas, just complete text)
+7. `("response_event", "content_block_stop", {...})` - for each content block
+8. `("response_event", "message_delta", {...})` - usage information
+9. `("response_event", "message_stop", {...})` - end marker
+10. `("response_done",)` - completion
+
+**Critical**: These events must match what formatting.py expects. The complete message is "exploded" back into the SSE event sequence format, but all at once (no streaming).
+
+#### Acceptance Criteria
+- [ ] `convert_to_events(req, resp) -> list[tuple]` generates all required event types
+- [ ] Generated events match the format that formatting.py expects
+- [ ] Content blocks are properly sequenced (start → deltas → stop)
+- [ ] Tool use blocks are handled correctly
+- [ ] Usage information is included in message_delta event
+- [ ] Final state after processing matches live session state
+
+#### Technical Notes
+- Look at formatting.py to understand exact event structure expected
+- Complete message content is split into "fake deltas" that contain full text (not actual character-by-character deltas)
+- This is the inverse of Sprint 1's reconstruction: live SSE → complete message (Sprint 1), complete message → synthetic SSE (Sprint 2)
+
+---
+
+### P1 - State Restoration Verification
+
+**Dependencies**: Message-to-Event Conversion, CLI Replay Mode
 **Spec Reference**: ARCHITECTURE.md "Content Tracking" section
 **Status Reference**: EVALUATION-20260203-120000.md "Content tracking state" note
 
 #### Description
-Content tracking state (system prompt hashing, position tracking in `formatting.py`) is accumulated across events. When replaying, this state must build up naturally as events are processed -- which it will, since the same `format_request()` calls happen in the same order.
-
-This work item verifies that no special handling is needed: the state dict initialized in cli.py (lines 52-58) accumulates correctly during replay just as it does during live capture.
-
-If any state depends on wall-clock time or external factors (not event data), those must be identified and handled.
+Verify that content tracking state (system prompt hashing, position tracking in `formatting.py`) accumulates correctly during batch replay. Since replay pushes all events at once, the state dict builds up in a tight loop, but the final result should be identical to live.
 
 #### Acceptance Criteria
 - [ ] Replayed session produces identical system prompt tags ([sp-1], [sp-2], etc.) as live session
 - [ ] Diffs between system prompt versions are identical in replay vs. live
 - [ ] Content tracking state dict at end of replay matches what it would be after live session
-- [ ] No state depends on wall-clock time (only on event ordering and content)
+- [ ] Batch processing (all events at once) produces same final state as incremental streaming
 
 #### Technical Notes
-The state dict in cli.py lines 52-58 is:
-```python
-state = {"positions": {}, "known_hashes": {}, "next_id": 0, "next_color": 0, "request_counter": 0}
-```
-This is purely derived from event content processed through `track_content()` in formatting.py. Since replay feeds identical events, the state should be identical. This is a verification task, not an implementation task.
-
----
-
-### P1 - Replay Speed Control (MEDIUM confidence)
-
-**Dependencies**: Event Replayer
-**Spec Reference**: None (UX enhancement)
-**Status Reference**: N/A
-
-#### Description
-Add `--replay-speed <float>` flag. Values: 0 = instant, 1.0 = realtime, 0.5 = 2x speed, 2.0 = half speed. Default: 0 (instant).
-
-Additionally, consider TUI keybindings for speed control during replay (pause/resume, speed up/slow down). This is MEDIUM confidence because the UX design for interactive speed control needs consideration.
-
-#### Acceptance Criteria
-- [ ] `--replay-speed` CLI flag works with float values
-- [ ] Speed=0 replays all events instantly
-- [ ] Speed=1.0 replays at original timing
-- [ ] Speed values between 0 and 1 speed up; above 1 slow down
-
-#### Unknowns to Resolve
-1. Should the TUI show a "replay mode" indicator? Research: examine footer implementation in custom_footer.py
-2. Should there be interactive speed controls (keybindings)? Research: check if Textual binding system can handle dynamic additions
-3. What happens at end of replay -- keep TUI open or exit? Research: check how other TUI tools handle this
-
-#### Exit Criteria (to reach HIGH confidence)
-- [ ] UX decision made: replay indicator yes/no
-- [ ] UX decision made: interactive controls yes/no
-- [ ] UX decision made: end-of-replay behavior
+The state dict in cli.py is purely derived from event content processed through `track_content()` in formatting.py. Since replay feeds identical events (just in batch instead of streaming), the state should be identical. This is a verification task, not an implementation task.
 
 ## Dependencies
-- Sprint 1 (event-recording) must be complete: serializer/deserializer, recording format
+- Sprint 1 (HAR recording) must be complete: HAR format structure, message reconstruction
 - No dependency on Sprint 3 (unification)
 
 ## Risks
-- **Low risk**: Content tracking state may have hidden dependencies on factors outside event data. Mitigation: verification test in "Content Tracking State Restoration" work item.
-- **Medium risk**: Replay of streaming events at "instant" speed may overwhelm the TUI's rendering pipeline (events arrive faster than rendering). Mitigation: the QueueSubscriber already handles backpressure via queue depth; _drain_events processes one at a time.
-- **Low risk**: SQLite write during replay may conflict with live reads by panels. Mitigation: WAL mode already handles this for live sessions.
+- **Low risk**: Message-to-event conversion may not handle all content block types. Mitigation: tests cover text, tool_use, and other block types. Can extend as needed.
+- **Medium risk**: Batch processing (all events at once) may cause TUI freeze during load. Mitigation: acceptable for replay mode - users expect brief loading time. For very large HAR files (hundreds of entries), could show loading indicator.
+- **Low risk**: Content tracking state may accumulate differently in batch vs. streaming. Mitigation: verification test in "State Restoration Verification" work item.
+- **Low risk**: Synthetic events may not perfectly match live event structure. Mitigation: copy exact event structure from formatting.py expectations, validate with tests.

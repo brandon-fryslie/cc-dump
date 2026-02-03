@@ -5,126 +5,142 @@ Status: READY FOR IMPLEMENTATION
 Source: EVALUATION-20260203-120000.md
 
 ## Sprint Goal
-Implement a recording subscriber that captures every event tuple as JSONL, preserving exact ordering, timing, and data fidelity for later replay.
+Implement a HAR recording subscriber that accumulates streaming SSE events and writes complete HTTP request/response pairs in standard HAR format, while preserving live streaming UX.
 
 ## Scope
 **Deliverables:**
-- `recorder.py` module: a `Subscriber` that serializes event tuples to JSONL
-- JSONL format specification with timestamp, sequence number, and event data
-- Integration into `cli.py` as a third router subscriber
+- `har_recorder.py` module: a `Subscriber` that accumulates events and writes HAR format
+- HAR 1.2 compliant format with synthetic non-streaming responses
+- Integration into `cli.py` as a third router subscriber (parallel to TUI and SQLite)
 - CLI flag `--record <path>` to enable recording (on by default to a session file)
-- Tests for serialization round-trip fidelity
+- Tests for HAR generation and request/response reconstruction
 
 ## Work Items
 
-### P0 - Event Serializer/Deserializer
+### P0 - HAR Request/Response Builder
 
 **Dependencies**: None
-**Spec Reference**: ARCHITECTURE.md "Event Flow" section, proxy.py event tuple definitions
-**Status Reference**: EVALUATION-20260203-120000.md "Event Pipeline" section
+**Spec Reference**: HAR 1.2 Spec (https://w3c.github.io/web-performance/specs/HAR/Overview.html)
+**Status Reference**: EVALUATION-20260203-120000.md "Format Analysis" section
 
 #### Description
-Create a pair of functions that serialize and deserialize event tuples to/from JSON. The event tuples are currently plain Python tuples like `("request", body_dict)`, `("response_event", "message_start", data_dict)`, etc. These must round-trip perfectly -- the deserialized output must be identical to the original input when fed to any subscriber.
+Create functions to build HAR-compliant request/response entries from streaming SSE events. The key insight: as events arrive, accumulate them in memory, then when the stream completes, reconstruct a **synthetic non-streaming response** that contains the complete message.
+
+**Transformation:**
+- Input: Streaming SSE events (`message_start`, `content_block_delta`, `message_delta`, `message_stop`)
+- Output: Single complete JSON message (as if `stream: false` was used)
 
 Key design decisions:
-- Use JSON lines format (one JSON object per line, newline-delimited)
-- Each line contains: `{"ts": <float_epoch>, "seq": <int>, "event": [<event_tuple_elements>]}`
-- Event tuple elements are already JSON-serializable (strings, dicts, ints) since they come from JSON parsing in proxy.py
-- The `event` field is a JSON array matching the tuple positionally
+- Store actual request with `"stream": false` (synthetic, for HAR viewer clarity)
+- Reconstruct response as `Content-Type: application/json` with complete message body
+- HAR entry includes headers, timing (startedDateTime, time in ms), HTTP version
+- Response body is the final reconstructed message, not the SSE event stream
 
 #### Acceptance Criteria
-- [ ] `serialize_event(event_tuple) -> str` produces valid JSON line with timestamp and sequence
-- [ ] `deserialize_event(json_line) -> (timestamp, seq, event_tuple)` reconstructs exact event tuple
-- [ ] Round-trip test: `deserialize(serialize(event)) == event` for all 8 event types
-- [ ] Binary data (if any) is base64-encoded; all other data passes through as-is
-- [ ] Malformed input raises clear ValueError with context
+- [ ] `build_har_request(headers, body) -> dict` produces HAR request entry
+- [ ] `build_har_response(status, headers, reconstructed_body, timings) -> dict` produces HAR response entry
+- [ ] Reconstructed message matches Claude API non-streaming format (content array, usage object, etc.)
+- [ ] HAR structure validates against HAR 1.2 schema
+- [ ] Headers are properly formatted (name/value pairs)
 
 #### Technical Notes
-- Event tuples from proxy.py contain only JSON-native types (str, dict, int, list, bool, None) because they originate from `json.loads()` calls. No special serialization needed for the payloads.
-- Timestamps should use `time.monotonic()` for relative replay timing and `time.time()` for absolute wall clock.
+- The response body must be reconstructed from accumulated deltas (text_delta events → final text)
+- Message structure: `{"id": "...", "type": "message", "role": "assistant", "content": [...], "usage": {...}}`
+- Timing information comes from event timestamps (first event → last event = total time)
 
 ---
 
-### P0 - Recording Subscriber
+### P0 - HAR Recording Subscriber
 
-**Dependencies**: Event Serializer
+**Dependencies**: HAR Request/Response Builder
 **Spec Reference**: ARCHITECTURE.md "Event Flow", router.py Subscriber protocol
 **Status Reference**: EVALUATION-20260203-120000.md "What Does NOT Exist" section
 
 #### Description
-Create `RecordingSubscriber` that implements the `Subscriber` protocol (has `on_event(event)` method) and writes each event to a JSONL file. This is a `DirectSubscriber`-style component (inline in the router thread, no queue).
+Create `HARRecordingSubscriber` that implements the `Subscriber` protocol and **accumulates streaming events in memory**, then writes complete HAR entries when each request/response completes. This is a `DirectSubscriber`-style component (inline in the router thread, no queue).
+
+**Critical UX constraint**: This subscriber runs in parallel with TUI subscriber. It must NOT block or slow down the live streaming display.
 
 The recorder must:
-- Open a file handle on construction
-- Write one JSON line per event (using the serializer from above)
-- Flush after each write (events must survive crash)
-- Include a header line with session metadata (start time, cc-dump version, session_id)
-- Close cleanly on shutdown
+- Accumulate events in memory per request (track state: pending request, accumulating response)
+- On `request` event: store request headers and body
+- On `response_event`: accumulate SSE events (message_start, content_block_delta, etc.)
+- On `response_done`: reconstruct complete message, build HAR entry, write to file
+- Maintain HAR 1.2 structure: `{"log": {"version": "1.2", "creator": {...}, "entries": [...]}}`
+- Write complete HAR file on shutdown (or incrementally append entries)
 
 #### Acceptance Criteria
 - [ ] Implements `Subscriber` protocol (has `on_event` method)
-- [ ] Writes valid JSONL to the specified file path
-- [ ] Each line is flushed immediately (fsync not required, but flush is)
-- [ ] First line is a metadata header with `{"type": "session_meta", "version": 1, ...}`
+- [ ] Accumulates events in memory without blocking TUI
+- [ ] Writes valid HAR 1.2 JSON structure
+- [ ] Synthetic responses contain complete messages (not SSE streams)
 - [ ] File is created in `~/.local/share/cc-dump/recordings/` by default
+- [ ] HAR file can be opened in Chrome DevTools Network panel
 
 #### Technical Notes
-- Follow the pattern of `DirectSubscriber` wrapping `SQLiteWriter.on_event` -- the recorder wraps a file write.
+- Follow the pattern of `DirectSubscriber` wrapping `SQLiteWriter.on_event`.
 - Error handling: log and continue on write errors (never crash the router).
-- File naming: `recording-<session_id>.jsonl`
+- File naming: `recording-<session_id>.har`
+- Memory management: for long sessions, periodically flush completed entries to disk
 
 ---
 
-### P1 - CLI Integration for Recording
+### P1 - CLI Integration for HAR Recording
 
-**Dependencies**: Recording Subscriber
+**Dependencies**: HAR Recording Subscriber
 **Spec Reference**: PROJECT_SPEC.md "Zero Configuration"
 **Status Reference**: EVALUATION-20260203-120000.md "CLI Bootstrap" section
 
 #### Description
-Add recording to `cli.py`. Recording should be on by default (every session is recorded) with an opt-out `--no-record` flag. Add `--record <path>` for explicit output path.
+Add HAR recording to `cli.py`. Recording should be on by default (every session is recorded) with an opt-out `--no-record` flag. Add `--record <path>` for explicit output path.
 
-The recorder subscriber is added to the router alongside the existing QueueSubscriber and DirectSubscriber(SQLiteWriter).
+The HAR recorder subscriber is added to the router alongside the existing QueueSubscriber and DirectSubscriber(SQLiteWriter). It runs in parallel and does NOT affect live streaming performance.
 
 #### Acceptance Criteria
-- [ ] `--record <path>` flag writes recording to specified path
-- [ ] Default behavior: records to `~/.local/share/cc-dump/recordings/recording-<session_id>.jsonl`
+- [ ] `--record <path>` flag writes HAR file to specified path
+- [ ] Default behavior: records to `~/.local/share/cc-dump/recordings/recording-<session_id>.har`
 - [ ] `--no-record` disables recording
 - [ ] Recording path is printed to stdout during startup (like db_path is today)
-- [ ] Recorder is stopped cleanly in the `finally` block alongside router.stop()
+- [ ] Recorder is stopped cleanly in the `finally` block (flushes HAR file)
+- [ ] Live streaming UX is completely unchanged (no latency or blocking)
 
 #### Technical Notes
 - Mirror the existing pattern for `--db`/`--no-db` flags.
 - The recorder is a third subscriber on the router, parallel to display and SQLite.
+- On shutdown, recorder must flush final HAR structure to disk
 
 ---
 
-### P1 - Recording Round-Trip Tests
+### P1 - HAR Generation Tests
 
-**Dependencies**: Event Serializer, Recording Subscriber
+**Dependencies**: HAR Request/Response Builder, HAR Recording Subscriber
 **Spec Reference**: CLAUDE.md test requirements
 **Status Reference**: EVALUATION-20260203-120000.md "Test coverage needed"
 
 #### Description
 Write tests that verify:
-1. All 8 event types serialize and deserialize correctly
-2. A recorded JSONL file can be read back and produces identical event tuples
-3. Edge cases: empty bodies, large payloads, unicode content, nested JSON
+1. Streaming SSE events correctly reconstruct into complete messages
+2. HAR structure is valid (validates against HAR 1.2 schema)
+3. Generated HAR files can be loaded by standard tools (Chrome DevTools compatible)
+4. Edge cases: empty messages, large responses, unicode content, tool use blocks
 
 #### Acceptance Criteria
-- [ ] Test file `tests/test_recorder.py` with at least 8 test cases (one per event type)
-- [ ] Round-trip test that writes events, reads them back, compares
-- [ ] Edge case test with unicode, empty strings, deeply nested dicts
-- [ ] Test that recorder handles write errors gracefully (does not crash)
+- [ ] Test file `tests/test_har_recorder.py` with at least 5 test cases
+- [ ] Reconstruction test: SSE event sequence → complete message (compare with expected non-streaming format)
+- [ ] HAR validation: generated structure has all required fields (log, entries, request, response)
+- [ ] Edge case test with unicode, tool use, large content blocks
+- [ ] Test that recorder handles incomplete streams gracefully (missing message_stop)
 
 #### Technical Notes
 - Use `tmp_path` pytest fixture for file I/O tests.
-- Generate representative event tuples by examining proxy.py's emit points.
+- Generate representative SSE event sequences matching real Claude API responses.
+- Test HAR can be parsed by json.load() and has expected structure
 
 ## Dependencies
 - No external dependencies on other sprints
 - This sprint is a prerequisite for Sprint 2 (replay)
 
 ## Risks
-- **Low risk**: Event tuples may contain types we haven't accounted for (e.g., if proxy.py is modified to emit non-JSON types). Mitigation: the serializer tests cover all current event types.
-- **Low risk**: Recording overhead could slow the event pipeline. Mitigation: JSONL append + flush is fast; benchmarks show <1ms per event for typical payloads.
+- **Low risk**: Message reconstruction logic may not handle all SSE event patterns. Mitigation: tests cover standard message types, tool use, and edge cases. Can add more patterns as discovered.
+- **Low risk**: HAR accumulation in memory could use significant RAM for very long responses. Mitigation: typical Claude responses are <100KB complete messages; even 50 turns = ~5MB peak memory usage.
+- **Low risk**: Recording overhead could slow the event pipeline. Mitigation: Accumulation in memory is fast (no I/O per event); only final HAR write at stream completion has I/O cost.
