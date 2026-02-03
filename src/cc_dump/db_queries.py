@@ -109,13 +109,21 @@ def get_tool_invocations(db_path: str, session_id: str) -> list[ToolInvocation]:
         conn.close()
 
 
-def get_tool_economics(db_path: str, session_id: str) -> list[ToolEconomicsRow]:
+def get_tool_economics(db_path: str, session_id: str, group_by_model: bool = False) -> list[ToolEconomicsRow]:
     """Query per-tool economics with real token counts and cache attribution.
 
-    Returns list of ToolEconomicsRow with:
-    - Real token counts from tool_invocations (input_tokens, result_tokens)
-    - Proportional cache attribution from parent turn
-    - Normalized cost using model pricing
+    Args:
+        db_path: Path to SQLite database
+        session_id: Session identifier
+        group_by_model: If False (default), aggregate by tool name only.
+                       If True, group by (tool_name, model) for breakdown view.
+
+    Returns:
+        List of ToolEconomicsRow with:
+        - Real token counts from tool_invocations (input_tokens, result_tokens)
+        - Proportional cache attribution from parent turn
+        - Normalized cost using model pricing
+        - model field: None for aggregate mode, model string for breakdown mode
     """
     uri = f"file:{db_path}?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
@@ -148,43 +156,89 @@ def get_tool_economics(db_path: str, session_id: str) -> list[ToolEconomicsRow]:
     for tool_name, input_tokens, result_tokens, model, turn_input, turn_cache_read, turn_id in rows:
         turn_tool_totals[turn_id] = turn_tool_totals.get(turn_id, 0) + input_tokens
 
-    # Aggregate by tool name
-    by_name = {}  # tool_name -> {calls, input_tokens, result_tokens, cache_read, cost_sum}
-    for tool_name, input_tokens, result_tokens, model, turn_input, turn_cache_read, turn_id in rows:
-        if tool_name not in by_name:
-            by_name[tool_name] = {
-                "calls": 0, "input_tokens": 0, "result_tokens": 0,
-                "cache_read": 0, "norm_cost": 0.0,
-            }
-        agg = by_name[tool_name]
-        agg["calls"] += 1
-        agg["input_tokens"] += input_tokens
-        agg["result_tokens"] += result_tokens
+    if group_by_model:
+        # Group by (tool_name, model)
+        by_key = {}  # (tool_name, model) -> {calls, input_tokens, result_tokens, cache_read, cost_sum}
+        for tool_name, input_tokens, result_tokens, model, turn_input, turn_cache_read, turn_id in rows:
+            key = (tool_name, model or "")
+            if key not in by_key:
+                by_key[key] = {
+                    "calls": 0, "input_tokens": 0, "result_tokens": 0,
+                    "cache_read": 0, "norm_cost": 0.0,
+                }
+            agg = by_key[key]
+            agg["calls"] += 1
+            agg["input_tokens"] += input_tokens
+            agg["result_tokens"] += result_tokens
 
-        # Proportional cache attribution
-        turn_total = turn_tool_totals.get(turn_id, 0)
-        if turn_total > 0 and turn_cache_read > 0:
-            share = input_tokens / turn_total
-            agg["cache_read"] += int(turn_cache_read * share)
+            # Proportional cache attribution
+            turn_total = turn_tool_totals.get(turn_id, 0)
+            if turn_total > 0 and turn_cache_read > 0:
+                share = input_tokens / turn_total
+                agg["cache_read"] += int(turn_cache_read * share)
 
-        # Norm cost contribution
-        _, pricing = classify_model(model)
-        agg["norm_cost"] += (
-            input_tokens * (pricing.base_input / HAIKU_BASE_UNIT)
-            + result_tokens * (pricing.output / HAIKU_BASE_UNIT)
-        )
+            # Norm cost contribution
+            _, pricing = classify_model(model)
+            agg["norm_cost"] += (
+                input_tokens * (pricing.base_input / HAIKU_BASE_UNIT)
+                + result_tokens * (pricing.output / HAIKU_BASE_UNIT)
+            )
 
-    # Build result list sorted by norm_cost descending
-    result = []
-    for name, agg in sorted(by_name.items(), key=lambda x: x[1]["norm_cost"], reverse=True):
-        result.append(ToolEconomicsRow(
-            name=name,
-            calls=agg["calls"],
-            input_tokens=agg["input_tokens"],
-            result_tokens=agg["result_tokens"],
-            cache_read_tokens=agg["cache_read"],
-            norm_cost=agg["norm_cost"],
-        ))
+        # Build result list sorted by norm_cost descending, then tool_name, then model
+        result = []
+        for (name, model), agg in sorted(
+            by_key.items(),
+            key=lambda x: (-x[1]["norm_cost"], x[0][0], x[0][1])
+        ):
+            result.append(ToolEconomicsRow(
+                name=name,
+                calls=agg["calls"],
+                input_tokens=agg["input_tokens"],
+                result_tokens=agg["result_tokens"],
+                cache_read_tokens=agg["cache_read"],
+                norm_cost=agg["norm_cost"],
+                model=model if model else None,
+            ))
+
+    else:
+        # Aggregate by tool_name only (existing behavior)
+        by_name = {}  # tool_name -> {calls, input_tokens, result_tokens, cache_read, cost_sum}
+        for tool_name, input_tokens, result_tokens, model, turn_input, turn_cache_read, turn_id in rows:
+            if tool_name not in by_name:
+                by_name[tool_name] = {
+                    "calls": 0, "input_tokens": 0, "result_tokens": 0,
+                    "cache_read": 0, "norm_cost": 0.0,
+                }
+            agg = by_name[tool_name]
+            agg["calls"] += 1
+            agg["input_tokens"] += input_tokens
+            agg["result_tokens"] += result_tokens
+
+            # Proportional cache attribution
+            turn_total = turn_tool_totals.get(turn_id, 0)
+            if turn_total > 0 and turn_cache_read > 0:
+                share = input_tokens / turn_total
+                agg["cache_read"] += int(turn_cache_read * share)
+
+            # Norm cost contribution
+            _, pricing = classify_model(model)
+            agg["norm_cost"] += (
+                input_tokens * (pricing.base_input / HAIKU_BASE_UNIT)
+                + result_tokens * (pricing.output / HAIKU_BASE_UNIT)
+            )
+
+        # Build result list sorted by norm_cost descending
+        result = []
+        for name, agg in sorted(by_name.items(), key=lambda x: x[1]["norm_cost"], reverse=True):
+            result.append(ToolEconomicsRow(
+                name=name,
+                calls=agg["calls"],
+                input_tokens=agg["input_tokens"],
+                result_tokens=agg["result_tokens"],
+                cache_read_tokens=agg["cache_read"],
+                norm_cost=agg["norm_cost"],
+                model=None,  # Aggregate mode always has model=None
+            ))
 
     return result
 

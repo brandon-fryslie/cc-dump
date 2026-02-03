@@ -34,6 +34,7 @@ class CcDumpApp(App):
         Binding("c", "toggle_economics", "c|ost", show=True),
         Binding("l", "toggle_timeline", "time|l|ine", show=True),
         Binding("ctrl+l", "toggle_logs", "Logs", show=False),
+        Binding("ctrl+m", "toggle_economics_breakdown", "Model breakdown", show=False),
         # Sprint 2: Follow mode and navigation
         Binding("f", "toggle_follow", "f|ollow", show=True),
         Binding("j", "next_turn", "next", show=False),
@@ -488,6 +489,12 @@ class CcDumpApp(App):
         logs = self._get_logs()
         if logs is not None:
             logs.display = self.show_logs
+
+    def action_toggle_economics_breakdown(self):
+        """Toggle between aggregate and per-model breakdown in economics panel."""
+        economics = self._get_economics()
+        if economics is not None:
+            economics.toggle_breakdown()
 
     # Sprint 2: Follow mode and navigation action handlers
 

@@ -182,6 +182,7 @@ class ToolEconomicsRow:
     result_tokens: int = 0
     cache_read_tokens: int = 0
     norm_cost: float = 0.0
+    model: str | None = None  # None for aggregate, model string for breakdown
 
 
 def correlate_tools(messages: list) -> list[ToolInvocation]:
@@ -315,6 +316,29 @@ def classify_model(model_str: str) -> tuple[str, ModelPricing]:
             return (family, pricing)
 
     return ("unknown", FALLBACK_PRICING)
+
+
+def format_model_short(model: str) -> str:
+    """Format model string as short display name.
+
+    Examples:
+        "claude-opus-4-20250514" -> "Opus 4.5"
+        "claude-sonnet-4-20250514" -> "Sonnet 4.5"
+        "claude-haiku-4-20250514" -> "Haiku 4.5"
+    """
+    if not model:
+        return "Unknown"
+
+    lower = model.lower()
+    if "opus" in lower:
+        return "Opus 4.5"
+    elif "sonnet" in lower:
+        return "Sonnet 4.5"
+    elif "haiku" in lower:
+        return "Haiku 4.5"
+
+    # Fallback: truncate to 20 chars
+    return model[:20]
 
 
 @dataclass

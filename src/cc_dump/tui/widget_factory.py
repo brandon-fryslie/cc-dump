@@ -1041,10 +1041,16 @@ class ToolEconomicsPanel(Static):
     """Panel showing per-tool token usage aggregates.
 
     Queries database as single source of truth.
+    Supports two view modes:
+    - Aggregate (default): one row per tool (all models combined)
+    - Breakdown (Ctrl+M): separate rows per (tool, model) combination
     """
 
     def __init__(self):
         super().__init__("")
+        self._breakdown_mode = False  # Default to aggregate view
+        self._db_path = None
+        self._session_id = None
 
     def refresh_from_db(self, db_path: str, session_id: str):
         """Refresh panel data from database.
@@ -1053,13 +1059,24 @@ class ToolEconomicsPanel(Static):
             db_path: Path to SQLite database
             session_id: Session identifier
         """
+        # Store for use in toggle_breakdown
+        self._db_path = db_path
+        self._session_id = session_id
+
         if not db_path or not session_id:
             self._refresh_display([])
             return
 
         # Query tool economics with real tokens and cache attribution
-        rows = cc_dump.db_queries.get_tool_economics(db_path, session_id)
+        rows = cc_dump.db_queries.get_tool_economics(db_path, session_id, group_by_model=self._breakdown_mode)
         self._refresh_display(rows)
+
+    def toggle_breakdown(self):
+        """Toggle between aggregate and breakdown view modes."""
+        self._breakdown_mode = not self._breakdown_mode
+        # Re-query with new mode
+        if self._db_path and self._session_id:
+            self.refresh_from_db(self._db_path, self._session_id)
 
     def _refresh_display(self, rows):
         """Rebuild the economics table."""
@@ -1068,10 +1085,13 @@ class ToolEconomicsPanel(Static):
 
     def get_state(self) -> dict:
         """Extract state for transfer to a new instance."""
-        return {}  # No state to preserve - queries DB on demand
+        return {
+            "breakdown_mode": self._breakdown_mode,
+        }
 
     def restore_state(self, state: dict):
         """Restore state from a previous instance."""
+        self._breakdown_mode = state.get("breakdown_mode", False)
         self._refresh_display([])
 
 
@@ -1185,7 +1205,7 @@ class LogsPanel(RichLog):
     """Panel showing cc-dump application logs (debug, errors, internal messages)."""
 
     def __init__(self):
-        super().__init__(highlight=False, markup=False, wrap=True, max_lines=1000)
+        super().__init__( highlight=False, markup=False, wrap=True, max_lines=1000)
 
     def log(self, level: str, message: str):
         """Add an application log entry.
