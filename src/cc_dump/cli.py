@@ -41,7 +41,7 @@ def main():
         # Replay mode: load HAR and push all events to queue
         import cc_dump.har_replayer
 
-        print(f"🎬 cc-dump replay mode")
+        print("🎬 cc-dump replay mode")
         print(f"   Loading: {args.replay}")
 
         try:

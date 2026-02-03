@@ -6,7 +6,6 @@ The synthetic events match the format that formatting.py expects from the live p
 
 import json
 import sys
-from typing import Any
 
 
 def load_har(path: str) -> list[tuple[dict, dict]]:

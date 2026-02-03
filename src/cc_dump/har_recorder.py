@@ -8,7 +8,6 @@ import json
 import os
 import sys
 from datetime import datetime, timezone
-from typing import Any
 
 
 def build_har_request(method: str, url: str, headers: dict, body: dict) -> dict:
@@ -259,7 +258,7 @@ class HARRecordingSubscriber:
 
         elif kind == "response_event":
             # Accumulate SSE event
-            event_type, event_data = event[1], event[2]
+            _event_type, event_data = event[1], event[2]
             self.response_events.append(event_data)
 
         elif kind == "response_done":
