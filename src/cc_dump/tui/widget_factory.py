@@ -223,14 +223,32 @@ class ConversationView(ScrollView):
 
     def _recalculate_offsets(self):
         """Rebuild line offsets and virtual size."""
-        offset = 0
+        self._recalculate_offsets_from(0)
+
+    def _recalculate_offsets_from(self, start_idx: int):
+        """Rebuild line offsets and virtual size from start_idx onwards.
+
+        For start_idx > 0, reuses offset from previous turn.
+        Widest line is always recomputed from all turns (O(n) with cached _widest_strip).
+        """
+        turns = self._turns
+        if start_idx > 0 and start_idx < len(turns):
+            prev = turns[start_idx - 1]
+            offset = prev.line_offset + prev.line_count
+        else:
+            offset = 0
+            start_idx = 0
+
+        for i in range(start_idx, len(turns)):
+            turns[i].line_offset = offset
+            offset += turns[i].line_count
+
+        # Widest: O(n) integer comparisons with cached _widest_strip
         widest = 0
-        for turn in self._turns:
-            turn.line_offset = offset
-            offset += turn.line_count
-            # Use cached widest strip value
+        for turn in turns:
             if turn._widest_strip > widest:
                 widest = turn._widest_strip
+
         self._total_lines = offset
         self._widest_line = max(widest, self._last_width)
         self.virtual_size = Size(self._widest_line, self._total_lines)
@@ -590,7 +608,7 @@ class ConversationView(ScrollView):
                     first_changed = idx
 
         if first_changed is not None:
-            self._recalculate_offsets()
+            self._recalculate_offsets_from(first_changed)
 
         # Try saved anchor first (from a previous filter-out).
         # Check even when nothing changed — the saved block may now be
