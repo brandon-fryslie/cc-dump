@@ -591,6 +591,46 @@ def format_response_event(event_type, data):
     return []
 
 
+def format_complete_response(complete_message):
+    """Format a complete (non-streaming) Claude message as FormattedBlocks.
+
+    This is used for replay mode - takes a complete message and builds the blocks
+    directly without going through streaming events.
+
+    Args:
+        complete_message: Complete Claude API message dict
+
+    Returns:
+        List of FormattedBlock objects
+    """
+    blocks = []
+
+    # Model info
+    model = complete_message.get("model", "?")
+    blocks.append(StreamInfoBlock(model=model))
+
+    # Content blocks
+    content = complete_message.get("content", [])
+    for block in content:
+        block_type = block.get("type", "")
+
+        if block_type == "text":
+            text = block.get("text", "")
+            if text:
+                blocks.append(TextDeltaBlock(text=text))
+
+        elif block_type == "tool_use":
+            tool_name = block.get("name", "?")
+            blocks.append(StreamToolUseBlock(name=tool_name))
+
+    # Stop reason
+    stop_reason = complete_message.get("stop_reason")
+    if stop_reason:
+        blocks.append(StopReasonBlock(reason=stop_reason))
+
+    return blocks
+
+
 def format_request_headers(headers_dict: dict) -> list:
     """Format HTTP request headers as blocks."""
     if not headers_dict:

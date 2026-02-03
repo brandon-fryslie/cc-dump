@@ -55,7 +55,7 @@ class CcDumpApp(App):
     show_timeline = reactive(False)
     show_logs = reactive(False)
 
-    def __init__(self, event_queue, state, router, db_path: Optional[str] = None, session_id: Optional[str] = None, host: str = "127.0.0.1", port: int = 3344, target: Optional[str] = None):
+    def __init__(self, event_queue, state, router, db_path: Optional[str] = None, session_id: Optional[str] = None, host: str = "127.0.0.1", port: int = 3344, target: Optional[str] = None, replay_data: Optional[list] = None):
         super().__init__()
         self._event_queue = event_queue
         self._state = state
@@ -65,6 +65,7 @@ class CcDumpApp(App):
         self._host = host
         self._port = port
         self._target = target
+        self._replay_data = replay_data
         self._closing = False
         self._replacing_widgets = False
 
@@ -145,6 +146,10 @@ class CcDumpApp(App):
         # Initialize footer with current filter state
         self._update_footer_state()
 
+        # Process replay data if in replay mode
+        if self._replay_data:
+            self._process_replay_data()
+
 
     # Widget accessors - use query by ID so we can swap widgets
     # Return None when widget is temporarily missing (e.g., during hot-reload swap)
@@ -175,6 +180,63 @@ class CcDumpApp(App):
             return self.query_one(StyledFooter)
         except NoMatches:
             return None
+
+    def _process_replay_data(self):
+        """Process HAR replay data and populate widgets directly (no events)."""
+        if not self._replay_data:
+            return
+
+        self._log("INFO", f"Processing {len(self._replay_data)} request/response pairs")
+
+        conv = self._get_conv()
+        stats = self._get_stats()
+
+        if conv is None:
+            self._log("ERROR", "Cannot process replay: conversation widget not found")
+            return
+
+        for req_headers, req_body, resp_status, resp_headers, complete_message in self._replay_data:
+            try:
+                # Format request blocks
+                request_blocks = cc_dump.formatting.format_request(req_body, self._state)
+
+                # Add request headers if present
+                if req_headers:
+                    header_blocks = cc_dump.formatting.format_request_headers(req_headers)
+                    # Insert after MetadataBlock
+                    for i, block in enumerate(request_blocks):
+                        if isinstance(block, cc_dump.formatting.MetadataBlock):
+                            request_blocks[i+1:i+1] = header_blocks
+                            break
+
+                # Add request turn
+                conv.add_turn(request_blocks)
+
+                # Format response blocks
+                response_blocks = []
+
+                # Add response headers if present
+                if resp_headers:
+                    response_blocks.extend(
+                        cc_dump.formatting.format_response_headers(resp_status, resp_headers)
+                    )
+
+                # Add complete message blocks (NO streaming events)
+                response_blocks.extend(
+                    cc_dump.formatting.format_complete_response(complete_message)
+                )
+
+                # Add response turn
+                conv.add_turn(response_blocks)
+
+                # Update stats
+                if stats:
+                    stats.update_stats(requests=self._state["request_counter"])
+
+            except Exception as e:
+                self._log("ERROR", f"Error processing replay pair: {e}")
+
+        self._log("INFO", f"Replay complete: {self._state['request_counter']} requests processed")
 
     def _log(self, level: str, message: str):
         """Log a message to the application logs panel."""

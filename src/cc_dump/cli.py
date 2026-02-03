@@ -37,26 +37,17 @@ def main():
 
     # Replay mode or live mode
     server = None
+    replay_data = None
     if args.replay:
-        # Replay mode: load HAR and push all events to queue
+        # Replay mode: load HAR (complete messages, NO event conversion)
         import cc_dump.har_replayer
 
         print("🎬 cc-dump replay mode")
         print(f"   Loading: {args.replay}")
 
         try:
-            pairs = cc_dump.har_replayer.load_har(args.replay)
-            print(f"   Found {len(pairs)} request/response pairs")
-
-            # Convert all pairs to events and push to queue
-            for req_headers, req_body, resp_status, resp_headers, complete_message in pairs:
-                events = cc_dump.har_replayer.convert_to_events(
-                    req_headers, req_body, resp_status, resp_headers, complete_message
-                )
-                for event in events:
-                    event_q.put(event)
-
-            print(f"   Loaded {event_q.qsize()} events")
+            replay_data = cc_dump.har_replayer.load_har(args.replay)
+            print(f"   Found {len(replay_data)} request/response pairs")
 
         except Exception as e:
             print(f"   Error loading HAR file: {e}")
@@ -144,7 +135,8 @@ def main():
         session_id=session_id,
         host=args.host if not args.replay else None,
         port=args.port if not args.replay else None,
-        target=ProxyHandler.target_host if not args.replay else None
+        target=ProxyHandler.target_host if not args.replay else None,
+        replay_data=replay_data
     )
     try:
         app.run()
