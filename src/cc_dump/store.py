@@ -10,6 +10,7 @@ import sys
 
 from cc_dump.analysis import correlate_tools
 from cc_dump.schema import init_db
+from cc_dump.token_counter import count_tokens
 
 BLOB_THRESHOLD = 512  # bytes - strings >= this size get extracted to blobs table
 
@@ -135,14 +136,18 @@ class SQLiteWriter:
                 (turn_id, blob_hash, field_path)
             )
 
-        # Persist tool invocations
+        # Persist tool invocations with token counts
         messages = self._current_request.get("messages", [])
         invocations = correlate_tools(messages)
         for inv in invocations:
+            # Count actual tokens using tiktoken
+            input_tokens = count_tokens(inv.input_str)
+            result_tokens = count_tokens(inv.result_str)
+
             self._conn.execute("""
-                INSERT INTO tool_invocations (turn_id, tool_name, tool_use_id, input_bytes, result_bytes, is_error)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (turn_id, inv.name, inv.tool_use_id, inv.input_bytes, inv.result_bytes, int(inv.is_error)))
+                INSERT INTO tool_invocations (turn_id, tool_name, tool_use_id, input_bytes, result_bytes, input_tokens, result_tokens, is_error)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (turn_id, inv.name, inv.tool_use_id, inv.input_bytes, inv.result_bytes, input_tokens, result_tokens, int(inv.is_error)))
 
         # Insert into FTS table for search
         if text_content:
