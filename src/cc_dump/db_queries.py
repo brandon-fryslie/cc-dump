@@ -9,7 +9,7 @@ This module is hot-reloadable - it can be edited while the TUI is running.
 import sqlite3
 from typing import Optional
 
-from cc_dump.analysis import ToolInvocation, estimate_tokens
+from cc_dump.analysis import ToolInvocation, ToolEconomicsRow, classify_model, HAIKU_BASE_UNIT, estimate_tokens
 
 
 def get_session_stats(db_path: str, session_id: str, current_turn: Optional[dict] = None) -> dict:
@@ -107,6 +107,86 @@ def get_tool_invocations(db_path: str, session_id: str) -> list[ToolInvocation]:
         return invocations
     finally:
         conn.close()
+
+
+def get_tool_economics(db_path: str, session_id: str) -> list[ToolEconomicsRow]:
+    """Query per-tool economics with real token counts and cache attribution.
+
+    Returns list of ToolEconomicsRow with:
+    - Real token counts from tool_invocations (input_tokens, result_tokens)
+    - Proportional cache attribution from parent turn
+    - Normalized cost using model pricing
+    """
+    uri = f"file:{db_path}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    try:
+        # Fetch per-invocation data with turn-level context
+        cursor = conn.execute("""
+            SELECT
+                ti.tool_name,
+                ti.input_tokens,
+                ti.result_tokens,
+                t.model,
+                t.input_tokens as turn_input,
+                t.cache_read_tokens as turn_cache_read,
+                t.id as turn_id
+            FROM tool_invocations ti
+            JOIN turns t ON ti.turn_id = t.id
+            WHERE t.session_id = ?
+            ORDER BY ti.id
+        """, (session_id,))
+
+        rows = cursor.fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return []
+
+    # Compute per-turn total tool input tokens (for proportional cache attribution)
+    turn_tool_totals = {}  # turn_id -> sum of tool input_tokens
+    for tool_name, input_tokens, result_tokens, model, turn_input, turn_cache_read, turn_id in rows:
+        turn_tool_totals[turn_id] = turn_tool_totals.get(turn_id, 0) + input_tokens
+
+    # Aggregate by tool name
+    by_name = {}  # tool_name -> {calls, input_tokens, result_tokens, cache_read, cost_sum}
+    for tool_name, input_tokens, result_tokens, model, turn_input, turn_cache_read, turn_id in rows:
+        if tool_name not in by_name:
+            by_name[tool_name] = {
+                "calls": 0, "input_tokens": 0, "result_tokens": 0,
+                "cache_read": 0, "norm_cost": 0.0,
+            }
+        agg = by_name[tool_name]
+        agg["calls"] += 1
+        agg["input_tokens"] += input_tokens
+        agg["result_tokens"] += result_tokens
+
+        # Proportional cache attribution
+        turn_total = turn_tool_totals.get(turn_id, 0)
+        if turn_total > 0 and turn_cache_read > 0:
+            share = input_tokens / turn_total
+            agg["cache_read"] += int(turn_cache_read * share)
+
+        # Norm cost contribution
+        _, pricing = classify_model(model)
+        agg["norm_cost"] += (
+            input_tokens * (pricing.base_input / HAIKU_BASE_UNIT)
+            + result_tokens * (pricing.output / HAIKU_BASE_UNIT)
+        )
+
+    # Build result list sorted by norm_cost descending
+    result = []
+    for name, agg in sorted(by_name.items(), key=lambda x: x[1]["norm_cost"], reverse=True):
+        result.append(ToolEconomicsRow(
+            name=name,
+            calls=agg["calls"],
+            input_tokens=agg["input_tokens"],
+            result_tokens=agg["result_tokens"],
+            cache_read_tokens=agg["cache_read"],
+            norm_cost=agg["norm_cost"],
+        ))
+
+    return result
 
 
 def get_model_economics(db_path: str, session_id: str) -> list[dict]:

@@ -173,6 +173,17 @@ class ToolAggregates:
         return self.input_tokens_est + self.result_tokens_est
 
 
+@dataclass
+class ToolEconomicsRow:
+    """Per-tool economics data for the panel display."""
+    name: str = ""
+    calls: int = 0
+    input_tokens: int = 0
+    result_tokens: int = 0
+    cache_read_tokens: int = 0
+    norm_cost: float = 0.0
+
+
 def correlate_tools(messages: list) -> list[ToolInvocation]:
     """Match tool_use blocks to tool_result blocks by tool_use_id.
 

@@ -34,23 +34,41 @@ def render_stats_panel(request_count: int, input_tokens: int, output_tokens: int
     return " | ".join(parts)
 
 
-def render_economics_panel(aggregates: list[cc_dump.analysis.ToolAggregates]) -> str:
-    """Render the tool economics panel display text."""
-    if not aggregates:
+def render_economics_panel(rows: list) -> str:
+    """Render the tool economics panel display text.
+
+    Args:
+        rows: List of ToolEconomicsRow from get_tool_economics()
+    """
+    if not rows:
         return "Tool Economics: (no tool calls yet)"
 
     lines = []
     lines.append("Tool Economics (session total):")
-    lines.append("  {:<12} {:>5}  {:>8}  {:>8}  {:>8}".format(
-        "Tool", "Calls", "Input↑", "Results↓", "Total"
+    lines.append("  {:<12} {:>5}  {:>14}  {:>8}  {:>10}".format(
+        "Tool", "Calls", "Input (Cached)", "Output", "Norm Cost"
     ))
-    for agg in aggregates:
-        lines.append("  {:<12} {:>5}  {:>8}  {:>8}  {:>8}".format(
-            agg.name[:12],
-            agg.calls,
-            _fmt_tokens(agg.input_tokens_est) + "t",
-            _fmt_tokens(agg.result_tokens_est) + "t",
-            _fmt_tokens(agg.total_tokens_est) + "t",
+    for row in rows:
+        # Format input with cache percentage
+        if row.input_tokens > 0:
+            total_input = row.input_tokens + row.cache_read_tokens
+            if row.cache_read_tokens > 0 and total_input > 0:
+                cache_pct = 100 * row.cache_read_tokens / total_input
+                input_str = "{} ({:.0f}%)".format(_fmt_tokens(row.input_tokens), cache_pct)
+            else:
+                input_str = _fmt_tokens(row.input_tokens)
+        else:
+            input_str = "--"
+
+        output_str = _fmt_tokens(row.result_tokens) if row.result_tokens > 0 else "--"
+        cost_str = "{:,.0f}".format(row.norm_cost) if row.norm_cost > 0 else "--"
+
+        lines.append("  {:<12} {:>5}  {:>14}  {:>8}  {:>10}".format(
+            row.name[:12],
+            row.calls,
+            input_str,
+            output_str,
+            cost_str,
         ))
 
     return "\n".join(lines)
