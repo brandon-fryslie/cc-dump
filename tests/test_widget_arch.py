@@ -443,6 +443,7 @@ class TestSavedScrollAnchor:
         """
         region_mock = MagicMock()
         region_mock.width = 80
+        region_mock.height = 50
         app_mock = MagicMock(console=Console())
         cls = type(conv)
 
@@ -716,3 +717,206 @@ class TestIncrementalOffsets:
 
         assert offsets_from == offsets_full
         assert total_from == total_full
+
+
+class TestViewportTurnRange:
+    """Test _viewport_turn_range viewport-only re-rendering."""
+
+    def _make_many_turns(self, n: int, lines_per_turn: int = 10):
+        """Create a ConversationView with n turns of known size."""
+        from textual.strip import Strip
+
+        conv = ConversationView()
+        for i in range(n):
+            td = TurnData(
+                turn_index=i,
+                blocks=[TextContentBlock(text="x", indent="")],
+                strips=[Strip.blank(80)] * lines_per_turn,
+                _widest_strip=80,
+            )
+            td.compute_relevant_keys()
+            td._last_filter_snapshot = {}
+            conv._turns.append(td)
+        conv._recalculate_offsets()
+        return conv
+
+    @contextlib.contextmanager
+    def _patch_scroll(self, conv, scroll_y=0, height=50):
+        """Mock scroll infrastructure with height support."""
+        region_mock = MagicMock()
+        region_mock.width = 80
+        region_mock.height = height
+        app_mock = MagicMock(console=Console())
+        cls = type(conv)
+
+        conv.scroll_to = MagicMock()
+        with patch.object(cls, 'scroll_offset', new_callable=PropertyMock, return_value=Offset(0, scroll_y)), \
+             patch.object(cls, 'scrollable_content_region', new_callable=PropertyMock, return_value=region_mock), \
+             patch.object(cls, 'app', new_callable=PropertyMock, return_value=app_mock):
+            yield
+
+    def test_viewport_range_at_top(self):
+        """At scroll_y=0, range should cover viewport + buffer from start."""
+        conv = self._make_many_turns(100, lines_per_turn=10)
+        # 1000 total lines, viewport=50, buffer=200
+        # Range: lines 0..250 → turns 0..25
+
+        with self._patch_scroll(conv, scroll_y=0, height=50):
+            start, end = conv._viewport_turn_range(buffer_lines=200)
+
+        assert start == 0
+        # 0 + 50 + 200 = 250 → turn at line 250 is turn 25 → end = 26
+        assert end == 26
+
+    def test_viewport_range_in_middle(self):
+        """In the middle, range should extend both directions from scroll position."""
+        conv = self._make_many_turns(100, lines_per_turn=10)
+
+        with self._patch_scroll(conv, scroll_y=500, height=50):
+            start, end = conv._viewport_turn_range(buffer_lines=200)
+
+        # range_start = 500 - 200 = 300 → turn 30
+        # range_end = 500 + 50 + 200 = 750 → turn 75 → end = 76
+        assert start == 30
+        assert end == 76
+
+    def test_viewport_range_at_bottom(self):
+        """At the bottom, range should clamp to last turn."""
+        conv = self._make_many_turns(100, lines_per_turn=10)
+        # total=1000, scrolled to near the end
+
+        with self._patch_scroll(conv, scroll_y=950, height=50):
+            start, end = conv._viewport_turn_range(buffer_lines=200)
+
+        # range_start = 950 - 200 = 750 → turn 75
+        assert start == 75
+        # range_end = 950 + 50 + 200 = 1200 → clamped to 999 → turn 99 → end = 100
+        assert end == 100
+
+    def test_viewport_range_empty_turns(self):
+        """Empty turns list returns (0, 0)."""
+        conv = ConversationView()
+        with self._patch_scroll(conv, scroll_y=0, height=50):
+            start, end = conv._viewport_turn_range()
+        assert start == 0
+        assert end == 0
+
+    def test_viewport_range_small_list_covers_all(self):
+        """When all turns fit in viewport+buffer, all are included."""
+        conv = self._make_many_turns(5, lines_per_turn=3)
+        # 15 total lines, viewport=50, buffer=200 → covers everything
+
+        with self._patch_scroll(conv, scroll_y=0, height=50):
+            start, end = conv._viewport_turn_range(buffer_lines=200)
+
+        assert start == 0
+        assert end == 5
+
+
+class TestViewportOnlyRerender:
+    """Test that rerender() only processes viewport turns and defers off-viewport."""
+
+    def _make_conv_with_turns(self, console, n_turns, filters):
+        """Create ConversationView with n turns containing tool blocks."""
+        conv = ConversationView()
+        for i in range(n_turns):
+            blocks = [
+                TextContentBlock(text=f"Turn {i}", indent=""),
+                ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
+            ]
+            strips, block_strip_map = render_turn_to_strips(blocks, filters, console, width=80)
+            td = TurnData(
+                turn_index=i,
+                blocks=blocks,
+                strips=strips,
+                block_strip_map=block_strip_map,
+                _widest_strip=max((s.cell_length for s in strips), default=0),
+            )
+            td.compute_relevant_keys()
+            td._last_filter_snapshot = {k: filters.get(k, False) for k in td.relevant_filter_keys}
+            conv._turns.append(td)
+        conv._recalculate_offsets()
+        conv._last_filters = dict(filters)
+        conv._last_width = 80
+        return conv
+
+    @contextlib.contextmanager
+    def _patch_scroll(self, conv, scroll_y=0, height=50):
+        region_mock = MagicMock()
+        region_mock.width = 80
+        region_mock.height = height
+        app_mock = MagicMock(console=Console())
+        cls = type(conv)
+
+        conv.scroll_to = MagicMock()
+        with patch.object(cls, 'scroll_offset', new_callable=PropertyMock, return_value=Offset(0, scroll_y)), \
+             patch.object(cls, 'scrollable_content_region', new_callable=PropertyMock, return_value=region_mock), \
+             patch.object(cls, 'app', new_callable=PropertyMock, return_value=app_mock), \
+             patch.object(cls, 'size', new_callable=PropertyMock, return_value=MagicMock(width=80)):
+            yield
+
+    def test_off_viewport_turns_get_pending_snapshot(self):
+        """Off-viewport turns should get _pending_filter_snapshot set, not re-rendered."""
+        console = Console()
+        filters_initial = {"tools": True}
+        # 200 turns × ~2 lines = ~400 total lines.  With viewport=10 + buffer=20,
+        # only turns covering lines 0..30 are in-range — the rest are off-viewport.
+        conv = self._make_conv_with_turns(console, 200, filters_initial)
+
+        with self._patch_scroll(conv, scroll_y=0, height=10):
+            conv._follow_mode = False
+            conv.rerender({"tools": False})
+
+        # Compute viewport range to know which turns were deferred
+        with self._patch_scroll(conv, scroll_y=0, height=10):
+            vp_start, vp_end = conv._viewport_turn_range()
+
+        has_pending = False
+        for idx, td in enumerate(conv._turns):
+            if idx >= vp_end:
+                if td._pending_filter_snapshot is not None:
+                    has_pending = True
+                    assert "tools" in td._pending_filter_snapshot
+                    assert td._pending_filter_snapshot["tools"] is False
+
+        assert has_pending, (
+            f"No off-viewport turns got _pending_filter_snapshot "
+            f"(vp_end={vp_end}, total_turns={len(conv._turns)})"
+        )
+
+    def test_viewport_turns_get_re_rendered(self):
+        """Viewport turns should be re-rendered, not deferred."""
+        console = Console()
+        filters_initial = {"tools": True}
+        conv = self._make_conv_with_turns(console, 50, filters_initial)
+
+        with self._patch_scroll(conv, scroll_y=0, height=10):
+            vp_start, vp_end = conv._viewport_turn_range()
+            conv._follow_mode = False
+            conv.rerender({"tools": False})
+
+        # Viewport turns should have no pending snapshot
+        for idx in range(vp_start, min(vp_end, len(conv._turns))):
+            td = conv._turns[idx]
+            assert td._pending_filter_snapshot is None, (
+                f"Viewport turn {idx} should not have pending snapshot"
+            )
+
+    def test_pending_snapshot_cleared_on_re_render(self):
+        """When a turn with _pending_filter_snapshot is re-rendered, pending is cleared."""
+        console = Console()
+        blocks = [
+            TextContentBlock(text="Hello", indent=""),
+            ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
+        ]
+        td = TurnData(
+            turn_index=0,
+            blocks=blocks,
+            strips=[],
+        )
+        td.compute_relevant_keys()
+        td._pending_filter_snapshot = {"tools": False}
+
+        # re_render should clear pending
+        td.re_render({"tools": True}, console, 80, force=True)
+        assert td._pending_filter_snapshot is None

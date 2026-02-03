@@ -53,6 +53,7 @@ class TurnData:
     _text_delta_buffer: list = field(default_factory=list)  # list[str] - accumulated delta text
     _stable_strip_count: int = 0  # boundary between stable and delta strips
     _widest_strip: int = 0  # cached max(s.cell_length for s in strips)
+    _pending_filter_snapshot: dict | None = None  # deferred filters for lazy off-viewport re-render
 
     @property
     def line_count(self) -> int:
@@ -91,6 +92,7 @@ class TurnData:
         if not force and snapshot == self._last_filter_snapshot:
             return False
         self._last_filter_snapshot = snapshot
+        self._pending_filter_snapshot = None  # clear deferred state
         self.strips, self.block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
             self.blocks, filters, console, width,
             expanded_overrides=expanded_overrides,
@@ -232,6 +234,40 @@ class ConversationView(ScrollView):
             else:
                 return turn
         return None
+
+    def _viewport_turn_range(self, buffer_lines: int = 200) -> tuple[int, int]:
+        """Return (start_idx, end_idx) of turns visible in viewport + buffer.
+
+        Returns inclusive start, exclusive end indices into self._turns.
+        Buffer extends the range above and below the viewport by buffer_lines
+        to avoid popping when scrolling.
+        """
+        if not self._turns:
+            return (0, 0)
+
+        scroll_y = int(self.scroll_offset.y)
+        viewport_height = self.scrollable_content_region.height
+
+        # Expand range by buffer
+        range_start = max(0, scroll_y - buffer_lines)
+        range_end = scroll_y + viewport_height + buffer_lines
+
+        # Find first turn via binary search
+        start_turn = self._find_turn_for_line(range_start)
+        if start_turn is None:
+            # range_start is before all turns or no turns visible
+            start_idx = 0
+        else:
+            start_idx = start_turn.turn_index
+
+        # Find last turn via binary search
+        end_turn = self._find_turn_for_line(min(range_end, self._total_lines - 1))
+        if end_turn is None:
+            end_idx = len(self._turns)
+        else:
+            end_idx = end_turn.turn_index + 1  # exclusive
+
+        return (start_idx, end_idx)
 
     def _recalculate_offsets(self):
         """Rebuild line offsets and virtual size."""
@@ -611,16 +647,28 @@ class ConversationView(ScrollView):
 
         width = self.scrollable_content_region.width if self._size_known else self._last_width
         console = self.app.console
+
+        # Viewport-only re-rendering: only process visible turns + buffer
+        vp_start, vp_end = self._viewport_turn_range()
+
         first_changed = None
         for idx, td in enumerate(self._turns):
             # Skip streaming turns during filter changes
             if td.is_streaming:
                 continue
-            overrides = self._overrides_for_turn(td.turn_index)
-            if td.re_render(filters, console, width, expanded_overrides=overrides,
-                           block_cache=self._block_strip_cache):
-                if first_changed is None:
-                    first_changed = idx
+
+            if vp_start <= idx < vp_end:
+                # Viewport turn: re-render immediately
+                overrides = self._overrides_for_turn(td.turn_index)
+                if td.re_render(filters, console, width, expanded_overrides=overrides,
+                               block_cache=self._block_strip_cache):
+                    if first_changed is None:
+                        first_changed = idx
+            else:
+                # Off-viewport turn: defer re-render, mark pending
+                snapshot = {k: filters.get(k, False) for k in td.relevant_filter_keys}
+                if snapshot != td._last_filter_snapshot:
+                    td._pending_filter_snapshot = snapshot
 
         if first_changed is not None:
             self._recalculate_offsets_from(first_changed)
