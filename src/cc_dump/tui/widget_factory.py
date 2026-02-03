@@ -577,16 +577,17 @@ class ConversationView(ScrollView):
 
         width = self.scrollable_content_region.width if self._size_known else self._last_width
         console = self.app.console
-        changed = False
-        for td in self._turns:
+        first_changed = None
+        for idx, td in enumerate(self._turns):
             # Skip streaming turns during filter changes
             if td.is_streaming:
                 continue
             overrides = self._overrides_for_turn(td.turn_index)
             if td.re_render(filters, console, width, expanded_overrides=overrides):
-                changed = True
+                if first_changed is None:
+                    first_changed = idx
 
-        if changed:
+        if first_changed is not None:
             self._recalculate_offsets()
 
         # Try saved anchor first (from a previous filter-out).
@@ -598,11 +599,11 @@ class ConversationView(ScrollView):
             return
 
         # Restore turn-level anchor if not in follow mode
-        if changed and anchor is not None:
+        if first_changed is not None and anchor is not None:
             self._restore_anchor(anchor)
 
         # No saved anchor — use fresh (only if strips actually changed)
-        if changed and fresh_anchor is not None:
+        if first_changed is not None and fresh_anchor is not None:
             if not self._scroll_to_anchor(fresh_anchor):
                 self._saved_anchor = fresh_anchor
 
@@ -1230,5 +1231,3 @@ def create_timeline_panel() -> TimelinePanel:
 def create_logs_panel() -> LogsPanel:
     """Create a new LogsPanel instance."""
     return LogsPanel()
-
-
