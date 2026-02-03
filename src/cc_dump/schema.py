@@ -10,7 +10,7 @@ Tables:
 import os
 import sqlite3
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def init_db(path: str) -> sqlite3.Connection:
@@ -28,6 +28,7 @@ def init_db(path: str) -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous=NORMAL")
 
     _create_tables(conn)
+    _migrate_v2_to_v3(conn)
 
     return conn
 
@@ -78,6 +79,8 @@ def _create_tables(conn: sqlite3.Connection) -> None:
             tool_use_id TEXT NOT NULL,
             input_bytes INTEGER NOT NULL DEFAULT 0,
             result_bytes INTEGER NOT NULL DEFAULT 0,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            result_tokens INTEGER NOT NULL DEFAULT 0,
             is_error INTEGER NOT NULL DEFAULT 0
         );
 
@@ -85,5 +88,22 @@ def _create_tables(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_turn_blobs_turn ON turn_blobs(turn_id);
         CREATE INDEX IF NOT EXISTS idx_tool_invocations_turn ON tool_invocations(turn_id);
     """)
+
+    conn.commit()
+
+
+def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
+    """Add token count columns to tool_invocations (migration from schema v2 to v3).
+
+    Idempotent: checks if columns exist before adding them.
+    """
+    cursor = conn.execute("PRAGMA table_info(tool_invocations)")
+    columns = {row[1] for row in cursor.fetchall()}
+
+    if "input_tokens" not in columns:
+        conn.execute("ALTER TABLE tool_invocations ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0")
+
+    if "result_tokens" not in columns:
+        conn.execute("ALTER TABLE tool_invocations ADD COLUMN result_tokens INTEGER NOT NULL DEFAULT 0")
 
     conn.commit()
