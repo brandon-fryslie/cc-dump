@@ -23,6 +23,8 @@ def main():
     parser.add_argument("--no-db", action="store_true", help="Disable persistence (no database)")
     parser.add_argument("--record", type=str, default=None, help="HAR recording output path")
     parser.add_argument("--no-record", action="store_true", help="Disable HAR recording")
+    parser.add_argument("--replay", type=str, default=None,
+                        help="Replay a recorded session (path to .har file)")
     parser.add_argument("--seed-hue", type=float, default=None,
                         help="Seed hue (0-360) for color palette (default: 190, cyan). Env: CC_DUMP_SEED_HUE")
     args = parser.parse_args()
@@ -31,24 +33,52 @@ def main():
     import cc_dump.palette
     cc_dump.palette.init_palette(args.seed_hue)
 
-    ProxyHandler.target_host = args.target.rstrip("/") if args.target else None
-
     event_q = queue.Queue()
-    ProxyHandler.event_queue = event_q
 
-    server = http.server.HTTPServer((args.host, args.port), ProxyHandler)
+    # Replay mode or live mode
+    server = None
+    if args.replay:
+        # Replay mode: load HAR and push all events to queue
+        import cc_dump.har_replayer
 
-    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-    server_thread.start()
+        print(f"🎬 cc-dump replay mode")
+        print(f"   Loading: {args.replay}")
 
-    print("🚀 cc-dump proxy started")
-    print(f"   Listening on: http://{args.host}:{args.port}")
-    if ProxyHandler.target_host:
-        print(f"   Reverse proxy mode: {ProxyHandler.target_host}")
-        print(f"   Usage: ANTHROPIC_BASE_URL=http://{args.host}:{args.port} claude")
+        try:
+            pairs = cc_dump.har_replayer.load_har(args.replay)
+            print(f"   Found {len(pairs)} request/response pairs")
+
+            # Convert all pairs to events and push to queue
+            for req_headers, req_body, resp_status, resp_headers, complete_message in pairs:
+                events = cc_dump.har_replayer.convert_to_events(
+                    req_headers, req_body, resp_status, resp_headers, complete_message
+                )
+                for event in events:
+                    event_q.put(event)
+
+            print(f"   Loaded {event_q.qsize()} events")
+
+        except Exception as e:
+            print(f"   Error loading HAR file: {e}")
+            return
     else:
-        print("   Forward proxy mode (dynamic targets)")
-        print(f"   Usage: HTTP_PROXY=http://{args.host}:{args.port} ANTHROPIC_BASE_URL=http://api.minimax.com claude")
+        # Live mode: start proxy server
+        ProxyHandler.target_host = args.target.rstrip("/") if args.target else None
+        ProxyHandler.event_queue = event_q
+
+        server = http.server.HTTPServer((args.host, args.port), ProxyHandler)
+
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+
+        print("🚀 cc-dump proxy started")
+        print(f"   Listening on: http://{args.host}:{args.port}")
+        if ProxyHandler.target_host:
+            print(f"   Reverse proxy mode: {ProxyHandler.target_host}")
+            print(f"   Usage: ANTHROPIC_BASE_URL=http://{args.host}:{args.port} claude")
+        else:
+            print("   Forward proxy mode (dynamic targets)")
+            print(f"   Usage: HTTP_PROXY=http://{args.host}:{args.port} ANTHROPIC_BASE_URL=http://api.minimax.com claude")
 
     # State dict for content tracking (used by formatting layer)
     state = {
@@ -112,9 +142,9 @@ def main():
         router,
         db_path=db_path,
         session_id=session_id,
-        host=args.host,
-        port=args.port,
-        target=ProxyHandler.target_host
+        host=args.host if not args.replay else None,
+        port=args.port if not args.replay else None,
+        target=ProxyHandler.target_host if not args.replay else None
     )
     try:
         app.run()
@@ -122,4 +152,5 @@ def main():
         router.stop()
         if har_recorder:
             har_recorder.close()
-        server.shutdown()
+        if server:
+            server.shutdown()
