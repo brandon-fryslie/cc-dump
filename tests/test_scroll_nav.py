@@ -156,30 +156,48 @@ class TestTurnSelection:
         assert conv._selected_turn == 0
 
     def test_select_turn_clears_line_cache(self):
-        """select_turn() should clear the line cache."""
+        """select_turn() should selectively clear cache entries for affected turns."""
         conv = ConversationView()
 
-        # Add a turn
-        td = TurnData(
+        # Add two turns
+        td0 = TurnData(
             turn_index=0,
             blocks=[TextContentBlock(text="Hello", indent="")],
             strips=[Strip.blank(80)],
         )
-        td.line_offset = 0
-        conv._turns.append(td)
-        conv._total_lines = 1
+        td0.line_offset = 0
+        conv._turns.append(td0)
 
-        # Populate cache
-        conv._line_cache[(0, 0, 80, 80, None)] = Strip.blank(80)
-        assert len(conv._line_cache) > 0
+        td1 = TurnData(
+            turn_index=1,
+            blocks=[TextContentBlock(text="World", indent="")],
+            strips=[Strip.blank(80)],
+        )
+        td1.line_offset = 1
+        conv._turns.append(td1)
+        conv._total_lines = 2
+
+        # Populate cache for both turns with tracking
+        key0 = (0, 0, 80, 80, None)
+        key1 = (1, 0, 80, 80, None)
+        conv._line_cache[key0] = Strip.blank(80)
+        conv._line_cache[key1] = Strip.blank(80)
+
+        # Set up tracking as if render_line() had been called
+        conv._cache_keys_by_turn[0] = {key0}
+        conv._cache_keys_by_turn[1] = {key1}
+
+        assert len(conv._line_cache) == 2
 
         # Mock refresh_lines
         conv.refresh_lines = MagicMock()
 
         conv.select_turn(0)
 
-        # Cache should be cleared
-        assert len(conv._line_cache) == 0
+        # Only turn 0's cache entry should be cleared (selective invalidation)
+        # Turn 1's entry should remain
+        assert key0 not in conv._line_cache
+        assert key1 in conv._line_cache
 
     def test_select_turn_refreshes_affected_lines(self):
         """select_turn() should refresh the selected turn's line range."""

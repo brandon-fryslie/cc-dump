@@ -73,16 +73,88 @@ Blocks carry data, not presentation. A `ToolUseBlock` has `name`, `input_size`, 
 
 ## Event Flow
 
-The proxy emits raw events into a queue. The `EventRouter` fans them out to two subscribers:
+The proxy emits raw events into a queue. The `EventRouter` fans them out to three subscribers:
 
 1. **QueueSubscriber** (TUI): Events are queued, drained by `app.py`'s worker thread, dispatched to `event_handlers.py` which calls formatting and updates widgets.
 
 2. **DirectSubscriber** (SQLite): `store.py` receives events inline, accumulates request/response data, and commits completed turns to the database.
 
+3. **DirectSubscriber** (HAR): `har_recorder.py` accumulates events inline, reconstructs complete messages, and writes HAR 1.2 entries.
+
 Events in order per API call:
 ```
 request_headers → request → response_headers → response_event* → response_done
 ```
+
+## Recording and Replay
+
+cc-dump records all API traffic to HAR (HTTP Archive) 1.2 format for replay and offline analysis.
+
+**Architecture principles:**
+- **HAR files are the source of truth** for raw event data (complete, ordered, replayable)
+- **SQLite is a derived index** for analytics queries (tokens, tools, search)
+- **Zero divergence:** Live and replay modes use identical code paths downstream of event emission
+
+### Live Mode (Recording)
+
+```
+proxy.py (HTTP intercept)
+    ↓ emits events
+router.py
+    ├→ TUI subscriber (display)
+    ├→ SQLite subscriber (analytics)
+    └→ HAR subscriber (recording)
+        └→ har_recorder.py
+            - Accumulates SSE events in memory
+            - Reconstructs complete messages
+            - Writes HAR on response_done
+```
+
+### Replay Mode
+
+```
+har_replayer.py (load HAR file)
+    ↓ synthesizes events
+router.py (same as live)
+    ├→ TUI subscriber (display)
+    ├→ SQLite subscriber (analytics)
+    └→ (no recording in replay mode)
+```
+
+**Key insight:** Replay feeds synthetic events to the SAME router that live mode uses. Everything downstream (formatting, rendering, analytics) is identical.
+
+### HAR Format Decisions
+
+HAR files store **synthetic non-streaming responses** (not raw SSE streams):
+- Request body: `stream=false` (for clarity in HAR viewers)
+- Response content: Complete message in non-streaming format
+- **Trade-off accepted:** HAR is not wire-faithful (shows complete messages, not SSE chunks)
+- **Benefit gained:** Standard format, tool compatibility, simpler replay
+
+When replaying:
+1. `har_replayer.load_har()` extracts complete request/response pairs
+2. `convert_to_events()` synthesizes SSE event sequence from complete message
+3. Events match exactly what `proxy.py` emits during live capture
+4. Same formatting pipeline produces identical FormattedBlocks
+
+### Semantic Divergences (Acceptable)
+
+Between live and replay modes:
+- **MetadataBlock.stream:** `true` in live, `false` in replay (cosmetic)
+- **Response headers:** `text/event-stream` in live, `application/json` in replay (cosmetic)
+- **TextDeltaBlock count:** Multiple chunks in live, consolidated in replay (semantic content identical)
+
+These divergences are documented, tested, and accepted as part of the HAR format decision.
+
+### Session Management
+
+Recordings stored in `~/.local/share/cc-dump/recordings/recording-<session_id>.har`
+
+CLI commands:
+- `cc-dump --list` — List available recordings with metadata (date, size, entry count)
+- `cc-dump --replay <path>` — Replay a specific HAR file
+- `cc-dump --replay latest` — Replay most recent recording
+- `cc-dump --no-record` — Disable recording (live mode only)
 
 ## Virtual Rendering
 
@@ -131,6 +203,8 @@ SQLite with WAL mode. Two key patterns:
 
 Tables: `turns` (metadata + tokens), `blobs` (content-addressed), `turn_blobs` (links), `turns_fts` (full-text search), `tool_invocations` (per-tool stats).
 
+**Relationship to HAR:** SQLite is a derived index built from events. In principle, SQLite could be deleted and rebuilt by replaying HAR files. In practice, SQLite is kept as a persistent cache for query performance.
+
 ## Filter System
 
 Eight toggleable filters, each with a keybinding and colored indicator:
@@ -164,8 +238,8 @@ Modules are classified as **stable** (never reload) or **reloadable** (reload on
 |---|---|
 | `proxy.py`, `cli.py`, `hot_reload.py` | `palette.py`, `colors.py`, `analysis.py` |
 | `tui/app.py`, `tui/widgets.py` | `formatting.py`, `tui/rendering.py` |
-| | `tui/event_handlers.py`, `tui/widget_factory.py` |
-| | `tui/panel_renderers.py`, `tui/custom_footer.py` |
+| `har_recorder.py`, `har_replayer.py` | `tui/event_handlers.py`, `tui/widget_factory.py` |
+| `sessions.py` | `tui/panel_renderers.py`, `tui/custom_footer.py` |
 
 **Critical rule:** Stable modules must use `import cc_dump.module`, never `from cc_dump.module import func`. Direct imports create stale references that survive reload.
 
@@ -175,9 +249,12 @@ Reloadable modules are reloaded in dependency order (leaves first). If `widget_f
 
 ```
 Stable layer:
-  cli.py → {router, store, app, palette}
+  cli.py → {router, store, app, palette, har_recorder, har_replayer, sessions}
   proxy.py → router
   app.py → {event_handlers, widget_factory, hot_reload, custom_footer}
+  har_recorder.py (no deps)
+  har_replayer.py (no deps)
+  sessions.py (no deps)
 
 Reloadable layer (reload order):
   1. palette.py

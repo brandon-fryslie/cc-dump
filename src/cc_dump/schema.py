@@ -87,6 +87,10 @@ def _create_tables(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id);
         CREATE INDEX IF NOT EXISTS idx_turn_blobs_turn ON turn_blobs(turn_id);
         CREATE INDEX IF NOT EXISTS idx_tool_invocations_turn ON tool_invocations(turn_id);
+
+        -- Performance optimization indexes
+        CREATE INDEX IF NOT EXISTS idx_tool_invocations_composite ON tool_invocations(turn_id, tool_name);
+        CREATE INDEX IF NOT EXISTS idx_turns_session_seq ON turns(session_id, sequence_num);
     """)
 
     conn.commit()

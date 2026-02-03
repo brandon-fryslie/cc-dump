@@ -448,6 +448,7 @@ def render_turn_to_strips(
     width: int,
     wrap: bool = True,
     expanded_overrides: dict[int, bool] | None = None,
+    block_cache=None,
 ) -> tuple[list, dict[int, int]]:
     """Render blocks to Strip objects for Line API storage.
 
@@ -461,6 +462,7 @@ def render_turn_to_strips(
         width: Render width in cells
         wrap: Enable word wrapping
         expanded_overrides: Per-block expand state overrides (block_index → bool)
+        block_cache: Optional LRUCache for caching rendered strips per block
 
     Returns:
         (strips, block_strip_map) — pre-rendered lines and a dict mapping
@@ -480,6 +482,25 @@ def render_turn_to_strips(
     for block_idx, text in render_blocks(blocks, filters, expanded_overrides):
         block_strip_map[block_idx] = len(all_strips)
 
+        # Cache key: block identity + width + relevant filter state + expand override
+        # Note: We use id(blocks[block_idx]) not id(text) since text is freshly generated
+        block = blocks[block_idx]
+        filter_key = BLOCK_FILTER_KEY.get(type(block).__name__)
+        expand_override = expanded_overrides.get(block_idx) if expanded_overrides else None
+        cache_key = (
+            id(block),
+            width,
+            filters.get(filter_key, False) if filter_key else None,
+            expand_override,
+        )
+
+        # Check cache first
+        if block_cache is not None and cache_key in block_cache:
+            block_strips = block_cache[cache_key]
+            all_strips.extend(block_strips)
+            continue
+
+        # Render block
         segments = console.render(text, render_options)
         lines = list(Segment.split_lines(segments))
         if lines:
@@ -487,6 +508,10 @@ def render_turn_to_strips(
             for strip in block_strips:
                 strip.adjust_cell_length(width)
             all_strips.extend(block_strips)
+
+            # Cache result
+            if block_cache is not None:
+                block_cache[cache_key] = block_strips
 
     return all_strips, block_strip_map
 

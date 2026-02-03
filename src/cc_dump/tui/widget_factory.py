@@ -78,12 +78,14 @@ class TurnData:
         width: int,
         expanded_overrides: dict[int, bool] | None = None,
         force: bool = False,
+        block_cache=None,
     ) -> bool:
         """Re-render if a relevant filter changed. Returns True if strips changed.
 
         Args:
             expanded_overrides: Per-block expand state (block_index → bool).
             force: Force re-render even if filter snapshot hasn't changed.
+            block_cache: Optional LRUCache for caching rendered strips per block.
         """
         snapshot = {k: filters.get(k, False) for k in self.relevant_filter_keys}
         if not force and snapshot == self._last_filter_snapshot:
@@ -92,6 +94,7 @@ class TurnData:
         self.strips, self.block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
             self.blocks, filters, console, width,
             expanded_overrides=expanded_overrides,
+            block_cache=block_cache,
         )
         self._widest_strip = _compute_widest(self.strips)
         return True
@@ -128,6 +131,8 @@ class ConversationView(ScrollView):
         self._total_lines: int = 0
         self._widest_line: int = 0
         self._line_cache: LRUCache = LRUCache(1024)
+        self._block_strip_cache: LRUCache = LRUCache(4096)  # Block-level rendering cache
+        self._cache_keys_by_turn: dict[int, set[tuple]] = {}  # Track cache keys per turn
         self._last_filters: dict = {}
         self._last_width: int = 78
         self._follow_mode: bool = True
@@ -202,6 +207,13 @@ class ConversationView(ScrollView):
             strip = strip.apply_style(self._SELECTED_STYLE)
 
         self._line_cache[key] = strip
+
+        # Track which turn this cache key belongs to (for selective invalidation)
+        turn_idx = turn.turn_index
+        if turn_idx not in self._cache_keys_by_turn:
+            self._cache_keys_by_turn[turn_idx] = set()
+        self._cache_keys_by_turn[turn_idx].add(key)
+
         return strip
 
     def _find_turn_for_line(self, line_y: int) -> TurnData | None:
@@ -253,6 +265,7 @@ class ConversationView(ScrollView):
         self._widest_line = max(widest, self._last_width)
         self.virtual_size = Size(self._widest_line, self._total_lines)
         self._line_cache.clear()
+        self._cache_keys_by_turn.clear()  # Clear tracking when cache is cleared
 
     def add_turn(self, blocks: list, filters: dict = None):
         """Add a completed turn from block list."""
@@ -262,7 +275,7 @@ class ConversationView(ScrollView):
         console = self.app.console
 
         strips, block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
-            blocks, filters, console, width
+            blocks, filters, console, width, block_cache=self._block_strip_cache
         )
         td = TurnData(
             turn_index=len(self._turns),
@@ -480,7 +493,8 @@ class ConversationView(ScrollView):
         width = self.scrollable_content_region.width if self._size_known else self._last_width
         console = self.app.console
         strips, block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
-            consolidated, self._last_filters, console, width
+            consolidated, self._last_filters, console, width,
+            block_cache=self._block_strip_cache
         )
 
         # Update turn data
@@ -603,7 +617,8 @@ class ConversationView(ScrollView):
             if td.is_streaming:
                 continue
             overrides = self._overrides_for_turn(td.turn_index)
-            if td.re_render(filters, console, width, expanded_overrides=overrides):
+            if td.re_render(filters, console, width, expanded_overrides=overrides,
+                           block_cache=self._block_strip_cache):
                 if first_changed is None:
                     first_changed = idx
 
@@ -653,6 +668,7 @@ class ConversationView(ScrollView):
                 td.strips, td.block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
                     td.blocks, self._last_filters, console, width,
                     expanded_overrides=overrides,
+                    block_cache=self._block_strip_cache,
                 )
                 td._widest_strip = _compute_widest(td.strips)
             self._recalculate_offsets()
@@ -695,8 +711,13 @@ class ConversationView(ScrollView):
         old_selected = self._selected_turn
         self._selected_turn = turn_index
 
-        # Clear line cache (selection state changes rendered output)
-        self._line_cache.clear()
+        # Selective cache invalidation: only clear entries for affected turns
+        for idx in [old_selected, turn_index]:
+            if idx is not None and idx in self._cache_keys_by_turn:
+                for key in self._cache_keys_by_turn[idx]:
+                    self._line_cache.discard(key)
+                # Remove tracking entry
+                del self._cache_keys_by_turn[idx]
 
         # Refresh old selection line range
         if old_selected is not None and old_selected < len(self._turns):
@@ -715,7 +736,13 @@ class ConversationView(ScrollView):
         if self._selected_turn is not None:
             old = self._selected_turn
             self._selected_turn = None
-            self._line_cache.clear()
+
+            # Selective cache invalidation: only clear old selection
+            if old in self._cache_keys_by_turn:
+                for key in self._cache_keys_by_turn[old]:
+                    self._line_cache.discard(key)
+                del self._cache_keys_by_turn[old]
+
             if old < len(self._turns):
                 turn = self._turns[old]
                 if turn.line_count > 0:
@@ -794,7 +821,8 @@ class ConversationView(ScrollView):
             console = self.app.console
             overrides = self._overrides_for_turn(turn.turn_index)
             turn.re_render(self._last_filters, console, width,
-                           expanded_overrides=overrides, force=True)
+                           expanded_overrides=overrides, force=True,
+                           block_cache=self._block_strip_cache)
             self._recalculate_offsets()
 
     # ─── Sprint 2: Turn navigation ───────────────────────────────────────────
@@ -940,7 +968,8 @@ class ConversationView(ScrollView):
 
                 # Render blocks to get initial strips
                 strips, block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
-                    block_list, filters, console, width
+                    block_list, filters, console, width,
+                    block_cache=self._block_strip_cache
                 )
 
                 td = TurnData(
