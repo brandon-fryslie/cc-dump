@@ -615,3 +615,104 @@ class TestSavedScrollAnchor:
 
         # Saved anchor should still be there (system block still hidden)
         assert conv._saved_anchor == saved
+
+
+class TestWidestStripCache:
+    """Test _widest_strip caching on TurnData."""
+
+    def test_widest_strip_set_after_re_render(self):
+        """_widest_strip matches actual max strip cell_length after re_render."""
+        from rich.console import Console
+        blocks = [TextContentBlock(text="Short\nA much longer line of text here", indent="")]
+        console = Console()
+        filters = {}
+        td = TurnData(turn_index=0, blocks=blocks, strips=[])
+        td.compute_relevant_keys()
+        td.re_render(filters, console, 80, force=True)
+
+        expected = max(s.cell_length for s in td.strips) if td.strips else 0
+        assert td._widest_strip == expected
+        assert td._widest_strip > 0
+
+    def test_widest_strip_zero_for_empty_strips(self):
+        """_widest_strip is 0 when all blocks filtered out."""
+        from rich.console import Console
+        blocks = [SystemLabelBlock()]
+        console = Console()
+        td = TurnData(turn_index=0, blocks=blocks, strips=[])
+        td.compute_relevant_keys()
+        # System labels filtered with system: False
+        td.re_render({"system": False}, console, 80, force=True)
+        # No strips rendered when filtered
+        assert len(td.strips) == 0
+        assert td._widest_strip == 0
+
+
+class TestIncrementalOffsets:
+    """Test _recalculate_offsets_from correctness."""
+
+    def test_incremental_matches_full_recalc(self):
+        """Incremental from index K produces same offsets as full recalc."""
+        from textual.strip import Strip
+
+        conv = ConversationView()
+        # Build 5 turns with known strip counts
+        for i in range(5):
+            strip_count = (i + 1) * 2  # 2, 4, 6, 8, 10
+            td = TurnData(
+                turn_index=i,
+                blocks=[],
+                strips=[Strip.blank(80 + i * 10)] * strip_count,
+                _widest_strip=80 + i * 10,
+            )
+            conv._turns.append(td)
+
+        # Full recalc to establish baseline
+        conv._recalculate_offsets()
+        baseline_offsets = [t.line_offset for t in conv._turns]
+        baseline_total = conv._total_lines
+        baseline_widest = conv._widest_line
+
+        # Modify turn 2 (change strip count)
+        conv._turns[2].strips = [Strip.blank(90)] * 3  # was 6 strips, now 3
+        conv._turns[2]._widest_strip = 90
+
+        # Incremental from index 2
+        conv._recalculate_offsets_from(2)
+        incr_offsets = [t.line_offset for t in conv._turns]
+
+        # Turns 0-1 offsets unchanged
+        assert incr_offsets[0] == baseline_offsets[0]
+        assert incr_offsets[1] == baseline_offsets[1]
+
+        # Full recalc for comparison
+        conv._recalculate_offsets()
+        full_offsets = [t.line_offset for t in conv._turns]
+
+        # Incremental and full must match
+        assert incr_offsets == full_offsets
+
+    def test_incremental_from_zero_matches_full(self):
+        """_recalculate_offsets_from(0) is identical to _recalculate_offsets()."""
+        from textual.strip import Strip
+
+        conv = ConversationView()
+        for i in range(3):
+            td = TurnData(
+                turn_index=i,
+                blocks=[],
+                strips=[Strip.blank(80)] * (i + 1),
+                _widest_strip=80,
+            )
+            conv._turns.append(td)
+
+        conv._recalculate_offsets_from(0)
+        offsets_from = [t.line_offset for t in conv._turns]
+        total_from = conv._total_lines
+
+        conv._recalculate_offsets()
+        offsets_full = [t.line_offset for t in conv._turns]
+        total_full = conv._total_lines
+
+        assert offsets_from == offsets_full
+        assert total_from == total_full
