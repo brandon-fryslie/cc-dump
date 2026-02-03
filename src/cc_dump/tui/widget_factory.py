@@ -25,6 +25,19 @@ import cc_dump.tui.panel_renderers
 import cc_dump.db_queries
 
 
+def _compute_widest(strips: list) -> int:
+    """Compute max cell_length across strips.
+
+    O(m) but called once per strip assignment.
+    """
+    widest = 0
+    for s in strips:
+        w = s.cell_length
+        if w > widest:
+            widest = w
+    return widest
+
+
 @dataclass
 class TurnData:
     """Pre-rendered turn data for Line API storage."""
@@ -39,6 +52,7 @@ class TurnData:
     is_streaming: bool = False
     _text_delta_buffer: list = field(default_factory=list)  # list[str] - accumulated delta text
     _stable_strip_count: int = 0  # boundary between stable and delta strips
+    _widest_strip: int = 0  # cached max(s.cell_length for s in strips)
 
     @property
     def line_count(self) -> int:
@@ -79,6 +93,7 @@ class TurnData:
             self.blocks, filters, console, width,
             expanded_overrides=expanded_overrides,
         )
+        self._widest_strip = _compute_widest(self.strips)
         return True
 
     def strip_offset_for_block(self, block_index: int) -> int | None:
@@ -213,10 +228,9 @@ class ConversationView(ScrollView):
         for turn in self._turns:
             turn.line_offset = offset
             offset += turn.line_count
-            for strip in turn.strips:
-                w = strip.cell_length
-                if w > widest:
-                    widest = w
+            # Use cached widest strip value
+            if turn._widest_strip > widest:
+                widest = turn._widest_strip
         self._total_lines = offset
         self._widest_line = max(widest, self._last_width)
         self.virtual_size = Size(self._widest_line, self._total_lines)
@@ -238,6 +252,7 @@ class ConversationView(ScrollView):
             strips=strips,
             block_strip_map=block_strip_map,
         )
+        td._widest_strip = _compute_widest(strips)
         td.compute_relevant_keys()
         td._last_filter_snapshot = {
             k: filters.get(k, False) for k in td.relevant_filter_keys
@@ -297,6 +312,7 @@ class ConversationView(ScrollView):
         if not td._text_delta_buffer:
             # No delta text - trim to stable strips only
             td.strips = td.strips[:td._stable_strip_count]
+            td._widest_strip = _compute_widest(td.strips)
             return
 
         width = self.scrollable_content_region.width if self._size_known else self._last_width
@@ -311,6 +327,7 @@ class ConversationView(ScrollView):
 
         # Replace delta tail
         td.strips = td.strips[:td._stable_strip_count] + delta_strips
+        td._widest_strip = _compute_widest(td.strips)
 
     def _flush_streaming_delta(self, td: TurnData, filters: dict):
         """Convert delta buffer to stable strips.
@@ -331,6 +348,7 @@ class ConversationView(ScrollView):
 
         # Replace delta tail with stable strips
         td.strips = td.strips[:td._stable_strip_count] + delta_strips
+        td._widest_strip = _compute_widest(td.strips)
 
         # Advance stable boundary
         td._stable_strip_count = len(td.strips)
@@ -341,27 +359,9 @@ class ConversationView(ScrollView):
     def _update_streaming_size(self, td: TurnData):
         """Update total_lines and virtual_size for streaming turn.
 
-        Lighter-weight than full _recalculate_offsets() - only updates
-        the streaming turn's contribution to virtual size.
+        Delegates to _recalculate_offsets() to avoid code duplication.
         """
-        # Recalculate widest line from all turns
-        widest = 0
-        for turn in self._turns:
-            for strip in turn.strips:
-                w = strip.cell_length
-                if w > widest:
-                    widest = w
-
-        # Recalculate total lines
-        offset = 0
-        for turn in self._turns:
-            turn.line_offset = offset
-            offset += turn.line_count
-
-        self._total_lines = offset
-        self._widest_line = max(widest, self._last_width)
-        self.virtual_size = Size(self._widest_line, self._total_lines)
-        self._line_cache.clear()
+        self._recalculate_offsets()
 
     def append_streaming_block(self, block, filters: dict = None):
         """Append a block to the streaming turn.
@@ -402,6 +402,7 @@ class ConversationView(ScrollView):
 
                 # Add to stable strips
                 td.strips.extend(new_strips)
+                td._widest_strip = _compute_widest(td.strips)
 
                 # Update block_strip_map (track where this block starts)
                 block_idx = len(td.blocks) - 1
@@ -468,6 +469,7 @@ class ConversationView(ScrollView):
         td.blocks = consolidated
         td.strips = strips
         td.block_strip_map = block_strip_map
+        td._widest_strip = _compute_widest(td.strips)
         td.is_streaming = False
         td._text_delta_buffer.clear()
         td._stable_strip_count = 0
@@ -634,6 +636,7 @@ class ConversationView(ScrollView):
                     td.blocks, self._last_filters, console, width,
                     expanded_overrides=overrides,
                 )
+                td._widest_strip = _compute_widest(td.strips)
             self._recalculate_offsets()
 
     # ─── Sprint 2: Follow mode ───────────────────────────────────────────────
