@@ -12,6 +12,7 @@ import contextlib
 import pytest
 from unittest.mock import patch, PropertyMock, MagicMock
 from rich.console import Console
+from rich.style import Style
 from textual.geometry import Offset
 
 from cc_dump.formatting import (
@@ -920,3 +921,98 @@ class TestViewportOnlyRerender:
         # re_render should clear pending
         td.re_render({"tools": True}, console, 80, force=True)
         assert td._pending_filter_snapshot is None
+
+
+class TestLazyRerenderInRenderLine:
+    """Test that render_line() lazily re-renders turns with _pending_filter_snapshot."""
+
+    @contextlib.contextmanager
+    def _patch_scroll(self, conv, scroll_y=0, height=50):
+        region_mock = MagicMock()
+        region_mock.width = 80
+        region_mock.height = height
+        app_mock = MagicMock(console=Console())
+        cls = type(conv)
+
+        conv.scroll_to = MagicMock()
+        conv.call_later = MagicMock()  # Mock call_later to prevent scheduling
+        with patch.object(cls, 'scroll_offset', new_callable=PropertyMock, return_value=Offset(0, scroll_y)), \
+             patch.object(cls, 'scrollable_content_region', new_callable=PropertyMock, return_value=region_mock), \
+             patch.object(cls, 'app', new_callable=PropertyMock, return_value=app_mock), \
+             patch.object(cls, 'rich_style', new_callable=PropertyMock, return_value=Style()), \
+             patch.object(cls, 'size', new_callable=PropertyMock, return_value=MagicMock(width=80)):
+            yield
+
+    def test_lazy_rerender_clears_pending_on_scroll(self):
+        """When a turn with pending snapshot is accessed via render_line, it re-renders."""
+        console = Console()
+        blocks = [
+            TextContentBlock(text="Hello world", indent=""),
+            ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
+        ]
+        filters = {"tools": True}
+
+        # Build a turn manually
+        strips, block_strip_map = render_turn_to_strips(blocks, filters, console, width=80)
+        td = TurnData(
+            turn_index=0,
+            blocks=blocks,
+            strips=strips,
+            block_strip_map=block_strip_map,
+            _widest_strip=max((s.cell_length for s in strips), default=0),
+        )
+        td.compute_relevant_keys()
+        td._last_filter_snapshot = {"tools": True}
+
+        conv = ConversationView()
+        conv._turns.append(td)
+        conv._last_filters = {"tools": False}
+        conv._last_width = 80
+        conv._recalculate_offsets()
+
+        # Simulate pending filter (tools toggled off while off-viewport)
+        td._pending_filter_snapshot = {"tools": False}
+
+        strips_before = list(td.strips)
+
+        with self._patch_scroll(conv, scroll_y=0, height=50):
+            # render_line at y=0 should trigger lazy re-render
+            conv.render_line(0)
+
+        # Pending should be cleared
+        assert td._pending_filter_snapshot is None
+        # call_later should have been called to schedule offset recalc
+        conv.call_later.assert_called_once()
+
+    def test_no_lazy_rerender_without_pending(self):
+        """render_line should not re-render turns without _pending_filter_snapshot."""
+        console = Console()
+        blocks = [TextContentBlock(text="Hello", indent="")]
+        filters = {}
+
+        strips, block_strip_map = render_turn_to_strips(blocks, filters, console, width=80)
+        td = TurnData(
+            turn_index=0,
+            blocks=blocks,
+            strips=strips,
+            block_strip_map=block_strip_map,
+            _widest_strip=max((s.cell_length for s in strips), default=0),
+        )
+        td.compute_relevant_keys()
+        td._last_filter_snapshot = {}
+
+        conv = ConversationView()
+        conv._turns.append(td)
+        conv._last_filters = {}
+        conv._last_width = 80
+        conv._recalculate_offsets()
+
+        original_strips = list(td.strips)
+
+        with self._patch_scroll(conv, scroll_y=0, height=50):
+            conv.render_line(0)
+
+        # Strips should be unchanged (no re-render)
+        assert td.strips == original_strips
+        # call_later should NOT have been called
+        conv.call_later.assert_not_called()

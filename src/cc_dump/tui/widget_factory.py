@@ -193,6 +193,11 @@ class ConversationView(ScrollView):
         if turn is None:
             return Strip.blank(width, self.rich_style)
 
+        # Lazy re-render: if this turn was deferred during a filter toggle,
+        # re-render it now that it's scrolled into view.
+        if turn._pending_filter_snapshot is not None:
+            self._lazy_rerender_turn(turn)
+
         local_y = actual_y - turn.line_offset
         if local_y < len(turn.strips):
             strip = turn.strips[local_y].crop_extend(
@@ -268,6 +273,33 @@ class ConversationView(ScrollView):
             end_idx = end_turn.turn_index + 1  # exclusive
 
         return (start_idx, end_idx)
+
+    def _lazy_rerender_turn(self, turn: TurnData):
+        """Lazily re-render a turn that was deferred during a filter toggle.
+
+        Called from render_line() when a turn with _pending_filter_snapshot
+        scrolls into view. Re-renders the turn with the pending filters,
+        then schedules offset recalculation for after the current render pass.
+        """
+        width = self.scrollable_content_region.width if self._size_known else self._last_width
+        console = self.app.console
+        overrides = self._overrides_for_turn(turn.turn_index)
+
+        # Apply the pending filters
+        filters = dict(self._last_filters)
+        turn.re_render(filters, console, width, expanded_overrides=overrides,
+                       block_cache=self._block_strip_cache)
+        # re_render clears _pending_filter_snapshot
+
+        # Schedule offset recalculation after current render pass completes.
+        # We can't recalculate inline because it invalidates the line cache
+        # and virtual_size while render_line() is still iterating.
+        self.call_later(self._deferred_offset_recalc, turn.turn_index)
+
+    def _deferred_offset_recalc(self, from_turn_index: int):
+        """Recalculate offsets after a lazy re-render, then refresh display."""
+        self._recalculate_offsets_from(from_turn_index)
+        self.refresh()
 
     def _recalculate_offsets(self):
         """Rebuild line offsets and virtual size."""
