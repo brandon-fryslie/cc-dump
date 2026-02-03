@@ -78,6 +78,8 @@ class StyledFooter(Footer):
             ("toggle_stats", "stats"),
             ("toggle_economics", "economics"),
             ("toggle_timeline", "timeline"),
+            ("toggle_user_messages", "user"),
+            ("toggle_assistant_messages", "assistant"),
         ]
         action_map = {}
         css_parts = []
@@ -238,6 +240,10 @@ class StyledFooter(Footer):
         else:
             # Fallback: remove all markers
             return "".join(parts)
+
+    def update_filter_states(self, filters: dict):
+        """Alias for update_active_state for consistency."""
+        self.update_active_state(filters)
 
 
 # Initialize palette colors at module load time

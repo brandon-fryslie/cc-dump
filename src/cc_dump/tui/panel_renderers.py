@@ -5,13 +5,7 @@ so it can be hot-reloaded without affecting the live widget instances.
 """
 
 import cc_dump.analysis
-
-
-def _fmt_tokens(n: int) -> str:
-    """Format token count: 1.2k, 68.9k, etc."""
-    if n >= 1000:
-        return "{:.1f}k".format(n / 1000)
-    return str(n)
+from cc_dump.formatting_utils import fmt_tokens as _fmt_tokens, fmt_input_with_cache
 
 
 def render_stats_panel(request_count: int, input_tokens: int, output_tokens: int,
@@ -56,16 +50,7 @@ def render_economics_panel(rows: list) -> str:
         ))
         for row in rows:
             # Format input with cache percentage
-            if row.input_tokens > 0:
-                total_input = row.input_tokens + row.cache_read_tokens
-                if row.cache_read_tokens > 0 and total_input > 0:
-                    cache_pct = 100 * row.cache_read_tokens / total_input
-                    input_str = "{} ({:.0f}%)".format(_fmt_tokens(row.input_tokens), cache_pct)
-                else:
-                    input_str = _fmt_tokens(row.input_tokens)
-            else:
-                input_str = "--"
-
+            input_str = fmt_input_with_cache(row.input_tokens, row.cache_read_tokens)
             output_str = _fmt_tokens(row.result_tokens) if row.result_tokens > 0 else "--"
             cost_str = "{:,.0f}".format(row.norm_cost) if row.norm_cost > 0 else "--"
 
@@ -87,16 +72,7 @@ def render_economics_panel(rows: list) -> str:
         ))
         for row in rows:
             # Format input with cache percentage
-            if row.input_tokens > 0:
-                total_input = row.input_tokens + row.cache_read_tokens
-                if row.cache_read_tokens > 0 and total_input > 0:
-                    cache_pct = 100 * row.cache_read_tokens / total_input
-                    input_str = "{} ({:.0f}%)".format(_fmt_tokens(row.input_tokens), cache_pct)
-                else:
-                    input_str = _fmt_tokens(row.input_tokens)
-            else:
-                input_str = "--"
-
+            input_str = fmt_input_with_cache(row.input_tokens, row.cache_read_tokens)
             output_str = _fmt_tokens(row.result_tokens) if row.result_tokens > 0 else "--"
             cost_str = "{:,.0f}".format(row.norm_cost) if row.norm_cost > 0 else "--"
 

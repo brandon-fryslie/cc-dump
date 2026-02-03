@@ -164,35 +164,40 @@ def get_tool_economics(db_path: str, session_id: str, group_by_model: bool = Fal
     if not rows:
         return []
 
-    # Aggregate in Python with norm_cost calculation
+    # Aggregate in Python with norm_cost calculation - single loop handles both modes
+    aggregates = {}  # key -> {calls, input_tokens, result_tokens, cache_read, norm_cost}
+
+    for tool_name, input_tokens, result_tokens, model, cache_read_contrib in rows:
+        # Key depends on grouping mode
+        key = (tool_name, model or "") if group_by_model else tool_name
+
+        if key not in aggregates:
+            aggregates[key] = {
+                "calls": 0, "input_tokens": 0, "result_tokens": 0,
+                "cache_read": 0, "norm_cost": 0.0,
+            }
+        agg = aggregates[key]
+        agg["calls"] += 1
+        agg["input_tokens"] += input_tokens
+        agg["result_tokens"] += result_tokens
+        agg["cache_read"] += cache_read_contrib
+
+        # Norm cost contribution
+        _, pricing = classify_model(model)
+        agg["norm_cost"] += (
+            input_tokens * (pricing.base_input / HAIKU_BASE_UNIT)
+            + result_tokens * (pricing.output / HAIKU_BASE_UNIT)
+        )
+
+    # Build result list sorted by norm_cost descending
+    result = []
     if group_by_model:
-        by_key = {}  # (tool_name, model) -> {calls, input_tokens, result_tokens, cache_read, norm_cost}
-        for tool_name, input_tokens, result_tokens, model, cache_read_contrib in rows:
-            key = (tool_name, model or "")
-            if key not in by_key:
-                by_key[key] = {
-                    "calls": 0, "input_tokens": 0, "result_tokens": 0,
-                    "cache_read": 0, "norm_cost": 0.0,
-                }
-            agg = by_key[key]
-            agg["calls"] += 1
-            agg["input_tokens"] += input_tokens
-            agg["result_tokens"] += result_tokens
-            agg["cache_read"] += cache_read_contrib
-
-            # Norm cost contribution
-            _, pricing = classify_model(model)
-            agg["norm_cost"] += (
-                input_tokens * (pricing.base_input / HAIKU_BASE_UNIT)
-                + result_tokens * (pricing.output / HAIKU_BASE_UNIT)
-            )
-
-        # Build result list sorted by norm_cost descending
-        result = []
-        for (name, model), agg in sorted(
-            by_key.items(),
+        # Sort by norm_cost desc, then tool name, then model
+        sorted_items = sorted(
+            aggregates.items(),
             key=lambda x: (-x[1]["norm_cost"], x[0][0], x[0][1])
-        ):
+        )
+        for (name, model), agg in sorted_items:
             result.append(ToolEconomicsRow(
                 name=name,
                 calls=agg["calls"],
@@ -202,32 +207,10 @@ def get_tool_economics(db_path: str, session_id: str, group_by_model: bool = Fal
                 norm_cost=agg["norm_cost"],
                 model=model if model else None,
             ))
-
     else:
-        # Aggregate by tool_name only
-        by_name = {}  # tool_name -> {calls, input_tokens, result_tokens, cache_read, norm_cost}
-        for tool_name, input_tokens, result_tokens, model, cache_read_contrib in rows:
-            if tool_name not in by_name:
-                by_name[tool_name] = {
-                    "calls": 0, "input_tokens": 0, "result_tokens": 0,
-                    "cache_read": 0, "norm_cost": 0.0,
-                }
-            agg = by_name[tool_name]
-            agg["calls"] += 1
-            agg["input_tokens"] += input_tokens
-            agg["result_tokens"] += result_tokens
-            agg["cache_read"] += cache_read_contrib
-
-            # Norm cost contribution
-            _, pricing = classify_model(model)
-            agg["norm_cost"] += (
-                input_tokens * (pricing.base_input / HAIKU_BASE_UNIT)
-                + result_tokens * (pricing.output / HAIKU_BASE_UNIT)
-            )
-
-        # Build result list sorted by norm_cost descending
-        result = []
-        for name, agg in sorted(by_name.items(), key=lambda x: x[1]["norm_cost"], reverse=True):
+        # Sort by norm_cost descending
+        sorted_items = sorted(aggregates.items(), key=lambda x: x[1]["norm_cost"], reverse=True)
+        for name, agg in sorted_items:
             result.append(ToolEconomicsRow(
                 name=name,
                 calls=agg["calls"],

@@ -61,17 +61,23 @@ class TurnData:
 
     def compute_relevant_keys(self):
         """Compute which filter keys affect this turn's blocks.
-
+        
         Uses type(block).__name__ for lookup so blocks created before a
         hot-reload still match filter keys from the reloaded module.
         """
         keys = set()
+        current_role = None
         for block in self.blocks:
-            key = cc_dump.tui.rendering.BLOCK_FILTER_KEY.get(type(block).__name__)
+            block_name = type(block).__name__
+            key = cc_dump.tui.rendering.get_block_filter_key(block_name)
             if key is not None:
                 keys.add(key)
+            # Track role for message-collapse filter relevance
+            if block_name == "RoleBlock":
+                current_role = block.role.lower()
+            elif block_name == "TextContentBlock" and current_role in ("user", "assistant"):
+                keys.add(current_role)  # "user" or "assistant"
         self.relevant_filter_keys = keys
-
     def re_render(
         self,
         filters: dict,
