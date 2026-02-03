@@ -6,6 +6,7 @@ cc_dump modules.
 
 import json
 from dataclasses import dataclass
+from typing import NamedTuple
 
 
 # ─── Token Estimation ─────────────────────────────────────────────────────────
@@ -258,3 +259,78 @@ def tool_result_breakdown(messages: list) -> dict[str, int]:
     for inv in invocations:
         breakdown[inv.name] = breakdown.get(inv.name, 0) + inv.result_tokens_est
     return breakdown
+
+
+# ─── Model Economics ─────────────────────────────────────────────────────────
+
+
+class ModelPricing(NamedTuple):
+    """Per-model pricing in $/MTok."""
+
+    base_input: float
+    cache_write_5m: float
+    cache_hit: float
+    output: float
+
+
+# Normalization unit: 1 Haiku base input token = 1 unit
+HAIKU_BASE_UNIT = 1.0  # $/MTok
+
+MODEL_PRICING: dict[str, ModelPricing] = {
+    "opus": ModelPricing(base_input=5.0, cache_write_5m=6.25, cache_hit=0.50, output=25.0),
+    "sonnet": ModelPricing(base_input=3.0, cache_write_5m=3.75, cache_hit=0.30, output=15.0),
+    "haiku": ModelPricing(base_input=1.0, cache_write_5m=1.25, cache_hit=0.10, output=5.0),
+}
+
+FALLBACK_PRICING = MODEL_PRICING["sonnet"]
+
+
+def classify_model(model_str: str) -> tuple[str, ModelPricing]:
+    """Map a full model string to (display_key, pricing).
+
+    Matches on substring: "opus", "sonnet", "haiku".
+    Unknown models fall back to sonnet pricing.
+    """
+    if not model_str:
+        return ("unknown", FALLBACK_PRICING)
+
+    lower = model_str.lower()
+    for family, pricing in MODEL_PRICING.items():
+        if family in lower:
+            return (family, pricing)
+
+    return ("unknown", FALLBACK_PRICING)
+
+
+@dataclass
+class ModelEconomics:
+    """Aggregated real token data for a single model family."""
+
+    model_key: str = ""
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+
+    @property
+    def total_input(self) -> int:
+        """Total input = fresh + cache_read + cache_creation."""
+        return self.input_tokens + self.cache_read_tokens + self.cache_creation_tokens
+
+    @property
+    def cache_hit_pct(self) -> float:
+        """Cache hit percentage of total input."""
+        total = self.total_input
+        if total == 0:
+            return 0.0
+        return 100.0 * self.cache_read_tokens / total
+
+    def norm_cost(self, pricing: ModelPricing) -> float:
+        """Normalized cost where 1 Haiku base input token = 1 unit."""
+        return (
+            self.input_tokens * (pricing.base_input / HAIKU_BASE_UNIT)
+            + self.cache_creation_tokens * (pricing.cache_write_5m / HAIKU_BASE_UNIT)
+            + self.cache_read_tokens * (pricing.cache_hit / HAIKU_BASE_UNIT)
+            + self.output_tokens * (pricing.output / HAIKU_BASE_UNIT)
+        )

@@ -42,7 +42,7 @@ def render_economics_panel(aggregates: list[cc_dump.analysis.ToolAggregates]) ->
     lines = []
     lines.append("Tool Economics (session total):")
     lines.append("  {:<12} {:>5}  {:>8}  {:>8}  {:>8}".format(
-        "Tool", "Calls", "Input\u2191", "Results\u2193", "Total"
+        "Tool", "Calls", "Input↑", "Results↓", "Total"
     ))
     for agg in aggregates:
         lines.append("  {:<12} {:>5}  {:>8}  {:>8}  {:>8}".format(

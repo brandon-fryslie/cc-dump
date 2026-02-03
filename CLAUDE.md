@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-cc-dump is a transparent HTTP proxy for monitoring Claude Code API traffic. It intercepts Anthropic API requests, tracks system prompt changes with diffs, and provides a real-time Textual TUI. Python 3.10+, single production dependency (`textual`).
+cc-dump is a transparent HTTP proxy for monitoring Claude Code API traffic. It intercepts Anthropic API requests, tracks system prompt changes with diffs, and provides a real-time Textual TUI. Python 3.10+, single production dependency (`textual`). See [PROJECT_SPEC.md](PROJECT_SPEC.md) for goals and [ARCHITECTURE.md](ARCHITECTURE.md) for system design.
 
 ## Commands
 
@@ -24,6 +24,9 @@ just fmt                          # uvx ruff format src/
 # Install as tool
 just install                      # uv tool install -e .
 just reinstall                    # after structural changes
+
+# Run with Claude Code (reverse proxy mode)
+# ANTHROPIC_BASE_URL=http://127.0.0.1:3344 claude
 ```
 
 ## Architecture

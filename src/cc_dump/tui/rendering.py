@@ -25,6 +25,7 @@ def _build_role_styles() -> dict[str, str]:
         "user": f"bold {p.user}",
         "assistant": f"bold {p.assistant}",
         "system": f"bold {p.system}",
+        "tool_result": f"dim {p.user}",
     }
 
 
@@ -53,6 +54,9 @@ ROLE_STYLES = _build_role_styles()
 TAG_STYLES = _build_tag_styles()
 MSG_COLORS = _build_msg_colors()
 FILTER_INDICATORS = _build_filter_indicators()
+
+# Block types that support per-block expand/collapse via click
+_EXPANDABLE_BLOCK_TYPES = frozenset({"TrackedContentBlock", "TurnBudgetBlock"})
 
 
 # Type alias for render function signature
@@ -140,9 +144,14 @@ def _render_metadata(block: MetadataBlock, filters: dict) -> Text | None:
     return _add_filter_indicator(t, "metadata")
 
 
-def _render_turn_budget_block(block: TurnBudgetBlock, filters: dict) -> Text | None:
-    """Render turn budget block (wrapper for filter check)."""
-    if not filters.get("expand", False):
+def _render_turn_budget_block(block: TurnBudgetBlock, filters: dict, *, expanded: bool | None = None) -> Text | None:
+    """Render turn budget block (wrapper for filter check).
+
+    Args:
+        expanded: Per-block override. If None, falls back to filters["expand"].
+    """
+    is_expanded = expanded if expanded is not None else filters.get("expand", False)
+    if not is_expanded:
         return None
     return _render_turn_budget(block)
 
@@ -155,12 +164,16 @@ def _render_system_label(block: SystemLabelBlock, filters: dict) -> Text | None:
     return _add_filter_indicator(t, "system")
 
 
-def _render_tracked_content_block(block: TrackedContentBlock, filters: dict) -> Text | None:
-    """Render tracked content block (wrapper for filter check)."""
+def _render_tracked_content_block(block: TrackedContentBlock, filters: dict, *, expanded: bool | None = None) -> Text | None:
+    """Render tracked content block (wrapper for filter check).
+
+    Args:
+        expanded: Per-block override. If None, falls back to filters["expand"].
+    """
     # System content is controlled by "system" filter
     if not filters.get("system", False):
         return None
-    return _render_tracked_content(block, filters)
+    return _render_tracked_content(block, filters, expanded=expanded)
 
 
 def _render_role(block: RoleBlock, filters: dict) -> Text | None:
@@ -168,8 +181,11 @@ def _render_role(block: RoleBlock, filters: dict) -> Text | None:
     role_lower = block.role.lower()
     if role_lower == "system" and not filters.get("system", False):
         return None
+    if role_lower == "tool_result" and not filters.get("tools", False):
+        return None
     style = ROLE_STYLES.get(role_lower, "bold magenta")
-    t = Text(block.role.upper(), style=style)
+    label = block.role.upper().replace("_", " ")
+    t = Text(label, style=style)
     if block.timestamp:
         t.append(f"  {block.timestamp}", style="dim")
     return t
@@ -183,13 +199,12 @@ def _render_text_content(block: TextContentBlock, filters: dict) -> Text | None:
 
 
 def _render_tool_use(block: ToolUseBlock, filters: dict) -> Text | None:
-    """Render tool use block."""
+    """Render tool use block. Only shown when tools filter is on."""
     if not filters.get("tools", False):
-        return None
+        return None  # Summary handled by render_blocks
     color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
     t = Text("  ")
-    t.append("[tool_use]", style="bold {}".format(color))
-    t.append(" {}".format(block.name))
+    t.append("[Use: {}]".format(block.name), style="bold {}".format(color))
     if block.detail:
         t.append(" {}".format(block.detail), style="dim")
     t.append(" ({} bytes)".format(block.input_size))
@@ -197,32 +212,20 @@ def _render_tool_use(block: ToolUseBlock, filters: dict) -> Text | None:
 
 
 def _render_tool_result(block: ToolResultBlock, filters: dict) -> Text | None:
-    """Render tool result block. Shows full or summary based on tools filter."""
+    """Render tool result block. Hidden when tools filter is off."""
+    if not filters.get("tools", False):
+        return None
     color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
-
-    if filters.get("tools", False):
-        # Full mode: detailed display
-        label = "[tool_result:error]" if block.is_error else "[tool_result]"
-        t = Text("  ")
-        t.append(label, style="bold {}".format(color))
-        if block.tool_name:
-            t.append(" {}".format(block.tool_name))
-        if block.detail:
-            t.append(" {}".format(block.detail), style="dim")
-        t.append(" ({} bytes)".format(block.size))
-        return _add_filter_indicator(t, "tools")
+    if block.is_error:
+        label = "[Result: {} ERROR]".format(block.tool_name) if block.tool_name else "[Result: ERROR]"
     else:
-        # Summary mode: compact, dimmed
-        if block.tool_name:
-            label = "[{}:error]".format(block.tool_name) if block.is_error else "[{}]".format(block.tool_name)
-        else:
-            label = "[tool_result:error]" if block.is_error else "[tool_result]"
-        t = Text("  ")
-        t.append(label, style="dim {}".format(color))
-        if block.detail:
-            t.append(" {}".format(block.detail), style="dim")
-        t.append(" ({} bytes)".format(block.size), style="dim")
-        return t
+        label = "[Result: {}]".format(block.tool_name) if block.tool_name else "[Result]"
+    t = Text("  ")
+    t.append(label, style="bold {}".format(color))
+    if block.detail:
+        t.append(" {}".format(block.detail), style="dim")
+    t.append(" ({} bytes)".format(block.size))
+    return _add_filter_indicator(t, "tools")
 
 
 def _render_image(block: ImageBlock, filters: dict) -> Text | None:
@@ -331,7 +334,7 @@ BLOCK_FILTER_KEY: dict[str, str | None] = {
     "RoleBlock": "system",             # _render_role checks filters["system"] for system roles
     "TextContentBlock": None,
     "ToolUseBlock": "tools",
-    "ToolResultBlock": None,  # Always visible (summary or full based on tools filter)
+    "ToolResultBlock": "tools",
     "ImageBlock": None,
     "UnknownTypeBlock": None,
     "StreamInfoBlock": "metadata",
@@ -345,24 +348,82 @@ BLOCK_FILTER_KEY: dict[str, str | None] = {
 }
 
 
-def render_block(block: FormattedBlock, filters: dict) -> Text | None:
+def render_block(block: FormattedBlock, filters: dict, *, expanded: bool | None = None) -> Text | None:
     """Render a FormattedBlock to a Rich Text object.
+
+    Args:
+        expanded: Per-block expand override for collapsible blocks.
+            If None, falls back to filters["expand"].
 
     Returns None if the block should be filtered out based on filters dict.
     """
     renderer = BLOCK_RENDERERS.get(type(block).__name__)
     if renderer is None:
         return None  # Unknown block type - graceful degradation
+    # Pass expanded override to collapsible block renderers
+    block_name = type(block).__name__
+    if expanded is not None and block_name in _EXPANDABLE_BLOCK_TYPES:
+        return renderer(block, filters, expanded=expanded)
     return renderer(block, filters)
 
 
-def render_blocks(blocks: list[FormattedBlock], filters: dict) -> list[Text]:
-    """Render a list of FormattedBlock to Rich Text objects, applying filters."""
-    rendered = []
-    for block in blocks:
-        r = render_block(block, filters)
+def _make_tool_use_summary(tool_blocks: list[ToolUseBlock]) -> Text:
+    """Create a condensed summary line for a run of tool use blocks."""
+    from collections import Counter
+    counts = Counter(b.name for b in tool_blocks)
+    total = len(tool_blocks)
+    parts = ["{} {}x".format(name, count) for name, count in counts.items()]
+    t = Text("  ")
+    t.append("[used {} tool{}: {}]".format(
+        total, "" if total == 1 else "s", ", ".join(parts),
+    ), style="dim")
+    return t
+
+
+def render_blocks(
+    blocks: list[FormattedBlock],
+    filters: dict,
+    expanded_overrides: dict[int, bool] | None = None,
+) -> list[tuple[int, Text]]:
+    """Render a list of FormattedBlock to indexed Rich Text objects, applying filters.
+
+    When the tools filter is off, consecutive ToolUseBlocks are collapsed
+    into a single summary line like '[used 3 tools: Bash 2x, Read 1x]'.
+
+    Args:
+        expanded_overrides: Optional dict mapping block_index → expand state.
+            Overrides filters["expand"] for individual collapsible blocks.
+
+    Returns:
+        List of (block_index, Text) pairs. The block_index is the position
+        in the original blocks list. Summary lines use the index of the
+        first ToolUseBlock in the collapsed run.
+    """
+    rendered: list[tuple[int, Text]] = []
+    tools_on = filters.get("tools", False)
+    pending_tool_uses: list[tuple[int, ToolUseBlock]] = []
+
+    def flush_tool_uses():
+        if pending_tool_uses:
+            first_idx = pending_tool_uses[0][0]
+            tool_blocks = [b for _, b in pending_tool_uses]
+            rendered.append((first_idx, _make_tool_use_summary(tool_blocks)))
+            pending_tool_uses.clear()
+
+    for i, block in enumerate(blocks):
+        is_tool_use = type(block).__name__ == "ToolUseBlock"
+        if is_tool_use and not tools_on:
+            pending_tool_uses.append((i, block))
+            continue
+        # Non-tool-use block: flush any pending summary first
+        flush_tool_uses()
+        # Look up per-block expand override
+        block_expanded = expanded_overrides.get(i) if expanded_overrides else None
+        r = render_block(block, filters, expanded=block_expanded)
         if r is not None:
-            rendered.append(r)
+            rendered.append((i, r))
+
+    flush_tool_uses()
     return rendered
 
 
@@ -386,6 +447,7 @@ def render_turn_to_strips(
     console,
     width: int,
     wrap: bool = True,
+    expanded_overrides: dict[int, bool] | None = None,
 ) -> tuple[list, dict[int, int]]:
     """Render blocks to Strip objects for Line API storage.
 
@@ -398,6 +460,7 @@ def render_turn_to_strips(
         console: Rich Console instance (from app.console)
         width: Render width in cells
         wrap: Enable word wrapping
+        expanded_overrides: Per-block expand state overrides (block_index → bool)
 
     Returns:
         (strips, block_strip_map) — pre-rendered lines and a dict mapping
@@ -414,12 +477,8 @@ def render_turn_to_strips(
     all_strips: list[Strip] = []
     block_strip_map: dict[int, int] = {}
 
-    for i, block in enumerate(blocks):
-        text = render_block(block, filters)
-        if text is None:
-            continue
-
-        block_strip_map[i] = len(all_strips)
+    for block_idx, text in render_blocks(blocks, filters, expanded_overrides):
+        block_strip_map[block_idx] = len(all_strips)
 
         segments = console.render(text, render_options)
         lines = list(Segment.split_lines(segments))
@@ -432,17 +491,25 @@ def render_turn_to_strips(
     return all_strips, block_strip_map
 
 
-def _render_tracked_content(block: TrackedContentBlock, filters: dict) -> Text:
-    """Render a TrackedContentBlock with tag colors."""
+def _render_tracked_content(block: TrackedContentBlock, filters: dict, *, expanded: bool | None = None) -> Text:
+    """Render a TrackedContentBlock with tag colors.
+
+    Args:
+        expanded: Per-block override. If None, falls back to filters["expand"].
+    """
+    is_expanded = expanded if expanded is not None else filters.get("expand", False)
     fg, bg = TAG_STYLES[block.color_idx % len(TAG_STYLES)]
     tag_style = "bold {} on {}".format(fg, bg)
+    # Collapse/expand indicator
+    arrow = "\u25bc" if is_expanded else "\u25b6"
 
     if block.status == "new":
         content_len = len(block.content)
         t = Text(block.indent + "  ")
+        t.append("{} ".format(arrow), style="dim")
         t.append(" {} ".format(block.tag_id), style=tag_style)
         t.append(" NEW ({} chars):\n".format(content_len))
-        if filters.get("expand", False):
+        if is_expanded:
             t.append(_indent_text(block.content, block.indent + "    "))
         else:
             t.append(Text(block.indent + "    ...", style="dim"))
@@ -458,9 +525,10 @@ def _render_tracked_content(block: TrackedContentBlock, filters: dict) -> Text:
         old_len = len(block.old_content)
         new_len = len(block.new_content)
         t = Text(block.indent + "  ")
+        t.append("{} ".format(arrow), style="dim")
         t.append(" {} ".format(block.tag_id), style=tag_style)
         t.append(" CHANGED ({} -> {} chars):\n".format(old_len, new_len))
-        if filters.get("expand", False):
+        if is_expanded:
             diff_lines = make_diff_lines(block.old_content, block.new_content)
             t.append(_render_diff(diff_lines, block.indent + "    "))
         else:

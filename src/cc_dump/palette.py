@@ -46,6 +46,48 @@ def _angular_distance(a: float, b: float) -> float:
     return min(d, 360 - d)
 
 
+# ── Fixed indicator palette for filter toggles ──────────────────────────
+# Hand-picked palette (warm → cool gradient) for filter indicator bars.
+# Each entry is (name, foreground_hex).
+_INDICATOR_COLORS: list[tuple[str, str]] = [
+    ("strawberry-red",    "#F94144"),
+    ("atomic-tangerine",  "#F3722C"),
+    ("carrot-orange",     "#F8961E"),
+    ("tuscan-sun",        "#F9C74F"),
+    ("golden-sand",       "#C5C35E"),
+    ("willow-green",      "#90BE6D"),
+    ("mint-leaf",         "#6AB47C"),
+    ("seagrass",          "#43AA8B"),
+    ("dark-cyan",         "#4D908E"),
+    ("blue-slate",        "#577590"),
+]
+
+# Stable mapping: filter name → index into _INDICATOR_COLORS
+_FILTER_INDICATOR_INDEX: dict[str, int] = {
+    "headers":    0,  # strawberry-red
+    "tools":      1,  # atomic-tangerine
+    "system":     2,  # carrot-orange
+    "expand":     3,  # tuscan-sun
+    "metadata":   4,  # golden-sand
+    "stats":      5,  # willow-green
+    "economics":  6,  # mint-leaf
+    "timeline":   7,  # seagrass
+}
+
+
+def _darken_hex(hex_color: str, lightness: float = 0.25, saturation: float = 0.60) -> str:
+    """Derive a dark background variant from a hex foreground color."""
+    r, g, b = _hex_to_rgb(hex_color)
+    h, l_orig, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
+    # Re-synthesize at target lightness/saturation, preserving hue
+    return _hsl_to_hex(h * 360.0, saturation, lightness)
+
+
+# Pre-compute foreground and dark background variants for indicators
+INDICATOR_FG: list[str] = [hex_color for _, hex_color in _INDICATOR_COLORS]
+INDICATOR_BG: list[str] = [_darken_hex(hex_color) for _, hex_color in _INDICATOR_COLORS]
+
+
 class Palette:
     """Color palette with golden-angle spacing from a seed hue.
 
@@ -80,8 +122,10 @@ class Palette:
             "system": 2,
         }
 
-        # Indices reserved by roles and filters (not available for semantic matching)
-        _reserved = set(self._role_indices.values()) | set(range(3, 11))
+        # Indices reserved by roles (not available for semantic matching).
+        # Filter indicators now use a separate fixed palette, so positions
+        # 3-10 are no longer reserved in the golden-angle palette.
+        _reserved = set(self._role_indices.values())
 
         # Map semantic roles to closest non-reserved palette indices
         self._semantic_indices: dict[str, int] = {}
@@ -172,35 +216,19 @@ class Palette:
     def filter_color(self, filter_name: str) -> str:
         """Get a stable foreground color for a named filter.
 
-        Filter assignments use palette positions 3-7 (after role colors).
+        Uses the fixed indicator palette (warm→cool gradient), not the
+        golden-angle palette.
         """
-        _filter_positions = {
-            "headers": 3,
-            "tools": 4,
-            "system": 5,
-            "expand": 6,
-            "metadata": 7,
-            "stats": 8,
-            "economics": 9,
-            "timeline": 10,
-        }
-        pos = _filter_positions.get(filter_name, 3)
-        return self._fg_colors[pos]
+        idx = _FILTER_INDICATOR_INDEX.get(filter_name, 0)
+        return INDICATOR_FG[idx]
 
     def filter_bg(self, filter_name: str) -> str:
-        """Get a stable dark background for a named filter."""
-        _filter_positions = {
-            "headers": 3,
-            "tools": 4,
-            "system": 5,
-            "expand": 6,
-            "metadata": 7,
-            "stats": 8,
-            "economics": 9,
-            "timeline": 10,
-        }
-        pos = _filter_positions.get(filter_name, 3)
-        return self._bg_colors[pos]
+        """Get a stable dark background for a named filter.
+
+        Uses darkened variants of the fixed indicator palette.
+        """
+        idx = _FILTER_INDICATOR_INDEX.get(filter_name, 0)
+        return INDICATOR_BG[idx]
 
     # ── Accent color (for keybinding highlights, etc.) ──
 

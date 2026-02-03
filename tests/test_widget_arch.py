@@ -74,7 +74,7 @@ class TestBlockFilterKeyCompleteness:
         assert BLOCK_FILTER_KEY["TrackedContentBlock"] == "system"
         assert BLOCK_FILTER_KEY["RoleBlock"] == "system"  # filters system roles
         assert BLOCK_FILTER_KEY["ToolUseBlock"] == "tools"
-        assert BLOCK_FILTER_KEY["ToolResultBlock"] is None  # always visible; renderer shows summary when filter off
+        assert BLOCK_FILTER_KEY["ToolResultBlock"] == "tools"  # filtered by tools; summary handled by render_blocks
         assert BLOCK_FILTER_KEY["StreamInfoBlock"] == "metadata"
         assert BLOCK_FILTER_KEY["StreamToolUseBlock"] == "tools"
         assert BLOCK_FILTER_KEY["StopReasonBlock"] == "metadata"
@@ -256,14 +256,14 @@ class TestTurnDataReRender:
         td.compute_relevant_keys()
         td.re_render(filters1, console, 80)
 
-        # Tools filtered out, should have empty strips
-        assert len(td.strips) == 0
+        # Tools filtered out, but summary line appears via render_blocks
+        assert len(td.strips) == 1  # summary line
 
         # Enable tools filter
         filters2 = {"tools": True}
         td.re_render(filters2, console, 80)
 
-        # Should now have strips for the tool block
+        # Should now have strips for the individual tool block
         assert len(td.strips) > 0
 
 

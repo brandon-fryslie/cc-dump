@@ -6,7 +6,10 @@ readme = "README.md"
 license = {text = "MIT"}
 authors = [{name = "Brandon Fryslie", email = "brandon@fryslie.com"}]
 requires-python = ">=3.10"
-dependencies = ["textual>=0.80.0"]
+dependencies = [
+    "textual>=0.80.0",
+    "tiktoken>=0.5.0",
+]
 keywords = ["claude", "anthropic", "proxy", "api", "debugging", "tui"]
 classifiers = [
     "Development Status :: 4 - Beta",

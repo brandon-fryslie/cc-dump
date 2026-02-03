@@ -6,7 +6,12 @@ from cc_dump.analysis import (
     TurnBudget,
     ToolAggregates,
     ToolInvocation,
+    ModelEconomics,
+    ModelPricing,
+    MODEL_PRICING,
+    HAIKU_BASE_UNIT,
     aggregate_tools,
+    classify_model,
     compute_turn_budget,
     correlate_tools,
     estimate_tokens,
@@ -495,3 +500,91 @@ def test_tool_result_breakdown_multiple_tools():
     assert "read_file" in breakdown
     # Should be sum of both results
     assert breakdown["read_file"] > 0
+
+
+# ─── Model Classification Tests ──────────────────────────────────────────────
+
+
+def test_classify_model_sonnet():
+    key, pricing = classify_model("claude-sonnet-4-5-20241022")
+    assert key == "sonnet"
+    assert pricing == MODEL_PRICING["sonnet"]
+
+
+def test_classify_model_opus():
+    key, pricing = classify_model("claude-opus-4-5-20251101")
+    assert key == "opus"
+    assert pricing == MODEL_PRICING["opus"]
+
+
+def test_classify_model_haiku():
+    key, pricing = classify_model("claude-haiku-4-5-20250101")
+    assert key == "haiku"
+    assert pricing == MODEL_PRICING["haiku"]
+
+
+def test_classify_model_unknown():
+    key, pricing = classify_model("gpt-4o")
+    assert key == "unknown"
+    assert pricing == MODEL_PRICING["sonnet"]  # fallback
+
+
+def test_classify_model_empty():
+    key, pricing = classify_model("")
+    assert key == "unknown"
+
+
+# ─── Model Economics Tests ───────────────────────────────────────────────────
+
+
+def test_model_economics_total_input():
+    m = ModelEconomics(
+        input_tokens=1000,
+        cache_read_tokens=2000,
+        cache_creation_tokens=500,
+    )
+    assert m.total_input == 3500
+
+
+def test_model_economics_cache_hit_pct():
+    m = ModelEconomics(
+        input_tokens=700,
+        cache_read_tokens=2100,
+        cache_creation_tokens=200,
+    )
+    # cache_read / total_input = 2100 / 3000 = 70%
+    assert abs(m.cache_hit_pct - 70.0) < 0.01
+
+
+def test_model_economics_cache_hit_pct_zero():
+    m = ModelEconomics()
+    assert m.cache_hit_pct == 0.0
+
+
+def test_model_economics_norm_cost_haiku():
+    """1000 Haiku base input tokens = 1000 norm units."""
+    m = ModelEconomics(input_tokens=1000)
+    pricing = MODEL_PRICING["haiku"]
+    # 1000 * (1.0 / 1.0) = 1000
+    assert m.norm_cost(pricing) == 1000.0
+
+
+def test_model_economics_norm_cost_opus():
+    """1000 Opus base input tokens = 5000 norm units (5x Haiku)."""
+    m = ModelEconomics(input_tokens=1000)
+    pricing = MODEL_PRICING["opus"]
+    assert m.norm_cost(pricing) == 5000.0
+
+
+def test_model_economics_norm_cost_mixed():
+    """Full cost calculation with all token types."""
+    m = ModelEconomics(
+        input_tokens=1000,
+        cache_creation_tokens=500,
+        cache_read_tokens=2000,
+        output_tokens=300,
+    )
+    pricing = MODEL_PRICING["sonnet"]
+    # 1000 * 3.0 + 500 * 3.75 + 2000 * 0.30 + 300 * 15.0
+    # = 3000 + 1875 + 600 + 4500 = 9975
+    assert m.norm_cost(pricing) == 9975.0

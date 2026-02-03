@@ -57,14 +57,27 @@ class TurnData:
                 keys.add(key)
         self.relevant_filter_keys = keys
 
-    def re_render(self, filters: dict, console, width: int) -> bool:
-        """Re-render if a relevant filter changed. Returns True if strips changed."""
+    def re_render(
+        self,
+        filters: dict,
+        console,
+        width: int,
+        expanded_overrides: dict[int, bool] | None = None,
+        force: bool = False,
+    ) -> bool:
+        """Re-render if a relevant filter changed. Returns True if strips changed.
+
+        Args:
+            expanded_overrides: Per-block expand state (block_index → bool).
+            force: Force re-render even if filter snapshot hasn't changed.
+        """
         snapshot = {k: filters.get(k, False) for k in self.relevant_filter_keys}
-        if snapshot == self._last_filter_snapshot:
+        if not force and snapshot == self._last_filter_snapshot:
             return False
         self._last_filter_snapshot = snapshot
         self.strips, self.block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
-            self.blocks, filters, console, width
+            self.blocks, filters, console, width,
+            expanded_overrides=expanded_overrides,
         )
         return True
 
@@ -111,6 +124,10 @@ class ConversationView(ScrollView):
         # Sprint 2: selection and programmatic scroll guard
         self._selected_turn: int | None = None
         self._scrolling_programmatically: bool = False
+        # Per-block expand overrides: (turn_index, block_index) → expanded bool.
+        # Only stores overrides from the global expand default.
+        # Cleared when the global expand toggle changes (acts as reset).
+        self._expanded_overrides: dict[tuple[int, int], bool] = {}
 
     def _compute_anchor_from_scroll(self) -> tuple[int, int, int] | None:
         """Compute (turn_index, block_index, line_within_block) from current scroll position."""
@@ -540,6 +557,12 @@ class ConversationView(ScrollView):
         2. Otherwise, compute a fresh anchor from current scroll position.
         3. If the anchor block is filtered out, save it for later.
         """
+        # Clear per-block overrides when global expand toggle changes
+        old_expand = self._last_filters.get("expand", False)
+        new_expand = filters.get("expand", False)
+        if old_expand != new_expand:
+            self._expanded_overrides.clear()
+
         self._last_filters = filters
 
         if self._pending_restore is not None:
@@ -559,7 +582,8 @@ class ConversationView(ScrollView):
             # Skip streaming turns during filter changes
             if td.is_streaming:
                 continue
-            if td.re_render(filters, console, width):
+            overrides = self._overrides_for_turn(td.turn_index)
+            if td.re_render(filters, console, width, expanded_overrides=overrides):
                 changed = True
 
         if changed:
@@ -604,8 +628,10 @@ class ConversationView(ScrollView):
                 # Skip re-rendering streaming turns on resize
                 if td.is_streaming:
                     continue
+                overrides = self._overrides_for_turn(td.turn_index)
                 td.strips, td.block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
-                    td.blocks, self._last_filters, console, width
+                    td.blocks, self._last_filters, console, width,
+                    expanded_overrides=overrides,
                 )
             self._recalculate_offsets()
 
@@ -673,13 +699,81 @@ class ConversationView(ScrollView):
                 if turn.line_count > 0:
                     self.refresh_lines(turn.line_offset, turn.line_count)
 
+    def _block_index_at_line(self, turn: TurnData, content_y: int) -> int | None:
+        """Find the block index within a turn for a given content line.
+
+        Uses block_strip_map to determine which block owns the line.
+        Returns None if no block maps to this line.
+        """
+        local_y = content_y - turn.line_offset
+        best_block_idx = None
+        best_strip_start = -1
+        for block_idx, strip_start in turn.block_strip_map.items():
+            if strip_start <= local_y and strip_start > best_strip_start:
+                best_block_idx = block_idx
+                best_strip_start = strip_start
+        return best_block_idx
+
+    def _is_expandable_block(self, block) -> bool:
+        """Check if a block supports click-to-expand."""
+        name = type(block).__name__
+        if name == "TurnBudgetBlock":
+            return True
+        if name == "TrackedContentBlock":
+            # "ref" status blocks have no content to expand
+            return block.status in ("new", "changed")
+        return False
+
+    def _overrides_for_turn(self, turn_index: int) -> dict[int, bool] | None:
+        """Build expanded_overrides dict for a single turn from global state."""
+        overrides = {}
+        for (ti, bi), expanded in self._expanded_overrides.items():
+            if ti == turn_index:
+                overrides[bi] = expanded
+        return overrides or None
+
     def on_click(self, event) -> None:
-        """Select turn at click position."""
+        """Select turn at click position. Toggle expand on collapsible blocks."""
         # event.y is viewport-relative; add scroll offset for content-space
         content_y = int(event.y + self.scroll_offset.y)
         turn = self._find_turn_for_line(content_y)
-        if turn is not None:
-            self.select_turn(turn.turn_index)
+        if turn is None:
+            return
+
+        self.select_turn(turn.turn_index)
+
+        # Check if click hit an expandable block
+        block_idx = self._block_index_at_line(turn, content_y)
+        if block_idx is not None and block_idx < len(turn.blocks):
+            block = turn.blocks[block_idx]
+            if self._is_expandable_block(block):
+                self._toggle_block_expand(turn, block_idx)
+
+    def _toggle_block_expand(self, turn: TurnData, block_idx: int):
+        """Toggle expand state for a single block and re-render its turn."""
+        key = (turn.turn_index, block_idx)
+        global_default = self._last_filters.get("expand", False)
+
+        if key in self._expanded_overrides:
+            # Already overridden — toggle it
+            current = self._expanded_overrides[key]
+            if current == (not global_default):
+                # Toggling back to global default — remove override
+                del self._expanded_overrides[key]
+            else:
+                self._expanded_overrides[key] = not current
+        else:
+            # No override — set to opposite of global default
+            self._expanded_overrides[key] = not global_default
+
+        # Re-render just this turn
+        if not turn.is_streaming:
+            width = self.scrollable_content_region.width if self._size_known else self._last_width
+            console = self.app.console
+            overrides = self._overrides_for_turn(turn.turn_index)
+            turn.re_render(self._last_filters, console, width,
+                           expanded_overrides=overrides, force=True)
+            self._recalculate_offsets()
 
     # ─── Sprint 2: Turn navigation ───────────────────────────────────────────
 
@@ -781,6 +875,7 @@ class ConversationView(ScrollView):
             "selected_turn": self._selected_turn,
             "turn_count": len(self._turns),
             "streaming_states": streaming_states,
+            "expanded_overrides": dict(self._expanded_overrides),
         }
 
     def restore_state(self, state: dict):
@@ -791,6 +886,12 @@ class ConversationView(ScrollView):
         self._pending_restore = state
         self._follow_mode = state.get("follow_mode", True)
         self._selected_turn = state.get("selected_turn", None)
+        # Restore per-block expand overrides; keys are (turn_index, block_index) tuples
+        raw_overrides = state.get("expanded_overrides", {})
+        self._expanded_overrides = {
+            (tuple(k) if isinstance(k, list) else k): v
+            for k, v in raw_overrides.items()
+        }
 
         # Restore streaming states after _rebuild_from_state is called
         streaming_states = state.get("streaming_states", [])

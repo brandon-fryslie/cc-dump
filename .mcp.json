@@ -1,0 +1,27 @@
+{
+  "mcpServers": {
+    "cherry-chrome": {
+      "command": "node",
+      "args": [
+        "/Users/bmf/code/cherry-chrome-mcp/build/src/index.js"
+      ]
+    },
+    "chromedevtools/chrome-devtools-mcp": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest"
+      ],
+      "env": {}
+    },
+    "cherry-chatgpt": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/Users/bmf/code/cherry-chatgpt-mcp/build/src/index.js"
+      ],
+      "env": {}
+    }
+  }
+}

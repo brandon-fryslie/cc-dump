@@ -289,7 +289,7 @@ def make_diff_lines(old_text, new_text):
 
 
 def _get_timestamp():
-    return datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    return datetime.now().strftime("%-I:%M:%S %p")
 
 
 def _front_ellipse_path(path: str, max_len: int = 40) -> str:
@@ -395,6 +395,19 @@ def format_request(body, state):
         content = msg.get("content", "")
         msg_color_idx = i % MSG_COLOR_CYCLE
 
+        # Detect user messages that are purely tool results
+        if role == "user" and isinstance(content, list):
+            has_tool_result = any(
+                isinstance(b, dict) and b.get("type") == "tool_result"
+                for b in content
+            )
+            if has_tool_result:
+                role = "tool_result"
+
+        # Blank line between messages (skip before the first one)
+        if i > 0:
+            blocks.append(NewlineBlock())
+
         blocks.append(RoleBlock(role=role, msg_index=i, timestamp=_get_timestamp()))
 
         if isinstance(content, str):
@@ -460,7 +473,88 @@ def format_request(body, state):
                     blocks.append(UnknownTypeBlock(block_type=btype))
 
     blocks.append(NewlineBlock())
+    blocks = _merge_tool_only_assistant_runs(blocks)
     return blocks
+
+
+def _merge_tool_only_assistant_runs(blocks):
+    """Merge consecutive assistant messages that contain only tool uses (and thinking).
+
+    When Claude makes multiple assistant turns that only contain tool invocations
+    and thinking blocks (no user-visible text response), these are collapsed into
+    a single assistant block with all ToolUseBlocks and thinking blocks preserved.
+    This reduces visual noise from repeated ASSISTANT headers.
+    """
+    # Step 1: Segment blocks into message groups by RoleBlock boundaries.
+    # Each group is (start_index, [blocks]).
+    groups = []
+    current_group = []
+    for block in blocks:
+        if isinstance(block, RoleBlock) and current_group:
+            groups.append(current_group)
+            current_group = []
+        current_group.append(block)
+    if current_group:
+        groups.append(current_group)
+
+    # Step 2: Classify each group and merge consecutive tool-only assistant groups.
+    def _is_tool_only_assistant(group):
+        """A group is tool-only assistant if it starts with an assistant RoleBlock,
+        contains at least one ToolUseBlock, and only has ToolUseBlocks,
+        UnknownTypeBlocks (thinking markers), or TextContentBlocks (thinking text)
+        as content (excluding the RoleBlock itself and any trailing NewlineBlock)."""
+        if not group:
+            return False
+        first = group[0]
+        if not isinstance(first, RoleBlock) or first.role != "assistant":
+            return False
+        has_tool_use = False
+        for block in group[1:]:
+            if isinstance(block, NewlineBlock):
+                continue
+            if isinstance(block, ToolUseBlock):
+                has_tool_use = True
+            elif isinstance(block, UnknownTypeBlock):
+                continue  # thinking marker
+            elif isinstance(block, TextContentBlock):
+                continue  # thinking text content
+            else:
+                return False  # some other block type — not tool-only
+        return has_tool_use
+
+    result = []
+    i = 0
+    while i < len(groups):
+        if not _is_tool_only_assistant(groups[i]):
+            result.extend(groups[i])
+            i += 1
+            continue
+
+        # Found a tool-only assistant group — collect consecutive ones.
+        run_start = i
+        i += 1
+        while i < len(groups) and _is_tool_only_assistant(groups[i]):
+            i += 1
+
+        if i - run_start == 1:
+            # Single group, no merge needed.
+            result.extend(groups[run_start])
+            continue
+
+        # Merge: keep first group's RoleBlock, collect content from all groups.
+        first_group = groups[run_start]
+        result.append(first_group[0])  # RoleBlock from first group
+
+        # Add content blocks from all groups in the run (skip RoleBlock and
+        # inter-group NewlineBlocks that were separators).
+        for g_idx in range(run_start, i):
+            group = groups[g_idx]
+            for block in group[1:]:
+                if isinstance(block, NewlineBlock):
+                    continue  # drop inter-message separators
+                result.append(block)
+
+    return result
 
 
 def format_response_event(event_type, data):
