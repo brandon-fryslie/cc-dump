@@ -39,13 +39,13 @@ def main():
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
 
-    print(f"🚀 cc-dump proxy started")
+    print("🚀 cc-dump proxy started")
     print(f"   Listening on: http://{args.host}:{args.port}")
     if ProxyHandler.target_host:
         print(f"   Reverse proxy mode: {ProxyHandler.target_host}")
         print(f"   Usage: ANTHROPIC_BASE_URL=http://{args.host}:{args.port} claude")
     else:
-        print(f"   Forward proxy mode (dynamic targets)")
+        print("   Forward proxy mode (dynamic targets)")
         print(f"   Usage: HTTP_PROXY=http://{args.host}:{args.port} ANTHROPIC_BASE_URL=http://api.minimax.com claude")
 
     # State dict for content tracking (used by formatting layer)
@@ -75,7 +75,7 @@ def main():
         print(f"   Database: {db_path}")
         print(f"   Session ID: {session_id}")
     else:
-        print(f"   Database: disabled (--no-db)")
+        print("   Database: disabled (--no-db)")
 
     router.start()
 

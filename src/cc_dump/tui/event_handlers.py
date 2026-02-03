@@ -201,7 +201,7 @@ def handle_response_done(event, state, widgets, app_state, refresh_callbacks, db
         show_expand = widgets.get("show_expand", False)
 
         # Finalize streaming turn in ConversationView
-        blocks = conv.finalize_streaming_turn()
+        _ = conv.finalize_streaming_turn()
 
         # Clear current turn usage (turn is now committed to DB)
         app_state["current_turn_usage"] = {}
