@@ -1,8 +1,8 @@
-# cc-dump Test Suite Summary
+# surview Test Suite Summary
 
 ## Overview
 
-Comprehensive integration test suite created for cc-dump TUI to prevent regressions and ensure all functionality works correctly.
+Comprehensive integration test suite created for surview TUI to prevent regressions and ensure all functionality works correctly.
 
 ## Test Files Created
 
@@ -126,7 +126,7 @@ Tests for visual indicators (colored bars) in filtered content:
 
 Added new fixtures to support comprehensive testing:
 
-- **Enhanced `start_cc_dump` fixture**
+- **Enhanced `start_surview` fixture**
   - Now supports `db_path` parameter for database-enabled tests
   - Now supports `session_id` parameter
   - Handles both --no-db and database-enabled modes
@@ -205,7 +205,7 @@ uv run pytest tests/test_tui_integration.py tests/test_visual_indicators.py -v
 uv run pytest tests/test_tui_integration.py::TestFilterToggles -v
 
 # Run with coverage
-uv run pytest --cov=cc_dump --cov-report=html
+uv run pytest --cov=surview --cov-report=html
 ```
 
 ### CI/CD
@@ -241,7 +241,7 @@ dev = [
 ### 1. PTY-based Testing
 
 Uses `ptydriver` to:
-- Start real cc-dump TUI process
+- Start real surview TUI process
 - Send keyboard inputs programmatically
 - Capture terminal output
 - Verify UI behavior
@@ -307,7 +307,7 @@ Tests ensure:
 
 ### Adding New Features
 
-When adding new features to cc-dump:
+When adding new features to surview:
 
 1. Write integration tests in `test_tui_integration.py`
 2. Write unit tests for helper functions

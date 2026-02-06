@@ -3,8 +3,8 @@
 import json
 import pytest
 
-from cc_dump.har_replayer import load_har, convert_to_events
-from cc_dump.formatting import format_request, format_response_event
+from surview.har_replayer import load_har, convert_to_events
+from surview.formatting import format_request, format_response_event
 
 
 def test_replay_events_through_formatting(tmp_path):
@@ -174,7 +174,7 @@ def test_replay_with_tool_use(tmp_path):
             all_blocks.extend(blocks)
 
     # Verify tool use was processed
-    from cc_dump.formatting import StreamToolUseBlock
+    from surview.formatting import StreamToolUseBlock
 
     tool_blocks = [b for b in all_blocks if isinstance(b, StreamToolUseBlock)]
     assert len(tool_blocks) == 1

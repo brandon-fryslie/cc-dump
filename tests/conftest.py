@@ -1,4 +1,4 @@
-"""Pytest configuration and shared fixtures for cc-dump hot-reload tests."""
+"""Pytest configuration and shared fixtures for surview hot-reload tests."""
 
 import os
 import random
@@ -13,21 +13,21 @@ from ptydriver import PtyProcess
 
 
 @pytest.fixture
-def cc_dump_path():
-    """Return absolute path to cc-dump package directory."""
-    return Path(__file__).parent.parent / "src" / "cc_dump"
+def surview_path():
+    """Return absolute path to surview package directory."""
+    return Path(__file__).parent.parent / "src" / "surview"
 
 
 @pytest.fixture
-def formatting_py(cc_dump_path):
+def formatting_py(surview_path):
     """Return path to formatting.py."""
-    return cc_dump_path / "formatting.py"
+    return surview_path / "formatting.py"
 
 
 @pytest.fixture
-def proxy_py(cc_dump_path):
+def proxy_py(surview_path):
     """Return path to proxy.py."""
-    return cc_dump_path / "proxy.py"
+    return surview_path / "proxy.py"
 
 
 @pytest.fixture
@@ -58,12 +58,12 @@ def backup_file():
 
 
 @pytest.fixture
-def start_cc_dump():
-    """Factory fixture to start cc-dump TUI and return PtyProcess."""
+def start_surview():
+    """Factory fixture to start surview TUI and return PtyProcess."""
     processes = []
 
     def _start(port=None, timeout=10, db_path=None, session_id=None):
-        """Start cc-dump on specified port and wait for it to be ready.
+        """Start surview on specified port and wait for it to be ready.
 
         Args:
             port: Port number to use (None = random port between 10000-60000)
@@ -76,7 +76,7 @@ def start_cc_dump():
             port = random.randint(10000, 60000)
 
         # Build command
-        cmd = ["uv", "run", "cc-dump", "--port", str(port)]
+        cmd = ["uv", "run", "surview", "--port", str(port)]
 
         if db_path is None:
             cmd.append("--no-db")
@@ -98,13 +98,13 @@ def start_cc_dump():
             # Check if process is alive
             if not proc.is_alive():
                 content = proc.get_content()
-                raise RuntimeError(f"cc-dump failed to start. Error output:\n{content}")
+                raise RuntimeError(f"surview failed to start. Error output:\n{content}")
 
             # Try to find some recognizable content
             content = proc.get_content()
             # Textual apps may show various elements, just verify we have output
             if not content or len(content.strip()) < 10:
-                raise RuntimeError(f"cc-dump started but no TUI content visible. Output:\n{content}")
+                raise RuntimeError(f"surview started but no TUI content visible. Output:\n{content}")
 
         except Exception as e:
             if proc.is_alive():

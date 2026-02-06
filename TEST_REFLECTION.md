@@ -9,9 +9,9 @@ The original test suite verified that the TUI **didn't crash** when filters were
 The original tests (`test_tui_integration.py`) included tests like:
 
 ```python
-def test_toggle_headers_filter(self, start_cc_dump):
+def test_toggle_headers_filter(self, start_surview):
     """Test 'h' key toggles headers filter."""
-    proc = start_cc_dump()
+    proc = start_surview()
     assert proc.is_alive()
 
     proc.send("h", press_enter=False)
@@ -115,9 +115,9 @@ The answer should be: **Look at the UI and see an indicator**. But the tests nev
 #### Proper Test Structure
 
 ```python
-def test_user_can_see_active_filters(self, start_cc_dump):
+def test_user_can_see_active_filters(self, start_surview):
     """Test that UI shows which filters are active."""
-    proc = start_cc_dump()
+    proc = start_surview()
 
     # Initial state - get UI
     content = proc.get_content()
@@ -287,7 +287,7 @@ def test_toggle_system(): ...
 ### Anti-Pattern 4: "Integration Without Inspection"
 ```python
 # Using integration test tools but not inspecting output
-proc = start_cc_dump()
+proc = start_surview()
 proc.send("h")
 # ... missing: proc.get_content()
 ```

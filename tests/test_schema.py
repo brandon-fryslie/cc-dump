@@ -3,7 +3,7 @@
 import sqlite3
 import tempfile
 import os
-from cc_dump.schema import init_db, SCHEMA_VERSION, _migrate_v2_to_v3
+from surview.schema import init_db, SCHEMA_VERSION, _migrate_v2_to_v3
 
 
 def test_schema_version():

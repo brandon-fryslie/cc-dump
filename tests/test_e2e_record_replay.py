@@ -28,9 +28,9 @@ from pathlib import Path
 
 import pytest
 
-from cc_dump.har_recorder import HARRecordingSubscriber
-from cc_dump.har_replayer import load_har, convert_to_events
-import cc_dump.formatting as fmt
+from surview.har_recorder import HARRecordingSubscriber
+from surview.har_replayer import load_har, convert_to_events
+import surview.formatting as fmt
 
 
 # Sample events representing a realistic API exchange with multiple event types

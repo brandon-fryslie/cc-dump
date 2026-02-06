@@ -1,4 +1,4 @@
-# cc-dump
+# surview
 
 Transparent HTTP proxy for monitoring Claude Code API traffic. Intercepts requests to the Anthropic API, tracks system prompt changes with diffs, and provides a real-time Textual TUI.
 
@@ -14,10 +14,10 @@ Requires Python 3.10+. Single production dependency: [Textual](https://github.co
 
 ### Reverse Proxy Mode (default)
 
-Point Claude Code at cc-dump, which forwards to the real API:
+Point Claude Code at surview, which forwards to the real API:
 
 ```bash
-cc-dump [--port PORT] [--target URL]
+surview [--port PORT] [--target URL]
 ANTHROPIC_BASE_URL=http://127.0.0.1:3344 claude
 ```
 
@@ -26,11 +26,11 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:3344 claude
 For dynamic targets (e.g., non-Anthropic APIs):
 
 ```bash
-cc-dump --port 3344 --target ""
+surview --port 3344 --target ""
 HTTP_PROXY=http://127.0.0.1:3344 ANTHROPIC_BASE_URL=http://api.minimax.com claude
 ```
 
-In forward proxy mode, requests are sent as plain HTTP to cc-dump, inspected, then upgraded to HTTPS for the upstream API. Set `ANTHROPIC_BASE_URL` to an HTTP URL (not HTTPS) to avoid TLS tunneling.
+In forward proxy mode, requests are sent as plain HTTP to surview, inspected, then upgraded to HTTPS for the upstream API. Set `ANTHROPIC_BASE_URL` to an HTTP URL (not HTTPS) to avoid TLS tunneling.
 
 ### Options
 

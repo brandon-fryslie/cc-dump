@@ -1,12 +1,12 @@
 # PROJECT_SPEC.md
 
-## What cc-dump Is
+## What surview Is
 
-cc-dump is a transparent HTTP proxy that sits between Claude Code and the Anthropic API, capturing and displaying all API traffic in a real-time TUI. It is a debugging and observability tool for understanding what Claude Code is actually sending and receiving.
+surview is a transparent HTTP proxy that sits between Claude Code and the Anthropic API, capturing and displaying all API traffic in a real-time TUI. It is a debugging and observability tool for understanding what Claude Code is actually sending and receiving.
 
 ## Why It Exists
 
-Claude Code is opaque by design — you see the assistant's text output, but not the full API payloads: the system prompts, tool definitions, tool use/result blocks, token counts, caching behavior, or how the context window fills up over a session. cc-dump makes all of this visible.
+Claude Code is opaque by design — you see the assistant's text output, but not the full API payloads: the system prompts, tool definitions, tool use/result blocks, token counts, caching behavior, or how the context window fills up over a session. surview makes all of this visible.
 
 ## Core Goals
 
@@ -16,7 +16,7 @@ Every API request and response is captured and displayed. Nothing is hidden or s
 
 ### 2. System Prompt Tracking
 
-System prompts are the most interesting part of Claude Code's behavior and the hardest to observe. cc-dump assigns color-coded tags to each distinct prompt section, tracks them across requests via content hashing, and shows unified diffs when they change.
+System prompts are the most interesting part of Claude Code's behavior and the hardest to observe. surview assigns color-coded tags to each distinct prompt section, tracks them across requests via content hashing, and shows unified diffs when they change.
 
 ### 3. Real-Time Streaming
 
@@ -24,7 +24,7 @@ Responses stream into the TUI as they arrive, matching the real-time experience 
 
 ### 4. Session-Level Analysis
 
-Beyond individual requests, cc-dump provides aggregate views: total token usage, per-tool cost breakdowns, and context growth over time. These help answer questions like "how fast is the context window filling up?" and "which tools are using the most tokens?"
+Beyond individual requests, surview provides aggregate views: total token usage, per-tool cost breakdowns, and context growth over time. These help answer questions like "how fast is the context window filling up?" and "which tools are using the most tokens?"
 
 ### 5. Hot-Reloadable Development
 
@@ -32,7 +32,7 @@ The TUI supports hot-reloading of formatting, rendering, and widget code without
 
 ### 6. Zero Configuration
 
-cc-dump should work out of the box with a single command. Point Claude Code at it and go. No config files, no setup, no accounts.
+surview should work out of the box with a single command. Point Claude Code at it and go. No config files, no setup, no accounts.
 
 ## What It Is Not
 

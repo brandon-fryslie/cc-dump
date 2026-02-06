@@ -15,11 +15,10 @@ from rich.console import Console
 from rich.style import Style
 from textual.geometry import Offset
 
-from cc_dump.formatting import (
+from surview.formatting import (
     SeparatorBlock,
     HeaderBlock,
     MetadataBlock,
-    TurnBudgetBlock,
     SystemLabelBlock,
     TrackedContentBlock,
     RoleBlock,
@@ -37,8 +36,8 @@ from cc_dump.formatting import (
     LogBlock,
     NewlineBlock,
 )
-from cc_dump.tui.rendering import BLOCK_RENDERERS, BLOCK_FILTER_KEY, render_turn_to_strips
-from cc_dump.tui.widget_factory import TurnData, ConversationView
+from surview.tui.rendering import BLOCK_RENDERERS, BLOCK_FILTER_KEY, render_turn_to_strips
+from surview.tui.widget_factory import TurnData, ConversationView
 
 
 class TestBlockFilterKeyCompleteness:
@@ -70,7 +69,6 @@ class TestBlockFilterKeyCompleteness:
         assert BLOCK_FILTER_KEY["SeparatorBlock"] == "headers"
         assert BLOCK_FILTER_KEY["HeaderBlock"] == "headers"
         assert BLOCK_FILTER_KEY["MetadataBlock"] == "metadata"
-        assert BLOCK_FILTER_KEY["TurnBudgetBlock"] == "expand"
         assert BLOCK_FILTER_KEY["SystemLabelBlock"] == "system"
         assert BLOCK_FILTER_KEY["TrackedContentBlock"] == "system"
         assert BLOCK_FILTER_KEY["RoleBlock"] == "system"  # filters system roles

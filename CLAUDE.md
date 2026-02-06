@@ -4,20 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-cc-dump is a transparent HTTP proxy for monitoring Claude Code API traffic. It intercepts Anthropic API requests, tracks system prompt changes with diffs, and provides a real-time Textual TUI with HAR recording/replay capabilities. Python 3.10+, single production dependency (`textual`). See [PROJECT_SPEC.md](PROJECT_SPEC.md) for goals and [ARCHITECTURE.md](ARCHITECTURE.md) for system design.
+surview is an HTTP debugging proxy with a real-time Textual TUI and HAR recording/replay capabilities. Python 3.10+, single production dependency (`textual`). See [PROJECT_SPEC.md](PROJECT_SPEC.md) for goals and [ARCHITECTURE.md](ARCHITECTURE.md) for system design.
 
 ## Commands
 
 ```bash
 # Run (live proxy mode)
-just run                          # or: uv run cc-dump [--port PORT] [--target URL]
+just run                          # or: uv run surview [--port PORT] [--target URL]
 
 # Recording and replay
-cc-dump --list                    # list available recordings
-cc-dump --replay <path>           # replay a HAR file
-cc-dump --replay latest           # replay most recent recording
-cc-dump --no-record               # disable recording (live mode)
-cc-dump --record <path>           # custom recording path
+surview --list                    # list available recordings
+surview --replay <path>           # replay a HAR file
+surview --replay latest           # replay most recent recording
+surview --no-record               # disable recording (live mode)
+surview --record <path>           # custom recording path
 
 # Test
 uv run pytest                     # all tests
@@ -31,9 +31,6 @@ just fmt                          # uvx ruff format src/
 # Install as tool
 just install                      # uv tool install -e .
 just reinstall                    # after structural changes
-
-# Run with Claude Code (reverse proxy mode)
-# ANTHROPIC_BASE_URL=http://127.0.0.1:3344 claude
 ```
 
 ## Architecture
@@ -63,7 +60,7 @@ proxy.py (HTTP intercept, emits events)
 
 See `HOT_RELOAD_ARCHITECTURE.md` for full details. The critical rule:
 
-**Stable boundary modules** (`proxy.py`, `cli.py`, `tui/app.py`, `tui/widgets.py`, `hot_reload.py`, `har_recorder.py`, `har_replayer.py`, `sessions.py`) must use `import cc_dump.module` — never `from cc_dump.module import func`. Direct imports create stale references that won't update on reload.
+**Stable boundary modules** (`proxy.py`, `cli.py`, `tui/app.py`, `tui/widgets.py`, `hot_reload.py`, `har_recorder.py`, `har_replayer.py`, `sessions.py`) must use `import surview.module` — never `from surview.module import func`. Direct imports create stale references that won't update on reload.
 
 **Reloadable modules** (`formatting.py`, `tui/rendering.py`, `tui/widget_factory.py`, `tui/event_handlers.py`, `tui/panel_renderers.py`, `colors.py`, `analysis.py`, `palette.py`, `tui/protocols.py`, `tui/custom_footer.py`) can be safely reloaded in dependency order.
 

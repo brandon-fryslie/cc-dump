@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from cc_dump.router import DirectSubscriber, EventRouter, QueueSubscriber
+from surview.router import DirectSubscriber, EventRouter, QueueSubscriber
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────

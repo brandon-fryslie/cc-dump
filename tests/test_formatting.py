@@ -2,7 +2,7 @@
 
 import pytest
 
-from cc_dump.formatting import (
+from surview.formatting import (
     DiffBlock,
     ErrorBlock,
     FormattedBlock,

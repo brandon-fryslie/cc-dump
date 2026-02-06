@@ -1,4 +1,4 @@
-"""Comprehensive integration tests for cc-dump TUI functionality.
+"""Comprehensive integration tests for surview TUI functionality.
 
 Tests all user-facing features including:
 - Filter toggling (h, t, s, e, m, p, x, l)
@@ -25,18 +25,18 @@ import requests
 class TestTUIStartupShutdown:
     """Test basic TUI startup and shutdown."""
 
-    def test_tui_starts_and_displays_header(self, start_cc_dump):
+    def test_tui_starts_and_displays_header(self, start_surview):
         """Verify TUI starts successfully and shows expected elements."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         content = proc.get_content()
         # Should see some standard UI elements
-        assert any(x in content for x in ["cc-dump", "Quit", "headers", "tools"])
+        assert any(x in content for x in ["surview", "Quit", "headers", "tools"])
 
-    def test_tui_quits_cleanly_with_q_key(self, start_cc_dump):
+    def test_tui_quits_cleanly_with_q_key(self, start_surview):
         """Verify pressing 'q' exits the application cleanly."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Press 'q' to quit
@@ -46,9 +46,9 @@ class TestTUIStartupShutdown:
         # Process should exit (or be exiting)
         # Note: There might be a brief delay, so we don't strictly assert not alive
 
-    def test_tui_shows_startup_logs(self, start_cc_dump):
+    def test_tui_shows_startup_logs(self, start_surview):
         """Verify startup logs are visible when logs panel is toggled."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Toggle logs panel (ctrl+l)
@@ -63,9 +63,9 @@ class TestTUIStartupShutdown:
 class TestFilterToggles:
     """Test all filter toggle keybindings."""
 
-    def test_toggle_headers_filter(self, start_cc_dump):
+    def test_toggle_headers_filter(self, start_surview):
         """Test 'h' key toggles headers filter."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Initially headers are off (show_headers = False)
@@ -80,9 +80,9 @@ class TestFilterToggles:
         # Should still be alive after toggling
         assert proc.is_alive()
 
-    def test_toggle_tools_filter(self, start_cc_dump):
+    def test_toggle_tools_filter(self, start_surview):
         """Test 't' key toggles tools filter."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Press 't' to toggle tools filter
@@ -94,9 +94,9 @@ class TestFilterToggles:
 
         assert proc.is_alive()
 
-    def test_toggle_system_filter(self, start_cc_dump):
+    def test_toggle_system_filter(self, start_surview):
         """Test 's' key toggles system filter."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         proc.send("s", press_enter=False)
@@ -107,9 +107,9 @@ class TestFilterToggles:
 
         assert proc.is_alive()
 
-    def test_toggle_expand_filter(self, start_cc_dump):
+    def test_toggle_expand_filter(self, start_surview):
         """Test 'e' key toggles expand/context filter."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         proc.send("e", press_enter=False)
@@ -120,9 +120,9 @@ class TestFilterToggles:
 
         assert proc.is_alive()
 
-    def test_toggle_metadata_filter(self, start_cc_dump):
+    def test_toggle_metadata_filter(self, start_surview):
         """Test 'm' key toggles metadata filter."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         proc.send("m", press_enter=False)
@@ -133,9 +133,9 @@ class TestFilterToggles:
 
         assert proc.is_alive()
 
-    def test_multiple_filter_toggles_in_sequence(self, start_cc_dump):
+    def test_multiple_filter_toggles_in_sequence(self, start_surview):
         """Test toggling multiple filters in sequence."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Toggle several filters
@@ -156,9 +156,9 @@ class TestFilterToggles:
 class TestPanelToggles:
     """Test panel visibility toggles."""
 
-    def test_toggle_stats_panel(self, start_cc_dump):
+    def test_toggle_stats_panel(self, start_surview):
         """Test 'a' key toggles stats panel visibility."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Stats panel is initially visible (show_stats = True)
@@ -172,9 +172,9 @@ class TestPanelToggles:
 
         assert proc.is_alive()
 
-    def test_toggle_economics_panel(self, start_cc_dump):
+    def test_toggle_economics_panel(self, start_surview):
         """Test 'c' key toggles cost panel visibility."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Economics panel is initially hidden (show_economics = False)
@@ -192,9 +192,9 @@ class TestPanelToggles:
 
         assert proc.is_alive()
 
-    def test_toggle_timeline_panel(self, start_cc_dump):
+    def test_toggle_timeline_panel(self, start_surview):
         """Test 'l' key toggles timeline panel visibility."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Timeline panel is initially hidden (show_timeline = False)
@@ -208,9 +208,9 @@ class TestPanelToggles:
 
         assert proc.is_alive()
 
-    def test_toggle_logs_panel(self, start_cc_dump):
+    def test_toggle_logs_panel(self, start_surview):
         """Test 'ctrl+l' key toggles logs panel visibility."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Logs panel is initially hidden (show_logs = False)
@@ -232,10 +232,10 @@ class TestPanelToggles:
 class TestRequestHandling:
     """Test TUI behavior when handling API requests."""
 
-    def test_displays_request_when_received(self, start_cc_dump):
+    def test_displays_request_when_received(self, start_surview):
         """Test that TUI displays incoming API request."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Enable headers to see request
@@ -266,10 +266,10 @@ class TestRequestHandling:
         assert len(content) > 0
         assert proc.is_alive()
 
-    def test_handles_multiple_requests(self, start_cc_dump):
+    def test_handles_multiple_requests(self, start_surview):
         """Test TUI handles multiple sequential requests."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Send multiple requests
@@ -296,26 +296,26 @@ class TestRequestHandling:
 class TestDatabaseIntegration:
     """Test database persistence and querying."""
 
-    def test_tui_creates_database_when_enabled(self, start_cc_dump):
+    def test_tui_creates_database_when_enabled(self, start_surview):
         """Test that TUI creates and uses database when not disabled."""
         # Create temp directory for database
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test.db"
             session_id = "test-session-123"
 
-            # Start cc-dump with database enabled
+            # Start surview with database enabled
             # Note: We need to modify fixture or add parameter to support this
             # For now, this test documents the expected behavior
             pytest.skip("Requires fixture enhancement to pass db_path")
 
-    def test_stats_panel_queries_database(self, start_cc_dump):
+    def test_stats_panel_queries_database(self, start_surview):
         """Test that stats panel updates from database."""
         # This requires database-enabled mode
         pytest.skip("Requires database-enabled test setup")
 
-    def test_economics_panel_queries_database(self, start_cc_dump):
+    def test_economics_panel_queries_database(self, start_surview):
         """Test that economics panel queries database when visible."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Toggle economics panel visible
@@ -325,9 +325,9 @@ class TestDatabaseIntegration:
         # Without database or requests, panel should be empty but functional
         assert proc.is_alive()
 
-    def test_timeline_panel_queries_database(self, start_cc_dump):
+    def test_timeline_panel_queries_database(self, start_surview):
         """Test that timeline panel queries database when visible."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Toggle timeline panel visible
@@ -341,10 +341,10 @@ class TestDatabaseIntegration:
 class TestVisualIndicators:
     """Test visual indicators for active filters."""
 
-    def test_content_shows_filter_indicators(self, start_cc_dump):
+    def test_content_shows_filter_indicators(self, start_surview):
         """Test that filtered content shows colored bar indicators."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Enable headers and metadata
@@ -380,10 +380,10 @@ class TestVisualIndicators:
 class TestContentFiltering:
     """Test that content visibility changes based on filters."""
 
-    def test_headers_filter_controls_request_headers(self, start_cc_dump):
+    def test_headers_filter_controls_request_headers(self, start_surview):
         """Test that 'h' filter controls visibility of request/response headers."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Initially headers are hidden (show_headers = False)
@@ -414,9 +414,9 @@ class TestContentFiltering:
         # (might be same if no requests yet, but should not crash)
         assert proc.is_alive()
 
-    def test_tools_filter_controls_tool_visibility(self, start_cc_dump):
+    def test_tools_filter_controls_tool_visibility(self, start_surview):
         """Test that 't' filter controls visibility of tool use/results."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Toggle tools filter
@@ -431,10 +431,10 @@ class TestContentFiltering:
         time.sleep(0.3)
         assert proc.is_alive()
 
-    def test_metadata_filter_controls_model_info(self, start_cc_dump):
+    def test_metadata_filter_controls_model_info(self, start_surview):
         """Test that 'm' filter controls visibility of metadata."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Metadata is initially visible (show_metadata = True)
@@ -469,9 +469,9 @@ class TestContentFiltering:
 class TestStatsPanel:
     """Test stats panel functionality."""
 
-    def test_stats_panel_visible_by_default(self, start_cc_dump):
+    def test_stats_panel_visible_by_default(self, start_surview):
         """Test that stats panel is visible on startup."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         content = proc.get_content()
@@ -479,10 +479,10 @@ class TestStatsPanel:
         # Even if zero, should have structure
         assert len(content) > 0
 
-    def test_stats_panel_updates_on_request(self, start_cc_dump):
+    def test_stats_panel_updates_on_request(self, start_surview):
         """Test that stats panel updates when request is processed."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         content_before = proc.get_content()
@@ -508,9 +508,9 @@ class TestStatsPanel:
         # Content should potentially change (request count, etc.)
         assert proc.is_alive()
 
-    def test_stats_panel_can_be_hidden(self, start_cc_dump):
+    def test_stats_panel_can_be_hidden(self, start_surview):
         """Test that stats panel can be hidden with 'p' key."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Hide stats panel
@@ -524,10 +524,10 @@ class TestStatsPanel:
 class TestErrorHandling:
     """Test error handling and resilience."""
 
-    def test_tui_survives_malformed_request(self, start_cc_dump):
+    def test_tui_survives_malformed_request(self, start_surview):
         """Test that TUI handles malformed API requests gracefully."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Send malformed request
@@ -543,18 +543,18 @@ class TestErrorHandling:
         time.sleep(1)
         assert proc.is_alive()
 
-    def test_tui_survives_network_error(self, start_cc_dump):
+    def test_tui_survives_network_error(self, start_surview):
         """Test that TUI handles network errors gracefully."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Just verify it runs - network errors would come from upstream
         time.sleep(1)
         assert proc.is_alive()
 
-    def test_tui_handles_rapid_filter_toggling(self, start_cc_dump):
+    def test_tui_handles_rapid_filter_toggling(self, start_surview):
         """Test that rapid filter toggling doesn't crash TUI."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Rapidly toggle filters
@@ -570,18 +570,18 @@ class TestErrorHandling:
 class TestRenderingStability:
     """Test rendering stability and performance."""
 
-    def test_tui_renders_without_crash_on_startup(self, start_cc_dump):
+    def test_tui_renders_without_crash_on_startup(self, start_surview):
         """Test initial rendering completes without crash."""
-        proc = start_cc_dump()
+        proc = start_surview()
         time.sleep(1)
         assert proc.is_alive()
 
         content = proc.get_content()
         assert len(content) > 0
 
-    def test_tui_rerender_on_filter_change(self, start_cc_dump):
+    def test_tui_rerender_on_filter_change(self, start_surview):
         """Test that changing filters triggers re-render without crash."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Change a filter that affects content rendering
@@ -596,10 +596,10 @@ class TestRenderingStability:
 
         assert proc.is_alive()
 
-    def test_tui_handles_large_content(self, start_cc_dump):
+    def test_tui_handles_large_content(self, start_surview):
         """Test TUI handles large content without issues."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Send request with large message
@@ -625,9 +625,9 @@ class TestRenderingStability:
 class TestFooterBindings:
     """Test footer keybinding display."""
 
-    def test_footer_shows_keybindings(self, start_cc_dump):
+    def test_footer_shows_keybindings(self, start_surview):
         """Test that footer displays available keybindings."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         content = proc.get_content()
@@ -635,9 +635,9 @@ class TestFooterBindings:
         # Common ones: headers, tools, system, quit
         assert any(x in content for x in ["headers", "tools", "system", "quit"])
 
-    def test_footer_persists_during_operation(self, start_cc_dump):
+    def test_footer_persists_during_operation(self, start_surview):
         """Test that footer remains visible during normal operation."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Toggle some filters
@@ -656,10 +656,10 @@ class TestFooterBindings:
 class TestConversationView:
     """Test conversation view widget."""
 
-    def test_conversation_view_displays_messages(self, start_cc_dump):
+    def test_conversation_view_displays_messages(self, start_surview):
         """Test that conversation view displays message content."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Send request to generate conversation content
@@ -682,10 +682,10 @@ class TestConversationView:
         time.sleep(1)
         assert proc.is_alive()
 
-    def test_conversation_view_handles_streaming(self, start_cc_dump):
+    def test_conversation_view_handles_streaming(self, start_surview):
         """Test that conversation view handles streaming responses."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Send streaming request
@@ -711,19 +711,19 @@ class TestConversationView:
 class TestNoDatabase:
     """Test TUI functionality when database is disabled (--no-db)."""
 
-    def test_tui_starts_without_database(self, start_cc_dump):
+    def test_tui_starts_without_database(self, start_surview):
         """Test that TUI works with --no-db flag."""
         # Default fixture uses --no-db
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         content = proc.get_content()
         # Should show warning about database being disabled
         # or just work normally without DB features
 
-    def test_stats_panel_works_without_database(self, start_cc_dump):
+    def test_stats_panel_works_without_database(self, start_surview):
         """Test that stats panel shows basic stats without database."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Stats panel should still be visible and functional
@@ -731,9 +731,9 @@ class TestNoDatabase:
         content = proc.get_content()
         assert len(content) > 0
 
-    def test_economics_panel_empty_without_database(self, start_cc_dump):
+    def test_economics_panel_empty_without_database(self, start_surview):
         """Test that economics panel is empty but functional without DB."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Show economics panel
@@ -743,9 +743,9 @@ class TestNoDatabase:
         # Should not crash, just be empty
         assert proc.is_alive()
 
-    def test_timeline_panel_empty_without_database(self, start_cc_dump):
+    def test_timeline_panel_empty_without_database(self, start_surview):
         """Test that timeline panel is empty but functional without DB."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Show timeline panel
@@ -759,10 +759,10 @@ class TestNoDatabase:
 class TestIntegrationScenarios:
     """Test complete user workflows and scenarios."""
 
-    def test_complete_filter_workflow(self, start_cc_dump):
+    def test_complete_filter_workflow(self, start_surview):
         """Test a complete workflow of using filters."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # 1. Start with default view
@@ -804,9 +804,9 @@ class TestIntegrationScenarios:
         # Should still be running
         assert proc.is_alive()
 
-    def test_panel_management_workflow(self, start_cc_dump):
+    def test_panel_management_workflow(self, start_surview):
         """Test managing multiple panels."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Show all panels

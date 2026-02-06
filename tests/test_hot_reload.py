@@ -1,4 +1,4 @@
-"""Tests for cc-dump hot-reload functionality.
+"""Tests for surview hot-reload functionality.
 
 These tests verify that the hot-reload system correctly detects changes to
 source files and reloads modules without crashing the TUI.
@@ -16,21 +16,21 @@ from tests.conftest import modify_file
 class TestHotReloadBasics:
     """Test basic hot-reload functionality."""
 
-    def test_tui_starts_successfully(self, start_cc_dump):
-        """Verify that cc-dump TUI starts and displays the header."""
-        proc = start_cc_dump()
+    def test_tui_starts_successfully(self, start_surview):
+        """Verify that surview TUI starts and displays the header."""
+        proc = start_surview()
 
         # Check that process is alive
-        assert proc.is_alive(), "cc-dump process should be running"
+        assert proc.is_alive(), "surview process should be running"
 
         # Verify we can see the TUI (check for common elements)
         content = proc.get_content()
-        assert "cc-dump" in content or "Quit" in content or "headers" in content, \
+        assert "surview" in content or "Quit" in content or "headers" in content, \
             f"Expected TUI elements in output. Got:\n{content}"
 
-    def test_hot_reload_detection_comment(self, start_cc_dump, formatting_py):
+    def test_hot_reload_detection_comment(self, start_surview, formatting_py):
         """Test that hot-reload detects a simple modification (added comment)."""
-        proc = start_cc_dump()
+        proc = start_surview()
 
         # Modify formatting.py by adding a comment
         with modify_file(formatting_py, lambda content: f"# Hot-reload test comment\n{content}"):
@@ -54,9 +54,9 @@ class TestHotReloadBasics:
 class TestHotReloadWithCodeChanges:
     """Test hot-reload when actual code changes are made."""
 
-    def test_hot_reload_with_marker_in_function(self, start_cc_dump, formatting_py):
+    def test_hot_reload_with_marker_in_function(self, start_surview, formatting_py):
         """Test that hot-reloaded code actually executes (add marker to output)."""
-        proc = start_cc_dump()
+        proc = start_surview()
 
         # Add a marker string to _get_timestamp function
         marker = "HOTRELOAD_MARKER_12345"
@@ -84,9 +84,9 @@ class TestHotReloadWithCodeChanges:
         time.sleep(1)
         assert proc.is_alive(), "Process should remain alive after marker removal"
 
-    def test_hot_reload_formatting_function_change(self, start_cc_dump, formatting_py):
+    def test_hot_reload_formatting_function_change(self, start_surview, formatting_py):
         """Test that changes to formatting functions are reloaded."""
-        proc = start_cc_dump()
+        proc = start_surview()
 
         def modify_separator(content):
             # Change the separator character in a visible way
@@ -107,9 +107,9 @@ class TestHotReloadWithCodeChanges:
 class TestHotReloadErrorResilience:
     """Test that hot-reload handles errors gracefully."""
 
-    def test_hot_reload_survives_syntax_error(self, start_cc_dump, formatting_py):
+    def test_hot_reload_survives_syntax_error(self, start_surview, formatting_py):
         """Test that app doesn't crash when a syntax error is introduced."""
-        proc = start_cc_dump()
+        proc = start_surview()
 
         # Introduce a syntax error
         def add_syntax_error(content):
@@ -131,9 +131,9 @@ class TestHotReloadErrorResilience:
         time.sleep(2)
         assert proc.is_alive(), "Process should recover after syntax error is fixed"
 
-    def test_hot_reload_survives_import_error(self, start_cc_dump, formatting_py):
+    def test_hot_reload_survives_import_error(self, start_surview, formatting_py):
         """Test that app doesn't crash when an import error is introduced."""
-        proc = start_cc_dump()
+        proc = start_surview()
 
         # Add an invalid import
         def add_import_error(content):
@@ -148,9 +148,9 @@ class TestHotReloadErrorResilience:
         time.sleep(2)
         assert proc.is_alive(), "Process should recover after import error is fixed"
 
-    def test_hot_reload_survives_runtime_error_in_function(self, start_cc_dump, formatting_py):
+    def test_hot_reload_survives_runtime_error_in_function(self, start_surview, formatting_py):
         """Test that introducing a runtime error doesn't crash during reload."""
-        proc = start_cc_dump()
+        proc = start_surview()
 
         # Add code that would cause a runtime error if executed
         def add_runtime_error(content):
@@ -173,9 +173,9 @@ class TestHotReloadErrorResilience:
 class TestHotReloadExclusions:
     """Test that excluded files are not hot-reloaded."""
 
-    def test_proxy_changes_not_reloaded(self, start_cc_dump, proxy_py):
+    def test_proxy_changes_not_reloaded(self, start_surview, proxy_py):
         """Test that changes to proxy.py do NOT trigger hot-reload."""
-        proc = start_cc_dump()
+        proc = start_surview()
 
         # Modify proxy.py
         with modify_file(proxy_py, lambda content: f"# Test comment in proxy\n{content}"):
@@ -199,9 +199,9 @@ class TestHotReloadExclusions:
 class TestHotReloadMultipleChanges:
     """Test hot-reload with multiple file changes."""
 
-    def test_hot_reload_multiple_modifications(self, start_cc_dump, formatting_py):
+    def test_hot_reload_multiple_modifications(self, start_surview, formatting_py):
         """Test that hot-reload handles multiple successive changes."""
-        proc = start_cc_dump()
+        proc = start_surview()
 
         # First modification
         with modify_file(formatting_py, lambda c: f"# First comment\n{c}"):
@@ -218,9 +218,9 @@ class TestHotReloadMultipleChanges:
         time.sleep(1)
         assert proc.is_alive(), "Process should remain stable after all changes"
 
-    def test_hot_reload_rapid_changes(self, start_cc_dump, formatting_py):
+    def test_hot_reload_rapid_changes(self, start_surview, formatting_py):
         """Test that rapid successive changes don't cause issues."""
-        proc = start_cc_dump()
+        proc = start_surview()
 
         # Make several rapid changes
         for i in range(3):
@@ -235,9 +235,9 @@ class TestHotReloadMultipleChanges:
 class TestHotReloadStability:
     """Test hot-reload stability over time."""
 
-    def test_hot_reload_extended_operation(self, start_cc_dump, formatting_py):
+    def test_hot_reload_extended_operation(self, start_surview, formatting_py):
         """Test that hot-reload works correctly over extended operation."""
-        proc = start_cc_dump()
+        proc = start_surview()
 
         # Let it run for a bit
         time.sleep(2)
@@ -272,7 +272,7 @@ class TestImportValidation:
         # Find project root
         test_dir = Path(__file__).parent
         project_root = test_dir.parent
-        src_dir = project_root / "src" / "cc_dump"
+        src_dir = project_root / "src" / "surview"
 
         # Stable boundary modules to check
         stable_modules = [
@@ -282,14 +282,13 @@ class TestImportValidation:
 
         # Reloadable modules that stable boundaries interact with
         forbidden_modules = {
-            "cc_dump.formatting",
-            "cc_dump.colors",
-            "cc_dump.analysis",
-            "cc_dump.tui.rendering",
-            "cc_dump.tui.panel_renderers",
-            "cc_dump.tui.event_handlers",
-            "cc_dump.tui.widget_factory",
-            "cc_dump.tui.protocols",
+            "surview.formatting",
+            "surview.colors",
+            "surview.tui.rendering",
+            "surview.tui.panel_renderers",
+            "surview.tui.event_handlers",
+            "surview.tui.widget_factory",
+            "surview.tui.protocols",
         }
 
         violations = []
@@ -308,7 +307,7 @@ class TestImportValidation:
             # Walk the AST looking for ImportFrom nodes
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom):
-                    # node.module is the module being imported from (e.g., "cc_dump.formatting")
+                    # node.module is the module being imported from (e.g., "surview.formatting")
                     if node.module in forbidden_modules:
                         # Found a forbidden direct import
                         imported_names = [alias.name for alias in node.names]
@@ -339,13 +338,13 @@ class TestWidgetProtocolValidation:
 
     def test_validate_all_widgets_implement_protocol(self):
         """All widget classes implement HotSwappableWidget protocol."""
-        from cc_dump.tui.widget_factory import (
+        from surview.tui.widget_factory import (
             ConversationView,
             StatsPanel,
             TimelinePanel,
             ToolEconomicsPanel,
         )
-        from cc_dump.tui.protocols import validate_widget_protocol
+        from surview.tui.protocols import validate_widget_protocol
 
         widgets = [
             ConversationView(),
@@ -360,7 +359,7 @@ class TestWidgetProtocolValidation:
 
     def test_validate_widget_protocol_rejects_missing_get_state(self):
         """Protocol validation fails for widget missing get_state()."""
-        from cc_dump.tui.protocols import validate_widget_protocol
+        from surview.tui.protocols import validate_widget_protocol
 
         class InvalidWidget:
             def restore_state(self, state):
@@ -372,7 +371,7 @@ class TestWidgetProtocolValidation:
 
     def test_validate_widget_protocol_rejects_missing_restore_state(self):
         """Protocol validation fails for widget missing restore_state()."""
-        from cc_dump.tui.protocols import validate_widget_protocol
+        from surview.tui.protocols import validate_widget_protocol
 
         class InvalidWidget:
             def get_state(self):
@@ -384,7 +383,7 @@ class TestWidgetProtocolValidation:
 
     def test_validate_widget_protocol_rejects_non_callable(self):
         """Protocol validation fails when method exists but is not callable."""
-        from cc_dump.tui.protocols import validate_widget_protocol
+        from surview.tui.protocols import validate_widget_protocol
 
         class InvalidWidget:
             get_state = "not_a_function"
@@ -400,7 +399,7 @@ class TestWidgetStatePreservation:
 
     def test_stats_panel_state_roundtrip(self):
         """StatsPanel state survives get_state/restore_state cycle."""
-        from cc_dump.tui.widget_factory import StatsPanel
+        from surview.tui.widget_factory import StatsPanel
 
         # Create widget with state
         widget = StatsPanel()
@@ -424,7 +423,7 @@ class TestWidgetStatePreservation:
 
     def test_conversation_view_state_roundtrip(self):
         """ConversationView state survives get_state/restore_state cycle."""
-        from cc_dump.tui.widget_factory import ConversationView
+        from surview.tui.widget_factory import ConversationView
 
         # Create widget and set state fields
         widget = ConversationView()
@@ -444,7 +443,7 @@ class TestWidgetStatePreservation:
 
     def test_economics_panel_state_roundtrip(self):
         """ToolEconomicsPanel state survives get_state/restore_state cycle."""
-        from cc_dump.tui.widget_factory import ToolEconomicsPanel
+        from surview.tui.widget_factory import ToolEconomicsPanel
 
         # Create widget
         widget = ToolEconomicsPanel()
@@ -461,7 +460,7 @@ class TestWidgetStatePreservation:
 
     def test_timeline_panel_state_roundtrip(self):
         """TimelinePanel state survives get_state/restore_state cycle."""
-        from cc_dump.tui.widget_factory import TimelinePanel
+        from surview.tui.widget_factory import TimelinePanel
 
         # Create widget
         widget = TimelinePanel()
@@ -482,34 +481,34 @@ class TestHotReloadModuleStructure:
 
     def test_reload_order_is_defined(self):
         """Reload order list is properly defined."""
-        from cc_dump.hot_reload import _RELOAD_ORDER
+        from surview.hot_reload import _RELOAD_ORDER
 
         assert isinstance(_RELOAD_ORDER, list)
         assert len(_RELOAD_ORDER) > 0
 
         # Verify expected modules are in the list
         expected_modules = [
-            "cc_dump.formatting",
-            "cc_dump.tui.rendering",
-            "cc_dump.tui.widget_factory",
+            "surview.formatting",
+            "surview.tui.rendering",
+            "surview.tui.widget_factory",
         ]
         for mod in expected_modules:
             assert mod in _RELOAD_ORDER, f"Expected module {mod} in reload order"
 
     def test_reload_if_changed_is_defined(self):
         """Reload-if-changed list is properly defined."""
-        from cc_dump.hot_reload import _RELOAD_IF_CHANGED
+        from surview.hot_reload import _RELOAD_IF_CHANGED
 
         assert isinstance(_RELOAD_IF_CHANGED, list)
 
         # These modules should only reload if they themselves changed
-        expected_modules = ["cc_dump.schema", "cc_dump.store", "cc_dump.router"]
+        expected_modules = ["surview.schema", "surview.store", "surview.router"]
         for mod in expected_modules:
             assert mod in _RELOAD_IF_CHANGED
 
     def test_excluded_files_contain_stable_boundaries(self):
         """Excluded files list contains stable boundary modules."""
-        from cc_dump.hot_reload import _EXCLUDED_FILES
+        from surview.hot_reload import _EXCLUDED_FILES
 
         assert isinstance(_EXCLUDED_FILES, set)
 
@@ -520,7 +519,7 @@ class TestHotReloadModuleStructure:
 
     def test_excluded_modules_contain_live_instances(self):
         """Excluded modules list contains live instance modules."""
-        from cc_dump.hot_reload import _EXCLUDED_MODULES
+        from surview.hot_reload import _EXCLUDED_MODULES
 
         assert isinstance(_EXCLUDED_MODULES, set)
 
@@ -531,23 +530,21 @@ class TestHotReloadModuleStructure:
 
     def test_reload_order_respects_dependencies(self):
         """Reload order lists leaf modules before dependents."""
-        from cc_dump.hot_reload import _RELOAD_ORDER
+        from surview.hot_reload import _RELOAD_ORDER
 
-        # colors and analysis have no internal deps, should come first
-        colors_idx = _RELOAD_ORDER.index("cc_dump.colors")
-        analysis_idx = _RELOAD_ORDER.index("cc_dump.analysis")
+        # colors has no internal deps, should come first
+        colors_idx = _RELOAD_ORDER.index("surview.colors")
 
-        # formatting depends on colors and analysis
-        formatting_idx = _RELOAD_ORDER.index("cc_dump.formatting")
+        # formatting depends on colors
+        formatting_idx = _RELOAD_ORDER.index("surview.formatting")
         assert formatting_idx > colors_idx, "formatting should come after colors"
-        assert formatting_idx > analysis_idx, "formatting should come after analysis"
 
         # rendering depends on formatting
-        rendering_idx = _RELOAD_ORDER.index("cc_dump.tui.rendering")
+        rendering_idx = _RELOAD_ORDER.index("surview.tui.rendering")
         assert rendering_idx > formatting_idx, "rendering should come after formatting"
 
         # widget_factory depends on rendering
-        widget_factory_idx = _RELOAD_ORDER.index("cc_dump.tui.widget_factory")
+        widget_factory_idx = _RELOAD_ORDER.index("surview.tui.widget_factory")
         assert widget_factory_idx > rendering_idx, "widget_factory should come after rendering"
 
 
@@ -556,10 +553,10 @@ class TestHotReloadFileDetection:
 
     def test_init_sets_watch_dirs(self):
         """init() properly sets watch directories."""
-        import cc_dump.hot_reload as hr
+        import surview.hot_reload as hr
         from pathlib import Path
 
-        test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
+        test_dir = Path(__file__).parent.parent / "src" / "surview"
         hr.init(str(test_dir))
 
         # Should have at least the package dir
@@ -568,10 +565,10 @@ class TestHotReloadFileDetection:
 
     def test_scan_mtimes_populates_cache(self):
         """_scan_mtimes() populates the mtime cache."""
-        import cc_dump.hot_reload as hr
+        import surview.hot_reload as hr
         from pathlib import Path
 
-        test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
+        test_dir = Path(__file__).parent.parent / "src" / "surview"
         hr.init(str(test_dir))
 
         # Should have mtimes for several files
@@ -583,10 +580,10 @@ class TestHotReloadFileDetection:
 
     def test_get_changed_files_returns_empty_initially(self):
         """_get_changed_files() returns empty set when nothing changed."""
-        import cc_dump.hot_reload as hr
+        import surview.hot_reload as hr
         from pathlib import Path
 
-        test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
+        test_dir = Path(__file__).parent.parent / "src" / "surview"
         hr.init(str(test_dir))
 
         # Call twice - second call should see no changes
@@ -598,10 +595,10 @@ class TestHotReloadFileDetection:
 
     def test_check_returns_false_when_no_changes(self):
         """check() returns False when no files have changed."""
-        import cc_dump.hot_reload as hr
+        import surview.hot_reload as hr
         from pathlib import Path
 
-        test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
+        test_dir = Path(__file__).parent.parent / "src" / "surview"
         hr.init(str(test_dir))
 
         # First call scans, second call should return False
@@ -612,10 +609,10 @@ class TestHotReloadFileDetection:
 
     def test_check_and_get_reloaded_returns_empty_list_when_no_changes(self):
         """check_and_get_reloaded() returns empty list when no changes."""
-        import cc_dump.hot_reload as hr
+        import surview.hot_reload as hr
         from pathlib import Path
 
-        test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
+        test_dir = Path(__file__).parent.parent / "src" / "surview"
         hr.init(str(test_dir))
 
         # Stabilize mtimes

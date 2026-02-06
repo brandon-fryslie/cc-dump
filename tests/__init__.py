@@ -1,1 +1,1 @@
-"""Tests for cc-dump hot-reload functionality."""
+"""Tests for surview hot-reload functionality."""

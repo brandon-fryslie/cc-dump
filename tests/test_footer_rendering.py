@@ -7,9 +7,9 @@ import time
 class TestFooterMarkupRendering:
     """Test that footer does NOT show literal [bold] tags."""
 
-    def test_footer_actually_renders_content(self, start_cc_dump):
+    def test_footer_actually_renders_content(self, start_surview):
         """CRITICAL: Footer must actually display binding text."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         time.sleep(0.5)
@@ -29,13 +29,13 @@ class TestFooterMarkupRendering:
         assert len(found) > 0, \
             f"Footer is NOT rendering any content! Expected to find at least one of {required_words}.\nContent:\n{content}"
 
-    def test_footer_does_not_duplicate_key_letters(self, start_cc_dump):
+    def test_footer_does_not_duplicate_key_letters(self, start_surview):
         """CRITICAL: Footer must NOT show duplicate key letters like 'h h|eaders' or 'h headers'.
 
         Should show: 'headers tools system' (with letters in bold)
         NOT: 'h headers t tools s system'
         """
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         time.sleep(0.5)
@@ -73,9 +73,9 @@ class TestFooterMarkupRendering:
                 assert pattern not in footer_text, \
                     f"Footer is showing duplicate key letter! Found '{pattern.strip()}' before '{binding_name}':\n{footer_text}"
 
-    def test_footer_does_not_contain_literal_bold_tags(self, start_cc_dump):
+    def test_footer_does_not_contain_literal_bold_tags(self, start_surview):
         """CRITICAL: Footer must NOT display literal '[bold]' or '[/bold]' text."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         time.sleep(0.5)
@@ -91,9 +91,9 @@ class TestFooterMarkupRendering:
         assert "[/bold]" not in content, \
             f"Footer is displaying literal [/bold] tags:\n{content}"
 
-    def test_footer_shows_binding_keys(self, start_cc_dump):
+    def test_footer_shows_binding_keys(self, start_surview):
         """Footer should show the keybinding letters."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         time.sleep(0.5)
@@ -105,9 +105,9 @@ class TestFooterMarkupRendering:
         assert any(x in lower_content for x in ["header", "tool", "system"]), \
             f"Footer should show binding descriptions. Content:\n{content}"
 
-    def test_footer_shows_multiple_bindings(self, start_cc_dump):
+    def test_footer_shows_multiple_bindings(self, start_surview):
         """Footer should show multiple keybinding descriptions."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         time.sleep(0.5)
@@ -125,9 +125,9 @@ class TestFooterMarkupRendering:
         assert len(found) >= 3, \
             f"Footer should show some bindings. Found: {found}, Expected: {expected_features}\nContent:\n{content}"
 
-    def test_footer_shows_keybinding_letters_in_words(self, start_cc_dump):
+    def test_footer_shows_keybinding_letters_in_words(self, start_surview):
         """Footer should show full words like 'headers', 'tools', not just single letters."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         time.sleep(0.5)

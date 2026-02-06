@@ -1,8 +1,8 @@
-# cc-dump development tasks
+# surview development tasks
 
 # Run the proxy with default settings
 run *args:
-    uv run cc-dump {{args}}
+    uv run surview {{args}}
 
 # Install as a uv tool (editable)
 install:
@@ -10,14 +10,14 @@ install:
 
 # Uninstall the tool
 uninstall:
-    uv tool uninstall cc-dump
+    uv tool uninstall surview
 
 # Reinstall (useful after structural changes)
 reinstall: uninstall install
 
 # Run directly via module
 run-module *args:
-    uv run python -m cc_dump {{args}}
+    uv run python -m surview {{args}}
 
 # Check code with ruff
 lint:

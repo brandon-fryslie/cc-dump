@@ -36,21 +36,21 @@ Added a **FilterStatusBar** widget that displays active filters with colored ind
 
 ## Files Modified
 
-1. **`src/cc_dump/tui/widget_factory.py`**
+1. **`src/surview/tui/widget_factory.py`**
    - Added `FilterStatusBar` class
    - Added `create_filter_status_bar()` factory function
 
-2. **`src/cc_dump/tui/widgets.py`**
+2. **`src/surview/tui/widgets.py`**
    - Exported `FilterStatusBar` class
 
-3. **`src/cc_dump/tui/app.py`**
+3. **`src/surview/tui/app.py`**
    - Added filter status bar to compose()
    - Added `_get_filter_status()` helper
    - Added `_update_filter_status()` method
    - Called `_update_filter_status()` in watchers and on_mount
    - Updated hot-reload logic to handle filter status bar
 
-4. **`src/cc_dump/tui/styles.css`**
+4. **`src/surview/tui/styles.css`**
    - Added styling for `FilterStatusBar`
    - Height: auto with min-height: 1
    - Border: solid accent color

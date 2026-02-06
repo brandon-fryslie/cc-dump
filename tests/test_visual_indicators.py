@@ -14,10 +14,10 @@ import requests
 class TestFilterIndicatorRendering:
     """Test that filter indicators render correctly."""
 
-    def test_headers_indicator_cyan(self, start_cc_dump):
+    def test_headers_indicator_cyan(self, start_surview):
         """Test that header content shows cyan indicator when visible."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Enable headers filter
@@ -48,9 +48,9 @@ class TestFilterIndicatorRendering:
         assert proc.is_alive()
         assert len(content) > 0
 
-    def test_tools_indicator_blue(self, start_cc_dump):
+    def test_tools_indicator_blue(self, start_surview):
         """Test that tool content shows blue indicator when visible."""
-        proc = start_cc_dump()
+        proc = start_surview()
         assert proc.is_alive()
 
         # Tools filter is enabled by default
@@ -59,10 +59,10 @@ class TestFilterIndicatorRendering:
         content = proc.get_content()
         assert proc.is_alive()
 
-    def test_metadata_indicator_magenta(self, start_cc_dump):
+    def test_metadata_indicator_magenta(self, start_surview):
         """Test that metadata shows magenta indicator when visible."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Metadata is visible by default
@@ -84,10 +84,10 @@ class TestFilterIndicatorRendering:
         time.sleep(1)
         assert proc.is_alive()
 
-    def test_system_indicator_yellow(self, start_cc_dump):
+    def test_system_indicator_yellow(self, start_surview):
         """Test that system content shows yellow indicator when visible."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # System filter is enabled by default
@@ -110,10 +110,10 @@ class TestFilterIndicatorRendering:
         time.sleep(1)
         assert proc.is_alive()
 
-    def test_expand_indicator_green(self, start_cc_dump):
+    def test_expand_indicator_green(self, start_surview):
         """Test that expanded context shows green indicator when visible."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Enable expand filter
@@ -143,10 +143,10 @@ class TestFilterIndicatorRendering:
 class TestIndicatorVisibility:
     """Test that indicators appear/disappear based on filter state."""
 
-    def test_indicator_appears_when_filter_enabled(self, start_cc_dump):
+    def test_indicator_appears_when_filter_enabled(self, start_surview):
         """Test that enabling a filter makes indicators appear."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Send request first
@@ -179,10 +179,10 @@ class TestIndicatorVisibility:
         # (exact difference depends on whether content is filtered)
         assert proc.is_alive()
 
-    def test_indicator_disappears_when_filter_disabled(self, start_cc_dump):
+    def test_indicator_disappears_when_filter_disabled(self, start_surview):
         """Test that disabling a filter makes indicators disappear."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Metadata is visible by default
@@ -218,10 +218,10 @@ class TestIndicatorVisibility:
 class TestRenderingPerformance:
     """Test rendering performance and stability."""
 
-    def test_rendering_handles_multiple_requests(self, start_cc_dump):
+    def test_rendering_handles_multiple_requests(self, start_surview):
         """Test that rendering handles multiple requests efficiently."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Enable headers for more content
@@ -248,10 +248,10 @@ class TestRenderingPerformance:
         time.sleep(1)
         assert proc.is_alive()
 
-    def test_rendering_survives_rapid_filter_changes(self, start_cc_dump):
+    def test_rendering_survives_rapid_filter_changes(self, start_surview):
         """Test rendering stability during rapid filter toggling."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Send a request to have content to render
@@ -287,10 +287,10 @@ class TestRenderingPerformance:
 class TestBlockRendering:
     """Test individual block type rendering."""
 
-    def test_separator_block_renders(self, start_cc_dump):
+    def test_separator_block_renders(self, start_surview):
         """Test that separator blocks render without crash."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Enable headers to see separators
@@ -315,10 +315,10 @@ class TestBlockRendering:
         time.sleep(1)
         assert proc.is_alive()
 
-    def test_text_content_block_renders(self, start_cc_dump):
+    def test_text_content_block_renders(self, start_surview):
         """Test that text content blocks render correctly."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Send request with text content
@@ -339,10 +339,10 @@ class TestBlockRendering:
         time.sleep(1)
         assert proc.is_alive()
 
-    def test_role_block_renders(self, start_cc_dump):
+    def test_role_block_renders(self, start_surview):
         """Test that role blocks (USER, ASSISTANT) render correctly."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Send request to generate role blocks
@@ -367,10 +367,10 @@ class TestBlockRendering:
 class TestColorScheme:
     """Test color scheme consistency."""
 
-    def test_consistent_colors_for_same_filter(self, start_cc_dump):
+    def test_consistent_colors_for_same_filter(self, start_surview):
         """Test that same filter type always uses same color."""
         port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+        proc = start_surview(port=port)
         assert proc.is_alive()
 
         # Enable headers
@@ -421,12 +421,12 @@ class TestIndicatorHelperFunction:
 
     def test_add_filter_indicator_exists(self):
         """Test that _add_filter_indicator function exists."""
-        from cc_dump.tui.rendering import _add_filter_indicator
+        from surview.tui.rendering import _add_filter_indicator
         assert callable(_add_filter_indicator)
 
     def test_filter_indicators_mapping_exists(self):
         """Test that FILTER_INDICATORS mapping is defined."""
-        from cc_dump.tui.rendering import FILTER_INDICATORS
+        from surview.tui.rendering import FILTER_INDICATORS
         assert isinstance(FILTER_INDICATORS, dict)
 
         # Verify expected filters are in mapping
@@ -436,7 +436,7 @@ class TestIndicatorHelperFunction:
 
     def test_filter_indicators_have_symbol_and_color(self):
         """Test that each filter indicator has symbol and color."""
-        from cc_dump.tui.rendering import FILTER_INDICATORS
+        from surview.tui.rendering import FILTER_INDICATORS
 
         for filter_name, (symbol, color) in FILTER_INDICATORS.items():
             assert isinstance(symbol, str)
@@ -446,7 +446,7 @@ class TestIndicatorHelperFunction:
 
     def test_add_filter_indicator_with_text(self):
         """Test _add_filter_indicator adds indicator to text."""
-        from cc_dump.tui.rendering import _add_filter_indicator
+        from surview.tui.rendering import _add_filter_indicator
         from rich.text import Text
 
         text = Text("Hello World")
@@ -461,7 +461,7 @@ class TestIndicatorHelperFunction:
 
     def test_add_filter_indicator_with_unknown_filter(self):
         """Test _add_filter_indicator handles unknown filter names."""
-        from cc_dump.tui.rendering import _add_filter_indicator
+        from surview.tui.rendering import _add_filter_indicator
         from rich.text import Text
 
         text = Text("Test")
@@ -476,8 +476,8 @@ class TestRenderBlockFunction:
 
     def test_render_block_handles_all_block_types(self):
         """Test that render_block can handle all FormattedBlock types."""
-        from cc_dump.tui.rendering import render_block
-        from cc_dump.formatting import (
+        from surview.tui.rendering import render_block
+        from surview.formatting import (
             SeparatorBlock, HeaderBlock, MetadataBlock, RoleBlock,
             TextContentBlock, NewlineBlock
         )
@@ -501,8 +501,8 @@ class TestRenderBlockFunction:
 
     def test_render_block_respects_filters(self):
         """Test that render_block respects filter settings."""
-        from cc_dump.tui.rendering import render_block
-        from cc_dump.formatting import HeaderBlock
+        from surview.tui.rendering import render_block
+        from surview.formatting import HeaderBlock
 
         # Test with headers disabled
         filters_off = {"headers": False}

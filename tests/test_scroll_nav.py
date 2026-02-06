@@ -14,15 +14,15 @@ from textual.geometry import Offset
 from textual.strip import Strip
 from rich.console import Console
 
-from cc_dump.formatting import (
+from surview.formatting import (
     TextContentBlock,
     ToolUseBlock,
     ToolResultBlock,
     StreamToolUseBlock,
     RoleBlock,
 )
-from cc_dump.tui.widget_factory import ConversationView, TurnData
-from cc_dump.tui.rendering import render_turn_to_strips
+from surview.tui.widget_factory import ConversationView, TurnData
+from surview.tui.rendering import render_turn_to_strips
 
 
 class TestFollowMode:

@@ -51,12 +51,12 @@ Example: When "Tools" filter is active, the "tools" binding shows with blue back
 
 ## Files Modified
 
-1. **`src/cc_dump/tui/app.py`**
+1. **`src/surview/tui/app.py`**
    - Updated `BINDINGS` list with new format and keys
    - Changed from standard `Footer` to `StyledFooter`
    - Removed `q` quit binding
 
-2. **`src/cc_dump/tui/custom_footer.py`** (new file)
+2. **`src/surview/tui/custom_footer.py`** (new file)
    - Custom Footer widget that supports Rich markup
    - Parses `[bold]...[/bold]` tags in binding descriptions
    - Renders styled text properly

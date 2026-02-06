@@ -1,6 +1,6 @@
 # Hot-Reload Architecture
 
-This document describes the hot-reload system in cc-dump, which enables real-time code updates without restarting the proxy server or losing TUI state.
+This document describes the hot-reload system in surview, which enables real-time code updates without restarting the proxy server or losing TUI state.
 
 ## Overview
 
@@ -28,18 +28,18 @@ These modules contain live instances or entry points that cannot be safely reloa
 
 ```python
 # CORRECT - module-level import in stable boundary
-import cc_dump.formatting
-import cc_dump.tui.widget_factory
+import surview.formatting
+import surview.tui.widget_factory
 
 def handler():
-    block = cc_dump.formatting.format_request(...)
-    widget = cc_dump.tui.widget_factory.create_conversation_view()
+    block = surview.formatting.format_request(...)
+    widget = surview.tui.widget_factory.create_conversation_view()
 ```
 
 ```python
 # WRONG - direct import creates stale reference
-from cc_dump.formatting import format_request
-from cc_dump.tui.widget_factory import create_conversation_view
+from surview.formatting import format_request
+from surview.tui.widget_factory import create_conversation_view
 
 def handler():
     block = format_request(...)  # STALE - won't update on hot-reload!
@@ -153,7 +153,7 @@ def restore_state(self, state: dict):
 
 ### How to Add a New Reloadable Module
 
-1. **Create the module** in `src/cc_dump/` or `src/cc_dump/tui/`
+1. **Create the module** in `src/surview/` or `src/surview/tui/`
 2. **Update reload order** in `hot_reload.py:_RELOAD_ORDER`:
    - If it has no project dependencies, add it near the top
    - If it depends on other reloadable modules, add it after them
@@ -163,11 +163,11 @@ Example:
 ```python
 # In hot_reload.py
 _RELOAD_ORDER = [
-    "cc_dump.colors",
-    "cc_dump.analysis",
-    "cc_dump.tui.protocols",
-    "cc_dump.your_new_module",  # <-- Add here if it depends on analysis
-    "cc_dump.formatting",
+    "surview.colors",
+    "surview.analysis",
+    "surview.tui.protocols",
+    "surview.your_new_module",  # <-- Add here if it depends on analysis
+    "surview.formatting",
     # ...
 ]
 ```
@@ -190,16 +190,16 @@ _RELOAD_ORDER = [
 
 2. **Add a factory function** with protocol return type:
    ```python
-   def create_my_widget() -> cc_dump.tui.protocols.HotSwappableWidget:
+   def create_my_widget() -> surview.tui.protocols.HotSwappableWidget:
        return MyNewWidget()
    ```
 
 3. **Use the factory in app.py** (module-level import):
    ```python
-   import cc_dump.tui.widget_factory
+   import surview.tui.widget_factory
 
    # In compose():
-   widget = cc_dump.tui.widget_factory.create_my_widget()
+   widget = surview.tui.widget_factory.create_my_widget()
    widget.id = "my-widget"
    yield widget
    ```
@@ -211,7 +211,7 @@ _RELOAD_ORDER = [
        my_state = self._get_my_widget().get_state()
 
        # Create new instance
-       new_widget = cc_dump.tui.widget_factory.create_my_widget()
+       new_widget = surview.tui.widget_factory.create_my_widget()
        new_widget.id = "my-widget"
        new_widget.restore_state(my_state)
 
@@ -253,18 +253,18 @@ This test scans stable boundary modules (`app.py`, `proxy.py`) for forbidden `fr
 
 **Forbidden Patterns** (in stable boundaries):
 ```python
-from cc_dump.formatting import format_request  # FORBIDDEN
-from cc_dump.tui.widget_factory import create_conversation_view  # FORBIDDEN
+from surview.formatting import format_request  # FORBIDDEN
+from surview.tui.widget_factory import create_conversation_view  # FORBIDDEN
 ```
 
 **Required Patterns** (in stable boundaries):
 ```python
-import cc_dump.formatting  # REQUIRED
-import cc_dump.tui.widget_factory  # REQUIRED
+import surview.formatting  # REQUIRED
+import surview.tui.widget_factory  # REQUIRED
 
 # Use fully-qualified calls:
-block = cc_dump.formatting.format_request(...)
-widget = cc_dump.tui.widget_factory.create_conversation_view()
+block = surview.formatting.format_request(...)
+widget = surview.tui.widget_factory.create_conversation_view()
 ```
 
 ## Design Rationale

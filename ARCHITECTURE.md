@@ -2,7 +2,7 @@
 
 ## System Overview
 
-cc-dump is a three-layer system: **proxy** (HTTP interception) → **IR** (structured formatting) → **TUI** (display). Data flows strictly downward through these layers.
+surview is a three-layer system: **proxy** (HTTP interception) → **IR** (structured formatting) → **TUI** (display). Data flows strictly downward through these layers.
 
 ```
 Claude Code (HTTP client)
@@ -88,7 +88,7 @@ request_headers → request → response_headers → response_event* → respons
 
 ## Recording and Replay
 
-cc-dump records all API traffic to HAR (HTTP Archive) 1.2 format for replay and offline analysis.
+surview records all API traffic to HAR (HTTP Archive) 1.2 format for replay and offline analysis.
 
 **Architecture principles:**
 - **HAR files are the source of truth** for raw event data (complete, ordered, replayable)
@@ -148,13 +148,13 @@ These divergences are documented, tested, and accepted as part of the HAR format
 
 ### Session Management
 
-Recordings stored in `~/.local/share/cc-dump/recordings/recording-<session_id>.har`
+Recordings stored in `~/.local/share/surview/recordings/recording-<session_id>.har`
 
 CLI commands:
-- `cc-dump --list` — List available recordings with metadata (date, size, entry count)
-- `cc-dump --replay <path>` — Replay a specific HAR file
-- `cc-dump --replay latest` — Replay most recent recording
-- `cc-dump --no-record` — Disable recording (live mode only)
+- `surview --list` — List available recordings with metadata (date, size, entry count)
+- `surview --replay <path>` — Replay a specific HAR file
+- `surview --replay latest` — Replay most recent recording
+- `surview --no-record` — Disable recording (live mode only)
 
 ## Virtual Rendering
 
@@ -241,7 +241,7 @@ Modules are classified as **stable** (never reload) or **reloadable** (reload on
 | `har_recorder.py`, `har_replayer.py` | `tui/event_handlers.py`, `tui/widget_factory.py` |
 | `sessions.py` | `tui/panel_renderers.py`, `tui/custom_footer.py` |
 
-**Critical rule:** Stable modules must use `import cc_dump.module`, never `from cc_dump.module import func`. Direct imports create stale references that survive reload.
+**Critical rule:** Stable modules must use `import surview.module`, never `from surview.module import func`. Direct imports create stale references that survive reload.
 
 Reloadable modules are reloaded in dependency order (leaves first). If `widget_factory.py` is reloaded, widgets are hot-swapped using the `HotSwappableWidget` protocol (`get_state()` / `restore_state()`).
 

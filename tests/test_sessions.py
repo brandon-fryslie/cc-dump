@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cc_dump.sessions import (
+from surview.sessions import (
     list_recordings,
     get_latest_recording,
     format_size,
@@ -60,7 +60,7 @@ def create_har_file(path: Path, entry_count: int = 1, session_id: str = "test") 
     har = {
         "log": {
             "version": "1.2",
-            "creator": {"name": "cc-dump", "version": "0.2.0"},
+            "creator": {"name": "surview", "version": "0.2.0"},
             "entries": entries,
         }
     }
@@ -248,8 +248,8 @@ def test_format_size_gigabytes():
 
 
 def test_get_recordings_dir():
-    """get_recordings_dir returns ~/.local/share/cc-dump/recordings/."""
-    expected = os.path.expanduser("~/.local/share/cc-dump/recordings")
+    """get_recordings_dir returns ~/.local/share/surview/recordings/."""
+    expected = os.path.expanduser("~/.local/share/surview/recordings")
     assert get_recordings_dir() == expected
 
 
@@ -278,7 +278,7 @@ def test_list_recordings_no_timestamp(recordings_dir):
     har_data = {
         "log": {
             "version": "1.2",
-            "creator": {"name": "cc-dump"},
+            "creator": {"name": "surview"},
             "entries": [{
                 "request": {"postData": {"text": "{}"}},
                 "response": {"content": {"text": '{"type": "message", "content": []}'}},

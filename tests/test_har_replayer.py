@@ -3,7 +3,7 @@
 import json
 import pytest
 
-from cc_dump.har_replayer import load_har, convert_to_events
+from surview.har_replayer import load_har, convert_to_events
 
 
 # ─── HAR Loading Tests ────────────────────────────────────────────────────────
@@ -15,7 +15,7 @@ def test_load_har_basic(tmp_path):
     har = {
         "log": {
             "version": "1.2",
-            "creator": {"name": "cc-dump", "version": "0.2.0"},
+            "creator": {"name": "surview", "version": "0.2.0"},
             "entries": [
                 {
                     "startedDateTime": "2024-01-01T00:00:00Z",

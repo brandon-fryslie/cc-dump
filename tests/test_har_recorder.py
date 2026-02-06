@@ -3,7 +3,7 @@
 import json
 import pytest
 
-from cc_dump.har_recorder import (
+from surview.har_recorder import (
     HARRecordingSubscriber,
     build_har_request,
     build_har_response,
@@ -315,7 +315,7 @@ def test_har_subscriber_initialization(tmp_path):
     assert subscriber.path == str(har_path)
     assert subscriber.session_id == "session_123"
     assert subscriber.har["log"]["version"] == "1.2"
-    assert subscriber.har["log"]["creator"]["name"] == "cc-dump"
+    assert subscriber.har["log"]["creator"]["name"] == "surview"
     assert subscriber.entries == []
 
 
@@ -438,7 +438,7 @@ def test_har_subscriber_writes_file(tmp_path):
 
     # Verify HAR structure
     assert har["log"]["version"] == "1.2"
-    assert har["log"]["creator"]["name"] == "cc-dump"
+    assert har["log"]["creator"]["name"] == "surview"
     assert len(har["log"]["entries"]) == 1
 
     # Verify entry is valid
