@@ -7,12 +7,32 @@ from typing import Callable
 
 from rich.text import Text
 
+from collections import Counter
+
 from cc_dump.formatting import (
-    FormattedBlock, SeparatorBlock, HeaderBlock, HttpHeadersBlock, MetadataBlock,
-    SystemLabelBlock, TrackedContentBlock, RoleBlock, TextContentBlock,
-    ToolUseBlock, ToolResultBlock, ImageBlock, UnknownTypeBlock,
-    StreamInfoBlock, StreamToolUseBlock, TextDeltaBlock, StopReasonBlock,
-    ErrorBlock, ProxyErrorBlock, LogBlock, NewlineBlock, TurnBudgetBlock,
+    FormattedBlock,
+    SeparatorBlock,
+    HeaderBlock,
+    HttpHeadersBlock,
+    MetadataBlock,
+    SystemLabelBlock,
+    TrackedContentBlock,
+    RoleBlock,
+    TextContentBlock,
+    ToolUseBlock,
+    ToolResultBlock,
+    ToolUseSummaryBlock,
+    ImageBlock,
+    UnknownTypeBlock,
+    StreamInfoBlock,
+    StreamToolUseBlock,
+    TextDeltaBlock,
+    StopReasonBlock,
+    ErrorBlock,
+    ProxyErrorBlock,
+    LogBlock,
+    NewlineBlock,
+    TurnBudgetBlock,
     make_diff_lines,
 )
 
@@ -25,7 +45,6 @@ def _build_role_styles() -> dict[str, str]:
         "user": f"bold {p.user}",
         "assistant": f"bold {p.assistant}",
         "system": f"bold {p.system}",
-        "tool_result": f"dim {p.user}",
     }
 
 
@@ -144,7 +163,9 @@ def _render_metadata(block: MetadataBlock, filters: dict) -> Text | None:
     return _add_filter_indicator(t, "metadata")
 
 
-def _render_turn_budget_block(block: TurnBudgetBlock, filters: dict, *, expanded: bool | None = None) -> Text | None:
+def _render_turn_budget_block(
+    block: TurnBudgetBlock, filters: dict, *, expanded: bool | None = None
+) -> Text | None:
     """Render turn budget block (wrapper for filter check).
 
     Args:
@@ -164,7 +185,9 @@ def _render_system_label(block: SystemLabelBlock, filters: dict) -> Text | None:
     return _add_filter_indicator(t, "system")
 
 
-def _render_tracked_content_block(block: TrackedContentBlock, filters: dict, *, expanded: bool | None = None) -> Text | None:
+def _render_tracked_content_block(
+    block: TrackedContentBlock, filters: dict, *, expanded: bool | None = None
+) -> Text | None:
     """Render tracked content block (wrapper for filter check).
 
     Args:
@@ -180,8 +203,6 @@ def _render_role(block: RoleBlock, filters: dict) -> Text | None:
     """Render role label (USER, ASSISTANT, SYSTEM)."""
     role_lower = block.role.lower()
     if role_lower == "system" and not filters.get("system", False):
-        return None
-    if role_lower == "tool_result" and not filters.get("tools", False):
         return None
     style = ROLE_STYLES.get(role_lower, "bold magenta")
     label = block.role.upper().replace("_", " ")
@@ -217,15 +238,36 @@ def _render_tool_result(block: ToolResultBlock, filters: dict) -> Text | None:
         return None
     color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
     if block.is_error:
-        label = "[Result: {} ERROR]".format(block.tool_name) if block.tool_name else "[Result: ERROR]"
+        label = (
+            "[Result: {} ERROR]".format(block.tool_name)
+            if block.tool_name
+            else "[Result: ERROR]"
+        )
     else:
-        label = "[Result: {}]".format(block.tool_name) if block.tool_name else "[Result]"
+        label = (
+            "[Result: {}]".format(block.tool_name) if block.tool_name else "[Result]"
+        )
     t = Text("  ")
     t.append(label, style="bold {}".format(color))
     if block.detail:
         t.append(" {}".format(block.detail), style="dim")
     t.append(" ({} bytes)".format(block.size))
     return _add_filter_indicator(t, "tools")
+
+
+def _render_tool_use_summary(block: ToolUseSummaryBlock, filters: dict) -> Text | None:
+    """Render a collapsed tool use summary line."""
+    parts = ["{} {}x".format(name, count) for name, count in block.tool_counts.items()]
+    t = Text("  ")
+    t.append(
+        "[used {} tool{}: {}]".format(
+            block.total,
+            "" if block.total == 1 else "s",
+            ", ".join(parts),
+        ),
+        style="dim",
+    )
+    return t
 
 
 def _render_image(block: ImageBlock, filters: dict) -> Text | None:
@@ -273,17 +315,25 @@ def _render_stop_reason(block: StopReasonBlock, filters: dict) -> Text | None:
 
 def _render_error(block: ErrorBlock, filters: dict) -> Text | None:
     """Render error block."""
-    return Text("\n  [HTTP {} {}]".format(block.code, block.reason), style=f"bold {cc_dump.palette.PALETTE.error}")
+    return Text(
+        "\n  [HTTP {} {}]".format(block.code, block.reason),
+        style=f"bold {cc_dump.palette.PALETTE.error}",
+    )
 
 
 def _render_proxy_error(block: ProxyErrorBlock, filters: dict) -> Text | None:
     """Render proxy error block."""
-    return Text("\n  [PROXY ERROR: {}]".format(block.error), style=f"bold {cc_dump.palette.PALETTE.error}")
+    return Text(
+        "\n  [PROXY ERROR: {}]".format(block.error),
+        style=f"bold {cc_dump.palette.PALETTE.error}",
+    )
 
 
 def _render_log(block: LogBlock, filters: dict) -> Text | None:
     """Render log block."""
-    return Text("  {} {} {}".format(block.command, block.path, block.status), style="dim")
+    return Text(
+        "  {} {} {}".format(block.command, block.path, block.status), style="dim"
+    )
 
 
 def _render_newline(block: NewlineBlock, filters: dict) -> Text | None:
@@ -307,6 +357,7 @@ BLOCK_RENDERERS: dict[str, BlockRenderer] = {
     "TextContentBlock": _render_text_content,
     "ToolUseBlock": _render_tool_use,
     "ToolResultBlock": _render_tool_result,
+    "ToolUseSummaryBlock": _render_tool_use_summary,
     "ImageBlock": _render_image,
     "UnknownTypeBlock": _render_unknown_type,
     "StreamInfoBlock": _render_stream_info,
@@ -331,10 +382,11 @@ BLOCK_FILTER_KEY: dict[str, str | None] = {
     "TurnBudgetBlock": "expand",
     "SystemLabelBlock": "system",
     "TrackedContentBlock": "system",
-    "RoleBlock": "system",             # _render_role checks filters["system"] for system roles
+    "RoleBlock": "system",
     "TextContentBlock": None,
     "ToolUseBlock": "tools",
     "ToolResultBlock": "tools",
+    "ToolUseSummaryBlock": "tools",
     "ImageBlock": None,
     "UnknownTypeBlock": None,
     "StreamInfoBlock": "metadata",
@@ -348,7 +400,9 @@ BLOCK_FILTER_KEY: dict[str, str | None] = {
 }
 
 
-def render_block(block: FormattedBlock, filters: dict, *, expanded: bool | None = None) -> Text | None:
+def render_block(
+    block: FormattedBlock, filters: dict, *, expanded: bool | None = None
+) -> Text | None:
     """Render a FormattedBlock to a Rich Text object.
 
     Args:
@@ -367,17 +421,49 @@ def render_block(block: FormattedBlock, filters: dict, *, expanded: bool | None 
     return renderer(block, filters)
 
 
-def _make_tool_use_summary(tool_blocks: list[ToolUseBlock]) -> Text:
-    """Create a condensed summary line for a run of tool use blocks."""
-    from collections import Counter
-    counts = Counter(b.name for b in tool_blocks)
-    total = len(tool_blocks)
-    parts = ["{} {}x".format(name, count) for name, count in counts.items()]
-    t = Text("  ")
-    t.append("[used {} tool{}: {}]".format(
-        total, "" if total == 1 else "s", ", ".join(parts),
-    ), style="dim")
-    return t
+def collapse_tool_runs(
+    blocks: list, tools_on: bool
+) -> list[tuple[int, FormattedBlock]]:
+    """Pre-pass: collapse consecutive ToolUseBlock runs into ToolUseSummaryBlock.
+
+    When tools_on=True, returns blocks with their original indices unchanged.
+    When tools_on=False, consecutive ToolUseBlock runs are replaced with a
+    single ToolUseSummaryBlock containing the aggregated counts.
+
+    Returns list of (original_block_index, block) tuples.
+    """
+    if tools_on:
+        return [(i, block) for i, block in enumerate(blocks)]
+
+    result: list[tuple[int, FormattedBlock]] = []
+    pending: list[tuple[int, FormattedBlock]] = []
+
+    def flush():
+        if not pending:
+            return
+        first_idx = pending[0][0]
+        counts = Counter(b.name for _, b in pending)
+        result.append(
+            (
+                first_idx,
+                ToolUseSummaryBlock(
+                    tool_counts=dict(counts),
+                    total=len(pending),
+                    first_block_index=first_idx,
+                ),
+            )
+        )
+        pending.clear()
+
+    for i, block in enumerate(blocks):
+        if type(block).__name__ == "ToolUseBlock":
+            pending.append((i, block))
+        else:
+            flush()
+            result.append((i, block))
+
+    flush()
+    return result
 
 
 def render_blocks(
@@ -399,31 +485,17 @@ def render_blocks(
         in the original blocks list. Summary lines use the index of the
         first ToolUseBlock in the collapsed run.
     """
-    rendered: list[tuple[int, Text]] = []
     tools_on = filters.get("tools", False)
-    pending_tool_uses: list[tuple[int, ToolUseBlock]] = []
+    prepared = collapse_tool_runs(blocks, tools_on)
 
-    def flush_tool_uses():
-        if pending_tool_uses:
-            first_idx = pending_tool_uses[0][0]
-            tool_blocks = [b for _, b in pending_tool_uses]
-            rendered.append((first_idx, _make_tool_use_summary(tool_blocks)))
-            pending_tool_uses.clear()
-
-    for i, block in enumerate(blocks):
-        is_tool_use = type(block).__name__ == "ToolUseBlock"
-        if is_tool_use and not tools_on:
-            pending_tool_uses.append((i, block))
-            continue
-        # Non-tool-use block: flush any pending summary first
-        flush_tool_uses()
-        # Look up per-block expand override
-        block_expanded = expanded_overrides.get(i) if expanded_overrides else None
+    rendered: list[tuple[int, Text]] = []
+    for orig_idx, block in prepared:
+        block_expanded = (
+            expanded_overrides.get(orig_idx) if expanded_overrides else None
+        )
         r = render_block(block, filters, expanded=block_expanded)
         if r is not None:
-            rendered.append((i, r))
-
-    flush_tool_uses()
+            rendered.append((orig_idx, r))
     return rendered
 
 
@@ -486,7 +558,9 @@ def render_turn_to_strips(
         # Note: We use id(blocks[block_idx]) not id(text) since text is freshly generated
         block = blocks[block_idx]
         filter_key = BLOCK_FILTER_KEY.get(type(block).__name__)
-        expand_override = expanded_overrides.get(block_idx) if expanded_overrides else None
+        expand_override = (
+            expanded_overrides.get(block_idx) if expanded_overrides else None
+        )
         cache_key = (
             id(block),
             width,
@@ -516,7 +590,9 @@ def render_turn_to_strips(
     return all_strips, block_strip_map
 
 
-def _render_tracked_content(block: TrackedContentBlock, filters: dict, *, expanded: bool | None = None) -> Text:
+def _render_tracked_content(
+    block: TrackedContentBlock, filters: dict, *, expanded: bool | None = None
+) -> Text:
     """Render a TrackedContentBlock with tag colors.
 
     Args:
@@ -617,33 +693,56 @@ def _render_turn_budget(block: TurnBudgetBlock) -> Text:
     t = Text("  ")
     t.append("Context: ", style="bold")
     t.append("{} tok".format(_fmt_tokens(total)))
-    t.append(" | sys: {} ({})".format(_fmt_tokens(sys_tok), _pct(sys_tok, total)), style=f"dim {p.info}")
-    t.append(" | tools: {} ({})".format(_fmt_tokens(tool_tok), _pct(tool_tok, total)), style=f"dim {p.warning}")
-    t.append(" | conv: {} ({})".format(_fmt_tokens(conv_tok), _pct(conv_tok, total)), style=f"dim {p.success}")
+    t.append(
+        " | sys: {} ({})".format(_fmt_tokens(sys_tok), _pct(sys_tok, total)),
+        style=f"dim {p.info}",
+    )
+    t.append(
+        " | tools: {} ({})".format(_fmt_tokens(tool_tok), _pct(tool_tok, total)),
+        style=f"dim {p.warning}",
+    )
+    t.append(
+        " | conv: {} ({})".format(_fmt_tokens(conv_tok), _pct(conv_tok, total)),
+        style=f"dim {p.success}",
+    )
 
     # Tool result breakdown by name
     if block.tool_result_by_name:
         parts = []
         # Sort by tokens descending
-        sorted_tools = sorted(block.tool_result_by_name.items(), key=lambda x: x[1], reverse=True)
+        sorted_tools = sorted(
+            block.tool_result_by_name.items(), key=lambda x: x[1], reverse=True
+        )
         for name, tokens in sorted_tools[:5]:
             parts.append("{}: {}".format(name, _fmt_tokens(tokens)))
-        t.append("\n    tool_use: {} | tool_results: {} ({})".format(
-            _fmt_tokens(b.tool_use_tokens_est),
-            _fmt_tokens(b.tool_result_tokens_est),
-            ", ".join(parts),
-        ), style="dim")
+        t.append(
+            "\n    tool_use: {} | tool_results: {} ({})".format(
+                _fmt_tokens(b.tool_use_tokens_est),
+                _fmt_tokens(b.tool_result_tokens_est),
+                ", ".join(parts),
+            ),
+            style="dim",
+        )
 
     # Cache info (if actual data is available)
     if b.actual_input_tokens > 0 or b.actual_cache_read_tokens > 0:
         t.append("\n    ")
         t.append("Cache: ", style="bold")
-        t.append("{} read ({})".format(
-            _fmt_tokens(b.actual_cache_read_tokens),
-            _pct(b.actual_cache_read_tokens, b.actual_input_tokens + b.actual_cache_read_tokens),
-        ), style=f"dim {p.info}")
+        t.append(
+            "{} read ({})".format(
+                _fmt_tokens(b.actual_cache_read_tokens),
+                _pct(
+                    b.actual_cache_read_tokens,
+                    b.actual_input_tokens + b.actual_cache_read_tokens,
+                ),
+            ),
+            style=f"dim {p.info}",
+        )
         if b.actual_cache_creation_tokens > 0:
-            t.append(" | {} created".format(_fmt_tokens(b.actual_cache_creation_tokens)), style=f"dim {p.warning}")
+            t.append(
+                " | {} created".format(_fmt_tokens(b.actual_cache_creation_tokens)),
+                style=f"dim {p.warning}",
+            )
         t.append(" | {} fresh".format(_fmt_tokens(b.actual_input_tokens)), style="dim")
 
     return _add_filter_indicator(t, "expand")

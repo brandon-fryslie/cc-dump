@@ -3,10 +3,13 @@
 import pytest
 
 from cc_dump.formatting import (
-    ToolUseBlock, ToolResultBlock, TextContentBlock, RoleBlock,
-    UnknownTypeBlock, NewlineBlock, _merge_tool_only_assistant_runs,
+    ToolUseBlock, ToolResultBlock, ToolUseSummaryBlock, TextContentBlock,
+    RoleBlock, NewlineBlock,
 )
-from cc_dump.tui.rendering import _render_tool_use, _render_tool_result, render_blocks
+from cc_dump.tui.rendering import (
+    _render_tool_use, _render_tool_result, _render_tool_use_summary,
+    render_blocks, collapse_tool_runs, render_turn_to_strips,
+)
 
 
 class TestRenderToolUseWithDetail:
@@ -294,128 +297,206 @@ class TestRenderBlocksToolSummary:
         assert len(result) == 0
 
 
-class TestMergeToolOnlyAssistantRuns:
-    """Tests for _merge_tool_only_assistant_runs."""
+class TestCollapseToolRuns:
+    """Tests for collapse_tool_runs() pre-pass function."""
 
-    def test_no_merge_single_assistant(self):
-        """Single tool-only assistant group is unchanged."""
+    def test_passthrough_when_tools_on(self):
+        """tools_on=True returns all blocks with correct indices."""
         blocks = [
-            RoleBlock(role="assistant", msg_index=0, timestamp="1:00 PM"),
-            ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
-            NewlineBlock(),
-        ]
-        result = _merge_tool_only_assistant_runs(blocks)
-        assert len(result) == len(blocks)
-        assert isinstance(result[0], RoleBlock)
-        assert isinstance(result[1], ToolUseBlock)
-
-    def test_merge_two_consecutive_tool_only(self):
-        """Two consecutive tool-only assistant messages merge into one."""
-        blocks = [
-            RoleBlock(role="assistant", msg_index=0, timestamp="1:00 PM"),
+            TextContentBlock(text="hello"),
             ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
             ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
-            NewlineBlock(),
-            RoleBlock(role="assistant", msg_index=2, timestamp="1:00 PM"),
+        ]
+        result = collapse_tool_runs(blocks, tools_on=True)
+
+        assert len(result) == 3
+        for i, (idx, block) in enumerate(result):
+            assert idx == i
+            assert block is blocks[i]
+
+    def test_collapse_consecutive_tool_uses(self):
+        """3 consecutive ToolUseBlocks become 1 ToolUseSummaryBlock."""
+        blocks = [
+            ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
+            ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
             ToolUseBlock(name="Bash", input_size=150, msg_color_idx=2),
         ]
-        result = _merge_tool_only_assistant_runs(blocks)
+        result = collapse_tool_runs(blocks, tools_on=False)
 
-        # Should have: 1 RoleBlock + 3 ToolUseBlocks (no intermediate NewlineBlock/RoleBlock)
-        role_blocks = [b for b in result if isinstance(b, RoleBlock)]
-        tool_blocks = [b for b in result if isinstance(b, ToolUseBlock)]
-        assert len(role_blocks) == 1
-        assert len(tool_blocks) == 3
-        assert role_blocks[0].msg_index == 0  # kept the first one
+        assert len(result) == 1
+        idx, block = result[0]
+        assert idx == 0
+        assert type(block).__name__ == "ToolUseSummaryBlock"
+        assert block.total == 3
+        assert block.tool_counts == {"Bash": 2, "Read": 1}
 
-    def test_merge_preserves_thinking_blocks(self):
-        """Thinking (UnknownTypeBlock) and text content are preserved during merge."""
+    def test_mixed_blocks_preserved(self):
+        """Text, ToolUse, ToolUse, Text -> Text, Summary, Text."""
         blocks = [
-            RoleBlock(role="assistant", msg_index=0, timestamp="1:00 PM"),
-            UnknownTypeBlock(block_type="thinking"),
-            TextContentBlock(text="Let me evaluate...", indent="    "),
+            TextContentBlock(text="before"),
             ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
-            NewlineBlock(),
-            RoleBlock(role="assistant", msg_index=2, timestamp="1:00 PM"),
-            UnknownTypeBlock(block_type="thinking"),
             ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
+            TextContentBlock(text="after"),
         ]
-        result = _merge_tool_only_assistant_runs(blocks)
+        result = collapse_tool_runs(blocks, tools_on=False)
 
-        role_blocks = [b for b in result if isinstance(b, RoleBlock)]
-        tool_blocks = [b for b in result if isinstance(b, ToolUseBlock)]
-        thinking_blocks = [b for b in result if isinstance(b, UnknownTypeBlock)]
-        text_blocks = [b for b in result if isinstance(b, TextContentBlock)]
+        assert len(result) == 3
+        assert result[0][0] == 0
+        assert type(result[0][1]).__name__ == "TextContentBlock"
+        assert result[1][0] == 1  # first ToolUseBlock index
+        assert type(result[1][1]).__name__ == "ToolUseSummaryBlock"
+        assert result[1][1].total == 2
+        assert result[2][0] == 3
+        assert type(result[2][1]).__name__ == "TextContentBlock"
 
-        assert len(role_blocks) == 1
-        assert len(tool_blocks) == 2
-        assert len(thinking_blocks) == 2
-        assert len(text_blocks) == 1
-
-    def test_no_merge_with_non_tool_assistant(self):
-        """Assistant with real text response is not merged with tool-only."""
-        blocks = [
-            RoleBlock(role="assistant", msg_index=0, timestamp="1:00 PM"),
-            TextContentBlock(text="Here is my answer.", indent="    "),
-            NewlineBlock(),
-            RoleBlock(role="assistant", msg_index=2, timestamp="1:00 PM"),
-            ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
-        ]
-        result = _merge_tool_only_assistant_runs(blocks)
-
-        # First group has text but no ToolUseBlock, so it's not tool-only.
-        # Second group is tool-only but stands alone. No merging.
-        role_blocks = [b for b in result if isinstance(b, RoleBlock)]
-        assert len(role_blocks) == 2
-
-    def test_no_merge_across_user_boundary(self):
-        """Tool-only assistant groups separated by a user message don't merge."""
-        blocks = [
-            RoleBlock(role="assistant", msg_index=0, timestamp="1:00 PM"),
-            ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
-            NewlineBlock(),
-            RoleBlock(role="user", msg_index=1, timestamp="1:00 PM"),
-            TextContentBlock(text="hello", indent="    "),
-            NewlineBlock(),
-            RoleBlock(role="assistant", msg_index=2, timestamp="1:00 PM"),
-            ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
-        ]
-        result = _merge_tool_only_assistant_runs(blocks)
-
-        role_blocks = [b for b in result if isinstance(b, RoleBlock)]
-        assert len(role_blocks) == 3  # all three preserved
-
-    def test_merge_three_consecutive(self):
-        """Three consecutive tool-only assistant groups merge into one."""
-        blocks = [
-            RoleBlock(role="assistant", msg_index=0, timestamp="1:00 PM"),
-            ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
-            NewlineBlock(),
-            RoleBlock(role="assistant", msg_index=2, timestamp="1:00 PM"),
-            ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
-            NewlineBlock(),
-            RoleBlock(role="assistant", msg_index=4, timestamp="1:00 PM"),
-            ToolUseBlock(name="Bash", input_size=150, msg_color_idx=2),
-            ToolUseBlock(name="Glob", input_size=50, msg_color_idx=3),
-        ]
-        result = _merge_tool_only_assistant_runs(blocks)
-
-        role_blocks = [b for b in result if isinstance(b, RoleBlock)]
-        tool_blocks = [b for b in result if isinstance(b, ToolUseBlock)]
-        assert len(role_blocks) == 1
-        assert len(tool_blocks) == 4
-
-    def test_empty_blocks(self):
+    def test_empty_list(self):
         """Empty input returns empty output."""
-        assert _merge_tool_only_assistant_runs([]) == []
+        result = collapse_tool_runs([], tools_on=False)
+        assert result == []
 
-    def test_non_assistant_blocks_pass_through(self):
-        """Non-assistant blocks (headers, separators, etc.) pass through unchanged."""
-        from cc_dump.formatting import SeparatorBlock, HeaderBlock
+    def test_single_tool_use(self):
+        """Single ToolUseBlock becomes ToolUseSummaryBlock with total=1."""
+        blocks = [ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0)]
+        result = collapse_tool_runs(blocks, tools_on=False)
+
+        assert len(result) == 1
+        idx, block = result[0]
+        assert idx == 0
+        assert type(block).__name__ == "ToolUseSummaryBlock"
+        assert block.total == 1
+        assert block.tool_counts == {"Bash": 1}
+
+    def test_non_consecutive_runs(self):
+        """ToolUse, Text, ToolUse -> Summary, Text, Summary (two separate runs)."""
         blocks = [
-            SeparatorBlock(style="heavy"),
-            HeaderBlock(label="REQUEST #1"),
-            SeparatorBlock(style="thin"),
+            ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
+            TextContentBlock(text="middle"),
+            ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
         ]
-        result = _merge_tool_only_assistant_runs(blocks)
-        assert len(result) == len(blocks)
+        result = collapse_tool_runs(blocks, tools_on=False)
+
+        assert len(result) == 3
+        assert type(result[0][1]).__name__ == "ToolUseSummaryBlock"
+        assert result[0][1].total == 1
+        assert type(result[1][1]).__name__ == "TextContentBlock"
+        assert type(result[2][1]).__name__ == "ToolUseSummaryBlock"
+        assert result[2][1].total == 1
+
+    def test_indices_correct(self):
+        """Verify orig_idx values are correct for each returned item."""
+        blocks = [
+            TextContentBlock(text="a"),       # 0
+            ToolUseBlock(name="B", input_size=1, msg_color_idx=0),  # 1
+            ToolUseBlock(name="C", input_size=1, msg_color_idx=0),  # 2
+            ToolUseBlock(name="D", input_size=1, msg_color_idx=0),  # 3
+            TextContentBlock(text="e"),       # 4
+            ToolUseBlock(name="F", input_size=1, msg_color_idx=0),  # 5
+        ]
+        result = collapse_tool_runs(blocks, tools_on=False)
+
+        indices = [idx for idx, _ in result]
+        assert indices == [0, 1, 4, 5]
+
+    def test_input_not_mutated(self):
+        """Input list is never mutated."""
+        blocks = [
+            ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
+            ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
+        ]
+        original_len = len(blocks)
+        collapse_tool_runs(blocks, tools_on=False)
+        assert len(blocks) == original_len
+
+
+class TestRenderToolUseSummary:
+    """Tests for _render_tool_use_summary() renderer."""
+
+    def test_summary_format_plural(self):
+        """Multiple tools shows plural format."""
+        block = ToolUseSummaryBlock(
+            tool_counts={"Bash": 2, "Read": 1},
+            total=3,
+        )
+        result = _render_tool_use_summary(block, {})
+
+        assert result is not None
+        plain = result.plain
+        assert "used 3 tools" in plain
+        assert "Bash 2x" in plain
+        assert "Read 1x" in plain
+
+    def test_summary_format_singular(self):
+        """Single tool shows singular format."""
+        block = ToolUseSummaryBlock(
+            tool_counts={"Bash": 1},
+            total=1,
+        )
+        result = _render_tool_use_summary(block, {})
+
+        assert result is not None
+        plain = result.plain
+        assert "used 1 tool:" in plain
+        assert "Bash 1x" in plain
+
+    def test_summary_styled_dim(self):
+        """Summary text is styled dim."""
+        block = ToolUseSummaryBlock(
+            tool_counts={"Bash": 1},
+            total=1,
+        )
+        result = _render_tool_use_summary(block, {})
+
+        assert result is not None
+        styles = [span.style for span in result.spans if span.style]
+        has_dim = any("dim" in str(style) for style in styles)
+        assert has_dim
+
+
+class TestRenderTurnToStripsToolSummary:
+    """Integration test: tool summary through render_turn_to_strips()."""
+
+    def test_summary_in_strips(self):
+        """render_turn_to_strips() with tools=False produces summary in strip output."""
+        from rich.console import Console
+
+        blocks = [
+            RoleBlock(role="assistant", msg_index=0),
+            ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
+            ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
+            ToolUseBlock(name="Bash", input_size=150, msg_color_idx=2),
+            NewlineBlock(),
+        ]
+        console = Console(width=80, force_terminal=True)
+        filters = {"tools": False, "system": True, "headers": False, "metadata": False, "expand": False}
+
+        strips, block_strip_map = render_turn_to_strips(
+            blocks, filters, console, width=80,
+        )
+
+        # Extract text from strips
+        text = "".join(seg.text for strip in strips for seg in strip._segments)
+        assert "used 3 tools" in text
+        assert "Bash 2x" in text
+        assert "Read 1x" in text
+
+    def test_individual_tools_in_strips_when_on(self):
+        """render_turn_to_strips() with tools=True shows individual tool blocks."""
+        from rich.console import Console
+
+        blocks = [
+            ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0, detail="git status"),
+            ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
+        ]
+        console = Console(width=80, force_terminal=True)
+        filters = {"tools": True, "system": True, "headers": False, "metadata": False, "expand": False}
+
+        strips, block_strip_map = render_turn_to_strips(
+            blocks, filters, console, width=80,
+        )
+
+        text = "".join(seg.text for strip in strips for seg in strip._segments)
+        assert "Bash" in text
+        assert "Read" in text
+        assert "git status" in text
+        # Should NOT have summary
+        assert "used" not in text

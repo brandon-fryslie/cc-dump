@@ -89,24 +89,25 @@ def start_cc_dump():
         proc = PtyProcess(cmd, timeout=timeout)
         processes.append(proc)
 
-        # Wait for TUI to initialize - look for header or footer
-        # The TUI displays various elements, we just need to see it's running
+        # Wait for TUI to initialize — poll until content appears.
+        # Under load (full test suite), startup can take longer than 1.5s.
         try:
-            # Wait a bit for initial startup
-            time.sleep(1.5)
+            deadline = time.monotonic() + timeout
+            content = ""
+            while time.monotonic() < deadline:
+                time.sleep(0.5)
 
-            # Check if process is alive
-            if not proc.is_alive():
+                if not proc.is_alive():
+                    content = proc.get_content()
+                    raise RuntimeError(f"cc-dump failed to start. Error output:\n{content}")
+
                 content = proc.get_content()
-                raise RuntimeError(f"cc-dump failed to start. Error output:\n{content}")
+                if content and len(content.strip()) >= 10:
+                    break
+            else:
+                raise RuntimeError(f"cc-dump started but no TUI content visible after {timeout}s. Output:\n{content}")
 
-            # Try to find some recognizable content
-            content = proc.get_content()
-            # Textual apps may show various elements, just verify we have output
-            if not content or len(content.strip()) < 10:
-                raise RuntimeError(f"cc-dump started but no TUI content visible. Output:\n{content}")
-
-        except Exception as e:
+        except Exception:
             if proc.is_alive():
                 proc.terminate()
             raise

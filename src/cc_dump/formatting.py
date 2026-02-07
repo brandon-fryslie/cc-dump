@@ -20,18 +20,21 @@ from cc_dump.colors import TAG_COLORS
 @dataclass
 class FormattedBlock:
     """Base class for all formatted output blocks."""
+
     pass
 
 
 @dataclass
 class SeparatorBlock(FormattedBlock):
     """A visual separator line."""
+
     style: str = "heavy"  # "heavy" or "thin" [MODIFIED]
 
 
 @dataclass
 class HeaderBlock(FormattedBlock):
     """Section header (e.g., REQUEST #1, RESPONSE)."""
+
     label: str = ""
     request_num: int = 0
     timestamp: str = ""
@@ -41,6 +44,7 @@ class HeaderBlock(FormattedBlock):
 @dataclass
 class HttpHeadersBlock(FormattedBlock):
     """HTTP request or response headers."""
+
     headers: dict = field(default_factory=dict)
     header_type: str = "request"  # "request" or "response"
     status_code: int = 0  # only for response headers
@@ -49,6 +53,7 @@ class HttpHeadersBlock(FormattedBlock):
 @dataclass
 class MetadataBlock(FormattedBlock):
     """Key-value metadata (model, max_tokens, etc.)."""
+
     model: str = ""
     max_tokens: str = ""
     stream: bool = False
@@ -58,12 +63,14 @@ class MetadataBlock(FormattedBlock):
 @dataclass
 class SystemLabelBlock(FormattedBlock):
     """The 'SYSTEM:' label."""
+
     pass
 
 
 @dataclass
 class TrackedContentBlock(FormattedBlock):
     """Result of content tracking (new/ref/changed)."""
+
     status: str = ""  # "new", "ref", "changed"
     tag_id: str = ""
     color_idx: int = 0
@@ -76,6 +83,7 @@ class TrackedContentBlock(FormattedBlock):
 @dataclass
 class DiffBlock(FormattedBlock):
     """A unified diff between old and new content."""
+
     old_text: str = ""
     new_text: str = ""
     diff_lines: list = field(default_factory=list)  # list of (kind, text) tuples
@@ -84,6 +92,7 @@ class DiffBlock(FormattedBlock):
 @dataclass
 class RoleBlock(FormattedBlock):
     """A message role header (USER, ASSISTANT, SYSTEM)."""
+
     role: str = ""
     msg_index: int = 0
     timestamp: str = ""
@@ -92,6 +101,7 @@ class RoleBlock(FormattedBlock):
 @dataclass
 class TextContentBlock(FormattedBlock):
     """Plain text content."""
+
     text: str = ""
     indent: str = "    "
 
@@ -99,16 +109,20 @@ class TextContentBlock(FormattedBlock):
 @dataclass
 class ToolUseBlock(FormattedBlock):
     """A tool_use content block."""
+
     name: str = ""
     input_size: int = 0
     msg_color_idx: int = 0
-    detail: str = ""  # Tool-specific enrichment (file path, skill name, command preview)
+    detail: str = (
+        ""  # Tool-specific enrichment (file path, skill name, command preview)
+    )
     tool_use_id: str = ""  # Tool use ID for correlation
 
 
 @dataclass
 class ToolResultBlock(FormattedBlock):
     """A tool_result content block."""
+
     size: int = 0
     is_error: bool = False
     msg_color_idx: int = 0
@@ -118,44 +132,60 @@ class ToolResultBlock(FormattedBlock):
 
 
 @dataclass
+class ToolUseSummaryBlock(FormattedBlock):
+    """Summary of a collapsed run of tool_use blocks (when tools filter is off)."""
+
+    tool_counts: dict = field(default_factory=dict)  # {tool_name: count}
+    total: int = 0
+    first_block_index: int = 0  # index in original block list
+
+
+@dataclass
 class ImageBlock(FormattedBlock):
     """An image content block."""
+
     media_type: str = ""
 
 
 @dataclass
 class UnknownTypeBlock(FormattedBlock):
     """An unknown content block type."""
+
     block_type: str = ""
 
 
 @dataclass
 class StreamInfoBlock(FormattedBlock):
     """Stream start info (model name)."""
+
     model: str = ""
 
 
 @dataclass
 class StreamToolUseBlock(FormattedBlock):
     """Tool use start in streaming response."""
+
     name: str = ""
 
 
 @dataclass
 class TextDeltaBlock(FormattedBlock):
     """A text delta from streaming response."""
+
     text: str = ""
 
 
 @dataclass
 class StopReasonBlock(FormattedBlock):
     """Stop reason from message_delta."""
+
     reason: str = ""
 
 
 @dataclass
 class ErrorBlock(FormattedBlock):
     """HTTP error."""
+
     code: int = 0
     reason: str = ""
 
@@ -163,12 +193,14 @@ class ErrorBlock(FormattedBlock):
 @dataclass
 class ProxyErrorBlock(FormattedBlock):
     """Proxy error."""
+
     error: str = ""
 
 
 @dataclass
 class LogBlock(FormattedBlock):
     """HTTP log line."""
+
     command: str = ""
     path: str = ""
     status: str = ""
@@ -177,6 +209,7 @@ class LogBlock(FormattedBlock):
 @dataclass
 class TurnBudgetBlock(FormattedBlock):
     """Per-turn context budget breakdown."""
+
     budget: TurnBudget = field(default_factory=TurnBudget)
     tool_result_by_name: dict = field(default_factory=dict)  # {name: tokens_est}
 
@@ -184,6 +217,7 @@ class TurnBudgetBlock(FormattedBlock):
 @dataclass
 class NewlineBlock(FormattedBlock):
     """An explicit newline/blank."""
+
     pass
 
 
@@ -218,7 +252,12 @@ def track_content(content, position_key, state):
             color_idx = state["next_color"] % len(TAG_COLORS)
             state["next_color"] += 1
         tag_id = known_hashes[h]
-        positions[position_key] = {"hash": h, "content": content, "id": tag_id, "color_idx": color_idx}
+        positions[position_key] = {
+            "hash": h,
+            "content": content,
+            "id": tag_id,
+            "color_idx": color_idx,
+        }
         return ("ref", tag_id, color_idx)
 
     # Check if this position had different content before
@@ -229,7 +268,12 @@ def track_content(content, position_key, state):
         tag_id = "sp-{}".format(state["next_id"])
         old_content_val = old_pos["content"]
         known_hashes[h] = tag_id
-        positions[position_key] = {"hash": h, "content": content, "id": tag_id, "color_idx": color_idx}
+        positions[position_key] = {
+            "hash": h,
+            "content": content,
+            "id": tag_id,
+            "color_idx": color_idx,
+        }
         return ("changed", tag_id, color_idx, old_content_val, content)
 
     # Completely new
@@ -238,7 +282,12 @@ def track_content(content, position_key, state):
     state["next_id"] += 1
     tag_id = "sp-{}".format(state["next_id"])
     known_hashes[h] = tag_id
-    positions[position_key] = {"hash": h, "content": content, "id": tag_id, "color_idx": color_idx}
+    positions[position_key] = {
+        "hash": h,
+        "content": content,
+        "id": tag_id,
+        "color_idx": color_idx,
+    }
     return ("new", tag_id, color_idx, content)
 
 
@@ -247,19 +296,29 @@ def _make_tracked_block(result, indent="    "):
     if result[0] == "new":
         _, tag_id, color_idx, content = result
         return TrackedContentBlock(
-            status="new", tag_id=tag_id, color_idx=color_idx,
-            content=content, indent=indent,
+            status="new",
+            tag_id=tag_id,
+            color_idx=color_idx,
+            content=content,
+            indent=indent,
         )
     elif result[0] == "ref":
         _, tag_id, color_idx = result
         return TrackedContentBlock(
-            status="ref", tag_id=tag_id, color_idx=color_idx, indent=indent,
+            status="ref",
+            tag_id=tag_id,
+            color_idx=color_idx,
+            indent=indent,
         )
     elif result[0] == "changed":
         _, tag_id, color_idx, old_content, new_content = result
         return TrackedContentBlock(
-            status="changed", tag_id=tag_id, color_idx=color_idx,
-            old_content=old_content, new_content=new_content, indent=indent,
+            status="changed",
+            tag_id=tag_id,
+            color_idx=color_idx,
+            old_content=old_content,
+            new_content=new_content,
+            indent=indent,
         )
     return TextContentBlock(text="", indent=indent)
 
@@ -308,13 +367,16 @@ def _front_ellipse_path(path: str, max_len: int = 40) -> str:
         # Even the filename alone is too long
         result = parts[-1]
         if len(result) > max_len - 3:
-            result = result[-(max_len - 3):]
+            result = result[-(max_len - 3) :]
     return "..." + result
 
 
 def _tool_detail(name: str, tool_input: dict) -> str:
     """Extract tool-specific detail string for display enrichment."""
-    if name == "Read" or name == "mcp__plugin_repomix-mcp_repomix__file_system_read_file":
+    if (
+        name == "Read"
+        or name == "mcp__plugin_repomix-mcp_repomix__file_system_read_file"
+    ):
         file_path = tool_input.get("file_path", "")
         if not file_path:
             return ""
@@ -343,12 +405,14 @@ def format_request(body, state):
     blocks = []
     blocks.append(NewlineBlock())
     blocks.append(SeparatorBlock(style="heavy"))
-    blocks.append(HeaderBlock(
-        label="REQUEST #{}".format(request_num),
-        request_num=request_num,
-        timestamp=_get_timestamp(),
-        header_type="request",
-    ))
+    blocks.append(
+        HeaderBlock(
+            label="REQUEST #{}".format(request_num),
+            request_num=request_num,
+            timestamp=_get_timestamp(),
+            header_type="request",
+        )
+    )
     blocks.append(SeparatorBlock(style="heavy"))
 
     model = body.get("model", "?")
@@ -356,10 +420,14 @@ def format_request(body, state):
     stream = body.get("stream", False)
     tools = body.get("tools", [])
 
-    blocks.append(MetadataBlock(
-        model=str(model), max_tokens=str(max_tokens),
-        stream=stream, tool_count=len(tools),
-    ))
+    blocks.append(
+        MetadataBlock(
+            model=str(model),
+            max_tokens=str(max_tokens),
+            stream=stream,
+            tool_count=len(tools),
+        )
+    )
 
     # Context budget breakdown
     budget = compute_turn_budget(body)
@@ -385,7 +453,9 @@ def format_request(body, state):
         blocks.append(SeparatorBlock(style="thin"))
 
     # Tool correlation state (per-request, not persistent)
-    tool_id_map: dict[str, tuple[str, int, str]] = {}  # tool_use_id -> (name, color_idx, detail)
+    tool_id_map: dict[
+        str, tuple[str, int, str]
+    ] = {}  # tool_use_id -> (name, color_idx, detail)
     tool_color_counter = 0
 
     # Messages
@@ -394,15 +464,6 @@ def format_request(body, state):
         role = msg.get("role", "?")
         content = msg.get("content", "")
         msg_color_idx = i % MSG_COLOR_CYCLE
-
-        # Detect user messages that are purely tool results
-        if role == "user" and isinstance(content, list):
-            has_tool_result = any(
-                isinstance(b, dict) and b.get("type") == "tool_result"
-                for b in content
-            )
-            if has_tool_result:
-                role = "tool_result"
 
         # Blank line between messages (skip before the first one)
         if i > 0:
@@ -422,7 +483,9 @@ def format_request(body, state):
                 if btype == "text":
                     text = cblock.get("text", "")
                     if len(text) > 500 and i == 0:
-                        result = track_content(text, "msg0:text:{}".format(content.index(cblock)), state)
+                        result = track_content(
+                            text, "msg0:text:{}".format(content.index(cblock)), state
+                        )
                         blocks.append(_make_tracked_block(result, indent="    "))
                     else:
                         blocks.append(TextContentBlock(text=text, indent="    "))
@@ -437,12 +500,15 @@ def format_request(body, state):
                     tool_color_counter += 1
                     if tool_use_id:
                         tool_id_map[tool_use_id] = (name, tool_color_idx, detail)
-                    blocks.append(ToolUseBlock(
-                        name=name, input_size=input_size,
-                        msg_color_idx=tool_color_idx,
-                        detail=detail,
-                        tool_use_id=tool_use_id,
-                    ))
+                    blocks.append(
+                        ToolUseBlock(
+                            name=name,
+                            input_size=input_size,
+                            msg_color_idx=tool_color_idx,
+                            detail=detail,
+                            tool_use_id=tool_use_id,
+                        )
+                    )
                 elif btype == "tool_result":
                     content_val = cblock.get("content", "")
                     if isinstance(content_val, list):
@@ -459,13 +525,16 @@ def format_request(body, state):
                     detail = ""
                     if tool_use_id and tool_use_id in tool_id_map:
                         tool_name, tool_color_idx, detail = tool_id_map[tool_use_id]
-                    blocks.append(ToolResultBlock(
-                        size=size, is_error=is_error,
-                        msg_color_idx=tool_color_idx,
-                        tool_use_id=tool_use_id,
-                        tool_name=tool_name,
-                        detail=detail,
-                    ))
+                    blocks.append(
+                        ToolResultBlock(
+                            size=size,
+                            is_error=is_error,
+                            msg_color_idx=tool_color_idx,
+                            tool_use_id=tool_use_id,
+                            tool_name=tool_name,
+                            detail=detail,
+                        )
+                    )
                 elif btype == "image":
                     source = cblock.get("source", {})
                     blocks.append(ImageBlock(media_type=source.get("media_type", "?")))
@@ -473,88 +542,7 @@ def format_request(body, state):
                     blocks.append(UnknownTypeBlock(block_type=btype))
 
     blocks.append(NewlineBlock())
-    blocks = _merge_tool_only_assistant_runs(blocks)
     return blocks
-
-
-def _merge_tool_only_assistant_runs(blocks):
-    """Merge consecutive assistant messages that contain only tool uses (and thinking).
-
-    When Claude makes multiple assistant turns that only contain tool invocations
-    and thinking blocks (no user-visible text response), these are collapsed into
-    a single assistant block with all ToolUseBlocks and thinking blocks preserved.
-    This reduces visual noise from repeated ASSISTANT headers.
-    """
-    # Step 1: Segment blocks into message groups by RoleBlock boundaries.
-    # Each group is (start_index, [blocks]).
-    groups = []
-    current_group = []
-    for block in blocks:
-        if isinstance(block, RoleBlock) and current_group:
-            groups.append(current_group)
-            current_group = []
-        current_group.append(block)
-    if current_group:
-        groups.append(current_group)
-
-    # Step 2: Classify each group and merge consecutive tool-only assistant groups.
-    def _is_tool_only_assistant(group):
-        """A group is tool-only assistant if it starts with an assistant RoleBlock,
-        contains at least one ToolUseBlock, and only has ToolUseBlocks,
-        UnknownTypeBlocks (thinking markers), or TextContentBlocks (thinking text)
-        as content (excluding the RoleBlock itself and any trailing NewlineBlock)."""
-        if not group:
-            return False
-        first = group[0]
-        if not isinstance(first, RoleBlock) or first.role != "assistant":
-            return False
-        has_tool_use = False
-        for block in group[1:]:
-            if isinstance(block, NewlineBlock):
-                continue
-            if isinstance(block, ToolUseBlock):
-                has_tool_use = True
-            elif isinstance(block, UnknownTypeBlock):
-                continue  # thinking marker
-            elif isinstance(block, TextContentBlock):
-                continue  # thinking text content
-            else:
-                return False  # some other block type — not tool-only
-        return has_tool_use
-
-    result = []
-    i = 0
-    while i < len(groups):
-        if not _is_tool_only_assistant(groups[i]):
-            result.extend(groups[i])
-            i += 1
-            continue
-
-        # Found a tool-only assistant group — collect consecutive ones.
-        run_start = i
-        i += 1
-        while i < len(groups) and _is_tool_only_assistant(groups[i]):
-            i += 1
-
-        if i - run_start == 1:
-            # Single group, no merge needed.
-            result.extend(groups[run_start])
-            continue
-
-        # Merge: keep first group's RoleBlock, collect content from all groups.
-        first_group = groups[run_start]
-        result.append(first_group[0])  # RoleBlock from first group
-
-        # Add content blocks from all groups in the run (skip RoleBlock and
-        # inter-group NewlineBlocks that were separators).
-        for g_idx in range(run_start, i):
-            group = groups[g_idx]
-            for block in group[1:]:
-                if isinstance(block, NewlineBlock):
-                    continue  # drop inter-message separators
-                result.append(block)
-
-    return result
 
 
 def format_response_event(event_type, data):
@@ -642,4 +630,8 @@ def format_response_headers(status_code: int, headers_dict: dict) -> list:
     """Format HTTP response headers as blocks."""
     if not headers_dict:
         return []
-    return [HttpHeadersBlock(headers=headers_dict, header_type="response", status_code=status_code)]
+    return [
+        HttpHeadersBlock(
+            headers=headers_dict, header_type="response", status_code=status_code
+        )
+    ]
