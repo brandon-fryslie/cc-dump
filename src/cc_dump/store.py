@@ -37,6 +37,7 @@ class SQLiteWriter:
             self._handle(event)
         except Exception as e:
             import traceback
+
             sys.stderr.write("[db] error: {}\n".format(e))
             traceback.print_exc(file=sys.stderr)
             sys.stderr.flush()
@@ -99,27 +100,30 @@ class SQLiteWriter:
         text_content = "".join(self._current_text)
 
         # Insert turn row
-        cur = self._conn.execute("""
+        cur = self._conn.execute(
+            """
             INSERT INTO turns (
                 session_id, sequence_num, model, stop_reason,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                 tool_names, request_json, response_json, text_content
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            self._session_id,
-            self._seq,
-            self._current_model,
-            self._current_stop,
-            self._current_usage.get("input_tokens", 0),
-            self._current_usage.get("output_tokens", 0),
-            self._current_usage.get("cache_read_input_tokens", 0),
-            self._current_usage.get("cache_creation_input_tokens", 0),
-            tool_names,
-            json.dumps(req_json),
-            json.dumps(resp_json),
-            text_content,
-        ))
+        """,
+            (
+                self._session_id,
+                self._seq,
+                self._current_model,
+                self._current_stop,
+                self._current_usage.get("input_tokens", 0),
+                self._current_usage.get("output_tokens", 0),
+                self._current_usage.get("cache_read_input_tokens", 0),
+                self._current_usage.get("cache_creation_input_tokens", 0),
+                tool_names,
+                json.dumps(req_json),
+                json.dumps(resp_json),
+                text_content,
+            ),
+        )
 
         turn_id = cur.lastrowid
 
@@ -129,11 +133,11 @@ class SQLiteWriter:
             # INSERT OR IGNORE ensures deduplication (same hash = same content)
             self._conn.execute(
                 "INSERT OR IGNORE INTO blobs (hash, content, byte_size) VALUES (?, ?, ?)",
-                (blob_hash, content.encode("utf-8"), len(content.encode("utf-8")))
+                (blob_hash, content.encode("utf-8"), len(content.encode("utf-8"))),
             )
             self._conn.execute(
                 "INSERT INTO turn_blobs (turn_id, blob_hash, field_path) VALUES (?, ?, ?)",
-                (turn_id, blob_hash, field_path)
+                (turn_id, blob_hash, field_path),
             )
 
         # Persist tool invocations with token counts
@@ -144,16 +148,28 @@ class SQLiteWriter:
             input_tokens = count_tokens(inv.input_str)
             result_tokens = count_tokens(inv.result_str)
 
-            self._conn.execute("""
+            self._conn.execute(
+                """
                 INSERT INTO tool_invocations (turn_id, tool_name, tool_use_id, input_bytes, result_bytes, input_tokens, result_tokens, is_error)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (turn_id, inv.name, inv.tool_use_id, inv.input_bytes, inv.result_bytes, input_tokens, result_tokens, int(inv.is_error)))
+            """,
+                (
+                    turn_id,
+                    inv.name,
+                    inv.tool_use_id,
+                    inv.input_bytes,
+                    inv.result_bytes,
+                    input_tokens,
+                    result_tokens,
+                    int(inv.is_error),
+                ),
+            )
 
         # Insert into FTS table for search
         if text_content:
             self._conn.execute(
                 "INSERT INTO turns_fts (rowid, text_content) VALUES (?, ?)",
-                (turn_id, text_content)
+                (turn_id, text_content),
             )
 
         self._conn.commit()
@@ -180,9 +196,15 @@ class SQLiteWriter:
             return obj
 
         elif isinstance(obj, dict):
-            return {k: self._blobify_walk(v, "{}.{}".format(path, k), blobs) for k, v in obj.items()}
+            return {
+                k: self._blobify_walk(v, "{}.{}".format(path, k), blobs)
+                for k, v in obj.items()
+            }
 
         elif isinstance(obj, list):
-            return [self._blobify_walk(v, "{}[{}]".format(path, i), blobs) for i, v in enumerate(obj)]
+            return [
+                self._blobify_walk(v, "{}[{}]".format(path, i), blobs)
+                for i, v in enumerate(obj)
+            ]
 
         return obj

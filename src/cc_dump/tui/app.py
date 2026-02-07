@@ -55,7 +55,18 @@ class CcDumpApp(App):
     show_timeline = reactive(False)
     show_logs = reactive(False)
 
-    def __init__(self, event_queue, state, router, db_path: Optional[str] = None, session_id: Optional[str] = None, host: str = "127.0.0.1", port: int = 3344, target: Optional[str] = None, replay_data: Optional[list] = None):
+    def __init__(
+        self,
+        event_queue,
+        state,
+        router,
+        db_path: Optional[str] = None,
+        session_id: Optional[str] = None,
+        host: str = "127.0.0.1",
+        port: int = 3344,
+        target: Optional[str] = None,
+        replay_data: Optional[list] = None,
+    ):
         super().__init__()
         self._event_queue = event_queue
         self._state = state
@@ -115,10 +126,16 @@ class CcDumpApp(App):
 
         if self._target:
             self._log("INFO", f"Reverse proxy mode: {self._target}")
-            self._log("INFO", f"Usage: ANTHROPIC_BASE_URL=http://{self._host}:{self._port} claude")
+            self._log(
+                "INFO",
+                f"Usage: ANTHROPIC_BASE_URL=http://{self._host}:{self._port} claude",
+            )
         else:
             self._log("INFO", "Forward proxy mode (dynamic targets)")
-            self._log("INFO", f"Usage: HTTP_PROXY=http://{self._host}:{self._port} ANTHROPIC_BASE_URL=http://api.minimax.com claude")
+            self._log(
+                "INFO",
+                f"Usage: HTTP_PROXY=http://{self._host}:{self._port} ANTHROPIC_BASE_URL=http://api.minimax.com claude",
+            )
 
         if self._db_path and self._session_id:
             self._log("INFO", f"Database: {self._db_path}")
@@ -149,7 +166,6 @@ class CcDumpApp(App):
         # Process replay data if in replay mode
         if self._replay_data:
             self._process_replay_data()
-
 
     # Widget accessors - use query by ID so we can swap widgets
     # Return None when widget is temporarily missing (e.g., during hot-reload swap)
@@ -195,18 +211,28 @@ class CcDumpApp(App):
             self._log("ERROR", "Cannot process replay: conversation widget not found")
             return
 
-        for req_headers, req_body, resp_status, resp_headers, complete_message in self._replay_data:
+        for (
+            req_headers,
+            req_body,
+            resp_status,
+            resp_headers,
+            complete_message,
+        ) in self._replay_data:
             try:
                 # Format request blocks
-                request_blocks = cc_dump.formatting.format_request(req_body, self._state)
+                request_blocks = cc_dump.formatting.format_request(
+                    req_body, self._state
+                )
 
                 # Add request headers if present
                 if req_headers:
-                    header_blocks = cc_dump.formatting.format_request_headers(req_headers)
+                    header_blocks = cc_dump.formatting.format_request_headers(
+                        req_headers
+                    )
                     # Insert after MetadataBlock
                     for i, block in enumerate(request_blocks):
                         if isinstance(block, cc_dump.formatting.MetadataBlock):
-                            request_blocks[i+1:i+1] = header_blocks
+                            request_blocks[i + 1 : i + 1] = header_blocks
                             break
 
                 # Add request turn
@@ -218,7 +244,9 @@ class CcDumpApp(App):
                 # Add response headers if present
                 if resp_headers:
                     response_blocks.extend(
-                        cc_dump.formatting.format_response_headers(resp_status, resp_headers)
+                        cc_dump.formatting.format_response_headers(
+                            resp_status, resp_headers
+                        )
                     )
 
                 # Add complete message blocks (NO streaming events)
@@ -236,7 +264,10 @@ class CcDumpApp(App):
             except Exception as e:
                 self._log("ERROR", f"Error processing replay pair: {e}")
 
-        self._log("INFO", f"Replay complete: {self._state['request_counter']} requests processed")
+        self._log(
+            "INFO",
+            f"Replay complete: {self._state['request_counter']} requests processed",
+        )
 
     def _log(self, level: str, message: str):
         """Log a message to the application logs panel."""
@@ -346,7 +377,9 @@ class CcDumpApp(App):
         logs_state = old_logs.get_state() if old_logs else {}
 
         stats_visible = old_stats.display if old_stats else self.show_stats
-        economics_visible = old_economics.display if old_economics else self.show_economics
+        economics_visible = (
+            old_economics.display if old_economics else self.show_economics
+        )
         timeline_visible = old_timeline.display if old_timeline else self.show_timeline
         logs_visible = old_logs.display if old_logs else self.show_logs
 
@@ -410,8 +443,9 @@ class CcDumpApp(App):
         except Exception as e:
             self._log("ERROR", f"Uncaught exception handling event: {e}")
             import traceback
+
             tb = traceback.format_exc()
-            for line in tb.split('\n'):
+            for line in tb.split("\n"):
                 if line:
                     self._log("ERROR", f"  {line}")
 
@@ -475,7 +509,13 @@ class CcDumpApp(App):
 
         elif kind == "response_done":
             self._app_state = cc_dump.tui.event_handlers.handle_response_done(
-                event, self._state, widgets, self._app_state, refresh_callbacks, db_context, log_callback
+                event,
+                self._state,
+                widgets,
+                self._app_state,
+                refresh_callbacks,
+                db_context,
+                log_callback,
             )
 
         elif kind == "error":

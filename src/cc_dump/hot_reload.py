@@ -12,9 +12,9 @@ from pathlib import Path
 
 # Modules to reload in dependency order (leaves first, dependents after)
 _RELOAD_ORDER = [
-    "cc_dump.palette",     # no deps within project, base for all colors
-    "cc_dump.colors",      # depends on: palette
-    "cc_dump.analysis",    # no deps within project
+    "cc_dump.palette",  # no deps within project, base for all colors
+    "cc_dump.colors",  # depends on: palette
+    "cc_dump.analysis",  # no deps within project
     "cc_dump.formatting",  # depends on: colors, analysis
     "cc_dump.tui.rendering",  # depends on: formatting, colors
     "cc_dump.tui.panel_renderers",  # depends on: analysis
@@ -32,17 +32,17 @@ _RELOAD_IF_CHANGED = [
 
 # Files to explicitly exclude from watching
 _EXCLUDED_FILES = {
-    "proxy.py",      # stable boundary, never reload
-    "cli.py",        # entry point, not reloadable at runtime
-    "hot_reload.py", # this file
-    "__init__.py",   # module init
-    "__main__.py",   # entry point
+    "proxy.py",  # stable boundary, never reload
+    "cli.py",  # entry point, not reloadable at runtime
+    "hot_reload.py",  # this file
+    "__init__.py",  # module init
+    "__main__.py",  # entry point
 }
 
 # Directories/modules to exclude
 _EXCLUDED_MODULES = {
-    "tui/app.py",     # live app instance, can't safely reload
-    "tui/widgets.py", # live widget instances, can't safely reload
+    "tui/app.py",  # live app instance, can't safely reload
+    "tui/widgets.py",  # live widget instances, can't safely reload
 }
 
 _watch_dirs: list[str] = []
@@ -112,7 +112,10 @@ def check_and_get_reloaded() -> list[str]:
                 # This way a syntax error in one module doesn't break the whole reload
 
     if reloaded:
-        print(f"[hot-reload] reloaded {len(reloaded)} module(s): {', '.join(reloaded)}", file=sys.stderr)
+        print(
+            f"[hot-reload] reloaded {len(reloaded)} module(s): {', '.join(reloaded)}",
+            file=sys.stderr,
+        )
 
     return reloaded
 

@@ -62,9 +62,14 @@ def handle_request(event, state, widgets, app_state, log_fn):
 
             if meta_idx is not None:
                 # Insert after MetadataBlock
-                header_blocks = cc_dump.formatting.format_request_headers(pending_headers)
-                blocks[meta_idx+1:meta_idx+1] = header_blocks
-                log_fn("DEBUG", f"Injected request headers after MetadataBlock at index {meta_idx}")
+                header_blocks = cc_dump.formatting.format_request_headers(
+                    pending_headers
+                )
+                blocks[meta_idx + 1 : meta_idx + 1] = header_blocks
+                log_fn(
+                    "DEBUG",
+                    f"Injected request headers after MetadataBlock at index {meta_idx}",
+                )
 
         conv = widgets["conv"]
         stats = widgets["stats"]
@@ -114,7 +119,10 @@ def handle_response_headers(event, state, widgets, app_state, log_fn):
             for block in blocks:
                 conv.append_streaming_block(block, filters)
 
-            log_fn("DEBUG", f"Displayed response headers: HTTP {status_code}, {len(headers_dict)} headers")
+            log_fn(
+                "DEBUG",
+                f"Displayed response headers: HTTP {status_code}, {len(headers_dict)} headers",
+            )
     except Exception as e:
         log_fn("ERROR", f"Error handling response headers: {e}")
         raise
@@ -162,8 +170,12 @@ def handle_response_event(event, state, widgets, app_state, log_fn):
                     # Track current turn usage for real-time display
                     current_turn = app_state.get("current_turn_usage", {})
                     current_turn["input_tokens"] = usage.get("input_tokens", 0)
-                    current_turn["cache_read_tokens"] = usage.get("cache_read_input_tokens", 0)
-                    current_turn["cache_creation_tokens"] = usage.get("cache_creation_input_tokens", 0)
+                    current_turn["cache_read_tokens"] = usage.get(
+                        "cache_read_input_tokens", 0
+                    )
+                    current_turn["cache_creation_tokens"] = usage.get(
+                        "cache_creation_input_tokens", 0
+                    )
                     app_state["current_turn_usage"] = current_turn
 
             elif event_type == "message_delta":
@@ -179,7 +191,9 @@ def handle_response_event(event, state, widgets, app_state, log_fn):
     return app_state
 
 
-def handle_response_done(event, state, widgets, app_state, refresh_callbacks, db_context, log_fn):
+def handle_response_done(
+    event, state, widgets, app_state, refresh_callbacks, db_context, log_fn
+):
     """Handle response_done event.
 
     Args:

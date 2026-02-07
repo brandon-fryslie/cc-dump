@@ -15,22 +15,51 @@ from cc_dump.store import SQLiteWriter
 def main():
     parser = argparse.ArgumentParser(description="Claude Code API monitor proxy")
     target = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
-    parser.add_argument("--host", type=str, default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Bind address (default: 127.0.0.1)",
+    )
     parser.add_argument("--port", type=int, default=3344)
-    parser.add_argument("--target", type=str, default=target,
-                        help="Upstream API URL for reverse proxy mode (default: https://api.anthropic.com)")
-    parser.add_argument("--db", type=str, default=os.path.expanduser("~/.local/share/cc-dump/sessions.db"), help="SQLite database path")
-    parser.add_argument("--no-db", action="store_true", help="Disable persistence (no database)")
-    parser.add_argument("--record", type=str, default=None, help="HAR recording output path")
-    parser.add_argument("--no-record", action="store_true", help="Disable HAR recording")
-    parser.add_argument("--replay", type=str, default=None,
-                        help="Replay a recorded session (path to .har file)")
-    parser.add_argument("--seed-hue", type=float, default=None,
-                        help="Seed hue (0-360) for color palette (default: 190, cyan). Env: CC_DUMP_SEED_HUE")
+    parser.add_argument(
+        "--target",
+        type=str,
+        default=target,
+        help="Upstream API URL for reverse proxy mode (default: https://api.anthropic.com)",
+    )
+    parser.add_argument(
+        "--db",
+        type=str,
+        default=os.path.expanduser("~/.local/share/cc-dump/sessions.db"),
+        help="SQLite database path",
+    )
+    parser.add_argument(
+        "--no-db", action="store_true", help="Disable persistence (no database)"
+    )
+    parser.add_argument(
+        "--record", type=str, default=None, help="HAR recording output path"
+    )
+    parser.add_argument(
+        "--no-record", action="store_true", help="Disable HAR recording"
+    )
+    parser.add_argument(
+        "--replay",
+        type=str,
+        default=None,
+        help="Replay a recorded session (path to .har file)",
+    )
+    parser.add_argument(
+        "--seed-hue",
+        type=float,
+        default=None,
+        help="Seed hue (0-360) for color palette (default: 190, cyan). Env: CC_DUMP_SEED_HUE",
+    )
     args = parser.parse_args()
 
     # Initialize color palette before anything else imports it
     import cc_dump.palette
+
     cc_dump.palette.init_palette(args.seed_hue)
 
     event_q = queue.Queue()
@@ -69,7 +98,9 @@ def main():
             print(f"   Usage: ANTHROPIC_BASE_URL=http://{args.host}:{args.port} claude")
         else:
             print("   Forward proxy mode (dynamic targets)")
-            print(f"   Usage: HTTP_PROXY=http://{args.host}:{args.port} ANTHROPIC_BASE_URL=http://api.minimax.com claude")
+            print(
+                f"   Usage: HTTP_PROXY=http://{args.host}:{args.port} ANTHROPIC_BASE_URL=http://api.minimax.com claude"
+            )
 
     # State dict for content tracking (used by formatting layer)
     state = {
@@ -108,10 +139,15 @@ def main():
             session_id = uuid.uuid4().hex
 
         import cc_dump.har_recorder
+
         record_dir = os.path.expanduser("~/.local/share/cc-dump/recordings")
         os.makedirs(record_dir, exist_ok=True)
-        record_path = args.record or os.path.join(record_dir, f"recording-{session_id}.har")
-        har_recorder = cc_dump.har_recorder.HARRecordingSubscriber(record_path, session_id)
+        record_path = args.record or os.path.join(
+            record_dir, f"recording-{session_id}.har"
+        )
+        har_recorder = cc_dump.har_recorder.HARRecordingSubscriber(
+            record_path, session_id
+        )
         router.add_subscriber(DirectSubscriber(har_recorder.on_event))
         print(f"   Recording: {record_path}")
     else:
@@ -121,6 +157,7 @@ def main():
 
     # Initialize hot-reload watcher
     import cc_dump.hot_reload
+
     package_dir = os.path.dirname(os.path.abspath(__file__))
     cc_dump.hot_reload.init(package_dir)
 
@@ -136,7 +173,7 @@ def main():
         host=args.host if not args.replay else None,
         port=args.port if not args.replay else None,
         target=ProxyHandler.target_host if not args.replay else None,
-        replay_data=replay_data
+        replay_data=replay_data,
     )
     try:
         app.run()

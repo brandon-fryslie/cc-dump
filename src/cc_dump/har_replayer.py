@@ -78,7 +78,11 @@ def load_har(path: str) -> list[tuple[dict, dict]]:
             request_headers = {}
             if "headers" in request:
                 for header in request["headers"]:
-                    if isinstance(header, dict) and "name" in header and "value" in header:
+                    if (
+                        isinstance(header, dict)
+                        and "name" in header
+                        and "value" in header
+                    ):
                         request_headers[header["name"]] = header["value"]
 
             # Extract response status and headers
@@ -86,10 +90,22 @@ def load_har(path: str) -> list[tuple[dict, dict]]:
             response_headers = {}
             if "headers" in response:
                 for header in response["headers"]:
-                    if isinstance(header, dict) and "name" in header and "value" in header:
+                    if (
+                        isinstance(header, dict)
+                        and "name" in header
+                        and "value" in header
+                    ):
                         response_headers[header["name"]] = header["value"]
 
-            pairs.append((request_headers, request_body, response_status, response_headers, complete_message))
+            pairs.append(
+                (
+                    request_headers,
+                    request_body,
+                    response_status,
+                    response_headers,
+                    complete_message,
+                )
+            )
 
         except (KeyError, json.JSONDecodeError, ValueError) as e:
             sys.stderr.write(f"[har_replayer] Warning: skipping entry {i}: {e}\n")
@@ -166,25 +182,50 @@ def convert_to_events(
             # Text block: start → delta → stop
             content_block_start = {
                 "type": "content_block_start",
-                "index": len([e for e in events if e[0] == "response_event" and e[1] == "content_block_start"]),
+                "index": len(
+                    [
+                        e
+                        for e in events
+                        if e[0] == "response_event" and e[1] == "content_block_start"
+                    ]
+                ),
                 "content_block": {"type": "text", "text": ""},
             }
-            events.append(("response_event", "content_block_start", content_block_start))
+            events.append(
+                ("response_event", "content_block_start", content_block_start)
+            )
 
             # Emit text as a single delta (not character-by-character)
             text = block.get("text", "")
             if text:
                 content_block_delta = {
                     "type": "content_block_delta",
-                    "index": len([e for e in events if e[0] == "response_event" and e[1] == "content_block_start"]) - 1,
+                    "index": len(
+                        [
+                            e
+                            for e in events
+                            if e[0] == "response_event"
+                            and e[1] == "content_block_start"
+                        ]
+                    )
+                    - 1,
                     "delta": {"type": "text_delta", "text": text},
                 }
-                events.append(("response_event", "content_block_delta", content_block_delta))
+                events.append(
+                    ("response_event", "content_block_delta", content_block_delta)
+                )
 
             # Block stop
             content_block_stop = {
                 "type": "content_block_stop",
-                "index": len([e for e in events if e[0] == "response_event" and e[1] == "content_block_start"]) - 1,
+                "index": len(
+                    [
+                        e
+                        for e in events
+                        if e[0] == "response_event" and e[1] == "content_block_start"
+                    ]
+                )
+                - 1,
             }
             events.append(("response_event", "content_block_stop", content_block_stop))
 
@@ -196,35 +237,62 @@ def convert_to_events(
 
             content_block_start = {
                 "type": "content_block_start",
-                "index": len([e for e in events if e[0] == "response_event" and e[1] == "content_block_start"]),
+                "index": len(
+                    [
+                        e
+                        for e in events
+                        if e[0] == "response_event" and e[1] == "content_block_start"
+                    ]
+                ),
                 "content_block": {
                     "type": "tool_use",
                     "id": tool_use_id,
                     "name": tool_name,
                 },
             }
-            events.append(("response_event", "content_block_start", content_block_start))
+            events.append(
+                ("response_event", "content_block_start", content_block_start)
+            )
 
             # Emit tool input as a single JSON delta (not character-by-character)
             input_json = json.dumps(tool_input)
             if input_json:
                 content_block_delta = {
                     "type": "content_block_delta",
-                    "index": len([e for e in events if e[0] == "response_event" and e[1] == "content_block_start"]) - 1,
+                    "index": len(
+                        [
+                            e
+                            for e in events
+                            if e[0] == "response_event"
+                            and e[1] == "content_block_start"
+                        ]
+                    )
+                    - 1,
                     "delta": {"type": "input_json_delta", "partial_json": input_json},
                 }
-                events.append(("response_event", "content_block_delta", content_block_delta))
+                events.append(
+                    ("response_event", "content_block_delta", content_block_delta)
+                )
 
             # Block stop
             content_block_stop = {
                 "type": "content_block_stop",
-                "index": len([e for e in events if e[0] == "response_event" and e[1] == "content_block_start"]) - 1,
+                "index": len(
+                    [
+                        e
+                        for e in events
+                        if e[0] == "response_event" and e[1] == "content_block_start"
+                    ]
+                )
+                - 1,
             }
             events.append(("response_event", "content_block_stop", content_block_stop))
 
         else:
             # Unknown block type - log warning but continue
-            sys.stderr.write(f"[har_replayer] Warning: unknown content block type '{block_type}'\n")
+            sys.stderr.write(
+                f"[har_replayer] Warning: unknown content block type '{block_type}'\n"
+            )
             sys.stderr.flush()
 
     # 3. message_delta (stop_reason and usage)

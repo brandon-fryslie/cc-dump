@@ -37,10 +37,10 @@ class TurnBudget:
     total_est: int = 0
 
     # Actual token counts (filled from message_start and message_delta usage data)
-    actual_input_tokens: int = 0        # fresh input tokens (not from cache)
-    actual_cache_read_tokens: int = 0   # input tokens served from cache
+    actual_input_tokens: int = 0  # fresh input tokens (not from cache)
+    actual_cache_read_tokens: int = 0  # input tokens served from cache
     actual_cache_creation_tokens: int = 0  # input tokens added to cache
-    actual_output_tokens: int = 0       # output tokens generated (always fresh)
+    actual_output_tokens: int = 0  # output tokens generated (always fresh)
 
     @property
     def cache_hit_ratio(self) -> float:
@@ -118,7 +118,9 @@ def compute_turn_budget(request_body: dict) -> TurnBudget:
                         budget.assistant_text_tokens_est += tokens
                 elif btype == "tool_use":
                     tool_input = block.get("input", {})
-                    budget.tool_use_tokens_est += estimate_tokens(json.dumps(tool_input))
+                    budget.tool_use_tokens_est += estimate_tokens(
+                        json.dumps(tool_input)
+                    )
                 elif btype == "tool_result":
                     content_val = block.get("content", "")
                     if isinstance(content_val, list):
@@ -154,8 +156,8 @@ class ToolInvocation:
     result_bytes: int = 0
     input_tokens_est: int = 0
     result_tokens_est: int = 0
-    input_str: str = ""    # Raw input text for token counting
-    result_str: str = ""   # Raw result text for token counting
+    input_str: str = ""  # Raw input text for token counting
+    result_str: str = ""  # Raw result text for token counting
     is_error: bool = False
 
 
@@ -176,6 +178,7 @@ class ToolAggregates:
 @dataclass
 class ToolEconomicsRow:
     """Per-tool economics data for the panel display."""
+
     name: str = ""
     calls: int = 0
     input_tokens: int = 0
@@ -233,17 +236,19 @@ def correlate_tools(messages: list) -> list[ToolInvocation]:
                     result_str = json.dumps(content_val)
                 result_bytes = len(result_str)
 
-                invocations.append(ToolInvocation(
-                    tool_use_id=tool_use_id,
-                    name=use_block.get("name", "?"),
-                    input_bytes=input_bytes,
-                    result_bytes=result_bytes,
-                    input_tokens_est=estimate_tokens(input_str),
-                    result_tokens_est=estimate_tokens(result_str),
-                    input_str=input_str,
-                    result_str=result_str,
-                    is_error=block.get("is_error", False),
-                ))
+                invocations.append(
+                    ToolInvocation(
+                        tool_use_id=tool_use_id,
+                        name=use_block.get("name", "?"),
+                        input_bytes=input_bytes,
+                        result_bytes=result_bytes,
+                        input_tokens_est=estimate_tokens(input_str),
+                        result_tokens_est=estimate_tokens(result_str),
+                        input_str=input_str,
+                        result_str=result_str,
+                        is_error=block.get("is_error", False),
+                    )
+                )
 
     return invocations
 
@@ -293,9 +298,15 @@ class ModelPricing(NamedTuple):
 HAIKU_BASE_UNIT = 1.0  # $/MTok
 
 MODEL_PRICING: dict[str, ModelPricing] = {
-    "opus": ModelPricing(base_input=5.0, cache_write_5m=6.25, cache_hit=0.50, output=25.0),
-    "sonnet": ModelPricing(base_input=3.0, cache_write_5m=3.75, cache_hit=0.30, output=15.0),
-    "haiku": ModelPricing(base_input=1.0, cache_write_5m=1.25, cache_hit=0.10, output=5.0),
+    "opus": ModelPricing(
+        base_input=5.0, cache_write_5m=6.25, cache_hit=0.50, output=25.0
+    ),
+    "sonnet": ModelPricing(
+        base_input=3.0, cache_write_5m=3.75, cache_hit=0.30, output=15.0
+    ),
+    "haiku": ModelPricing(
+        base_input=1.0, cache_write_5m=1.25, cache_hit=0.10, output=5.0
+    ),
 }
 
 FALLBACK_PRICING = MODEL_PRICING["sonnet"]

@@ -155,8 +155,14 @@ class StyledFooter(Footer):
                         styled_desc = self._style_description(binding.description)
 
                         # Check if this binding is active
-                        filter_key, color = self.ACTION_TO_FILTER.get(binding.action, (None, None))
-                        is_active = self._active_filters.get(filter_key, False) if filter_key else False
+                        filter_key, color = self.ACTION_TO_FILTER.get(
+                            binding.action, (None, None)
+                        )
+                        is_active = (
+                            self._active_filters.get(filter_key, False)
+                            if filter_key
+                            else False
+                        )
 
                         classes = "-grouped"
                         if is_active and color:
@@ -178,8 +184,14 @@ class StyledFooter(Footer):
                     styled_desc = self._style_description(binding.description)
 
                     # Check if this binding is active
-                    filter_key, color = self.ACTION_TO_FILTER.get(binding.action, (None, None))
-                    is_active = self._active_filters.get(filter_key, False) if filter_key else False
+                    filter_key, color = self.ACTION_TO_FILTER.get(
+                        binding.action, (None, None)
+                    )
+                    is_active = (
+                        self._active_filters.get(filter_key, False)
+                        if filter_key
+                        else False
+                    )
 
                     classes = ""
                     if is_active and color:

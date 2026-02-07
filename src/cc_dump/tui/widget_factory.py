@@ -41,19 +41,26 @@ def _compute_widest(strips: list) -> int:
 @dataclass
 class TurnData:
     """Pre-rendered turn data for Line API storage."""
+
     turn_index: int
-    blocks: list             # list[FormattedBlock] - source of truth
-    strips: list             # list[Strip] - pre-rendered lines
-    block_strip_map: dict = field(default_factory=dict)  # block_index → first strip line
+    blocks: list  # list[FormattedBlock] - source of truth
+    strips: list  # list[Strip] - pre-rendered lines
+    block_strip_map: dict = field(
+        default_factory=dict
+    )  # block_index → first strip line
     relevant_filter_keys: set = field(default_factory=set)
-    line_offset: int = 0     # start line in virtual space
+    line_offset: int = 0  # start line in virtual space
     _last_filter_snapshot: dict = field(default_factory=dict)
     # Streaming fields
     is_streaming: bool = False
-    _text_delta_buffer: list = field(default_factory=list)  # list[str] - accumulated delta text
+    _text_delta_buffer: list = field(
+        default_factory=list
+    )  # list[str] - accumulated delta text
     _stable_strip_count: int = 0  # boundary between stable and delta strips
     _widest_strip: int = 0  # cached max(s.cell_length for s in strips)
-    _pending_filter_snapshot: dict | None = None  # deferred filters for lazy off-viewport re-render
+    _pending_filter_snapshot: dict | None = (
+        None  # deferred filters for lazy off-viewport re-render
+    )
 
     @property
     def line_count(self) -> int:
@@ -94,7 +101,10 @@ class TurnData:
         self._last_filter_snapshot = snapshot
         self._pending_filter_snapshot = None  # clear deferred state
         self.strips, self.block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
-            self.blocks, filters, console, width,
+            self.blocks,
+            filters,
+            console,
+            width,
             expanded_overrides=expanded_overrides,
             block_cache=block_cache,
         )
@@ -133,8 +143,12 @@ class ConversationView(ScrollView):
         self._total_lines: int = 0
         self._widest_line: int = 0
         self._line_cache: LRUCache = LRUCache(1024)
-        self._block_strip_cache: LRUCache = LRUCache(4096)  # Block-level rendering cache
-        self._cache_keys_by_turn: dict[int, set[tuple]] = {}  # Track cache keys per turn
+        self._block_strip_cache: LRUCache = LRUCache(
+            4096
+        )  # Block-level rendering cache
+        self._cache_keys_by_turn: dict[
+            int, set[tuple]
+        ] = {}  # Track cache keys per turn
         self._last_filters: dict = {}
         self._last_width: int = 78
         self._follow_mode: bool = True
@@ -281,14 +295,23 @@ class ConversationView(ScrollView):
         scrolls into view. Re-renders the turn with the pending filters,
         then schedules offset recalculation for after the current render pass.
         """
-        width = self.scrollable_content_region.width if self._size_known else self._last_width
+        width = (
+            self.scrollable_content_region.width
+            if self._size_known
+            else self._last_width
+        )
         console = self.app.console
         overrides = self._overrides_for_turn(turn.turn_index)
 
         # Apply the pending filters
         filters = dict(self._last_filters)
-        turn.re_render(filters, console, width, expanded_overrides=overrides,
-                       block_cache=self._block_strip_cache)
+        turn.re_render(
+            filters,
+            console,
+            width,
+            expanded_overrides=overrides,
+            block_cache=self._block_strip_cache,
+        )
         # re_render clears _pending_filter_snapshot
 
         # Schedule offset recalculation after current render pass completes.
@@ -339,7 +362,11 @@ class ConversationView(ScrollView):
         """Add a completed turn from block list."""
         if filters is None:
             filters = self._last_filters
-        width = self.scrollable_content_region.width if self._size_known else self._last_width
+        width = (
+            self.scrollable_content_region.width
+            if self._size_known
+            else self._last_width
+        )
         console = self.app.console
 
         strips, block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
@@ -384,7 +411,9 @@ class ConversationView(ScrollView):
         self._turns.append(td)
         self._recalculate_offsets()
 
-    def _render_single_block_to_strips(self, text_obj: Text, console, width: int) -> list:
+    def _render_single_block_to_strips(
+        self, text_obj: Text, console, width: int
+    ) -> list:
         """Render a single Rich Text object to Strip list.
 
         Helper for rendering individual blocks during streaming.
@@ -410,11 +439,15 @@ class ConversationView(ScrollView):
         """
         if not td._text_delta_buffer:
             # No delta text - trim to stable strips only
-            td.strips = td.strips[:td._stable_strip_count]
+            td.strips = td.strips[: td._stable_strip_count]
             td._widest_strip = _compute_widest(td.strips)
             return
 
-        width = self.scrollable_content_region.width if self._size_known else self._last_width
+        width = (
+            self.scrollable_content_region.width
+            if self._size_known
+            else self._last_width
+        )
         console = self.app.console
 
         # Combine delta buffer into single text
@@ -425,7 +458,7 @@ class ConversationView(ScrollView):
         delta_strips = self._render_single_block_to_strips(text_obj, console, width)
 
         # Replace delta tail
-        td.strips = td.strips[:td._stable_strip_count] + delta_strips
+        td.strips = td.strips[: td._stable_strip_count] + delta_strips
         td._widest_strip = _compute_widest(td.strips)
 
     def _flush_streaming_delta(self, td: TurnData, filters: dict):
@@ -437,7 +470,11 @@ class ConversationView(ScrollView):
         if not td._text_delta_buffer:
             return
 
-        width = self.scrollable_content_region.width if self._size_known else self._last_width
+        width = (
+            self.scrollable_content_region.width
+            if self._size_known
+            else self._last_width
+        )
         console = self.app.console
 
         # Render delta buffer to strips
@@ -446,7 +483,7 @@ class ConversationView(ScrollView):
         delta_strips = self._render_single_block_to_strips(text_obj, console, width)
 
         # Replace delta tail with stable strips
-        td.strips = td.strips[:td._stable_strip_count] + delta_strips
+        td.strips = td.strips[: td._stable_strip_count] + delta_strips
         td._widest_strip = _compute_widest(td.strips)
 
         # Advance stable boundary
@@ -495,9 +532,15 @@ class ConversationView(ScrollView):
             # Render this block
             rendered = cc_dump.tui.rendering.render_block(block, filters)
             if rendered is not None:
-                width = self.scrollable_content_region.width if self._size_known else self._last_width
+                width = (
+                    self.scrollable_content_region.width
+                    if self._size_known
+                    else self._last_width
+                )
                 console = self.app.console
-                new_strips = self._render_single_block_to_strips(rendered, console, width)
+                new_strips = self._render_single_block_to_strips(
+                    rendered, console, width
+                )
 
                 # Add to stable strips
                 td.strips.extend(new_strips)
@@ -558,11 +601,18 @@ class ConversationView(ScrollView):
             consolidated.append(TextContentBlock(text=combined_text))
 
         # Full re-render from consolidated blocks
-        width = self.scrollable_content_region.width if self._size_known else self._last_width
+        width = (
+            self.scrollable_content_region.width
+            if self._size_known
+            else self._last_width
+        )
         console = self.app.console
         strips, block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
-            consolidated, self._last_filters, console, width,
-            block_cache=self._block_strip_cache
+            consolidated,
+            self._last_filters,
+            console,
+            width,
+            block_cache=self._block_strip_cache,
         )
 
         # Update turn data
@@ -599,9 +649,13 @@ class ConversationView(ScrollView):
         # Try exact block match
         strip_offset = turn.strip_offset_for_block(block_index)
         if strip_offset is not None:
-            target_y = turn.line_offset + strip_offset + min(
-                line_within_block,
-                max(turn.line_count - strip_offset - 1, 0),
+            target_y = (
+                turn.line_offset
+                + strip_offset
+                + min(
+                    line_within_block,
+                    max(turn.line_count - strip_offset - 1, 0),
+                )
             )
             self.scroll_to(y=target_y, animate=False)
             return True
@@ -677,7 +731,11 @@ class ConversationView(ScrollView):
         # Compute fresh block-level anchor BEFORE re-rendering changes the strips
         fresh_anchor = self._compute_anchor_from_scroll()
 
-        width = self.scrollable_content_region.width if self._size_known else self._last_width
+        width = (
+            self.scrollable_content_region.width
+            if self._size_known
+            else self._last_width
+        )
         console = self.app.console
 
         # Viewport-only re-rendering: only process visible turns + buffer
@@ -692,8 +750,13 @@ class ConversationView(ScrollView):
             if vp_start <= idx < vp_end:
                 # Viewport turn: re-render immediately
                 overrides = self._overrides_for_turn(td.turn_index)
-                if td.re_render(filters, console, width, expanded_overrides=overrides,
-                               block_cache=self._block_strip_cache):
+                if td.re_render(
+                    filters,
+                    console,
+                    width,
+                    expanded_overrides=overrides,
+                    block_cache=self._block_strip_cache,
+                ):
                     if first_changed is None:
                         first_changed = idx
             else:
@@ -745,10 +808,15 @@ class ConversationView(ScrollView):
                 if td.is_streaming:
                     continue
                 overrides = self._overrides_for_turn(td.turn_index)
-                td.strips, td.block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
-                    td.blocks, self._last_filters, console, width,
-                    expanded_overrides=overrides,
-                    block_cache=self._block_strip_cache,
+                td.strips, td.block_strip_map = (
+                    cc_dump.tui.rendering.render_turn_to_strips(
+                        td.blocks,
+                        self._last_filters,
+                        console,
+                        width,
+                        expanded_overrides=overrides,
+                        block_cache=self._block_strip_cache,
+                    )
                 )
                 td._widest_strip = _compute_widest(td.strips)
             self._recalculate_offsets()
@@ -897,12 +965,21 @@ class ConversationView(ScrollView):
 
         # Re-render just this turn
         if not turn.is_streaming:
-            width = self.scrollable_content_region.width if self._size_known else self._last_width
+            width = (
+                self.scrollable_content_region.width
+                if self._size_known
+                else self._last_width
+            )
             console = self.app.console
             overrides = self._overrides_for_turn(turn.turn_index)
-            turn.re_render(self._last_filters, console, width,
-                           expanded_overrides=overrides, force=True,
-                           block_cache=self._block_strip_cache)
+            turn.re_render(
+                self._last_filters,
+                console,
+                width,
+                expanded_overrides=overrides,
+                force=True,
+                block_cache=self._block_strip_cache,
+            )
             self._recalculate_offsets()
 
     # ─── Sprint 2: Turn navigation ───────────────────────────────────────────
@@ -944,7 +1021,11 @@ class ConversationView(ScrollView):
         _tool_type_names = {"ToolUseBlock", "ToolResultBlock", "StreamToolUseBlock"}
 
         visible = self._visible_turns()
-        tool_turns = [t for t in visible if any(type(b).__name__ in _tool_type_names for b in t.blocks)]
+        tool_turns = [
+            t
+            for t in visible
+            if any(type(b).__name__ in _tool_type_names for b in t.blocks)
+        ]
         if not tool_turns:
             return
         self._follow_mode = False
@@ -993,11 +1074,13 @@ class ConversationView(ScrollView):
         for td in self._turns:
             all_blocks.append(td.blocks)
             if td.is_streaming:
-                streaming_states.append({
-                    "turn_index": td.turn_index,
-                    "text_delta_buffer": list(td._text_delta_buffer),
-                    "stable_strip_count": td._stable_strip_count,
-                })
+                streaming_states.append(
+                    {
+                        "turn_index": td.turn_index,
+                        "text_delta_buffer": list(td._text_delta_buffer),
+                        "stable_strip_count": td._stable_strip_count,
+                    }
+                )
 
         return {
             "all_blocks": all_blocks,
@@ -1043,13 +1126,20 @@ class ConversationView(ScrollView):
             if turn_idx in streaming_by_index:
                 # Restore as streaming turn
                 s = streaming_by_index[turn_idx]
-                width = self.scrollable_content_region.width if self._size_known else self._last_width
+                width = (
+                    self.scrollable_content_region.width
+                    if self._size_known
+                    else self._last_width
+                )
                 console = self.app.console
 
                 # Render blocks to get initial strips
                 strips, block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
-                    block_list, filters, console, width,
-                    block_cache=self._block_strip_cache
+                    block_list,
+                    filters,
+                    console,
+                    width,
+                    block_cache=self._block_strip_cache,
                 )
 
                 td = TurnData(
@@ -1118,8 +1208,13 @@ class StatsPanel(Static):
             stats["cache_creation_tokens"],
         )
 
-    def _refresh_display(self, input_tokens: int, output_tokens: int,
-                        cache_read_tokens: int, cache_creation_tokens: int):
+    def _refresh_display(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int,
+        cache_creation_tokens: int,
+    ):
         """Rebuild the display text."""
         text = cc_dump.tui.panel_renderers.render_stats_panel(
             self.request_count,
@@ -1177,7 +1272,9 @@ class ToolEconomicsPanel(Static):
             return
 
         # Query tool economics with real tokens and cache attribution
-        rows = cc_dump.db_queries.get_tool_economics(db_path, session_id, group_by_model=self._breakdown_mode)
+        rows = cc_dump.db_queries.get_tool_economics(
+            db_path, session_id, group_by_model=self._breakdown_mode
+        )
         self._refresh_display(rows)
 
     def toggle_breakdown(self):
@@ -1281,13 +1378,20 @@ class FilterStatusBar(Static):
             ("t", "Tools", p.filter_color("tools"), filters.get("tools", False)),
             ("s", "System", p.filter_color("system"), filters.get("system", False)),
             ("e", "Context", p.filter_color("expand"), filters.get("expand", False)),
-            ("m", "Metadata", p.filter_color("metadata"), filters.get("metadata", False)),
+            (
+                "m",
+                "Metadata",
+                p.filter_color("metadata"),
+                filters.get("metadata", False),
+            ),
         ]
 
         text = Text()
         text.append("Active: ", style="dim")
 
-        active_filters = [(key, name, color) for key, name, color, active in filter_info if active]
+        active_filters = [
+            (key, name, color) for key, name, color, active in filter_info if active
+        ]
 
         if not active_filters:
             text.append("none", style="dim")
@@ -1314,7 +1418,7 @@ class LogsPanel(RichLog):
     """Panel showing cc-dump application logs (debug, errors, internal messages)."""
 
     def __init__(self):
-        super().__init__( highlight=False, markup=False, wrap=True, max_lines=1000)
+        super().__init__(highlight=False, markup=False, wrap=True, max_lines=1000)
 
     def log(self, level: str, message: str):
         """Add an application log entry.

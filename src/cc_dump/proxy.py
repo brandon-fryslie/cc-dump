@@ -9,15 +9,17 @@ import urllib.request
 from urllib.parse import urlparse
 
 # Headers to exclude from emitted events (security + noise reduction)
-_EXCLUDED_HEADERS = frozenset({
-    "authorization",
-    "x-api-key",
-    "cookie",
-    "set-cookie",
-    "host",
-    "content-length",
-    "transfer-encoding",
-})
+_EXCLUDED_HEADERS = frozenset(
+    {
+        "authorization",
+        "x-api-key",
+        "cookie",
+        "set-cookie",
+        "host",
+        "content-length",
+        "transfer-encoding",
+    }
+)
 
 
 def _safe_headers(headers):
@@ -49,10 +51,14 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             # Reverse proxy mode - relative URI
             request_path = self.path
             if not self.target_host:
-                self.event_queue.put(("error", 500, "No target_host configured for reverse proxy mode"))
+                self.event_queue.put(
+                    ("error", 500, "No target_host configured for reverse proxy mode")
+                )
                 self.send_response(500)
                 self.end_headers()
-                self.wfile.write(b"No target configured. Use --target or send absolute URIs.")
+                self.wfile.write(
+                    b"No target configured. Use --target or send absolute URIs."
+                )
                 return
             url = self.target_host + self.path
 
@@ -68,12 +74,16 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 sys.stderr.flush()
 
         # Forward
-        headers = {k: v for k, v in self.headers.items()
-                   if k.lower() not in ("host", "content-length")}
+        headers = {
+            k: v
+            for k, v in self.headers.items()
+            if k.lower() not in ("host", "content-length")
+        }
         headers["Content-Length"] = str(len(body_bytes))
 
-        req = urllib.request.Request(url, data=body_bytes or None,
-                                     headers=headers, method=self.command)
+        req = urllib.request.Request(
+            url, data=body_bytes or None, headers=headers, method=self.command
+        )
         try:
             ctx = ssl.create_default_context()
             resp = urllib.request.urlopen(req, context=ctx, timeout=300)

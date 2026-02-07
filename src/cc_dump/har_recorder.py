@@ -154,7 +154,9 @@ def reconstruct_message_from_events(events: list[dict]) -> dict:
                     # Accumulate JSON string (will need parsing at end)
                     if "_input_json_str" not in content_blocks[-1]:
                         content_blocks[-1]["_input_json_str"] = ""
-                    content_blocks[-1]["_input_json_str"] += delta.get("partial_json", "")
+                    content_blocks[-1]["_input_json_str"] += delta.get(
+                        "partial_json", ""
+                    )
 
         elif event_type == "content_block_stop":
             # Finalize current block

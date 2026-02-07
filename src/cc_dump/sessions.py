@@ -56,7 +56,7 @@ def list_recordings(recordings_dir: Optional[str] = None) -> list[dict]:
             # Extract session_id from filename (recording-<session_id>.har)
             session_id = None
             if path.stem.startswith("recording-"):
-                session_id = path.stem[len("recording-"):]
+                session_id = path.stem[len("recording-") :]
 
             # Load HAR to get entry count and creation time
             with open(path, "r", encoding="utf-8") as f:
@@ -74,18 +74,21 @@ def list_recordings(recordings_dir: Optional[str] = None) -> list[dict]:
                 mtime = path.stat().st_mtime
                 created = datetime.fromtimestamp(mtime).isoformat()
 
-            recordings.append({
-                "path": str(path),
-                "filename": path.name,
-                "session_id": session_id,
-                "created": created,
-                "entry_count": entry_count,
-                "size_bytes": path.stat().st_size,
-            })
+            recordings.append(
+                {
+                    "path": str(path),
+                    "filename": path.name,
+                    "session_id": session_id,
+                    "created": created,
+                    "entry_count": entry_count,
+                    "size_bytes": path.stat().st_size,
+                }
+            )
 
         except (json.JSONDecodeError, OSError, KeyError) as e:
             # Skip malformed files, but continue processing others
             import sys
+
             sys.stderr.write(f"[sessions] Warning: skipping {path.name}: {e}\n")
             sys.stderr.flush()
             continue
@@ -151,7 +154,11 @@ def print_recordings_list(recordings: list[dict]) -> None:
         # Format timestamp (just date and time, drop timezone info for brevity)
         created = rec["created"]
         if "T" in created:
-            created = created.split("T")[0] + " " + created.split("T")[1].split("+")[0].split(".")[0]
+            created = (
+                created.split("T")[0]
+                + " "
+                + created.split("T")[1].split("+")[0].split(".")[0]
+            )
 
         size_str = format_size(rec["size_bytes"])
         filename = rec["filename"]

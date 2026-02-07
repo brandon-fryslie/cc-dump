@@ -9,10 +9,18 @@ This module is hot-reloadable - it can be edited while the TUI is running.
 import sqlite3
 from typing import Optional
 
-from cc_dump.analysis import ToolInvocation, ToolEconomicsRow, classify_model, HAIKU_BASE_UNIT, estimate_tokens
+from cc_dump.analysis import (
+    ToolInvocation,
+    ToolEconomicsRow,
+    classify_model,
+    HAIKU_BASE_UNIT,
+    estimate_tokens,
+)
 
 
-def get_session_stats(db_path: str, session_id: str, current_turn: Optional[dict] = None) -> dict:
+def get_session_stats(
+    db_path: str, session_id: str, current_turn: Optional[dict] = None
+) -> dict:
     """Query cumulative token counts for a session.
 
     Args:
@@ -31,7 +39,8 @@ def get_session_stats(db_path: str, session_id: str, current_turn: Optional[dict
     uri = f"file:{db_path}?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     try:
-        cursor = conn.execute("""
+        cursor = conn.execute(
+            """
             SELECT
                 SUM(input_tokens) as total_input,
                 SUM(output_tokens) as total_output,
@@ -39,7 +48,9 @@ def get_session_stats(db_path: str, session_id: str, current_turn: Optional[dict
                 SUM(cache_creation_tokens) as total_cache_creation
             FROM turns
             WHERE session_id = ?
-        """, (session_id,))
+        """,
+            (session_id,),
+        )
 
         row = cursor.fetchone()
 
@@ -56,7 +67,9 @@ def get_session_stats(db_path: str, session_id: str, current_turn: Optional[dict
             stats["input_tokens"] += current_turn.get("input_tokens", 0)
             stats["output_tokens"] += current_turn.get("output_tokens", 0)
             stats["cache_read_tokens"] += current_turn.get("cache_read_tokens", 0)
-            stats["cache_creation_tokens"] += current_turn.get("cache_creation_tokens", 0)
+            stats["cache_creation_tokens"] += current_turn.get(
+                "cache_creation_tokens", 0
+            )
 
         return stats
     finally:
@@ -76,7 +89,8 @@ def get_tool_invocations(db_path: str, session_id: str) -> list[ToolInvocation]:
     uri = f"file:{db_path}?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     try:
-        cursor = conn.execute("""
+        cursor = conn.execute(
+            """
             SELECT
                 ti.tool_name,
                 ti.tool_use_id,
@@ -87,29 +101,35 @@ def get_tool_invocations(db_path: str, session_id: str) -> list[ToolInvocation]:
             JOIN turns t ON ti.turn_id = t.id
             WHERE t.session_id = ?
             ORDER BY ti.id
-        """, (session_id,))
+        """,
+            (session_id,),
+        )
 
         invocations = []
         for row in cursor:
             tool_name, tool_use_id, input_bytes, result_bytes, is_error = row
 
             # Estimate tokens from bytes (using same heuristic as analysis module)
-            invocations.append(ToolInvocation(
-                tool_use_id=tool_use_id,
-                name=tool_name,
-                input_bytes=input_bytes,
-                result_bytes=result_bytes,
-                input_tokens_est=estimate_tokens("x" * input_bytes),
-                result_tokens_est=estimate_tokens("x" * result_bytes),
-                is_error=bool(is_error),
-            ))
+            invocations.append(
+                ToolInvocation(
+                    tool_use_id=tool_use_id,
+                    name=tool_name,
+                    input_bytes=input_bytes,
+                    result_bytes=result_bytes,
+                    input_tokens_est=estimate_tokens("x" * input_bytes),
+                    result_tokens_est=estimate_tokens("x" * result_bytes),
+                    is_error=bool(is_error),
+                )
+            )
 
         return invocations
     finally:
         conn.close()
 
 
-def get_tool_economics(db_path: str, session_id: str, group_by_model: bool = False) -> list[ToolEconomicsRow]:
+def get_tool_economics(
+    db_path: str, session_id: str, group_by_model: bool = False
+) -> list[ToolEconomicsRow]:
     """Query per-tool economics with real token counts and cache attribution.
 
     Args:
@@ -129,7 +149,8 @@ def get_tool_economics(db_path: str, session_id: str, group_by_model: bool = Fal
     conn = sqlite3.connect(uri, uri=True)
     try:
         # Fetch per-invocation data with proportional cache attribution computed in SQL
-        cursor = conn.execute("""
+        cursor = conn.execute(
+            """
             WITH turn_totals AS (
                 SELECT
                     ti.turn_id,
@@ -155,7 +176,9 @@ def get_tool_economics(db_path: str, session_id: str, group_by_model: bool = Fal
             JOIN turns t ON ti.turn_id = t.id
             JOIN turn_totals tt ON ti.turn_id = tt.turn_id
             WHERE t.session_id = ?
-        """, (session_id, session_id))
+        """,
+            (session_id, session_id),
+        )
 
         rows = cursor.fetchall()
     finally:
@@ -171,8 +194,11 @@ def get_tool_economics(db_path: str, session_id: str, group_by_model: bool = Fal
             key = (tool_name, model or "")
             if key not in by_key:
                 by_key[key] = {
-                    "calls": 0, "input_tokens": 0, "result_tokens": 0,
-                    "cache_read": 0, "norm_cost": 0.0,
+                    "calls": 0,
+                    "input_tokens": 0,
+                    "result_tokens": 0,
+                    "cache_read": 0,
+                    "norm_cost": 0.0,
                 }
             agg = by_key[key]
             agg["calls"] += 1
@@ -182,26 +208,26 @@ def get_tool_economics(db_path: str, session_id: str, group_by_model: bool = Fal
 
             # Norm cost contribution
             _, pricing = classify_model(model)
-            agg["norm_cost"] += (
-                input_tokens * (pricing.base_input / HAIKU_BASE_UNIT)
-                + result_tokens * (pricing.output / HAIKU_BASE_UNIT)
-            )
+            agg["norm_cost"] += input_tokens * (
+                pricing.base_input / HAIKU_BASE_UNIT
+            ) + result_tokens * (pricing.output / HAIKU_BASE_UNIT)
 
         # Build result list sorted by norm_cost descending
         result = []
         for (name, model), agg in sorted(
-            by_key.items(),
-            key=lambda x: (-x[1]["norm_cost"], x[0][0], x[0][1])
+            by_key.items(), key=lambda x: (-x[1]["norm_cost"], x[0][0], x[0][1])
         ):
-            result.append(ToolEconomicsRow(
-                name=name,
-                calls=agg["calls"],
-                input_tokens=agg["input_tokens"],
-                result_tokens=agg["result_tokens"],
-                cache_read_tokens=agg["cache_read"],
-                norm_cost=agg["norm_cost"],
-                model=model if model else None,
-            ))
+            result.append(
+                ToolEconomicsRow(
+                    name=name,
+                    calls=agg["calls"],
+                    input_tokens=agg["input_tokens"],
+                    result_tokens=agg["result_tokens"],
+                    cache_read_tokens=agg["cache_read"],
+                    norm_cost=agg["norm_cost"],
+                    model=model if model else None,
+                )
+            )
 
     else:
         # Aggregate by tool_name only
@@ -209,8 +235,11 @@ def get_tool_economics(db_path: str, session_id: str, group_by_model: bool = Fal
         for tool_name, input_tokens, result_tokens, model, cache_read_contrib in rows:
             if tool_name not in by_name:
                 by_name[tool_name] = {
-                    "calls": 0, "input_tokens": 0, "result_tokens": 0,
-                    "cache_read": 0, "norm_cost": 0.0,
+                    "calls": 0,
+                    "input_tokens": 0,
+                    "result_tokens": 0,
+                    "cache_read": 0,
+                    "norm_cost": 0.0,
                 }
             agg = by_name[tool_name]
             agg["calls"] += 1
@@ -220,23 +249,26 @@ def get_tool_economics(db_path: str, session_id: str, group_by_model: bool = Fal
 
             # Norm cost contribution
             _, pricing = classify_model(model)
-            agg["norm_cost"] += (
-                input_tokens * (pricing.base_input / HAIKU_BASE_UNIT)
-                + result_tokens * (pricing.output / HAIKU_BASE_UNIT)
-            )
+            agg["norm_cost"] += input_tokens * (
+                pricing.base_input / HAIKU_BASE_UNIT
+            ) + result_tokens * (pricing.output / HAIKU_BASE_UNIT)
 
         # Build result list sorted by norm_cost descending
         result = []
-        for name, agg in sorted(by_name.items(), key=lambda x: x[1]["norm_cost"], reverse=True):
-            result.append(ToolEconomicsRow(
-                name=name,
-                calls=agg["calls"],
-                input_tokens=agg["input_tokens"],
-                result_tokens=agg["result_tokens"],
-                cache_read_tokens=agg["cache_read"],
-                norm_cost=agg["norm_cost"],
-                model=None,  # Aggregate mode always has model=None
-            ))
+        for name, agg in sorted(
+            by_name.items(), key=lambda x: x[1]["norm_cost"], reverse=True
+        ):
+            result.append(
+                ToolEconomicsRow(
+                    name=name,
+                    calls=agg["calls"],
+                    input_tokens=agg["input_tokens"],
+                    result_tokens=agg["result_tokens"],
+                    cache_read_tokens=agg["cache_read"],
+                    norm_cost=agg["norm_cost"],
+                    model=None,  # Aggregate mode always has model=None
+                )
+            )
 
     return result
 
@@ -251,7 +283,8 @@ def get_model_economics(db_path: str, session_id: str) -> list[dict]:
     uri = f"file:{db_path}?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     try:
-        cursor = conn.execute("""
+        cursor = conn.execute(
+            """
             SELECT
                 model,
                 COUNT(*) as calls,
@@ -263,18 +296,22 @@ def get_model_economics(db_path: str, session_id: str) -> list[dict]:
             WHERE session_id = ?
             GROUP BY model
             ORDER BY SUM(input_tokens + cache_read_tokens) DESC
-        """, (session_id,))
+        """,
+            (session_id,),
+        )
 
         results = []
         for row in cursor:
-            results.append({
-                "model": row[0] or "",
-                "calls": row[1],
-                "input_tokens": row[2] or 0,
-                "output_tokens": row[3] or 0,
-                "cache_read_tokens": row[4] or 0,
-                "cache_creation_tokens": row[5] or 0,
-            })
+            results.append(
+                {
+                    "model": row[0] or "",
+                    "calls": row[1],
+                    "input_tokens": row[2] or 0,
+                    "output_tokens": row[3] or 0,
+                    "cache_read_tokens": row[4] or 0,
+                    "cache_creation_tokens": row[5] or 0,
+                }
+            )
         return results
     finally:
         conn.close()
@@ -299,7 +336,8 @@ def get_turn_timeline(db_path: str, session_id: str) -> list[dict]:
     uri = f"file:{db_path}?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     try:
-        cursor = conn.execute("""
+        cursor = conn.execute(
+            """
             SELECT
                 sequence_num,
                 input_tokens,
@@ -310,18 +348,22 @@ def get_turn_timeline(db_path: str, session_id: str) -> list[dict]:
             FROM turns
             WHERE session_id = ?
             ORDER BY sequence_num
-        """, (session_id,))
+        """,
+            (session_id,),
+        )
 
         timeline = []
         for row in cursor:
-            timeline.append({
-                "sequence_num": row[0],
-                "input_tokens": row[1],
-                "output_tokens": row[2],
-                "cache_read_tokens": row[3],
-                "cache_creation_tokens": row[4],
-                "request_json": row[5],
-            })
+            timeline.append(
+                {
+                    "sequence_num": row[0],
+                    "input_tokens": row[1],
+                    "output_tokens": row[2],
+                    "cache_read_tokens": row[3],
+                    "cache_creation_tokens": row[4],
+                    "request_json": row[5],
+                }
+            )
 
         return timeline
     finally:

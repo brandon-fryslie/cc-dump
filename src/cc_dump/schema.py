@@ -105,9 +105,13 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
     columns = {row[1] for row in cursor.fetchall()}
 
     if "input_tokens" not in columns:
-        conn.execute("ALTER TABLE tool_invocations ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0")
+        conn.execute(
+            "ALTER TABLE tool_invocations ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0"
+        )
 
     if "result_tokens" not in columns:
-        conn.execute("ALTER TABLE tool_invocations ADD COLUMN result_tokens INTEGER NOT NULL DEFAULT 0")
+        conn.execute(
+            "ALTER TABLE tool_invocations ADD COLUMN result_tokens INTEGER NOT NULL DEFAULT 0"
+        )
 
     conn.commit()

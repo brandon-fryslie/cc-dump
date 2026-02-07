@@ -16,10 +16,10 @@ GOLDEN_ANGLE = 137.508
 
 # Semantic target hues (degrees) for perceptually-stable roles
 _SEMANTIC_TARGETS = {
-    "error": 0.0,       # red
-    "warning": 50.0,    # yellow-ish
-    "success": 130.0,   # green
-    "info": 190.0,      # cyan
+    "error": 0.0,  # red
+    "warning": 50.0,  # yellow-ish
+    "success": 130.0,  # green
+    "info": 190.0,  # cyan
 }
 
 
@@ -50,32 +50,34 @@ def _angular_distance(a: float, b: float) -> float:
 # Hand-picked palette (warm → cool gradient) for filter indicator bars.
 # Each entry is (name, foreground_hex).
 _INDICATOR_COLORS: list[tuple[str, str]] = [
-    ("strawberry-red",    "#F94144"),
-    ("atomic-tangerine",  "#F3722C"),
-    ("carrot-orange",     "#F8961E"),
-    ("tuscan-sun",        "#F9C74F"),
-    ("golden-sand",       "#C5C35E"),
-    ("willow-green",      "#90BE6D"),
-    ("mint-leaf",         "#6AB47C"),
-    ("seagrass",          "#43AA8B"),
-    ("dark-cyan",         "#4D908E"),
-    ("blue-slate",        "#577590"),
+    ("strawberry-red", "#F94144"),
+    ("atomic-tangerine", "#F3722C"),
+    ("carrot-orange", "#F8961E"),
+    ("tuscan-sun", "#F9C74F"),
+    ("golden-sand", "#C5C35E"),
+    ("willow-green", "#90BE6D"),
+    ("mint-leaf", "#6AB47C"),
+    ("seagrass", "#43AA8B"),
+    ("dark-cyan", "#4D908E"),
+    ("blue-slate", "#577590"),
 ]
 
 # Stable mapping: filter name → index into _INDICATOR_COLORS
 _FILTER_INDICATOR_INDEX: dict[str, int] = {
-    "headers":    0,  # strawberry-red
-    "tools":      1,  # atomic-tangerine
-    "system":     2,  # carrot-orange
-    "expand":     3,  # tuscan-sun
-    "metadata":   4,  # golden-sand
-    "stats":      5,  # willow-green
-    "economics":  6,  # mint-leaf
-    "timeline":   7,  # seagrass
+    "headers": 0,  # strawberry-red
+    "tools": 1,  # atomic-tangerine
+    "system": 2,  # carrot-orange
+    "expand": 3,  # tuscan-sun
+    "metadata": 4,  # golden-sand
+    "stats": 5,  # willow-green
+    "economics": 6,  # mint-leaf
+    "timeline": 7,  # seagrass
 }
 
 
-def _darken_hex(hex_color: str, lightness: float = 0.25, saturation: float = 0.60) -> str:
+def _darken_hex(
+    hex_color: str, lightness: float = 0.25, saturation: float = 0.60
+) -> str:
     """Derive a dark background variant from a hex foreground color."""
     r, g, b = _hex_to_rgb(hex_color)
     h, l_orig, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
@@ -274,6 +276,7 @@ def _get_seed_hue() -> float:
             return float(env)
         except ValueError:
             import sys
+
             sys.stderr.write(
                 f"[palette] invalid CC_DUMP_SEED_HUE={env!r}, using default\n"
             )

@@ -8,14 +8,15 @@ import queue
 import threading
 from typing import Protocol
 
-Event = tuple  # event tuples from proxy: ("request", ...), ("response_event", ...), etc.
+Event = (
+    tuple  # event tuples from proxy: ("request", ...), ("response_event", ...), etc.
+)
 
 
 class Subscriber(Protocol):
     """Protocol for event subscribers. Any object with on_event(event) can subscribe."""
 
-    def on_event(self, event: Event) -> None:
-        ...
+    def on_event(self, event: Event) -> None: ...
 
 
 class QueueSubscriber:
@@ -78,6 +79,7 @@ class EventRouter:
                     # Don't let one subscriber's error kill the router
                     import sys
                     import traceback
+
                     sys.stderr.write("[router] subscriber error: {}\n".format(e))
                     traceback.print_exc(file=sys.stderr)
                     sys.stderr.flush()
