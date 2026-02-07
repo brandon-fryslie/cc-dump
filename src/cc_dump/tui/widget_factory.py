@@ -153,10 +153,6 @@ class ConversationView(ScrollView):
         self._last_width: int = 78
         self._follow_mode: bool = True
         self._pending_restore: dict | None = None
-        # Saved anchor: set when a filter hides the anchor block, so we
-        # can restore to the exact position when the block reappears.
-        # Cleared when the saved block becomes visible again.
-        self._saved_anchor: tuple[int, int, int] | None = None
         # Sprint 2: selection and programmatic scroll guard
         self._selected_turn: int | None = None
         self._scrolling_programmatically: bool = False
@@ -164,29 +160,6 @@ class ConversationView(ScrollView):
         # Only stores overrides from the global expand default.
         # Cleared when the global expand toggle changes (acts as reset).
         self._expanded_overrides: dict[tuple[int, int], bool] = {}
-
-    def _compute_anchor_from_scroll(self) -> tuple[int, int, int] | None:
-        """Compute (turn_index, block_index, line_within_block) from current scroll position."""
-        if not self._turns:
-            return None
-
-        scroll_y = int(self.scroll_offset.y)
-        turn = self._find_turn_for_line(scroll_y)
-        if turn is None:
-            return (self._turns[-1].turn_index, 0, 0) if self._turns else None
-
-        local_y = scroll_y - turn.line_offset
-        best_block_idx = 0
-        best_strip_start = 0
-        for block_idx, strip_start in sorted(turn.block_strip_map.items()):
-            if strip_start <= local_y:
-                best_block_idx = block_idx
-                best_strip_start = strip_start
-            else:
-                break
-
-        line_within_block = local_y - best_strip_start
-        return (turn.turn_index, best_block_idx, line_within_block)
 
     def render_line(self, y: int) -> Strip:
         """Line API: render a single line at virtual position y."""
@@ -320,8 +293,15 @@ class ConversationView(ScrollView):
         self.call_later(self._deferred_offset_recalc, turn.turn_index)
 
     def _deferred_offset_recalc(self, from_turn_index: int):
-        """Recalculate offsets after a lazy re-render, then refresh display."""
+        """Recalculate offsets after a lazy re-render, then refresh display.
+
+        Captures and restores turn-level anchor to prevent viewport drift
+        when off-viewport turns lazily re-render and shift line offsets.
+        """
+        anchor = self._find_viewport_anchor() if not self._follow_mode else None
         self._recalculate_offsets_from(from_turn_index)
+        if anchor is not None:
+            self._restore_anchor(anchor)
         self.refresh()
 
     def _recalculate_offsets(self):
@@ -637,46 +617,6 @@ class ConversationView(ScrollView):
 
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _scroll_to_anchor(self, anchor: tuple[int, int, int]) -> bool:
-        """Try to scroll to an anchor position. Returns True if the block was visible."""
-        turn_index, block_index, line_within_block = anchor
-
-        if turn_index >= len(self._turns):
-            return False
-
-        turn = self._turns[turn_index]
-
-        # Try exact block match
-        strip_offset = turn.strip_offset_for_block(block_index)
-        if strip_offset is not None:
-            target_y = (
-                turn.line_offset
-                + strip_offset
-                + min(
-                    line_within_block,
-                    max(turn.line_count - strip_offset - 1, 0),
-                )
-            )
-            self.scroll_to(y=target_y, animate=False)
-            return True
-
-        # Block is filtered out — fall back to nearest visible block
-        if turn.block_strip_map:
-            visible = sorted(turn.block_strip_map.keys())
-            closest = min(visible, key=lambda bi: abs(bi - block_index))
-            target_y = turn.line_offset + turn.block_strip_map[closest]
-            self.scroll_to(y=target_y, animate=False)
-            return False
-
-        # Entire turn empty — find nearest visible turn
-        for delta in range(1, len(self._turns)):
-            for idx in [turn_index + delta, turn_index - delta]:
-                if 0 <= idx < len(self._turns) and self._turns[idx].line_count > 0:
-                    self.scroll_to(y=self._turns[idx].line_offset, animate=False)
-                    return False
-
-        return False
-
     def _find_viewport_anchor(self) -> tuple[int, int] | None:
         """Find turn at top of viewport and offset within it (turn-level anchor for filter toggles)."""
         if not self._turns:
@@ -707,11 +647,8 @@ class ConversationView(ScrollView):
     def rerender(self, filters: dict):
         """Re-render affected turns in place. Preserves scroll position.
 
-        On each rerender:
-        1. If we have a saved anchor (from a previous fallback), check if
-           its block is now visible. If so, restore to it exactly.
-        2. Otherwise, compute a fresh anchor from current scroll position.
-        3. If the anchor block is filtered out, save it for later.
+        Single strategy: capture turn-level anchor before re-render,
+        restore after. Stateless — no state persists between calls.
         """
         # Clear per-block overrides when global expand toggle changes
         old_expand = self._last_filters.get("expand", False)
@@ -725,11 +662,8 @@ class ConversationView(ScrollView):
             self._rebuild_from_state(filters)
             return
 
-        # Capture turn-level anchor before re-render (for scroll position preservation)
+        # Capture turn-level anchor BEFORE re-render (skip if follow mode)
         anchor = self._find_viewport_anchor() if not self._follow_mode else None
-
-        # Compute fresh block-level anchor BEFORE re-rendering changes the strips
-        fresh_anchor = self._compute_anchor_from_scroll()
 
         width = (
             self.scrollable_content_region.width
@@ -768,22 +702,9 @@ class ConversationView(ScrollView):
         if first_changed is not None:
             self._recalculate_offsets_from(first_changed)
 
-        # Try saved anchor first (from a previous filter-out).
-        # Check even when nothing changed — the saved block may now be
-        # visible due to external state changes.
-        if self._saved_anchor is not None:
-            if self._scroll_to_anchor(self._saved_anchor):
-                self._saved_anchor = None
-            return
-
-        # Restore turn-level anchor if not in follow mode
-        if first_changed is not None and anchor is not None:
+        # Single restore: turn-level anchor only
+        if anchor is not None:
             self._restore_anchor(anchor)
-
-        # No saved anchor — use fresh (only if strips actually changed)
-        if first_changed is not None and fresh_anchor is not None:
-            if not self._scroll_to_anchor(fresh_anchor):
-                self._saved_anchor = fresh_anchor
 
     def _rebuild_from_state(self, filters: dict):
         """Rebuild from restored state."""

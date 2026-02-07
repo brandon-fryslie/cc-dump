@@ -407,216 +407,214 @@ class TestConversationViewBinarySearch:
         assert conv._find_turn_for_line(5).turn_index == 1
 
 
-class TestSavedScrollAnchor:
-    """Test that hide→show filter cycles preserve scroll position.
+class TestScrollPreservation:
+    """Test turn-level scroll preservation across filter toggles.
 
-    When a filter hides the block the user was viewing, the anchor is
-    saved. When the block reappears, the saved anchor restores the exact
-    scroll position. No ScrollView internals are overridden.
+    The anchor is (turn_index, offset_within_turn) — stateless, filter-agnostic.
+    No cross-toggle state accumulation. Each rerender() captures, re-renders, restores.
     """
 
-    def _make_conv(self, console: Console, blocks: list, filters: dict) -> ConversationView:
-        """Create a ConversationView with one turn, mocking Textual internals."""
+    def _make_conv(self, console: Console, turns_blocks: list[list], filters: dict) -> ConversationView:
+        """Create a ConversationView with multiple turns, mocking Textual internals."""
         conv = ConversationView()
 
-        strips, block_strip_map = render_turn_to_strips(blocks, filters, console, width=80)
-        td = TurnData(
-            turn_index=0,
-            blocks=blocks,
-            strips=strips,
-            block_strip_map=block_strip_map,
-        )
-        td.compute_relevant_keys()
-        td._last_filter_snapshot = {k: filters.get(k, False) for k in td.relevant_filter_keys}
+        for i, blocks in enumerate(turns_blocks):
+            strips, block_strip_map = render_turn_to_strips(blocks, filters, console, width=80)
+            td = TurnData(
+                turn_index=i,
+                blocks=blocks,
+                strips=strips,
+                block_strip_map=block_strip_map,
+            )
+            td._widest_strip = max((s.cell_length for s in strips), default=0)
+            td.compute_relevant_keys()
+            td._last_filter_snapshot = {k: filters.get(k, False) for k in td.relevant_filter_keys}
+            conv._turns.append(td)
 
-        conv._turns.append(td)
-        conv._total_lines = len(strips)
+        conv._recalculate_offsets()
         conv._last_filters = dict(filters)
         conv._last_width = 80
         return conv
 
     @contextlib.contextmanager
-    def _patch_scroll(self, conv, scroll_y=0):
-        """Mock scroll infrastructure on ConversationView.
-
-        Patches class-level properties (scroll_offset, scrollable_content_region,
-        app) since Textual defines them as properties/descriptors.
-        """
+    def _patch_scroll(self, conv, scroll_y=0, height=50):
+        """Mock scroll infrastructure on ConversationView."""
         region_mock = MagicMock()
         region_mock.width = 80
-        region_mock.height = 50
+        region_mock.height = height
         app_mock = MagicMock(console=Console())
         cls = type(conv)
 
         conv.scroll_to = MagicMock()
         with patch.object(cls, 'scroll_offset', new_callable=PropertyMock, return_value=Offset(0, scroll_y)), \
              patch.object(cls, 'scrollable_content_region', new_callable=PropertyMock, return_value=region_mock), \
-             patch.object(cls, 'app', new_callable=PropertyMock, return_value=app_mock):
+             patch.object(cls, 'app', new_callable=PropertyMock, return_value=app_mock), \
+             patch.object(cls, 'size', new_callable=PropertyMock, return_value=MagicMock(width=80)):
             yield
 
-    def test_compute_anchor_identifies_block_and_line(self):
-        """_compute_anchor_from_scroll returns (turn, block, line_within_block)."""
+    def test_filter_toggle_preserves_viewport_turn(self):
+        """Toggling a filter should keep the same turn at the viewport top."""
         console = Console()
-        blocks = [
-            RoleBlock(role="user", msg_index=0),
-            TextContentBlock(text="Line 0\nLine 1\nLine 2\nLine 3\nLine 4", indent=""),
+        turns_blocks = [
+            [TextContentBlock(text="Turn 0 text", indent="")],
+            [
+                TextContentBlock(text="Turn 1 text\nLine 2\nLine 3", indent=""),
+                ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
+            ],
+            [TextContentBlock(text="Turn 2 text", indent="")],
         ]
-        filters = {}
+        filters = {"tools": True}
+        conv = self._make_conv(console, turns_blocks, filters)
+        conv._follow_mode = False
 
-        conv = self._make_conv(console, blocks, filters)
-        td = conv._turns[0]
+        # Scroll to turn 1 with some offset
+        turn1 = conv._turns[1]
+        scroll_y = turn1.line_offset + 1  # 1 line into turn 1
 
-        assert 0 in td.block_strip_map
-        assert 1 in td.block_strip_map
-        text_block_start = td.block_strip_map[1]
+        with self._patch_scroll(conv, scroll_y=scroll_y):
+            conv.rerender({"tools": False})
 
-        target_scroll_y = text_block_start + 2
-        with self._patch_scroll(conv, scroll_y=target_scroll_y):
-            anchor = conv._compute_anchor_from_scroll()
-
-        assert anchor is not None
-        turn_idx, block_idx, line_in_block = anchor
-        assert turn_idx == 0
-        assert block_idx == 1  # TextContentBlock
-        assert line_in_block == 2  # 3rd line within the block
-
-    def test_saved_anchor_set_when_block_hidden(self):
-        """When a filter hides the anchor block, _saved_anchor is set."""
-        console = Console()
-        blocks = [
-            TextContentBlock(text="Always visible", indent=""),
-            SystemLabelBlock(),
-            TrackedContentBlock(
-                status="new", tag_id="sys", color_idx=0,
-                content="System content",
-            ),
-        ]
-        filters_show = {"system": True}
-        conv = self._make_conv(console, blocks, filters_show)
-
-        assert conv._saved_anchor is None
-
-        # Scroll is at the SystemLabelBlock
-        system_start = conv._turns[0].block_strip_map[1]
-        with self._patch_scroll(conv, scroll_y=system_start):
-            conv.rerender({"system": False})
-
-        # Anchor should be saved (block 1 = SystemLabelBlock is now hidden)
-        assert conv._saved_anchor is not None
-        assert conv._saved_anchor[1] == 1  # block_index of SystemLabelBlock
-
-    def test_saved_anchor_cleared_when_block_reappears(self):
-        """When a saved anchor's block becomes visible, _saved_anchor is cleared."""
-        console = Console()
-        blocks = [
-            TextContentBlock(text="Always visible", indent=""),
-            SystemLabelBlock(),
-        ]
-        filters_show = {"system": True}
-        conv = self._make_conv(console, blocks, filters_show)
-
-        # Pre-set saved anchor as if block was previously hidden
-        conv._saved_anchor = (0, 1, 0)
-
-        # Show system — block 1 becomes visible again
-        with self._patch_scroll(conv, scroll_y=0):
-            conv.rerender({"system": True})
-
-        # Saved anchor should be cleared (block restored successfully)
-        assert conv._saved_anchor is None
-
-    def test_anchor_survives_hide_show_cycle(self):
-        """Core invariant: hide block → show block → scroll_to called with correct target."""
-        console = Console()
-        blocks = [
-            RoleBlock(role="user", msg_index=0),
-            TextContentBlock(text="User says hello", indent=""),
-            SystemLabelBlock(),
-            TrackedContentBlock(
-                status="new", tag_id="sys", color_idx=0,
-                content="System content here",
-            ),
-        ]
-        filters_show = {"system": True}
-
-        conv = self._make_conv(console, blocks, filters_show)
-        td = conv._turns[0]
-
-        assert 2 in td.block_strip_map
-        system_block_start = td.block_strip_map[2]
-
-        # --- Step 1: Hide system (user was viewing SystemLabelBlock) ---
-        with self._patch_scroll(conv, scroll_y=system_block_start):
-            conv.rerender({"system": False})
-
-        assert 2 not in conv._turns[0].block_strip_map
-        assert conv._saved_anchor is not None
-        assert conv._saved_anchor == (0, 2, 0)
-
-        # --- Step 2: Show system again ---
-        with self._patch_scroll(conv, scroll_y=0):
-            conv.rerender({"system": True})
-
-        # Saved anchor should be cleared
-        assert conv._saved_anchor is None
-        # Verify scroll_to was called to restore the system block position
-        assert 2 in conv._turns[0].block_strip_map
-        new_system_start = conv._turns[0].block_strip_map[2]
-        expected_y = conv._turns[0].line_offset + new_system_start
+        # scroll_to should be called with turn 1's new offset + clamped offset_within
+        turn1_after = conv._turns[1]
+        expected_offset = min(1, turn1_after.line_count - 1)
+        expected_y = turn1_after.line_offset + expected_offset
         conv.scroll_to.assert_called_with(y=expected_y, animate=False)
 
-    def test_multiple_hide_show_cycles_are_stable(self):
-        """Repeated hide→show should always restore and clear saved anchor."""
+    def test_no_cross_toggle_state(self):
+        """Toggle A then B: B should not jump to A's pre-toggle position."""
         console = Console()
-        blocks = [
-            TextContentBlock(text="Visible text", indent=""),
-            SystemLabelBlock(),
-            TrackedContentBlock(
-                status="new", tag_id="sys", color_idx=0,
-                content="System content",
-            ),
+        turns_blocks = [
+            [TextContentBlock(text="Turn 0", indent="")],
+            [
+                SystemLabelBlock(),
+                TrackedContentBlock(status="new", tag_id="sys", color_idx=0, content="System"),
+            ],
+            [
+                TextContentBlock(text="Turn 2 text\nLine 2", indent=""),
+                ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
+            ],
+            [TextContentBlock(text="Turn 3", indent="")],
         ]
-        filters_show = {"system": True}
+        filters = {"system": True, "tools": True}
+        conv = self._make_conv(console, turns_blocks, filters)
+        conv._follow_mode = False
 
-        conv = self._make_conv(console, blocks, filters_show)
-        system_start = conv._turns[0].block_strip_map[1]
-
-        for cycle in range(3):
-            # Hide — saved anchor set
-            with self._patch_scroll(conv, scroll_y=system_start):
-                conv.rerender({"system": False})
-            assert conv._saved_anchor is not None, f"No saved anchor on hide cycle {cycle}"
-            assert conv._saved_anchor[1] == 1, f"Wrong block in saved anchor cycle {cycle}"
-
-            # Show — saved anchor cleared, scroll restored
-            with self._patch_scroll(conv, scroll_y=0):
-                conv.rerender({"system": True})
-            assert conv._saved_anchor is None, f"Saved anchor not cleared on show cycle {cycle}"
-
-    def test_saved_anchor_preserved_across_unrelated_filter_changes(self):
-        """Changing a different filter while saved anchor exists should keep it."""
-        console = Console()
-        blocks = [
-            TextContentBlock(text="Visible", indent=""),
-            SystemLabelBlock(),
-            ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
-        ]
-        conv = self._make_conv(console, blocks, {"system": True, "tools": True})
-
-        # Hide system — anchor saved for system block
-        system_start = conv._turns[0].block_strip_map[1]
-        with self._patch_scroll(conv, scroll_y=system_start):
+        # Step 1: Scroll to turn 1 (system block area), hide system
+        turn1 = conv._turns[1]
+        with self._patch_scroll(conv, scroll_y=turn1.line_offset):
             conv.rerender({"system": False, "tools": True})
 
-        saved = conv._saved_anchor
-        assert saved is not None
-
-        # Toggle tools (unrelated to saved anchor's system block)
-        with self._patch_scroll(conv, scroll_y=0):
+        # Step 2: Scroll to turn 2, then toggle tools
+        turn2 = conv._turns[2]
+        with self._patch_scroll(conv, scroll_y=turn2.line_offset):
+            conv.scroll_to.reset_mock()
             conv.rerender({"system": False, "tools": False})
 
-        # Saved anchor should still be there (system block still hidden)
-        assert conv._saved_anchor == saved
+        # scroll_to should restore to turn 2's area, NOT turn 1
+        assert conv.scroll_to.called
+        call_y = conv.scroll_to.call_args.kwargs.get("y", conv.scroll_to.call_args[1].get("y"))
+        turn2_after = conv._turns[2]
+        # Should be at or near turn 2's offset
+        assert call_y >= turn2_after.line_offset
+        assert call_y < turn2_after.line_offset + turn2_after.line_count
+
+    def test_follow_mode_skips_anchor(self):
+        """In follow mode, scroll_to should not be called by rerender."""
+        console = Console()
+        turns_blocks = [
+            [TextContentBlock(text="Turn 0", indent=""),
+             ToolUseBlock(name="test", input_size=10, msg_color_idx=0)],
+        ]
+        filters = {"tools": True}
+        conv = self._make_conv(console, turns_blocks, filters)
+        conv._follow_mode = True
+
+        with self._patch_scroll(conv, scroll_y=0):
+            conv.rerender({"tools": False})
+
+        conv.scroll_to.assert_not_called()
+
+    def test_clamped_offset_when_turn_shrinks(self):
+        """When a turn shrinks, offset_within is clamped to new line count."""
+        console = Console()
+        # Turn with many lines when tools are shown
+        turns_blocks = [
+            [
+                TextContentBlock(text="Line 0\nLine 1\nLine 2", indent=""),
+                ToolUseBlock(name="tool1", input_size=10, msg_color_idx=0),
+                ToolUseBlock(name="tool2", input_size=20, msg_color_idx=1),
+                ToolUseBlock(name="tool3", input_size=30, msg_color_idx=2),
+            ],
+        ]
+        filters = {"tools": True}
+        conv = self._make_conv(console, turns_blocks, filters)
+        conv._follow_mode = False
+
+        turn = conv._turns[0]
+        original_lines = turn.line_count
+        # Scroll deep into the turn
+        deep_offset = original_lines - 1
+        scroll_y = turn.line_offset + deep_offset
+
+        with self._patch_scroll(conv, scroll_y=scroll_y):
+            conv.rerender({"tools": False})
+
+        # Turn should have fewer lines now
+        turn_after = conv._turns[0]
+        assert turn_after.line_count < original_lines
+        # scroll_to should clamp to turn's last line
+        expected_y = turn_after.line_offset + turn_after.line_count - 1
+        conv.scroll_to.assert_called_with(y=expected_y, animate=False)
+
+    def test_deferred_rerender_preserves_scroll(self):
+        """Lazy re-render via _deferred_offset_recalc should not shift viewport."""
+        console = Console()
+        turns_blocks = [
+            [TextContentBlock(text="Turn 0\nLine 2", indent="")],
+            [TextContentBlock(text="Turn 1\nLine 2", indent="")],
+        ]
+        filters = {}
+        conv = self._make_conv(console, turns_blocks, filters)
+        conv._follow_mode = False
+
+        # Scroll to turn 1
+        turn1 = conv._turns[1]
+        with self._patch_scroll(conv, scroll_y=turn1.line_offset):
+            conv._deferred_offset_recalc(0)
+
+        # Should restore to turn 1
+        conv.scroll_to.assert_called()
+        call_y = conv.scroll_to.call_args.kwargs.get("y", conv.scroll_to.call_args[1].get("y"))
+        assert call_y >= conv._turns[1].line_offset
+
+    def test_anchor_turn_invisible_falls_back(self):
+        """When anchor turn has 0 lines after re-render, finds nearest visible turn."""
+        console = Console()
+        # Turn 0: always visible text
+        # Turn 1: only system blocks (will become invisible)
+        # Turn 2: always visible text
+        turns_blocks = [
+            [TextContentBlock(text="Turn 0 visible", indent="")],
+            [SystemLabelBlock(),
+             TrackedContentBlock(status="new", tag_id="sys", color_idx=0, content="System only")],
+            [TextContentBlock(text="Turn 2 visible", indent="")],
+        ]
+        filters = {"system": True}
+        conv = self._make_conv(console, turns_blocks, filters)
+        conv._follow_mode = False
+
+        # Scroll to turn 1 (system content)
+        turn1 = conv._turns[1]
+        with self._patch_scroll(conv, scroll_y=turn1.line_offset):
+            conv.rerender({"system": False})
+
+        # Turn 1 is now invisible; should fall back to nearest visible
+        assert conv._turns[1].line_count == 0
+        assert conv.scroll_to.called
+        call_y = conv.scroll_to.call_args.kwargs.get("y", conv.scroll_to.call_args[1].get("y"))
+        # Should scroll to turn 0 or turn 2 (nearest visible)
+        visible_offsets = [t.line_offset for t in conv._turns if t.line_count > 0]
+        assert call_y in visible_offsets
 
 
 class TestWidestStripCache:
