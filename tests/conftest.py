@@ -12,6 +12,45 @@ import pytest
 from ptydriver import PtyProcess
 
 
+# ---------------------------------------------------------------------------
+# Smart wait helpers — replace fixed time.sleep() across test files
+# ---------------------------------------------------------------------------
+
+def settle(proc, duration=0.05):
+    """Minimal delay after keystroke to let event loop process."""
+    time.sleep(duration)
+    assert proc.is_alive(), "Process died after keystroke"
+
+
+def wait_for_content(proc, predicate=None, timeout=3, interval=0.05):
+    """Poll until content matches predicate or timeout.
+
+    Args:
+        proc: PtyProcess to poll
+        predicate: Optional callable(content) -> bool. If None, waits for
+                   any non-trivial content (>=10 chars).
+        timeout: Max seconds to wait
+        interval: Polling interval in seconds
+
+    Returns:
+        The content string at the time of match or timeout.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        content = proc.get_content()
+        if predicate is None:
+            if content and len(content.strip()) >= 10:
+                return content
+        elif predicate(content):
+            return content
+        time.sleep(interval)
+    return proc.get_content()
+
+
+# ---------------------------------------------------------------------------
+# Path fixtures
+# ---------------------------------------------------------------------------
+
 @pytest.fixture
 def cc_dump_path():
     """Return absolute path to cc-dump package directory."""
@@ -30,6 +69,10 @@ def proxy_py(cc_dump_path):
     return cc_dump_path / "proxy.py"
 
 
+# ---------------------------------------------------------------------------
+# File backup/modify helpers
+# ---------------------------------------------------------------------------
+
 @pytest.fixture
 def backup_file():
     """Context manager to backup and restore a file after modification."""
@@ -46,8 +89,7 @@ def backup_file():
         finally:
             # Restore original file
             shutil.move(backup_path, filepath)
-            # Wait a moment for filesystem to settle
-            time.sleep(0.1)
+            time.sleep(0.05)
 
     yield _backup
 
@@ -55,94 +97,6 @@ def backup_file():
     for original, backup in backed_up:
         if os.path.exists(backup):
             shutil.move(backup, original)
-
-
-@pytest.fixture
-def start_cc_dump():
-    """Factory fixture to start cc-dump TUI and return PtyProcess."""
-    processes = []
-
-    def _start(port=None, timeout=10, db_path=None, session_id=None):
-        """Start cc-dump on specified port and wait for it to be ready.
-
-        Args:
-            port: Port number to use (None = random port between 10000-60000)
-            timeout: Timeout in seconds for startup
-            db_path: Optional path to database file (if None, uses --no-db)
-            session_id: Optional session ID for database
-        """
-        if port is None:
-            # Use a random port to avoid conflicts
-            port = random.randint(10000, 60000)
-
-        # Build command
-        cmd = ["uv", "run", "cc-dump", "--port", str(port)]
-
-        if db_path is None:
-            cmd.append("--no-db")
-        else:
-            cmd.extend(["--db", str(db_path)])
-            if session_id:
-                cmd.extend(["--session-id", session_id])
-
-        # Use uv run to execute in the project's virtual environment
-        proc = PtyProcess(cmd, timeout=timeout)
-        processes.append(proc)
-
-        # Wait for TUI to initialize — poll until content appears.
-        # Under load (full test suite), startup can take longer than 1.5s.
-        try:
-            deadline = time.monotonic() + timeout
-            content = ""
-            while time.monotonic() < deadline:
-                time.sleep(0.5)
-
-                if not proc.is_alive():
-                    content = proc.get_content()
-                    raise RuntimeError(f"cc-dump failed to start. Error output:\n{content}")
-
-                content = proc.get_content()
-                if content and len(content.strip()) >= 10:
-                    break
-            else:
-                raise RuntimeError(f"cc-dump started but no TUI content visible after {timeout}s. Output:\n{content}")
-
-        except Exception:
-            if proc.is_alive():
-                proc.terminate()
-            raise
-
-        # Give it a moment to fully stabilize
-        time.sleep(0.3)
-        return proc
-
-    yield _start
-
-    # Cleanup: quit all processes
-    for proc in processes:
-        if proc.is_alive():
-            try:
-                proc.send("q", press_enter=False)
-                time.sleep(0.3)
-                if proc.is_alive():
-                    proc.terminate()
-            except Exception:
-                pass
-
-
-@pytest.fixture
-def temp_db():
-    """Create a temporary database file for testing."""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.db', delete=False) as f:
-        db_path = f.name
-
-    yield db_path
-
-    # Cleanup
-    try:
-        os.unlink(db_path)
-    except FileNotFoundError:
-        pass
 
 
 @contextmanager
@@ -167,11 +121,135 @@ def modify_file(filepath, modification_fn):
             f.write(modified_content)
 
         # Wait for filesystem to register the change
-        time.sleep(0.2)
+        time.sleep(0.05)
 
         yield filepath
 
     finally:
         # Restore original
         shutil.move(backup_path, filepath)
-        time.sleep(0.1)
+        time.sleep(0.05)
+
+
+# ---------------------------------------------------------------------------
+# Internal process launcher (shared by function- and class-scoped fixtures)
+# ---------------------------------------------------------------------------
+
+def _launch_cc_dump(port=None, timeout=10, db_path=None, session_id=None):
+    """Launch cc-dump and wait for TUI to be ready. Returns (proc, port)."""
+    if port is None:
+        port = random.randint(10000, 60000)
+
+    cmd = ["uv", "run", "cc-dump", "--port", str(port)]
+
+    if db_path is None:
+        cmd.append("--no-db")
+    else:
+        cmd.extend(["--db", str(db_path)])
+        if session_id:
+            cmd.extend(["--session-id", session_id])
+
+    proc = PtyProcess(cmd, timeout=timeout)
+
+    # Wait for TUI to fully initialize — fast polling at 0.05s.
+    # Two-phase: first wait for any content, then wait for footer to render.
+    try:
+        deadline = time.monotonic() + timeout
+        content = ""
+        while time.monotonic() < deadline:
+            time.sleep(0.05)
+
+            if not proc.is_alive():
+                content = proc.get_content()
+                raise RuntimeError(f"cc-dump failed to start. Error output:\n{content}")
+
+            content = proc.get_content()
+            # Footer keywords indicate the TUI is fully rendered
+            if content and any(
+                kw in content.lower()
+                for kw in ("headers", "tools", "system", "quit")
+            ):
+                break
+        else:
+            raise RuntimeError(
+                f"cc-dump started but TUI not fully rendered after {timeout}s. Output:\n{content}"
+            )
+
+    except Exception:
+        if proc.is_alive():
+            proc.terminate()
+        raise
+
+    return proc, port
+
+
+def _teardown_proc(proc):
+    """Gracefully quit a cc-dump process."""
+    if proc.is_alive():
+        try:
+            proc.send("q", press_enter=False)
+            time.sleep(0.1)
+            if proc.is_alive():
+                proc.terminate()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Function-scoped fixture (original behavior, one process per test)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def start_cc_dump():
+    """Factory fixture to start cc-dump TUI and return PtyProcess."""
+    processes = []
+
+    def _start(port=None, timeout=10, db_path=None, session_id=None):
+        proc, _port = _launch_cc_dump(port=port, timeout=timeout,
+                                       db_path=db_path, session_id=session_id)
+        processes.append(proc)
+        return proc
+
+    yield _start
+
+    for proc in processes:
+        _teardown_proc(proc)
+
+
+# ---------------------------------------------------------------------------
+# Class-scoped fixtures (one process shared across all tests in a class)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="class")
+def class_proc():
+    """One cc-dump process shared across all tests in a class (no port needed)."""
+    proc, _port = _launch_cc_dump()
+    yield proc
+    _teardown_proc(proc)
+
+
+@pytest.fixture(scope="class")
+def class_proc_with_port():
+    """Class-scoped process with known port for HTTP tests."""
+    port = random.randint(10000, 60000)
+    proc, port = _launch_cc_dump(port=port)
+    yield proc, port
+    _teardown_proc(proc)
+
+
+# ---------------------------------------------------------------------------
+# Misc fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def temp_db():
+    """Create a temporary database file for testing."""
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.db', delete=False) as f:
+        db_path = f.name
+
+    yield db_path
+
+    try:
+        os.unlink(db_path)
+    except FileNotFoundError:
+        pass

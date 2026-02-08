@@ -19,9 +19,18 @@ from cc_dump.colors import TAG_COLORS
 
 @dataclass
 class FormattedBlock:
-    """Base class for all formatted output blocks."""
+    """Base class for all formatted output blocks.
 
-    pass
+    The collapsed field carries UI state (expand/collapse) directly on the block.
+    This is intentional: the renderer reads block.collapsed directly, eliminating
+    parameter threading through the render pipeline. The block is mutable, owned
+    by TurnData, which is owned by ConversationView — no ownership inversion.
+    """
+
+    # UI state: whether this block is collapsed (showing summary vs full content).
+    # Only meaningful for expandable block types (TrackedContentBlock, TurnBudgetBlock).
+    # Default True = collapsed (show summary). Mutated by click handler.
+    collapsed: bool = True
 
 
 @dataclass
@@ -78,15 +87,6 @@ class TrackedContentBlock(FormattedBlock):
     old_content: str = ""
     new_content: str = ""
     indent: str = "    "
-
-
-@dataclass
-class DiffBlock(FormattedBlock):
-    """A unified diff between old and new content."""
-
-    old_text: str = ""
-    new_text: str = ""
-    diff_lines: list = field(default_factory=list)  # list of (kind, text) tuples
 
 
 @dataclass
@@ -195,15 +195,6 @@ class ProxyErrorBlock(FormattedBlock):
     """Proxy error."""
 
     error: str = ""
-
-
-@dataclass
-class LogBlock(FormattedBlock):
-    """HTTP log line."""
-
-    command: str = ""
-    path: str = ""
-    status: str = ""
 
 
 @dataclass

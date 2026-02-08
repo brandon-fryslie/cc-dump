@@ -73,7 +73,7 @@ class StyledFooter(Footer):
             ("toggle_headers", "headers"),
             ("toggle_tools", "tools"),
             ("toggle_system", "system"),
-            ("toggle_expand", "expand"),
+            ("toggle_budget", "budget"),
             ("toggle_metadata", "metadata"),
             ("toggle_stats", "stats"),
             ("toggle_economics", "economics"),

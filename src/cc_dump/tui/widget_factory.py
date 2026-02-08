@@ -84,14 +84,12 @@ class TurnData:
         filters: dict,
         console,
         width: int,
-        expanded_overrides: dict[int, bool] | None = None,
         force: bool = False,
         block_cache=None,
     ) -> bool:
         """Re-render if a relevant filter changed. Returns True if strips changed.
 
         Args:
-            expanded_overrides: Per-block expand state (block_index → bool).
             force: Force re-render even if filter snapshot hasn't changed.
             block_cache: Optional LRUCache for caching rendered strips per block.
         """
@@ -105,7 +103,6 @@ class TurnData:
             filters,
             console,
             width,
-            expanded_overrides=expanded_overrides,
             block_cache=block_cache,
         )
         self._widest_strip = _compute_widest(self.strips)
@@ -156,10 +153,6 @@ class ConversationView(ScrollView):
         # Sprint 2: selection and programmatic scroll guard
         self._selected_turn: int | None = None
         self._scrolling_programmatically: bool = False
-        # Per-block expand overrides: (turn_index, block_index) → expanded bool.
-        # Only stores overrides from the global expand default.
-        # Cleared when the global expand toggle changes (acts as reset).
-        self._expanded_overrides: dict[tuple[int, int], bool] = {}
 
     def render_line(self, y: int) -> Strip:
         """Line API: render a single line at virtual position y."""
@@ -274,7 +267,6 @@ class ConversationView(ScrollView):
             else self._last_width
         )
         console = self.app.console
-        overrides = self._overrides_for_turn(turn.turn_index)
 
         # Apply the pending filters
         filters = dict(self._last_filters)
@@ -282,7 +274,6 @@ class ConversationView(ScrollView):
             filters,
             console,
             width,
-            expanded_overrides=overrides,
             block_cache=self._block_strip_cache,
         )
         # re_render clears _pending_filter_snapshot
@@ -650,11 +641,15 @@ class ConversationView(ScrollView):
         Single strategy: capture turn-level anchor before re-render,
         restore after. Stateless — no state persists between calls.
         """
-        # Clear per-block overrides when global expand toggle changes
-        old_expand = self._last_filters.get("expand", False)
-        new_expand = filters.get("expand", False)
-        if old_expand != new_expand:
-            self._expanded_overrides.clear()
+        # When global budget toggle changes, sync collapsed state on all blocks
+        old_budget = self._last_filters.get("budget", False)
+        new_budget = filters.get("budget", False)
+        if old_budget != new_budget:
+            for td in self._turns:
+                for block in td.blocks:
+                    name = type(block).__name__
+                    if name in ("TrackedContentBlock", "TurnBudgetBlock"):
+                        block.collapsed = not new_budget
 
         self._last_filters = filters
 
@@ -683,12 +678,10 @@ class ConversationView(ScrollView):
 
             if vp_start <= idx < vp_end:
                 # Viewport turn: re-render immediately
-                overrides = self._overrides_for_turn(td.turn_index)
                 if td.re_render(
                     filters,
                     console,
                     width,
-                    expanded_overrides=overrides,
                     block_cache=self._block_strip_cache,
                 ):
                     if first_changed is None:
@@ -728,14 +721,12 @@ class ConversationView(ScrollView):
                 # Skip re-rendering streaming turns on resize
                 if td.is_streaming:
                     continue
-                overrides = self._overrides_for_turn(td.turn_index)
                 td.strips, td.block_strip_map = (
                     cc_dump.tui.rendering.render_turn_to_strips(
                         td.blocks,
                         self._last_filters,
                         console,
                         width,
-                        expanded_overrides=overrides,
                         block_cache=self._block_strip_cache,
                     )
                 )
@@ -842,14 +833,6 @@ class ConversationView(ScrollView):
             return block.status in ("new", "changed")
         return False
 
-    def _overrides_for_turn(self, turn_index: int) -> dict[int, bool] | None:
-        """Build expanded_overrides dict for a single turn from global state."""
-        overrides = {}
-        for (ti, bi), expanded in self._expanded_overrides.items():
-            if ti == turn_index:
-                overrides[bi] = expanded
-        return overrides or None
-
     def on_click(self, event) -> None:
         """Select turn at click position. Toggle expand on collapsible blocks."""
         # event.y is viewport-relative; add scroll offset for content-space
@@ -869,20 +852,8 @@ class ConversationView(ScrollView):
 
     def _toggle_block_expand(self, turn: TurnData, block_idx: int):
         """Toggle expand state for a single block and re-render its turn."""
-        key = (turn.turn_index, block_idx)
-        global_default = self._last_filters.get("expand", False)
-
-        if key in self._expanded_overrides:
-            # Already overridden — toggle it
-            current = self._expanded_overrides[key]
-            if current == (not global_default):
-                # Toggling back to global default — remove override
-                del self._expanded_overrides[key]
-            else:
-                self._expanded_overrides[key] = not current
-        else:
-            # No override — set to opposite of global default
-            self._expanded_overrides[key] = not global_default
+        block = turn.blocks[block_idx]
+        block.collapsed = not block.collapsed
 
         # Re-render just this turn
         if not turn.is_streaming:
@@ -892,12 +863,10 @@ class ConversationView(ScrollView):
                 else self._last_width
             )
             console = self.app.console
-            overrides = self._overrides_for_turn(turn.turn_index)
             turn.re_render(
                 self._last_filters,
                 console,
                 width,
-                expanded_overrides=overrides,
                 force=True,
                 block_cache=self._block_strip_cache,
             )
@@ -1009,7 +978,6 @@ class ConversationView(ScrollView):
             "selected_turn": self._selected_turn,
             "turn_count": len(self._turns),
             "streaming_states": streaming_states,
-            "expanded_overrides": dict(self._expanded_overrides),
         }
 
     def restore_state(self, state: dict):
@@ -1020,12 +988,6 @@ class ConversationView(ScrollView):
         self._pending_restore = state
         self._follow_mode = state.get("follow_mode", True)
         self._selected_turn = state.get("selected_turn", None)
-        # Restore per-block expand overrides; keys are (turn_index, block_index) tuples
-        raw_overrides = state.get("expanded_overrides", {})
-        self._expanded_overrides = {
-            (tuple(k) if isinstance(k, list) else k): v
-            for k, v in raw_overrides.items()
-        }
 
         # Restore streaming states after _rebuild_from_state is called
         streaming_states = state.get("streaming_states", [])
@@ -1289,7 +1251,7 @@ class FilterStatusBar(Static):
         """Update the status bar to show active filters.
 
         Args:
-            filters: Dict with filter states (headers, tools, system, expand, metadata)
+            filters: Dict with filter states (headers, tools, system, budget, metadata)
         """
 
         # Filter names and their colors (from palette)
@@ -1298,7 +1260,7 @@ class FilterStatusBar(Static):
             ("h", "Headers", p.filter_color("headers"), filters.get("headers", False)),
             ("t", "Tools", p.filter_color("tools"), filters.get("tools", False)),
             ("s", "System", p.filter_color("system"), filters.get("system", False)),
-            ("e", "Context", p.filter_color("expand"), filters.get("expand", False)),
+            ("e", "Budget", p.filter_color("budget"), filters.get("budget", False)),
             (
                 "m",
                 "Metadata",

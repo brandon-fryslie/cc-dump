@@ -273,50 +273,6 @@ def get_tool_economics(
     return result
 
 
-def get_model_economics(db_path: str, session_id: str) -> list[dict]:
-    """Query per-model aggregated token data for a session.
-
-    Returns list of dicts with keys: model, calls, input_tokens,
-    output_tokens, cache_read_tokens, cache_creation_tokens.
-    Grouped by model, ordered by total input descending.
-    """
-    uri = f"file:{db_path}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True)
-    try:
-        cursor = conn.execute(
-            """
-            SELECT
-                model,
-                COUNT(*) as calls,
-                SUM(input_tokens) as input_tokens,
-                SUM(output_tokens) as output_tokens,
-                SUM(cache_read_tokens) as cache_read_tokens,
-                SUM(cache_creation_tokens) as cache_creation_tokens
-            FROM turns
-            WHERE session_id = ?
-            GROUP BY model
-            ORDER BY SUM(input_tokens + cache_read_tokens) DESC
-        """,
-            (session_id,),
-        )
-
-        results = []
-        for row in cursor:
-            results.append(
-                {
-                    "model": row[0] or "",
-                    "calls": row[1],
-                    "input_tokens": row[2] or 0,
-                    "output_tokens": row[3] or 0,
-                    "cache_read_tokens": row[4] or 0,
-                    "cache_creation_tokens": row[5] or 0,
-                }
-            )
-        return results
-    finally:
-        conn.close()
-
-
 def get_turn_timeline(db_path: str, session_id: str) -> list[dict]:
     """Query turn timeline data for a session.
 

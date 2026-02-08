@@ -14,6 +14,10 @@ _ENCODING = None
 def count_tokens(text: str, model: str = "cl100k_base") -> int:
     """Count tokens in text using tiktoken.
 
+    Accurate tokenizer for DB storage (tool invocation token counts).
+    For fast real-time display estimates, see analysis.estimate_tokens()
+    which uses a ~4 chars/token heuristic.
+
     Args:
         text: The text to tokenize
         model: Encoding to use (default: cl100k_base for GPT-4/Claude approximation)

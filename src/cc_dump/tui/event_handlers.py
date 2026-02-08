@@ -212,7 +212,7 @@ def handle_response_done(
         conv = widgets["conv"]
         stats = widgets["stats"]
         filters = widgets["filters"]
-        show_expand = widgets.get("show_expand", False)
+        show_budget = widgets.get("show_budget", False)
 
         # Finalize streaming turn in ConversationView
         _ = conv.finalize_streaming_turn()
@@ -227,7 +227,7 @@ def handle_response_done(
             stats.refresh_from_db(db_path, session_id, current_turn=None)
 
         # Re-render expand view to show cache data
-        if show_expand:
+        if show_budget:
             conv.rerender(filters)
 
         # Update economics and timeline panels (these query database)

@@ -67,7 +67,7 @@ _FILTER_INDICATOR_INDEX: dict[str, int] = {
     "headers": 0,  # strawberry-red
     "tools": 1,  # atomic-tangerine
     "system": 2,  # carrot-orange
-    "expand": 3,  # tuscan-sun
+    "budget": 3,  # tuscan-sun
     "metadata": 4,  # golden-sand
     "stats": 5,  # willow-green
     "economics": 6,  # mint-leaf

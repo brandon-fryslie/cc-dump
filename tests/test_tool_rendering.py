@@ -467,7 +467,7 @@ class TestRenderTurnToStripsToolSummary:
             NewlineBlock(),
         ]
         console = Console(width=80, force_terminal=True)
-        filters = {"tools": False, "system": True, "headers": False, "metadata": False, "expand": False}
+        filters = {"tools": False, "system": True, "headers": False, "metadata": False, "budget": False}
 
         strips, block_strip_map = render_turn_to_strips(
             blocks, filters, console, width=80,
@@ -488,7 +488,7 @@ class TestRenderTurnToStripsToolSummary:
             ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
         ]
         console = Console(width=80, force_terminal=True)
-        filters = {"tools": True, "system": True, "headers": False, "metadata": False, "expand": False}
+        filters = {"tools": True, "system": True, "headers": False, "metadata": False, "budget": False}
 
         strips, block_strip_map = render_turn_to_strips(
             blocks, filters, console, width=80,

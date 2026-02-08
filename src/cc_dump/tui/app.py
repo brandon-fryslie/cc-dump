@@ -28,7 +28,7 @@ class CcDumpApp(App):
         Binding("h", "toggle_headers", "h|eaders", show=True),
         Binding("t", "toggle_tools", "t|ools", show=True),
         Binding("s", "toggle_system", "s|ystem", show=True),
-        Binding("e", "toggle_expand", "cont|e|xt", show=True),
+        Binding("e", "toggle_budget", "budg|e|t", show=True),
         Binding("m", "toggle_metadata", "m|etadata", show=True),
         Binding("a", "toggle_stats", "st|a|ts", show=True),
         Binding("c", "toggle_economics", "c|ost", show=True),
@@ -48,7 +48,7 @@ class CcDumpApp(App):
     show_headers = reactive(False)
     show_tools = reactive(True)
     show_system = reactive(True)
-    show_expand = reactive(False)
+    show_budget = reactive(False)
     show_metadata = reactive(True)
     show_stats = reactive(True)
     show_economics = reactive(False)
@@ -465,7 +465,7 @@ class CcDumpApp(App):
             "conv": conv,
             "stats": stats,
             "filters": self.active_filters,
-            "show_expand": self.show_expand,
+            "show_budget": self.show_budget,
         }
 
         # Build database context for handlers
@@ -540,7 +540,7 @@ class CcDumpApp(App):
             "headers": self.show_headers,
             "tools": self.show_tools,
             "system": self.show_system,
-            "expand": self.show_expand,
+            "budget": self.show_budget,
             "metadata": self.show_metadata,
             "stats": self.show_stats,
             "economics": self.show_economics,
@@ -558,8 +558,8 @@ class CcDumpApp(App):
     def action_toggle_system(self):
         self.show_system = not self.show_system
 
-    def action_toggle_expand(self):
-        self.show_expand = not self.show_expand
+    def action_toggle_budget(self):
+        self.show_budget = not self.show_budget
 
     def action_toggle_metadata(self):
         self.show_metadata = not self.show_metadata
@@ -670,7 +670,7 @@ class CcDumpApp(App):
     def watch_show_system(self, value):
         self._rerender_if_mounted()
 
-    def watch_show_expand(self, value):
+    def watch_show_budget(self, value):
         self._rerender_if_mounted()
 
     def watch_show_metadata(self, value):

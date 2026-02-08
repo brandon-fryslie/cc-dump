@@ -34,7 +34,6 @@ from cc_dump.formatting import (
     StopReasonBlock,
     ErrorBlock,
     ProxyErrorBlock,
-    LogBlock,
     NewlineBlock,
 )
 from cc_dump.tui.rendering import BLOCK_RENDERERS, BLOCK_FILTER_KEY, render_turn_to_strips
@@ -57,8 +56,8 @@ class TestBlockFilterKeyCompleteness:
     def test_filter_key_count_matches_block_count(self):
         """BLOCK_FILTER_KEY should have 20 entries (18+ block types)."""
         # Verify we have all expected block types
-        assert len(BLOCK_FILTER_KEY) >= 18, (
-            f"Expected at least 18 block types in BLOCK_FILTER_KEY, got {len(BLOCK_FILTER_KEY)}"
+        assert len(BLOCK_FILTER_KEY) >= 17, (
+            f"Expected at least 17 block types in BLOCK_FILTER_KEY, got {len(BLOCK_FILTER_KEY)}"
         )
 
     def test_filter_key_mappings_are_correct(self):
@@ -70,7 +69,7 @@ class TestBlockFilterKeyCompleteness:
         assert BLOCK_FILTER_KEY["SeparatorBlock"] == "headers"
         assert BLOCK_FILTER_KEY["HeaderBlock"] == "headers"
         assert BLOCK_FILTER_KEY["MetadataBlock"] == "metadata"
-        assert BLOCK_FILTER_KEY["TurnBudgetBlock"] == "expand"
+        assert BLOCK_FILTER_KEY["TurnBudgetBlock"] == "budget"
         assert BLOCK_FILTER_KEY["SystemLabelBlock"] == "system"
         assert BLOCK_FILTER_KEY["TrackedContentBlock"] == "system"
         assert BLOCK_FILTER_KEY["RoleBlock"] == "system"  # filters system roles
@@ -87,7 +86,6 @@ class TestBlockFilterKeyCompleteness:
         assert BLOCK_FILTER_KEY["TextDeltaBlock"] is None
         assert BLOCK_FILTER_KEY["ErrorBlock"] is None
         assert BLOCK_FILTER_KEY["ProxyErrorBlock"] is None
-        assert BLOCK_FILTER_KEY["LogBlock"] is None
         assert BLOCK_FILTER_KEY["NewlineBlock"] is None
 
 

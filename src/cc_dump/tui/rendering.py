@@ -30,7 +30,6 @@ from cc_dump.formatting import (
     StopReasonBlock,
     ErrorBlock,
     ProxyErrorBlock,
-    LogBlock,
     NewlineBlock,
     TurnBudgetBlock,
     make_diff_lines,
@@ -64,7 +63,7 @@ def _build_filter_indicators() -> dict[str, tuple[str, str]]:
         "headers": ("▌", p.filter_color("headers")),
         "tools": ("▌", p.filter_color("tools")),
         "system": ("▌", p.filter_color("system")),
-        "expand": ("▌", p.filter_color("expand")),
+        "budget": ("▌", p.filter_color("budget")),
         "metadata": ("▌", p.filter_color("metadata")),
     }
 
@@ -73,10 +72,6 @@ ROLE_STYLES = _build_role_styles()
 TAG_STYLES = _build_tag_styles()
 MSG_COLORS = _build_msg_colors()
 FILTER_INDICATORS = _build_filter_indicators()
-
-# Block types that support per-block expand/collapse via click
-_EXPANDABLE_BLOCK_TYPES = frozenset({"TrackedContentBlock", "TurnBudgetBlock"})
-
 
 # Type alias for render function signature
 BlockRenderer = Callable[[FormattedBlock, dict], Text | None]
@@ -164,14 +159,10 @@ def _render_metadata(block: MetadataBlock, filters: dict) -> Text | None:
 
 
 def _render_turn_budget_block(
-    block: TurnBudgetBlock, filters: dict, *, expanded: bool | None = None
+    block: TurnBudgetBlock, filters: dict
 ) -> Text | None:
-    """Render turn budget block (wrapper for filter check).
-
-    Args:
-        expanded: Per-block override. If None, falls back to filters["expand"].
-    """
-    is_expanded = expanded if expanded is not None else filters.get("expand", False)
+    """Render turn budget block (wrapper for filter check)."""
+    is_expanded = not getattr(block, "collapsed", True)
     if not is_expanded:
         return None
     return _render_turn_budget(block)
@@ -186,17 +177,13 @@ def _render_system_label(block: SystemLabelBlock, filters: dict) -> Text | None:
 
 
 def _render_tracked_content_block(
-    block: TrackedContentBlock, filters: dict, *, expanded: bool | None = None
+    block: TrackedContentBlock, filters: dict
 ) -> Text | None:
-    """Render tracked content block (wrapper for filter check).
-
-    Args:
-        expanded: Per-block override. If None, falls back to filters["expand"].
-    """
+    """Render tracked content block (wrapper for filter check)."""
     # System content is controlled by "system" filter
     if not filters.get("system", False):
         return None
-    return _render_tracked_content(block, filters, expanded=expanded)
+    return _render_tracked_content(block, filters)
 
 
 def _render_role(block: RoleBlock, filters: dict) -> Text | None:
@@ -329,13 +316,6 @@ def _render_proxy_error(block: ProxyErrorBlock, filters: dict) -> Text | None:
     )
 
 
-def _render_log(block: LogBlock, filters: dict) -> Text | None:
-    """Render log block."""
-    return Text(
-        "  {} {} {}".format(block.command, block.path, block.status), style="dim"
-    )
-
-
 def _render_newline(block: NewlineBlock, filters: dict) -> Text | None:
     """Render newline block."""
     return Text("")
@@ -366,7 +346,6 @@ BLOCK_RENDERERS: dict[str, BlockRenderer] = {
     "StopReasonBlock": _render_stop_reason,
     "ErrorBlock": _render_error,
     "ProxyErrorBlock": _render_proxy_error,
-    "LogBlock": _render_log,
     "NewlineBlock": _render_newline,
 }
 
@@ -379,7 +358,7 @@ BLOCK_FILTER_KEY: dict[str, str | None] = {
     "HeaderBlock": "headers",
     "HttpHeadersBlock": "headers",
     "MetadataBlock": "metadata",
-    "TurnBudgetBlock": "expand",
+    "TurnBudgetBlock": "budget",
     "SystemLabelBlock": "system",
     "TrackedContentBlock": "system",
     "RoleBlock": "system",
@@ -395,29 +374,19 @@ BLOCK_FILTER_KEY: dict[str, str | None] = {
     "StopReasonBlock": "metadata",
     "ErrorBlock": None,
     "ProxyErrorBlock": None,
-    "LogBlock": None,
     "NewlineBlock": None,
 }
 
 
-def render_block(
-    block: FormattedBlock, filters: dict, *, expanded: bool | None = None
-) -> Text | None:
+def render_block(block: FormattedBlock, filters: dict) -> Text | None:
     """Render a FormattedBlock to a Rich Text object.
 
-    Args:
-        expanded: Per-block expand override for collapsible blocks.
-            If None, falls back to filters["expand"].
-
+    Expandable blocks read their collapsed state from block.collapsed directly.
     Returns None if the block should be filtered out based on filters dict.
     """
     renderer = BLOCK_RENDERERS.get(type(block).__name__)
     if renderer is None:
         return None  # Unknown block type - graceful degradation
-    # Pass expanded override to collapsible block renderers
-    block_name = type(block).__name__
-    if expanded is not None and block_name in _EXPANDABLE_BLOCK_TYPES:
-        return renderer(block, filters, expanded=expanded)
     return renderer(block, filters)
 
 
@@ -469,16 +438,11 @@ def collapse_tool_runs(
 def render_blocks(
     blocks: list[FormattedBlock],
     filters: dict,
-    expanded_overrides: dict[int, bool] | None = None,
 ) -> list[tuple[int, Text]]:
     """Render a list of FormattedBlock to indexed Rich Text objects, applying filters.
 
     When the tools filter is off, consecutive ToolUseBlocks are collapsed
     into a single summary line like '[used 3 tools: Bash 2x, Read 1x]'.
-
-    Args:
-        expanded_overrides: Optional dict mapping block_index → expand state.
-            Overrides filters["expand"] for individual collapsible blocks.
 
     Returns:
         List of (block_index, Text) pairs. The block_index is the position
@@ -490,10 +454,7 @@ def render_blocks(
 
     rendered: list[tuple[int, Text]] = []
     for orig_idx, block in prepared:
-        block_expanded = (
-            expanded_overrides.get(orig_idx) if expanded_overrides else None
-        )
-        r = render_block(block, filters, expanded=block_expanded)
+        r = render_block(block, filters)
         if r is not None:
             rendered.append((orig_idx, r))
     return rendered
@@ -519,7 +480,6 @@ def render_turn_to_strips(
     console,
     width: int,
     wrap: bool = True,
-    expanded_overrides: dict[int, bool] | None = None,
     block_cache=None,
 ) -> tuple[list, dict[int, int]]:
     """Render blocks to Strip objects for Line API storage.
@@ -533,7 +493,6 @@ def render_turn_to_strips(
         console: Rich Console instance (from app.console)
         width: Render width in cells
         wrap: Enable word wrapping
-        expanded_overrides: Per-block expand state overrides (block_index → bool)
         block_cache: Optional LRUCache for caching rendered strips per block
 
     Returns:
@@ -551,21 +510,17 @@ def render_turn_to_strips(
     all_strips: list[Strip] = []
     block_strip_map: dict[int, int] = {}
 
-    for block_idx, text in render_blocks(blocks, filters, expanded_overrides):
+    for block_idx, text in render_blocks(blocks, filters):
         block_strip_map[block_idx] = len(all_strips)
 
-        # Cache key: block identity + width + relevant filter state + expand override
-        # Note: We use id(blocks[block_idx]) not id(text) since text is freshly generated
+        # Cache key: block identity + width + filter state + collapsed state
         block = blocks[block_idx]
         filter_key = BLOCK_FILTER_KEY.get(type(block).__name__)
-        expand_override = (
-            expanded_overrides.get(block_idx) if expanded_overrides else None
-        )
         cache_key = (
             id(block),
             width,
             filters.get(filter_key, False) if filter_key else None,
-            expand_override,
+            getattr(block, "collapsed", True),
         )
 
         # Check cache first
@@ -590,15 +545,9 @@ def render_turn_to_strips(
     return all_strips, block_strip_map
 
 
-def _render_tracked_content(
-    block: TrackedContentBlock, filters: dict, *, expanded: bool | None = None
-) -> Text:
-    """Render a TrackedContentBlock with tag colors.
-
-    Args:
-        expanded: Per-block override. If None, falls back to filters["expand"].
-    """
-    is_expanded = expanded if expanded is not None else filters.get("expand", False)
+def _render_tracked_content(block: TrackedContentBlock, filters: dict) -> Text:
+    """Render a TrackedContentBlock with tag colors."""
+    is_expanded = not getattr(block, "collapsed", True)
     fg, bg = TAG_STYLES[block.color_idx % len(TAG_STYLES)]
     tag_style = "bold {} on {}".format(fg, bg)
     # Collapse/expand indicator
@@ -745,4 +694,4 @@ def _render_turn_budget(block: TurnBudgetBlock) -> Text:
             )
         t.append(" | {} fresh".format(_fmt_tokens(b.actual_input_tokens)), style="dim")
 
-    return _add_filter_indicator(t, "expand")
+    return _add_filter_indicator(t, "budget")

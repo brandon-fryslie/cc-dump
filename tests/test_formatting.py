@@ -3,13 +3,11 @@
 import pytest
 
 from cc_dump.formatting import (
-    DiffBlock,
     ErrorBlock,
     FormattedBlock,
     HeaderBlock,
     HttpHeadersBlock,
     ImageBlock,
-    LogBlock,
     MetadataBlock,
     NewlineBlock,
     ProxyErrorBlock,
@@ -591,10 +589,8 @@ def test_block_types_can_be_instantiated():
     assert isinstance(StopReasonBlock(reason="end_turn"), FormattedBlock)
     assert isinstance(ErrorBlock(code=500), FormattedBlock)
     assert isinstance(ProxyErrorBlock(error="error"), FormattedBlock)
-    assert isinstance(LogBlock(command="GET"), FormattedBlock)
     assert isinstance(NewlineBlock(), FormattedBlock)
     assert isinstance(TrackedContentBlock(status="new"), FormattedBlock)
-    assert isinstance(DiffBlock(), FormattedBlock)
     assert isinstance(TurnBudgetBlock(), FormattedBlock)
 
 
