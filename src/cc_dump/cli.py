@@ -4,6 +4,7 @@ import argparse
 import http.server
 import os
 import queue
+import sys
 import threading
 import uuid
 
@@ -182,4 +183,9 @@ def main():
         if har_recorder:
             har_recorder.close()
         if server:
-            server.shutdown()
+            # Force close the socket immediately - don't wait for serve_forever()
+            server.server_close()
+            # NOTE: We skip server.shutdown() because it can hang waiting for
+            # the serve_forever() thread to finish. Since the thread is daemon=True,
+            # it will be killed when the process exits anyway. server_close()
+            # closes the socket immediately, preventing new connections.
