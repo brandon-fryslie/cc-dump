@@ -15,6 +15,8 @@ from __future__ import annotations
 from typing import Callable
 
 from rich.text import Text
+from rich.markdown import Markdown
+from rich.console import ConsoleRenderable
 
 from collections import Counter
 
@@ -66,6 +68,9 @@ DEFAULT_EXPANDED: dict[Level, bool] = {
     Level.SUMMARY: False,  # show collapsed summaries
     Level.FULL: True,  # show everything
 }
+
+# Categories that should render as Markdown instead of plain text
+_MARKDOWN_CATEGORIES = {Category.USER, Category.ASSISTANT}
 
 
 # ─── Category resolution ──────────────────────────────────────────────────────
@@ -173,8 +178,16 @@ MSG_COLORS = _build_msg_colors()
 FILTER_INDICATORS = _build_filter_indicators()
 
 
-def _add_filter_indicator(text: Text, filter_name: str) -> Text:
-    """Add a colored indicator to show which filter controls this content."""
+def _add_filter_indicator(text: ConsoleRenderable, filter_name: str) -> ConsoleRenderable:
+    """Add a colored indicator to show which filter controls this content.
+
+    Only works for Text objects. Non-Text renderables (like Markdown) are returned unchanged.
+    Use _prepend_indicator_to_strips() for those cases.
+    """
+    # Guard: only Text objects can be modified this way
+    if not isinstance(text, Text):
+        return text
+
     if filter_name not in FILTER_INDICATORS:
         return text
 
@@ -324,9 +337,12 @@ def _render_role(block: RoleBlock) -> Text | None:
     return t
 
 
-def _render_text_content(block: TextContentBlock) -> Text | None:
+def _render_text_content(block: TextContentBlock) -> ConsoleRenderable | None:
     if not block.text:
         return None
+    # Render as Markdown for USER and ASSISTANT categories
+    if block.category in _MARKDOWN_CATEGORIES:
+        return Markdown(block.text)
     return _indent_text(block.text, block.indent)
 
 
@@ -393,7 +409,10 @@ def _render_stream_tool_use(block: StreamToolUseBlock) -> Text | None:
     return t
 
 
-def _render_text_delta(block: TextDeltaBlock) -> Text | None:
+def _render_text_delta(block: TextDeltaBlock) -> ConsoleRenderable | None:
+    # TextDeltaBlock is always ASSISTANT category during streaming
+    if block.category in _MARKDOWN_CATEGORIES:
+        return Markdown(block.text)
     return Text(block.text)
 
 
@@ -666,6 +685,30 @@ _ARROW_COLLAPSED = "\u25b6"  # ▶
 _ARROW_EXPANDED = "\u25bc"  # ▼
 
 
+def _prepend_indicator_to_strips(block_strips, indicator_name: str, width: int):
+    """Prepend a category indicator segment to the first strip.
+
+    Used for Markdown and other non-Text renderables where we can't prepend
+    to the Text object directly.
+    """
+    if not block_strips or indicator_name not in FILTER_INDICATORS:
+        return block_strips
+    from rich.segment import Segment
+    from rich.style import Style
+    from textual.strip import Strip
+
+    symbol, color = FILTER_INDICATORS[indicator_name]
+    indicator_seg = Segment(symbol + " ", Style(bold=True, color=color))
+
+    first = block_strips[0]
+    segments = list(first)
+    new_segments = [indicator_seg] + segments
+
+    new_strip = Strip(new_segments)
+    new_strip.adjust_cell_length(width)
+    return [new_strip] + list(block_strips[1:])
+
+
 def _add_arrow_or_space_to_strips(
     block_strips, is_expandable, is_expanded, category_color, width
 ):
@@ -699,11 +742,12 @@ def _add_arrow_or_space_to_strips(
 # ─── Core rendering ───────────────────────────────────────────────────────────
 
 
-def render_block(block: FormattedBlock) -> Text | None:
-    """Render a FormattedBlock to a Rich Text object (full content).
+def render_block(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render a FormattedBlock to a Rich renderable object (full content).
 
     This is the public API for rendering a single block. Used by streaming code.
     No filter checks — returns full content always.
+    Returns Text, Markdown, or other ConsoleRenderable.
     """
     renderer = BLOCK_RENDERERS.get(type(block).__name__)
     if renderer is None:
@@ -761,6 +805,8 @@ def render_turn_to_strips(
     wrap: bool = True,
     block_cache=None,
     is_streaming: bool = False,
+    search_ctx=None,
+    turn_index: int = -1,
 ) -> tuple[list, dict[int, int]]:
     """Render blocks to Strip objects for Line API storage.
 
@@ -774,12 +820,15 @@ def render_turn_to_strips(
         wrap: Enable word wrapping
         block_cache: Optional LRUCache for caching rendered strips per block
         is_streaming: If True, skip truncation (show all content during stream)
+        search_ctx: Optional SearchContext for highlighting matches
+        turn_index: Turn index for search match correlation
 
     Returns:
         (strips, block_strip_map) — pre-rendered lines and a dict mapping
         block index to its first strip line index.
     """
     from rich.segment import Segment
+    from rich.style import Style
     from textual.strip import Strip
 
     render_options = console.options
@@ -801,6 +850,14 @@ def render_turn_to_strips(
 
         type_name = type(block).__name__
 
+        # Check if this block has search matches
+        block_has_matches = False
+        search_hash = None
+        if search_ctx is not None:
+            block_matches = search_ctx.matches_in_block(turn_index, orig_idx)
+            block_has_matches = bool(block_matches)
+            search_hash = search_ctx.pattern_str if block_has_matches else None
+
         # Dispatch: state-specific renderer first, then full + truncation
         state_renderer = BLOCK_STATE_RENDERERS.get((type_name, level, expanded))
         if state_renderer:
@@ -808,26 +865,46 @@ def render_turn_to_strips(
             should_truncate = False  # state renderer controls output exactly
         else:
             full_renderer = BLOCK_RENDERERS.get(type_name)
-            text = full_renderer(block) if full_renderer else None
+            if full_renderer:
+                # For Markdown blocks with search matches, render as plain Text
+                # so highlight_regex works correctly
+                if block_has_matches and isinstance(full_renderer(block), Markdown):
+                    # Re-render as plain Text for search highlighting
+                    plain_text = ""
+                    if hasattr(block, "text"):
+                        plain_text = block.text
+                    text = Text(plain_text)
+                else:
+                    text = full_renderer(block)
+            else:
+                text = None
             should_truncate = True
 
         if text is None:
             continue
 
-        # Add category indicator
+        # Apply search highlights before indicator (only on Text objects)
+        if block_has_matches and isinstance(text, Text):
+            _apply_search_highlights(text, search_ctx, turn_index, orig_idx)
+
+        # Add category indicator (works for Text, passed through for others)
         indicator_name = _category_indicator_name(block)
+        indicator_added_to_text = False
         if indicator_name:
+            original_text = text
             text = _add_filter_indicator(text, indicator_name)
+            indicator_added_to_text = text is not original_text  # True if Text modified
 
         block_strip_map[orig_idx] = len(all_strips)
 
-        # Cache key: block identity + width + state info
+        # Cache key: block identity + width + state info + search state
         cache_key = (
             id(block),
             width,
             level,
             expanded,
             bool(state_renderer),
+            search_hash,
         )
 
         # Check cache first
@@ -847,6 +924,12 @@ def render_turn_to_strips(
             # Cache result
             if block_cache is not None:
                 block_cache[cache_key] = block_strips
+
+        # If indicator wasn't added to text (e.g., Markdown), add to strips
+        if indicator_name and not indicator_added_to_text:
+            block_strips = _prepend_indicator_to_strips(
+                block_strips, indicator_name, width
+            )
 
         # Track expandability for click handler
         # [LAW:single-enforcer] Always check against collapsed limit, not current state
@@ -887,6 +970,49 @@ def render_turn_to_strips(
                 all_strips.extend(block_strips)
 
     return all_strips, block_strip_map
+
+
+def _apply_search_highlights(text: Text, search_ctx, turn_index: int, block_index: int) -> None:
+    """Apply search highlights to a Text object.
+
+    All matches get a dim background highlight.
+    The current navigated-to match gets a bright highlight override.
+    """
+    from rich.style import Style
+
+    # Dim highlight on ALL matches in this block
+    try:
+        text.highlight_regex(
+            search_ctx.pattern,
+            Style(bgcolor="color(239)"),
+        )
+    except Exception:
+        return  # Regex may fail on rendered text, silently skip
+
+    # Bright highlight on the CURRENT match (if it's in this block)
+    current = search_ctx.current_match
+    if (
+        current is not None
+        and current.turn_index == turn_index
+        and current.block_index == block_index
+    ):
+        # Find the specific occurrence via pattern.finditer on plain text
+        plain = text.plain
+        try:
+            for i, m in enumerate(search_ctx.pattern.finditer(plain)):
+                # Find which occurrence in this block matches current_match's offset
+                # We use the text_offset from SearchMatch which was computed on
+                # the searchable text, not the rendered text. Since these may differ
+                # (rendered text has indicators, indentation), we highlight the first
+                # occurrence that overlaps.
+                text.stylize(
+                    Style(bold=True, bgcolor="yellow", color="black"),
+                    m.start(),
+                    m.end(),
+                )
+                break  # Highlight first match occurrence (most visible)
+        except Exception:
+            pass  # Silently handle regex errors on rendered text
 
 
 def combine_rendered_texts(texts: list[Text]) -> Text:

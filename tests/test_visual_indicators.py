@@ -39,7 +39,7 @@ class TestFilterIndicatorRendering:
     def test_headers_indicator_cyan(self, class_proc_with_port):
         proc, port = class_proc_with_port
 
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
 
         _send_request(port, content="Test-HeaderIndicator")
@@ -50,9 +50,9 @@ class TestFilterIndicatorRendering:
         assert len(content) > 0
 
         # Clean up: cycle back to original state (3 presses total)
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
 
     def test_tools_indicator_blue(self, class_proc_with_port):
@@ -78,7 +78,7 @@ class TestFilterIndicatorRendering:
     def test_expand_indicator_green(self, class_proc_with_port):
         proc, port = class_proc_with_port
 
-        proc.send("e", press_enter=False)
+        proc.send("6", press_enter=False)
         settle(proc)
 
         _send_request(port, content="Test-ExpandIndicator",
@@ -87,9 +87,9 @@ class TestFilterIndicatorRendering:
         assert proc.is_alive()
 
         # Clean up: cycle back (3 presses total)
-        proc.send("e", press_enter=False)
+        proc.send("6", press_enter=False)
         settle(proc)
-        proc.send("e", press_enter=False)
+        proc.send("6", press_enter=False)
         settle(proc)
 
 
@@ -104,16 +104,16 @@ class TestIndicatorVisibility:
 
         content_without = proc.get_content()
 
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc, 0.1)
         content_with = proc.get_content()
 
         assert proc.is_alive()
 
         # Clean up: cycle back
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
 
     def test_indicator_disappears_when_filter_disabled(self, class_proc_with_port):
@@ -124,16 +124,16 @@ class TestIndicatorVisibility:
 
         content_with = proc.get_content()
 
-        proc.send("m", press_enter=False)
+        proc.send("7", press_enter=False)
         settle(proc, 0.1)
         content_without = proc.get_content()
 
         assert proc.is_alive()
 
         # Restore metadata: cycle back
-        proc.send("m", press_enter=False)
+        proc.send("7", press_enter=False)
         settle(proc)
-        proc.send("m", press_enter=False)
+        proc.send("7", press_enter=False)
         settle(proc)
 
 
@@ -143,7 +143,7 @@ class TestRenderingPerformance:
     def test_rendering_handles_multiple_requests(self, class_proc_with_port):
         proc, port = class_proc_with_port
 
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
 
         for i in range(5):
@@ -154,9 +154,9 @@ class TestRenderingPerformance:
         assert proc.is_alive()
 
         # Clean up: cycle back
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
 
     def test_rendering_survives_rapid_filter_changes(self, class_proc_with_port):
@@ -168,13 +168,13 @@ class TestRenderingPerformance:
         # Rapidly cycle filters (3 presses each = back to original state)
         for _ in range(1):
             for _ in range(3):
-                proc.send("h", press_enter=False)
+                proc.send("1", press_enter=False)
                 time.sleep(0.05)
             for _ in range(3):
-                proc.send("m", press_enter=False)
+                proc.send("7", press_enter=False)
                 time.sleep(0.05)
             for _ in range(3):
-                proc.send("e", press_enter=False)
+                proc.send("6", press_enter=False)
                 time.sleep(0.05)
 
         settle(proc, 0.3)
@@ -187,7 +187,7 @@ class TestBlockRendering:
     def test_separator_block_renders(self, class_proc_with_port):
         proc, port = class_proc_with_port
 
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
 
         _send_request(port, content="Test-SeparatorBlock")
@@ -195,9 +195,9 @@ class TestBlockRendering:
         assert proc.is_alive()
 
         # Clean up
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
 
     def test_text_content_block_renders(self, class_proc_with_port):
@@ -223,7 +223,7 @@ class TestColorScheme:
         proc = start_cc_dump(port=port)
         assert proc.is_alive()
 
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
 
         _send_request(port, content="First")

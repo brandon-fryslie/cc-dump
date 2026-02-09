@@ -88,50 +88,50 @@ class TestFilterToggles:
 
     def test_toggle_headers_filter(self, class_proc):
         proc = class_proc
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
         assert proc.is_alive()
 
     def test_toggle_tools_filter(self, class_proc):
         proc = class_proc
-        proc.send("t", press_enter=False)
+        proc.send("4", press_enter=False)
         settle(proc)
-        proc.send("t", press_enter=False)
+        proc.send("4", press_enter=False)
         settle(proc)
         assert proc.is_alive()
 
     def test_toggle_system_filter(self, class_proc):
         proc = class_proc
-        proc.send("s", press_enter=False)
+        proc.send("5", press_enter=False)
         settle(proc)
-        proc.send("s", press_enter=False)
+        proc.send("5", press_enter=False)
         settle(proc)
         assert proc.is_alive()
 
     def test_toggle_budget_filter(self, class_proc):
         proc = class_proc
-        proc.send("e", press_enter=False)
+        proc.send("6", press_enter=False)
         settle(proc)
-        proc.send("e", press_enter=False)
+        proc.send("6", press_enter=False)
         settle(proc)
         assert proc.is_alive()
 
     def test_toggle_metadata_filter(self, class_proc):
         proc = class_proc
-        proc.send("m", press_enter=False)
+        proc.send("7", press_enter=False)
         settle(proc)
-        proc.send("m", press_enter=False)
+        proc.send("7", press_enter=False)
         settle(proc)
         assert proc.is_alive()
 
     def test_multiple_filter_toggles_in_sequence(self, class_proc):
         proc = class_proc
-        for key in ["h", "t", "s", "e", "m"]:
+        for key in ["1", "4", "5", "6", "7"]:
             proc.send(key, press_enter=False)
             settle(proc)
-        for key in ["h", "t", "s", "e", "m"]:
+        for key in ["1", "4", "5", "6", "7"]:
             proc.send(key, press_enter=False)
             settle(proc)
         assert proc.is_alive()
@@ -142,25 +142,25 @@ class TestPanelToggles:
 
     def test_toggle_stats_panel(self, class_proc):
         proc = class_proc
-        proc.send("a", press_enter=False)
+        proc.send("3", press_enter=False)
         settle(proc)
-        proc.send("a", press_enter=False)
+        proc.send("3", press_enter=False)
         settle(proc)
         assert proc.is_alive()
 
     def test_toggle_economics_panel(self, class_proc):
         proc = class_proc
-        proc.send("c", press_enter=False)
+        proc.send("8", press_enter=False)
         settle(proc, 0.1)
-        proc.send("c", press_enter=False)
+        proc.send("8", press_enter=False)
         settle(proc)
         assert proc.is_alive()
 
     def test_toggle_timeline_panel(self, class_proc):
         proc = class_proc
-        proc.send("l", press_enter=False)
+        proc.send("9", press_enter=False)
         settle(proc, 0.1)
-        proc.send("l", press_enter=False)
+        proc.send("9", press_enter=False)
         settle(proc)
         assert proc.is_alive()
 
@@ -185,7 +185,7 @@ class TestRequestHandling:
 
     def test_displays_request_when_received(self, class_proc_with_port):
         proc, port = class_proc_with_port
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
 
         _send_request(port, content="Hello")
@@ -195,7 +195,7 @@ class TestRequestHandling:
         assert proc.is_alive()
 
         # Clean up: toggle headers back off
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
 
     def test_handles_multiple_requests(self, class_proc_with_port):
@@ -223,18 +223,18 @@ class TestDatabaseIntegration:
 
     def test_economics_panel_queries_database(self, class_proc):
         proc = class_proc
-        proc.send("c", press_enter=False)
+        proc.send("8", press_enter=False)
         settle(proc, 0.1)
         assert proc.is_alive()
-        proc.send("c", press_enter=False)
+        proc.send("8", press_enter=False)
         settle(proc)
 
     def test_timeline_panel_queries_database(self, class_proc):
         proc = class_proc
-        proc.send("l", press_enter=False)
+        proc.send("9", press_enter=False)
         settle(proc, 0.1)
         assert proc.is_alive()
-        proc.send("l", press_enter=False)
+        proc.send("9", press_enter=False)
         settle(proc)
 
 
@@ -246,9 +246,9 @@ class TestVisualIndicators:
         proc = start_cc_dump(port=port)
         assert proc.is_alive()
 
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
-        proc.send("m", press_enter=False)
+        proc.send("7", press_enter=False)
         settle(proc)
 
         _send_request(port, content="Test")
@@ -268,24 +268,24 @@ class TestContentFiltering:
 
         content_without_headers = proc.get_content()
 
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc, 0.1)
         content_with_headers = proc.get_content()
 
         assert proc.is_alive()
 
         # Clean up
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
 
     def test_tools_filter_controls_tool_visibility(self, class_proc_with_port):
         proc, port = class_proc_with_port
 
-        proc.send("t", press_enter=False)
+        proc.send("4", press_enter=False)
         settle(proc)
         assert proc.is_alive()
 
-        proc.send("t", press_enter=False)
+        proc.send("4", press_enter=False)
         settle(proc)
         assert proc.is_alive()
 
@@ -295,9 +295,9 @@ class TestContentFiltering:
         _send_request(port, content="Test-MetadataFilter")
         wait_for_content(proc, timeout=2)
 
-        proc.send("m", press_enter=False)
+        proc.send("7", press_enter=False)
         settle(proc, 0.1)
-        proc.send("m", press_enter=False)
+        proc.send("7", press_enter=False)
         settle(proc, 0.1)
 
         assert proc.is_alive()
@@ -321,12 +321,12 @@ class TestStatsPanel:
     def test_stats_panel_can_be_hidden(self, class_proc_with_port):
         proc, port = class_proc_with_port
 
-        proc.send("a", press_enter=False)
+        proc.send("3", press_enter=False)
         settle(proc, 0.1)
         assert proc.is_alive()
 
         # Restore
-        proc.send("a", press_enter=False)
+        proc.send("3", press_enter=False)
         settle(proc)
 
 
@@ -356,7 +356,7 @@ class TestErrorHandling:
         proc, port = class_proc_with_port
 
         for _ in range(10):
-            for key in ["h", "t", "s", "e", "m"]:
+            for key in ["1", "4", "5", "6", "7"]:
                 proc.send(key, press_enter=False)
                 time.sleep(0.05)
 
@@ -377,11 +377,11 @@ class TestRenderingStability:
     def test_tui_rerender_on_filter_change(self, class_proc_with_port):
         proc, port = class_proc_with_port
 
-        proc.send("e", press_enter=False)
+        proc.send("6", press_enter=False)
         settle(proc, 0.1)
         assert proc.is_alive()
 
-        proc.send("e", press_enter=False)
+        proc.send("6", press_enter=False)
         settle(proc, 0.1)
         assert proc.is_alive()
 
@@ -411,9 +411,9 @@ class TestFooterBindings:
     def test_footer_persists_during_operation(self, class_proc):
         proc = class_proc
 
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
-        proc.send("t", press_enter=False)
+        proc.send("4", press_enter=False)
         settle(proc)
 
         content = wait_for_content(
@@ -424,9 +424,9 @@ class TestFooterBindings:
         assert "quit" in content or "headers" in content
 
         # Clean up
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
-        proc.send("t", press_enter=False)
+        proc.send("4", press_enter=False)
         settle(proc)
 
         assert proc.is_alive()
@@ -466,18 +466,18 @@ class TestNoDatabase:
 
     def test_economics_panel_empty_without_database(self, class_proc):
         proc = class_proc
-        proc.send("c", press_enter=False)
+        proc.send("8", press_enter=False)
         settle(proc, 0.1)
         assert proc.is_alive()
-        proc.send("c", press_enter=False)
+        proc.send("8", press_enter=False)
         settle(proc)
 
     def test_timeline_panel_empty_without_database(self, class_proc):
         proc = class_proc
-        proc.send("l", press_enter=False)
+        proc.send("9", press_enter=False)
         settle(proc, 0.1)
         assert proc.is_alive()
-        proc.send("l", press_enter=False)
+        proc.send("9", press_enter=False)
         settle(proc)
 
 
@@ -487,39 +487,39 @@ class TestIntegrationScenarios:
     def test_complete_filter_workflow(self, class_proc_with_port):
         proc, port = class_proc_with_port
 
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
-        proc.send("e", press_enter=False)
+        proc.send("6", press_enter=False)
         settle(proc)
 
         _send_request(port, content="Hello", extra_json={"max_tokens": 100})
         wait_for_content(proc, timeout=2)
 
-        proc.send("m", press_enter=False)
+        proc.send("7", press_enter=False)
         settle(proc)
-        proc.send("c", press_enter=False)
+        proc.send("8", press_enter=False)
         settle(proc, 0.1)
 
         assert proc.is_alive()
 
         # Clean up filters to initial state
-        proc.send("h", press_enter=False)
+        proc.send("1", press_enter=False)
         settle(proc)
-        proc.send("e", press_enter=False)
+        proc.send("6", press_enter=False)
         settle(proc)
-        proc.send("m", press_enter=False)
+        proc.send("7", press_enter=False)
         settle(proc)
-        proc.send("c", press_enter=False)
+        proc.send("8", press_enter=False)
         settle(proc)
 
     def test_panel_management_workflow(self, class_proc_with_port):
         proc, port = class_proc_with_port
 
-        proc.send("c", press_enter=False)
+        proc.send("8", press_enter=False)
         settle(proc)
-        proc.send("l", press_enter=False)
+        proc.send("9", press_enter=False)
         settle(proc)
-        proc.send("a", press_enter=False)
+        proc.send("3", press_enter=False)
         settle(proc)
         proc.send("\x0c", press_enter=False)
         settle(proc, 0.1)
@@ -527,13 +527,170 @@ class TestIntegrationScenarios:
         assert proc.is_alive()
 
         # Clean up — restore to defaults
-        proc.send("c", press_enter=False)
+        proc.send("8", press_enter=False)
         settle(proc)
-        proc.send("l", press_enter=False)
+        proc.send("9", press_enter=False)
         settle(proc)
         proc.send("\x0c", press_enter=False)
         settle(proc)
-        proc.send("a", press_enter=False)
+        proc.send("3", press_enter=False)
         settle(proc)
 
+        assert proc.is_alive()
+
+
+class TestSearch:
+    """Test vim-style search functionality — shared process+port."""
+
+    def test_search_open_type_escape_cycle(self, class_proc_with_port):
+        """Verify search open/type/escape cycle doesn't crash."""
+        proc, port = class_proc_with_port
+
+        # Send a request so there's content to search
+        _send_request(port, content="Search-UniqueTestContent-XYZ123")
+        wait_for_content(proc, timeout=2)
+
+        # Open search, type, escape — full cycle
+        proc.send("/", press_enter=False)
+        settle(proc, 0.2)
+        for ch in "test":
+            proc.send(ch, press_enter=False)
+            settle(proc, 0.05)
+        settle(proc, 0.2)
+        proc.send("\x1b", press_enter=False)
+        settle(proc, 0.2)
+        assert proc.is_alive()
+
+    def test_search_enter_and_navigation(self, class_proc_with_port):
+        """Verify search commit and n/N navigation survive without crash."""
+        proc, port = class_proc_with_port
+
+        # Send request with known content
+        _send_request(port, content="Navigate-SearchTarget-ABC")
+        wait_for_content(proc, timeout=2)
+
+        # Open search, type query, commit
+        proc.send("/", press_enter=False)
+        settle(proc, 0.2)
+        for ch in "user":
+            proc.send(ch, press_enter=False)
+            settle(proc, 0.05)
+        settle(proc, 0.3)  # wait for debounce
+        proc.send("\r", press_enter=False)
+        settle(proc, 0.2)
+
+        # Navigate forward/backward
+        proc.send("n", press_enter=False)
+        settle(proc, 0.1)
+        proc.send("N", press_enter=False)
+        settle(proc, 0.1)
+        proc.send("n", press_enter=False)
+        settle(proc, 0.1)
+
+        assert proc.is_alive()
+
+        # Escape to close
+        proc.send("\x1b", press_enter=False)
+        settle(proc, 0.2)
+        assert proc.is_alive()
+
+    def test_search_re_edit_query(self, class_proc_with_port):
+        """Verify / in navigating mode re-opens editing."""
+        proc, port = class_proc_with_port
+
+        # Open search, type, commit
+        proc.send("/", press_enter=False)
+        settle(proc, 0.2)
+        for ch in "abc":
+            proc.send(ch, press_enter=False)
+            settle(proc, 0.05)
+        proc.send("\r", press_enter=False)
+        settle(proc, 0.2)
+
+        # Press / again to re-edit
+        proc.send("/", press_enter=False)
+        settle(proc, 0.2)
+
+        # Escape to close
+        proc.send("\x1b", press_enter=False)
+        settle(proc, 0.2)
+        assert proc.is_alive()
+
+    def test_search_no_crash_on_empty_content(self, class_proc):
+        """Verify search on empty conversation doesn't crash."""
+        proc = class_proc
+
+        # Open search on empty conversation
+        proc.send("/", press_enter=False)
+        settle(proc, 0.2)
+
+        # Type and commit with no matches
+        for ch in "nonexistent":
+            proc.send(ch, press_enter=False)
+            settle(proc, 0.05)
+        proc.send("\r", press_enter=False)
+        settle(proc, 0.2)
+        assert proc.is_alive()
+
+        # Escape to close
+        proc.send("\x1b", press_enter=False)
+        settle(proc, 0.2)
+        assert proc.is_alive()
+
+    def test_search_with_invalid_regex(self, class_proc_with_port):
+        """Verify invalid regex mid-typing doesn't crash."""
+        proc, port = class_proc_with_port
+
+        _send_request(port, content="RegexTest")
+        wait_for_content(proc, timeout=2)
+
+        # Open search and type invalid regex
+        proc.send("/", press_enter=False)
+        settle(proc, 0.2)
+        for ch in "[invalid":
+            proc.send(ch, press_enter=False)
+            settle(proc, 0.05)
+        settle(proc, 0.3)  # wait for debounce
+        assert proc.is_alive()
+
+        # Commit should also survive
+        proc.send("\r", press_enter=False)
+        settle(proc, 0.2)
+        assert proc.is_alive()
+
+        # Escape
+        proc.send("\x1b", press_enter=False)
+        settle(proc, 0.2)
+        assert proc.is_alive()
+
+    def test_search_normal_keys_pass_through_in_navigating(self, class_proc_with_port):
+        """Verify j/k/G keys work normally in navigating phase."""
+        proc, port = class_proc_with_port
+
+        _send_request(port, content="PassthroughTest")
+        wait_for_content(proc, timeout=2)
+
+        # Open search, commit with a query
+        proc.send("/", press_enter=False)
+        settle(proc, 0.2)
+        for ch in "user":
+            proc.send(ch, press_enter=False)
+            settle(proc, 0.05)
+        proc.send("\r", press_enter=False)
+        settle(proc, 0.2)
+
+        # Vim navigation keys should work in navigating phase
+        proc.send("j", press_enter=False)
+        settle(proc, 0.05)
+        proc.send("k", press_enter=False)
+        settle(proc, 0.05)
+        proc.send("G", press_enter=False)
+        settle(proc, 0.05)
+        proc.send("g", press_enter=False)
+        settle(proc, 0.05)
+        assert proc.is_alive()
+
+        # Escape
+        proc.send("\x1b", press_enter=False)
+        settle(proc, 0.2)
         assert proc.is_alive()

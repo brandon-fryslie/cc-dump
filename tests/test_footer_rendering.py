@@ -45,14 +45,14 @@ class TestFooterMarkupRendering:
         footer_text = ' '.join(footer_lines).lower()
 
         duplicate_patterns = [
-            (" h h", "headers"),
-            (" t t", "tools"),
-            (" s s", "system"),
-            (" e e", "context"),
-            (" m m", "metadata"),
-            (" a a", "stats"),
-            (" c c", "cost"),
-            (" l l", "timeline"),
+            (" 1 1", "headers"),
+            (" 4 4", "tools"),
+            (" 5 5", "system"),
+            (" 6 6", "budget"),
+            (" 7 7", "metadata"),
+            (" 3 3", "assistant"),
+            (" 8 8", "cost"),
+            (" 9 9", "timeline"),
         ]
 
         for pattern, binding_name in duplicate_patterns:
@@ -89,7 +89,7 @@ class TestFooterMarkupRendering:
         content = _get_footer_content(proc)
 
         lower_content = content.lower()
-        expected_features = ["headers", "tools", "system", "context", "metadata", "stats", "cost", "timeline"]
+        expected_features = ["headers", "tools", "system", "budget", "metadata", "user", "assistant", "cost", "timeline"]
         found = [feat for feat in expected_features if feat in lower_content]
 
         assert len(found) >= 3, \

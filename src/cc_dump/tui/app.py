@@ -3,7 +3,7 @@
 import queue
 from typing import Optional
 
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.css.query import NoMatches
 from textual.reactive import reactive
@@ -18,23 +18,27 @@ import cc_dump.formatting
 import cc_dump.tui.rendering
 import cc_dump.tui.widget_factory
 import cc_dump.tui.event_handlers
+import cc_dump.tui.search
 
 
 # [LAW:one-source-of-truth] [LAW:one-type-per-behavior]
 # (key, category, description, default_level, default_detail)
 _CATEGORY_CONFIG = [
-    ("h", "headers", "h|eaders", 1, 2),
-    ("u", "user", "u|ser", 3, 3),
-    ("a", "assistant", "a|ssistant", 3, 3),
-    ("t", "tools", "t|ools", 2, 2),
-    ("s", "system", "s|ystem", 2, 2),
-    ("e", "budget", "budg|e|t", 1, 2),
-    ("m", "metadata", "m|etadata", 1, 2),
+    ("1", "headers", "headers", 1, 2),
+    ("2", "user", "user", 3, 3),
+    ("3", "assistant", "assistant", 3, 3),
+    ("4", "tools", "tools", 2, 2),
+    ("5", "system", "system", 2, 2),
+    ("6", "budget", "budget", 1, 2),
+    ("7", "metadata", "metadata", 1, 2),
 ]
 
 # Build lookup dicts from config
 _VIS_ATTR = {name: f"vis_{name}" for _, name, _, _, _ in _CATEGORY_CONFIG}
 _DEFAULT_DETAIL = {name: detail for _, name, _, _, detail in _CATEGORY_CONFIG}
+
+# Mapping for shift+number detail toggle keys
+_SHIFTED_NUMBERS = {"1": "!", "2": "@", "3": "#", "4": "$", "5": "%", "6": "^", "7": "&"}
 
 
 class CcDumpApp(App):
@@ -46,18 +50,31 @@ class CcDumpApp(App):
     BINDINGS = []
     for key, name, desc, _, _ in _CATEGORY_CONFIG:
         BINDINGS.append(Binding(key, f"toggle_vis('{name}')", desc, show=True))
-        BINDINGS.append(Binding(key.upper(), f"toggle_detail('{name}')", show=False))
+        # Use shifted number for detail toggle
+        detail_key = _SHIFTED_NUMBERS.get(key, key.upper())
+        BINDINGS.append(Binding(detail_key, f"toggle_detail('{name}')", show=False))
         BINDINGS.append(
             Binding(f"ctrl+shift+{key}", f"toggle_expand('{name}')", show=False)
         )
-    # Non-category bindings stay explicit
+    # Non-category bindings
     BINDINGS.extend(
         [
-            Binding("c", "toggle_economics", "c|ost", show=True),
-            Binding("l", "toggle_timeline", "time|l|ine", show=True),
-            Binding("ctrl+l", "toggle_logs", "Logs", show=False),
-            Binding("C", "toggle_economics_breakdown", "Model breakdown", show=False),
-            Binding("f", "toggle_follow", "f|ollow", show=True),
+            Binding("8", "toggle_economics", "cost", show=True),
+            Binding("9", "toggle_timeline", "timeline", show=True),
+            Binding("0", "toggle_follow", "follow", show=True),
+            Binding("*", "toggle_economics_breakdown", show=False),
+            Binding("ctrl+l", "toggle_logs", show=False),
+            # Vim navigation bindings
+            Binding("g", "go_top", show=False),
+            Binding("G", "go_bottom", show=False),
+            Binding("j", "scroll_down_line", show=False),
+            Binding("k", "scroll_up_line", show=False),
+            Binding("h", "scroll_left_col", show=False),
+            Binding("l", "scroll_right_col", show=False),
+            Binding("ctrl+f", "page_down", show=False),
+            Binding("ctrl+b", "page_up", show=False),
+            Binding("ctrl+d", "half_page_down", show=False),
+            Binding("ctrl+u", "half_page_up", show=False),
         ]
     )
 
@@ -108,12 +125,29 @@ class CcDumpApp(App):
         # Remember detail level when toggling visibility
         self._remembered_detail = dict(_DEFAULT_DETAIL)
 
+        # Search state
+        self._search_state = cc_dump.tui.search.SearchState()
+
         # Widget IDs for querying (set after compose)
         self._conv_id = "conversation-view"
+        self._search_bar_id = "search-bar"
         self._stats_id = "stats-panel"
         self._economics_id = "economics-panel"
         self._timeline_id = "timeline-panel"
         self._logs_id = "logs-panel"
+
+    def get_system_commands(self, screen):
+        """Add category filter and panel commands to command palette."""
+        yield from super().get_system_commands(screen)
+        for _key, name, _desc, _, _ in _CATEGORY_CONFIG:
+            yield SystemCommand(f"Toggle {name}", f"Show/hide {name}", lambda n=name: self.action_toggle_vis(n))
+            yield SystemCommand(f"Cycle {name} detail", "SUMMARY <-> FULL", lambda n=name: self.action_toggle_detail(n))
+        yield SystemCommand("Toggle cost panel", "Economics panel", self.action_toggle_economics)
+        yield SystemCommand("Toggle timeline", "Timeline panel", self.action_toggle_timeline)
+        yield SystemCommand("Toggle logs", "Debug logs", self.action_toggle_logs)
+        yield SystemCommand("Go to top", "Scroll to start", self.action_go_top)
+        yield SystemCommand("Go to bottom", "Scroll to end", self.action_go_bottom)
+        yield SystemCommand("Toggle follow mode", "Auto-scroll", self.action_toggle_follow)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -121,6 +155,10 @@ class CcDumpApp(App):
         conv = cc_dump.tui.widget_factory.create_conversation_view()
         conv.id = self._conv_id
         yield conv
+
+        search_bar = cc_dump.tui.search.SearchBar()
+        search_bar.id = self._search_bar_id
+        yield search_bar
 
         economics = cc_dump.tui.widget_factory.create_economics_panel()
         economics.id = self._economics_id
@@ -209,6 +247,9 @@ class CcDumpApp(App):
 
     def _get_logs(self):
         return self._query_safe("#" + self._logs_id)
+
+    def _get_search_bar(self):
+        return self._query_safe("#" + self._search_bar_id)
 
     def _get_footer(self):
         try:
@@ -328,6 +369,14 @@ class CcDumpApp(App):
         # Notify user
         self.notify("[hot-reload] modules reloaded", severity="information")
         self._log("INFO", f"Hot-reload: {', '.join(reloaded_modules)}")
+
+        # Cancel any active search on reload (state references may be stale)
+        SearchPhase = cc_dump.tui.search.SearchPhase
+        if self._search_state.phase != SearchPhase.INACTIVE:
+            self._search_state = cc_dump.tui.search.SearchState()
+            bar = self._get_search_bar()
+            if bar is not None:
+                bar.display = False
 
         # Check if widget_factory was reloaded - if so, replace widgets
         try:
@@ -619,6 +668,69 @@ class CcDumpApp(App):
         if conv is not None:
             conv.toggle_follow()
 
+    def action_go_top(self):
+        """Scroll to top and disable follow mode."""
+        conv = self._get_conv()
+        if conv is not None:
+            conv._follow_mode = False
+            conv.scroll_home(animate=False)
+
+    def action_go_bottom(self):
+        """Scroll to bottom and enable follow mode."""
+        conv = self._get_conv()
+        if conv is not None:
+            conv.scroll_to_bottom()
+
+    def action_scroll_down_line(self):
+        """Scroll down one line."""
+        conv = self._get_conv()
+        if conv is not None:
+            conv.scroll_relative(y=1)
+
+    def action_scroll_up_line(self):
+        """Scroll up one line."""
+        conv = self._get_conv()
+        if conv is not None:
+            conv.scroll_relative(y=-1)
+
+    def action_scroll_left_col(self):
+        """Scroll left one column."""
+        conv = self._get_conv()
+        if conv is not None:
+            conv.scroll_relative(x=-1)
+
+    def action_scroll_right_col(self):
+        """Scroll right one column."""
+        conv = self._get_conv()
+        if conv is not None:
+            conv.scroll_relative(x=1)
+
+    def action_page_down(self):
+        """Scroll down one page."""
+        conv = self._get_conv()
+        if conv is not None:
+            conv.action_page_down()
+
+    def action_page_up(self):
+        """Scroll up one page."""
+        conv = self._get_conv()
+        if conv is not None:
+            conv.action_page_up()
+
+    def action_half_page_down(self):
+        """Scroll down half a page."""
+        conv = self._get_conv()
+        if conv is not None:
+            height = conv.scrollable_content_region.height
+            conv.scroll_relative(y=height // 2)
+
+    def action_half_page_up(self):
+        """Scroll up half a page."""
+        conv = self._get_conv()
+        if conv is not None:
+            height = conv.scrollable_content_region.height
+            conv.scroll_relative(y=-(height // 2))
+
     def _refresh_economics(self):
         """Update tool economics panel with current data from database."""
         if not self.is_running or not self._db_path or not self._session_id:
@@ -674,6 +786,366 @@ class CcDumpApp(App):
 
     def watch_show_logs(self, value):
         pass  # visibility handled in action handler
+
+    # ─── Search ────────────────────────────────────────────────────────────
+
+    def on_key(self, event) -> None:
+        """Handle keyboard input for search phases.
+
+        All search keys are handled here (not in static BINDINGS) because
+        behavior depends on the current search phase.
+        """
+        SearchPhase = cc_dump.tui.search.SearchPhase
+        phase = self._search_state.phase
+
+        if phase == SearchPhase.INACTIVE:
+            if event.character == "/":
+                event.prevent_default()
+                event.stop()
+                self._start_search()
+            return
+
+        if phase == SearchPhase.EDITING:
+            event.prevent_default()
+            event.stop()
+            self._handle_search_editing_key(event)
+            return
+
+        if phase == SearchPhase.NAVIGATING:
+            self._handle_search_navigating_key(event)
+            return
+
+    def _handle_search_editing_key(self, event) -> None:
+        """Handle keystrokes while editing the search query."""
+        SearchMode = cc_dump.tui.search.SearchMode
+        state = self._search_state
+        key = event.key
+
+        # Mode toggles (alt+key)
+        _MODE_TOGGLES = {
+            "alt+c": SearchMode.CASE_INSENSITIVE,
+            "alt+w": SearchMode.WORD_BOUNDARY,
+            "alt+r": SearchMode.REGEX,
+            "alt+i": SearchMode.INCREMENTAL,
+        }
+        if key in _MODE_TOGGLES:
+            state.modes ^= _MODE_TOGGLES[key]
+            self._update_search_bar()
+            if state.modes & SearchMode.INCREMENTAL:
+                self._schedule_incremental_search()
+            return
+
+        # Submit
+        if key == "enter":
+            self._commit_search()
+            return
+
+        # Cancel
+        if key == "escape":
+            self._cancel_search()
+            return
+
+        # Backspace
+        if key == "backspace":
+            if state.cursor_pos > 0:
+                state.query = (
+                    state.query[: state.cursor_pos - 1]
+                    + state.query[state.cursor_pos :]
+                )
+                state.cursor_pos -= 1
+                self._update_search_bar()
+                if state.modes & SearchMode.INCREMENTAL:
+                    self._schedule_incremental_search()
+            return
+
+        # Delete
+        if key == "delete":
+            if state.cursor_pos < len(state.query):
+                state.query = (
+                    state.query[: state.cursor_pos]
+                    + state.query[state.cursor_pos + 1 :]
+                )
+                self._update_search_bar()
+                if state.modes & SearchMode.INCREMENTAL:
+                    self._schedule_incremental_search()
+            return
+
+        # Cursor movement
+        if key == "left":
+            if state.cursor_pos > 0:
+                state.cursor_pos -= 1
+                self._update_search_bar()
+            return
+
+        if key == "right":
+            if state.cursor_pos < len(state.query):
+                state.cursor_pos += 1
+                self._update_search_bar()
+            return
+
+        if key == "home":
+            state.cursor_pos = 0
+            self._update_search_bar()
+            return
+
+        if key == "end":
+            state.cursor_pos = len(state.query)
+            self._update_search_bar()
+            return
+
+        # Printable character
+        if event.character and len(event.character) == 1 and event.character.isprintable():
+            state.query = (
+                state.query[: state.cursor_pos]
+                + event.character
+                + state.query[state.cursor_pos :]
+            )
+            state.cursor_pos += 1
+            self._update_search_bar()
+            if state.modes & SearchMode.INCREMENTAL:
+                self._schedule_incremental_search()
+            return
+
+    def _handle_search_navigating_key(self, event) -> None:
+        """Handle keystrokes while navigating search results."""
+        SearchPhase = cc_dump.tui.search.SearchPhase
+        key = event.key
+
+        # Navigate next/prev
+        if key == "n" or key == "enter":
+            event.prevent_default()
+            event.stop()
+            self._navigate_next()
+            return
+
+        if key == "N":
+            event.prevent_default()
+            event.stop()
+            self._navigate_prev()
+            return
+
+        # Re-edit query
+        if event.character == "/":
+            event.prevent_default()
+            event.stop()
+            self._search_state.phase = SearchPhase.EDITING
+            self._search_state.cursor_pos = len(self._search_state.query)
+            self._update_search_bar()
+            return
+
+        # Cancel
+        if key == "escape":
+            event.prevent_default()
+            event.stop()
+            self._cancel_search()
+            return
+
+        # All other keys pass through for normal scrolling/commands
+
+    def _start_search(self) -> None:
+        """Transition: INACTIVE → EDITING. Save filter state."""
+        SearchPhase = cc_dump.tui.search.SearchPhase
+        state = self._search_state
+        state.phase = SearchPhase.EDITING
+        state.query = ""
+        state.cursor_pos = 0
+        state.matches = []
+        state.current_index = 0
+        state.expanded_blocks = []
+        state.raised_categories = set()
+        # Save current filter state for restore on cancel
+        state.saved_filters = {
+            name: getattr(self, f"vis_{name}")
+            for _, name, _, _, _ in _CATEGORY_CONFIG
+        }
+        self._update_search_bar()
+
+    def _cancel_search(self) -> None:
+        """Transition: EDITING/NAVIGATING → INACTIVE. Restore filters."""
+        SearchPhase = cc_dump.tui.search.SearchPhase
+        state = self._search_state
+
+        # Clear block expansion overrides we set
+        self._clear_search_expand()
+
+        # Restore saved filter levels
+        for name, level in state.saved_filters.items():
+            setattr(self, f"vis_{name}", level)
+
+        # Reset state
+        state.phase = SearchPhase.INACTIVE
+        state.query = ""
+        state.matches = []
+        state.current_index = 0
+        state.expanded_blocks = []
+        state.raised_categories = set()
+
+        # Cancel debounce timer
+        if state.debounce_timer is not None:
+            state.debounce_timer.stop()
+            state.debounce_timer = None
+
+        self._update_search_bar()
+        # Re-render without search context (highlights removed)
+        conv = self._get_conv()
+        if conv is not None:
+            conv.rerender(self.active_filters)
+
+    def _commit_search(self) -> None:
+        """Transition: EDITING → NAVIGATING. Run final search, navigate to first result."""
+        SearchPhase = cc_dump.tui.search.SearchPhase
+        state = self._search_state
+
+        # Cancel debounce timer
+        if state.debounce_timer is not None:
+            state.debounce_timer.stop()
+            state.debounce_timer = None
+
+        # Run search
+        self._run_search()
+
+        if state.matches:
+            state.phase = SearchPhase.NAVIGATING
+            state.current_index = 0
+            self._navigate_to_current()
+        else:
+            state.phase = SearchPhase.NAVIGATING
+
+        self._update_search_bar()
+
+    def _schedule_incremental_search(self) -> None:
+        """Schedule a debounced incremental search (150ms)."""
+        state = self._search_state
+        if state.debounce_timer is not None:
+            state.debounce_timer.stop()
+        state.debounce_timer = self.set_timer(
+            0.15, self._run_incremental_search
+        )
+
+    def _run_incremental_search(self) -> None:
+        """Execute incremental search during editing."""
+        state = self._search_state
+        state.debounce_timer = None
+        self._run_search()
+        # Re-render with search highlights
+        self._search_rerender()
+        self._update_search_bar()
+
+    def _run_search(self) -> None:
+        """Compile pattern and find all matches."""
+        state = self._search_state
+        pattern = cc_dump.tui.search.compile_search_pattern(state.query, state.modes)
+        if pattern is None:
+            state.matches = []
+            state.current_index = 0
+            return
+
+        conv = self._get_conv()
+        if conv is None:
+            state.matches = []
+            return
+
+        state.matches = cc_dump.tui.search.find_all_matches(conv._turns, pattern)
+        # Clamp current_index
+        if state.current_index >= len(state.matches):
+            state.current_index = 0
+
+    def _navigate_next(self) -> None:
+        """Move to next match (wraps around)."""
+        state = self._search_state
+        if not state.matches:
+            return
+        state.current_index = (state.current_index + 1) % len(state.matches)
+        self._navigate_to_current()
+
+    def _navigate_prev(self) -> None:
+        """Move to previous match (wraps around)."""
+        state = self._search_state
+        if not state.matches:
+            return
+        state.current_index = (state.current_index - 1) % len(state.matches)
+        self._navigate_to_current()
+
+    def _navigate_to_current(self) -> None:
+        """Navigate to the current match: raise category, expand block, scroll."""
+        state = self._search_state
+        if not state.matches:
+            return
+
+        match = state.matches[state.current_index]
+        conv = self._get_conv()
+        if conv is None:
+            return
+
+        # Clear previous expansion
+        self._clear_search_expand()
+
+        # Get the block
+        if match.turn_index >= len(conv._turns):
+            return
+        td = conv._turns[match.turn_index]
+        if match.block_index >= len(td.blocks):
+            return
+        block = td.blocks[match.block_index]
+
+        # Raise category visibility to FULL if needed
+        cat = cc_dump.tui.rendering.get_category(block)
+        if cat is not None:
+            attr = f"vis_{cat.value}"
+            current_level = getattr(self, attr, 3)
+            if current_level < 3:
+                setattr(self, attr, 3)
+                state.raised_categories.add(cat.value)
+
+        # Expand the specific block
+        block.expanded = True
+        state.expanded_blocks.append((match.turn_index, match.block_index))
+
+        # Re-render with search context and scroll
+        self._search_rerender()
+        conv.scroll_to_block(match.turn_index, match.block_index)
+        self._update_search_bar()
+
+    def _clear_search_expand(self) -> None:
+        """Reset block.expanded on blocks we expanded during search."""
+        conv = self._get_conv()
+        if conv is None:
+            return
+        state = self._search_state
+        for turn_idx, block_idx in state.expanded_blocks:
+            if turn_idx < len(conv._turns):
+                td = conv._turns[turn_idx]
+                if block_idx < len(td.blocks):
+                    td.blocks[block_idx].expanded = None
+        state.expanded_blocks.clear()
+
+    def _search_rerender(self) -> None:
+        """Re-render conversation with search highlights."""
+        state = self._search_state
+        conv = self._get_conv()
+        if conv is None:
+            return
+
+        pattern = cc_dump.tui.search.compile_search_pattern(state.query, state.modes)
+        search_ctx = None
+        if pattern is not None:
+            current_match = (
+                state.matches[state.current_index] if state.matches else None
+            )
+            search_ctx = cc_dump.tui.search.SearchContext(
+                pattern=pattern,
+                pattern_str=state.query,
+                current_match=current_match,
+                all_matches=state.matches,
+            )
+
+        conv.rerender(self.active_filters, search_ctx=search_ctx)
+
+    def _update_search_bar(self) -> None:
+        """Update the search bar widget display."""
+        bar = self._get_search_bar()
+        if bar is not None:
+            bar.update_display(self._search_state)
 
     def on_unmount(self):
         """Clean up when app exits."""

@@ -1,69 +1,119 @@
 # Quick Reference Card
 
+## Keyboard Shortcuts
+
+### Category Filters (Number Keys)
+
+| Key | Category | Action |
+|-----|----------|--------|
+| `1` | Headers | Toggle visibility (hidden ↔ remembered level) |
+| `2` | User | Toggle visibility |
+| `3` | Assistant | Toggle visibility |
+| `4` | Tools | Toggle visibility |
+| `5` | System | Toggle visibility |
+| `6` | Budget | Toggle visibility |
+| `7` | Metadata | Toggle visibility |
+
+| Key | Action | Description |
+|-----|--------|-------------|
+| `!`, `@`, `#`, etc. | Toggle detail | Switch between SUMMARY and FULL (level 2 ↔ 3) |
+| `Ctrl+Shift+<number>` | Expand/collapse all | Toggle all blocks in category |
+| Click | Expand/collapse block | Toggle individual block within current level |
+
+**Examples:**
+- `1` hides/shows headers
+- `!` (Shift+1) toggles headers between SUMMARY and FULL
+- `Ctrl+Shift+1` expands/collapses all header blocks
+
+### Panels & Modes
+
+| Key | Action |
+|-----|--------|
+| `8` | Toggle cost panel (economics) |
+| `9` | Toggle timeline panel |
+| `0` | Toggle follow mode (auto-scroll) |
+| `*` | Toggle economics breakdown (aggregate ↔ per-model) |
+| `Ctrl+L` | Toggle logs panel |
+| `Ctrl+P` | Command palette |
+
+### Vim-Style Navigation
+
+| Key | Action |
+|-----|--------|
+| `g` | Go to top (disables follow mode) |
+| `G` | Go to bottom (enables follow mode) |
+| `j` | Scroll down one line |
+| `k` | Scroll up one line |
+| `h` | Scroll left one column |
+| `l` | Scroll right one column |
+| `Ctrl+D` | Scroll down half page |
+| `Ctrl+U` | Scroll up half page |
+| `Ctrl+F` | Scroll down full page |
+| `Ctrl+B` | Scroll up full page |
+
 ## Visual Examples at Each Level
 
-### Example: System Prompts (s key)
+### Example: System Prompts (5 key)
 
-#### Level 1: EXISTENCE `·`
+#### Level 1: EXISTENCE `·` (fully hidden)
 ```
-▐ [sp-1] CHANGED (100→245 chars):
-▐ [sp-2] UNCHANGED (512 chars)
+(No output - category completely hidden)
 ```
-**What you see:** Just the tag, status, and size for each tracked content item. Diffs hidden.
+**What you see:** Nothing. Press `5` again to show at SUMMARY level.
 
 ---
 
 #### Level 2: SUMMARY `◐` (collapsed)
 ```
-▶ ▐ [sp-1] CHANGED (100→245 chars):
-    @@ -1,5 +1,8 @@
-    + You are Claude Code
-    ··· 8 more lines
+▐ ▶ [sp-1] CHANGED (100→245 chars):
+      @@ -1,5 +1,8 @@
+      + You are Claude Code
+      ··· 8 more lines
 
-▐ [sp-2] UNCHANGED (512 chars)
+▐   [sp-2] UNCHANGED (512 chars)
 ```
-**What you see:** First 3 lines of diff for changed items. Click `▶` to expand to 12 lines.
+**What you see:** First 3 lines of diff for changed items. Arrow (▶) appears after color bar for expandable blocks. Click arrow to expand to 12 lines.
 
 ---
 
 #### Level 2: SUMMARY `◐` (expanded)
 ```
-▼ ▐ [sp-1] CHANGED (100→245 chars):
-    @@ -1,5 +1,8 @@
-    + You are Claude Code
-    + You help users with software
-    + engineering tasks
-    - Old instruction removed
-    @@ -10,3 +13,6 @@
-    + More changes here
-    ··· 2 more lines
+▐ ▼ [sp-1] CHANGED (100→245 chars):
+      @@ -1,5 +1,8 @@
+      + You are Claude Code
+      + You help users with software
+      + engineering tasks
+      - Old instruction removed
+      @@ -10,3 +13,6 @@
+      + More changes here
+      ··· 2 more lines
 
-▐ [sp-2] UNCHANGED (512 chars)
+▐   [sp-2] UNCHANGED (512 chars)
 ```
-**What you see:** Up to 12 lines of diff. Click `▼` to collapse back to 3 lines.
+**What you see:** Up to 12 lines of diff. Arrow (▼) indicates expanded state. Click arrow to collapse back to 3 lines.
 
 ---
 
 #### Level 3: FULL `●`
 ```
-▼ ▐ [sp-1] CHANGED (100→245 chars):
-    @@ -1,5 +1,8 @@
-    + You are Claude Code
-    + You help users with software
-    + engineering tasks
-    - Old instruction removed
-    @@ -10,3 +13,6 @@
-    + More changes here
-    + Additional context
-    [complete diff visible - 15 lines total]
+▐ ▼ [sp-1] CHANGED (100→245 chars):
+      @@ -1,5 +1,8 @@
+      + You are Claude Code
+      + You help users with software
+      + engineering tasks
+      - Old instruction removed
+      @@ -10,3 +13,6 @@
+      + More changes here
+      + Additional context
+      [complete diff visible - 15 lines total]
 
-▐ [sp-2] UNCHANGED:
-    You are Claude Code, Anthropic's official CLI.
-    You are an interactive agent that helps users
-    with software engineering tasks...
-    [full content - 512 chars / 42 lines]
+▐   [sp-2] UNCHANGED:
+      You are Claude Code, Anthropic's official CLI.
+      You are an interactive agent that helps users
+      with software engineering tasks...
+      [full content - 512 chars / 42 lines]
 ```
-**What you see:** Complete diff and full content for all tracked items. Click `▼` on long items to collapse to 5-line preview.
+**What you see:** Complete diff and full content for all tracked items. Arrow (▼) on expandable blocks can be clicked to collapse to 5-line preview.
 
 ---
 
@@ -72,58 +122,63 @@
 ```
                     EXISTENCE          SUMMARY            FULL
                         ·                 ◐                ●
-                      (1 line)         (3-12 lines)    (5-∞ lines)
+                      (hidden)         (3-12 lines)    (5-∞ lines)
 
-Headers (h)        Turn structure    Basic headers    All HTTP headers
-Tools (t)          "used 3 tools"    Tool counts      Full use/results
-System (s)         Tag + status      First lines      Complete diffs
-User (u)           First line        3-12 lines       Full message
-Assistant (a)      First line        3-12 lines       Full message
-Metadata (m)       One-liner         Breakdown        All fields
-Budget (e)         Total tokens      Category split   Full accounting
+Headers (1)        Hidden            Basic headers    All HTTP headers
+Tools (4)          Hidden            Tool counts      Full use/results
+System (5)         Hidden            First lines      Complete diffs
+User (2)           Hidden            3-12 lines       Full message
+Assistant (3)      Hidden            3-12 lines       Full message
+Metadata (7)       Hidden            Breakdown        All fields
+Budget (6)         Hidden            Category split   Full accounting
 ```
 
 ## Default Configuration
 
 When cc-dump starts:
 ```
-h · headers      EXISTENCE  — clean turn structure
-u ● user         FULL       — see all user input
-a ● assistant    FULL       — see all responses
-t ◐ tools        SUMMARY    — compact tool view
-s ◐ system       SUMMARY    — system prompts with preview
-m · metadata     EXISTENCE  — one-line summaries
-e · budget       EXISTENCE  — token total only
+1 · headers      EXISTENCE  — hidden (clean view)
+2 ● user         FULL       — see all user input
+3 ● assistant    FULL       — see all responses
+4 ◐ tools        SUMMARY    — compact tool view
+5 ◐ system       SUMMARY    — system prompts with preview
+7 · metadata     EXISTENCE  — hidden
+6 · budget       EXISTENCE  — hidden
 ```
 
-**Result:** A clean conversation view with tool/system context available but not overwhelming.
+**Result:** A clean conversation view focused on user/assistant messages, with tool/system context available but not overwhelming.
 
 ## Common Workflows
 
 ### "I want to see EVERYTHING"
 ```bash
-# Press each key 3 times (or until you see ● in footer):
-h h h    # headers to FULL
-t t      # tools to FULL (already at SUMMARY)
-s s      # system to FULL
-m m m    # metadata to FULL
-e e e    # budget to FULL
+# Show all hidden categories:
+1        # show headers (toggles to remembered SUMMARY)
+7        # show metadata (toggles to remembered SUMMARY)
+6        # show budget (toggles to remembered SUMMARY)
+
+# Then upgrade detail levels to FULL:
+!        # headers SUMMARY → FULL
+$        # tools SUMMARY → FULL
+%        # system SUMMARY → FULL
+&        # metadata SUMMARY → FULL
+^        # budget SUMMARY → FULL
 ```
 
 ### "Hide ALL the noise"
 ```bash
-# Press each key until you see · in footer:
-h        # headers already at EXISTENCE
-t t      # tools to EXISTENCE
-s s      # system to EXISTENCE
-m        # metadata already at EXISTENCE
-e        # budget already at EXISTENCE
+# Hide everything except user/assistant:
+1        # hide headers (EXISTENCE → hidden)
+4        # hide tools (press until hidden)
+5        # hide system (press until hidden)
+# 7 and 6 already hidden at EXISTENCE
 ```
 Result: Ultra-compact view, just user/assistant messages.
 
 ### "Debug this tool call"
 ```bash
-t        # Press once or twice until tools show FULL (●)
+4        # If hidden, press to show at SUMMARY
+$        # Press Shift+4 to toggle to FULL (●)
          # Individual tool blocks appear
          # Click ▶ on long result to expand
          # Click ▼ to collapse when done
@@ -131,10 +186,10 @@ t        # Press once or twice until tools show FULL (●)
 
 ### "What changed in the system prompt?"
 ```bash
-s        # Press once to SUMMARY (◐)
+5        # Press to show at SUMMARY (◐) if hidden
          # See first lines of diff
          # Click ▶ on the changed item to see more
-s        # Press again to FULL (●)
+%        # Press Shift+5 to toggle to FULL (●)
          # Complete diff visible
 ```
 
@@ -152,17 +207,17 @@ Clicking a block **only works within the current level**:
 
 ## Footer Legend
 
-The footer shows current level for each category:
+The footer shows current level for each category with key number and icon:
 
 ```
-h·  t◐  s◐  m·  e·  u●  a●
-│   │   │   │   │   │   └─ assistant: FULL
-│   │   │   │   │   └───── user: FULL
-│   │   │   │   └───────── budget: EXISTENCE
-│   │   │   └───────────── metadata: EXISTENCE
-│   │   └───────────────── system: SUMMARY
-│   └───────────────────── tools: SUMMARY
-└───────────────────────── headers: EXISTENCE
+1·headers  2●user  3●assistant  4◐tools  5◐system  6·budget  7·metadata
+│          │       │            │        │          │         └─ metadata: EXISTENCE
+│          │       │            │        │          └─────────── budget: EXISTENCE
+│          │       │            │        └──────────────────────  system: SUMMARY
+│          │       │            └───────────────────────────────  tools: SUMMARY
+│          │       └────────────────────────────────────────────  assistant: FULL
+│          └────────────────────────────────────────────────────  user: FULL
+└───────────────────────────────────────────────────────────────  headers: EXISTENCE
 ```
 
 Active categories (level > EXISTENCE) have colored backgrounds matching their indicator bars.
@@ -173,9 +228,11 @@ Active categories (level > EXISTENCE) have colored backgrounds matching their in
 
 | Level | Collapsed | Expanded |
 |-------|-----------|----------|
-| EXISTENCE | 0 (hidden) | 1 (title only) |
+| EXISTENCE | 0 (hidden) | 0 (hidden) |
 | SUMMARY | 3 lines | 12 lines |
 | FULL | 5 lines | unlimited |
+
+**Note:** EXISTENCE level is now fully hidden (0 lines). Use SUMMARY level for compact views with titles/summaries.
 
 ### Category Assignment
 
@@ -184,15 +241,18 @@ Active categories (level > EXISTENCE) have colored backgrounds matching their in
 
 ### Tool Summarization
 
-At SUMMARY or EXISTENCE, consecutive tool use/result blocks are automatically combined into a single summary line:
+At SUMMARY level, consecutive tool use/result blocks are automatically combined into a single summary line:
 ```
-[used 3 tools: Read 2x, Bash 1x]
+▐   [used 3 tools: Read 2x, Bash 1x]
 ```
 
-At FULL, individual blocks are shown.
+At EXISTENCE level, tools are completely hidden (no summary line).
+
+At FULL level, individual blocks are shown with full details.
 
 ### State Persistence
 
-- **Level changes:** Cycling a category level clears all per-block expansion overrides for that category
-- **Click expansion:** Creates per-block overrides that persist until you cycle the level
+- **Level changes:** Toggling visibility or detail level clears all per-block expansion overrides for that category
+- **Click expansion:** Creates per-block overrides that persist until you change the level
+- **Remembered detail:** When you hide a category (level 1), it remembers whether it was at SUMMARY (2) or FULL (3), so toggling visibility restores the previous detail level
 - **Session:** Follow mode and scroll position persist across hot-reloads

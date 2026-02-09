@@ -6,6 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 cc-dump is a transparent HTTP proxy for monitoring Claude Code API traffic. It intercepts Anthropic API requests, tracks system prompt changes with diffs, and provides a real-time Textual TUI with HAR recording/replay capabilities. Python 3.10+, single production dependency (`textual`). See [PROJECT_SPEC.md](PROJECT_SPEC.md) for goals and [ARCHITECTURE.md](ARCHITECTURE.md) for system design.
 
+## Textual Framework Reference
+
+We use the Textual TUI framework. Reference documentation is in `dev-docs/textual-docs/`:
+
+**Always load first:** @dev-docs/textual-docs/CC_DUMP_USAGE.md - Summary of Textual APIs we actually use in cc-dump
+
+**Full reference:** @dev-docs/textual-docs/INDEX.md - Index of all 42 granular documentation files organized by category (core APIs, widgets, support modules)
+
+When working on TUI code, consult CC_DUMP_USAGE.md first to see what we use, then load specific files from the index as needed. Files are small (2-93KB) and focused on single concepts.
+
 ## Commands
 
 ```bash
@@ -101,10 +111,11 @@ When adding new modules, classify them as stable or reloadable and follow the co
 **Keyboard cycling:** `action_cycle_*()` in `app.py` cycles reactive `vis_*` (1→2→3→1) and clears per-block overrides via `_clear_overrides()`.
 
 **Key mappings:**
-- `h` headers, `u` user, `a` assistant, `t` tools, `s` system, `m` metadata, `e` budget
+- Number keys: `1` headers, `2` user, `3` assistant, `4` tools, `5` system, `6` budget, `7` metadata
+- Shift+number toggles detail (e.g., `!` for headers detail toggle)
+- Panels: `8` cost, `9` timeline, `0` follow mode
+- Vim navigation: `g`/`G` top/bottom, `j`/`k` line scroll, `h`/`l` column scroll, `ctrl+d`/`ctrl+u` half-page, `ctrl+f`/`ctrl+b` full-page
 - Default levels: headers/metadata/budget=EXISTENCE, user/assistant=FULL, tools/system=SUMMARY
-
-**Removed features:** Turn selection (j/k/n/N/g/G keys removed) — replaced with click-to-expand/collapse.
 
 ## Issue Tracking
 

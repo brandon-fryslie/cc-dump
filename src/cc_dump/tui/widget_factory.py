@@ -15,6 +15,7 @@ from textual.strip import Strip
 from textual.cache import LRUCache
 from textual.geometry import Size
 from rich.text import Text
+from rich.markdown import Markdown
 
 # Use module-level imports for hot-reload
 import cc_dump.palette
@@ -85,17 +86,20 @@ class TurnData:
         width: int,
         force: bool = False,
         block_cache=None,
+        search_ctx=None,
     ) -> bool:
         """Re-render if a relevant filter changed. Returns True if strips changed.
 
         Args:
             force: Force re-render even if filter snapshot hasn't changed.
             block_cache: Optional LRUCache for caching rendered strips per block.
+            search_ctx: Optional SearchContext for highlighting matches.
         """
         from cc_dump.formatting import Level
 
         snapshot = {k: filters.get(k, Level.FULL) for k in self.relevant_filter_keys}
-        if not force and snapshot == self._last_filter_snapshot:
+        # Force re-render when search context changes
+        if not force and search_ctx is None and snapshot == self._last_filter_snapshot:
             return False
         self._last_filter_snapshot = snapshot
         self._pending_filter_snapshot = None  # clear deferred state
@@ -105,6 +109,8 @@ class TurnData:
             console,
             width,
             block_cache=block_cache,
+            search_ctx=search_ctx,
+            turn_index=self.turn_index,
         )
         self._widest_strip = _compute_widest(self.strips)
         return True
@@ -377,9 +383,9 @@ class ConversationView(ScrollView):
         self._recalculate_offsets()
 
     def _render_single_block_to_strips(
-        self, text_obj: Text, console, width: int
+        self, renderable, console, width: int
     ) -> list:
-        """Render a single Rich Text object to Strip list.
+        """Render a single Rich renderable (Text, Markdown, etc.) to Strip list.
 
         Helper for rendering individual blocks during streaming.
         """
@@ -387,7 +393,7 @@ class ConversationView(ScrollView):
         from textual.strip import Strip
 
         render_options = console.options.update_width(width)
-        segments = console.render(text_obj, render_options)
+        segments = console.render(renderable, render_options)
         lines = list(Segment.split_lines(segments))
         if not lines:
             return []
@@ -401,6 +407,7 @@ class ConversationView(ScrollView):
         """Re-render delta buffer portion only.
 
         Replaces strips[_stable_strip_count:] with freshly rendered delta text.
+        Streaming deltas are always ASSISTANT category, so render as Markdown.
         """
         if not td._text_delta_buffer:
             # No delta text - trim to stable strips only
@@ -415,12 +422,12 @@ class ConversationView(ScrollView):
         )
         console = self.app.console
 
-        # Combine delta buffer into single text
+        # Combine delta buffer into Markdown (streaming deltas are ASSISTANT)
         combined_text = "".join(td._text_delta_buffer)
-        text_obj = Text(combined_text)
+        renderable = Markdown(combined_text)
 
         # Render to strips
-        delta_strips = self._render_single_block_to_strips(text_obj, console, width)
+        delta_strips = self._render_single_block_to_strips(renderable, console, width)
 
         # Replace delta tail
         td.strips = td.strips[: td._stable_strip_count] + delta_strips
@@ -430,7 +437,7 @@ class ConversationView(ScrollView):
         """Convert delta buffer to stable strips.
 
         If delta buffer has content, consolidate it into stable strips
-        and advance _stable_strip_count.
+        and advance _stable_strip_count. Streaming deltas are ASSISTANT, use Markdown.
         """
         if not td._text_delta_buffer:
             return
@@ -442,10 +449,10 @@ class ConversationView(ScrollView):
         )
         console = self.app.console
 
-        # Render delta buffer to strips
+        # Render delta buffer to strips as Markdown (streaming deltas are ASSISTANT)
         combined_text = "".join(td._text_delta_buffer)
-        text_obj = Text(combined_text)
-        delta_strips = self._render_single_block_to_strips(text_obj, console, width)
+        renderable = Markdown(combined_text)
+        delta_strips = self._render_single_block_to_strips(renderable, console, width)
 
         # Replace delta tail with stable strips
         td.strips = td.strips[: td._stable_strip_count] + delta_strips
@@ -510,6 +517,9 @@ class ConversationView(ScrollView):
 
         Handles TextDeltaBlock (buffer + render delta tail) and
         non-delta blocks (flush + render + stable prefix).
+
+        During streaming, only USER and ASSISTANT category blocks are rendered.
+        All blocks are stored in td.blocks for finalization.
         """
         if filters is None:
             filters = self._last_filters
@@ -520,8 +530,16 @@ class ConversationView(ScrollView):
 
         td = self._turns[-1]
 
-        # Add block to blocks list
+        # Add block to blocks list (always store for finalization)
         td.blocks.append(block)
+
+        # Filter: only render USER and ASSISTANT content during streaming
+        # [LAW:dataflow-not-control-flow] Category resolved via lookup, not control flow
+        from cc_dump.formatting import Category
+        block_category = cc_dump.tui.rendering.get_category(block)
+        if block_category not in (Category.USER, Category.ASSISTANT, None):
+            # Skip rendering (but keep in blocks for finalize). None = always visible (ErrorBlock etc)
+            return
 
         # [LAW:dataflow-not-control-flow] Dispatch via handler lookup
         block_type_name = type(block).__name__
@@ -560,6 +578,8 @@ class ConversationView(ScrollView):
 
         # Consolidate consecutive TextDeltaBlock runs into TextContentBlock
         # Use class name for hot-reload safety
+        from cc_dump.formatting import Category
+
         consolidated = []
         delta_buffer = []
 
@@ -567,10 +587,12 @@ class ConversationView(ScrollView):
             if type(block).__name__ == "TextDeltaBlock":
                 delta_buffer.append(block.text)
             else:
-                # Flush accumulated deltas as a single TextContentBlock
+                # Flush accumulated deltas as a single TextContentBlock with ASSISTANT category
                 if delta_buffer:
                     combined_text = "".join(delta_buffer)
-                    consolidated.append(TextContentBlock(text=combined_text))
+                    consolidated.append(
+                        TextContentBlock(text=combined_text, category=Category.ASSISTANT)
+                    )
                     delta_buffer.clear()
                 # Add the non-delta block
                 consolidated.append(block)
@@ -578,7 +600,9 @@ class ConversationView(ScrollView):
         # Flush any remaining deltas
         if delta_buffer:
             combined_text = "".join(delta_buffer)
-            consolidated.append(TextContentBlock(text=combined_text))
+            consolidated.append(
+                TextContentBlock(text=combined_text, category=Category.ASSISTANT)
+            )
 
         # Full re-render from consolidated blocks
         width = (
@@ -646,11 +670,15 @@ class ConversationView(ScrollView):
                     self.scroll_to(y=self._turns[idx].line_offset, animate=False)
                     return
 
-    def rerender(self, filters: dict):
+    def rerender(self, filters: dict, search_ctx=None):
         """Re-render affected turns in place. Preserves scroll position.
 
         Single strategy: capture turn-level anchor before re-render,
         restore after. Stateless — no state persists between calls.
+
+        Args:
+            filters: Current filter state (category name -> Level)
+            search_ctx: Optional SearchContext for highlighting matches
         """
         self._last_filters = filters
 
@@ -671,6 +699,9 @@ class ConversationView(ScrollView):
         # Viewport-only re-rendering: only process visible turns + buffer
         vp_start, vp_end = self._viewport_turn_range()
 
+        # When search is active, force re-render all viewport turns
+        force = search_ctx is not None
+
         first_changed = None
         for idx, td in enumerate(self._turns):
             # Skip streaming turns during filter changes
@@ -683,7 +714,9 @@ class ConversationView(ScrollView):
                     filters,
                     console,
                     width,
+                    force=force,
                     block_cache=self._block_strip_cache,
+                    search_ctx=search_ctx,
                 ):
                     if first_changed is None:
                         first_changed = idx
@@ -767,6 +800,27 @@ class ConversationView(ScrollView):
         self._follow_mode = True
         self._scrolling_programmatically = True
         self.scroll_end(animate=False)
+        self._scrolling_programmatically = False
+
+    def scroll_to_block(self, turn_index: int, block_index: int) -> None:
+        """Scroll to center a specific block in the viewport."""
+        if turn_index >= len(self._turns):
+            return
+        td = self._turns[turn_index]
+        strip_offset = td.strip_offset_for_block(block_index)
+        if strip_offset is None:
+            # Block filtered out — scroll to turn start instead
+            target_y = td.line_offset
+        else:
+            target_y = td.line_offset + strip_offset
+
+        # Center in viewport
+        viewport_height = self.scrollable_content_region.height
+        centered_y = max(0, target_y - viewport_height // 2)
+
+        self._follow_mode = False
+        self._scrolling_programmatically = True
+        self.scroll_to(y=centered_y, animate=False)
         self._scrolling_programmatically = False
 
     def _block_index_at_line(self, turn: TurnData, content_y: int) -> int | None:
@@ -1150,13 +1204,13 @@ class FilterStatusBar(Static):
 
         p = cc_dump.palette.PALETTE
         categories = [
-            ("h", "Headers", "headers"),
-            ("u", "User", "user"),
-            ("a", "Assistant", "assistant"),
-            ("t", "Tools", "tools"),
-            ("s", "System", "system"),
-            ("e", "Budget", "budget"),
-            ("m", "Metadata", "metadata"),
+            ("1", "Headers", "headers"),
+            ("2", "User", "user"),
+            ("3", "Assistant", "assistant"),
+            ("4", "Tools", "tools"),
+            ("5", "System", "system"),
+            ("6", "Budget", "budget"),
+            ("7", "Metadata", "metadata"),
         ]
 
         text = Text()

@@ -25,6 +25,13 @@ TimelinePanel {
     border: solid $accent;
 }
 
+SearchBar {
+    dock: bottom;
+    height: 1;
+    background: $surface;
+    padding: 0 1;
+}
+
 StatsPanel {
     height: 3;
     dock: bottom;

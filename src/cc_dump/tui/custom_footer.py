@@ -145,7 +145,7 @@ class StyledFooter(Footer):
                 key_widget.set_class(is_active, f"-active-{color}")
 
     def compose(self) -> ComposeResult:
-        """Compose footer with styled bindings (no key prefix shown)."""
+        """Compose footer with styled bindings and responsive layout."""
         if not self._bindings_ready:
             return
 
@@ -160,7 +160,40 @@ class StyledFooter(Footer):
         for binding, enabled, tooltip in bindings:
             action_to_bindings[binding.action].append((binding, enabled, tooltip))
 
-        self.styles.grid_size_columns = len(action_to_bindings)
+        # Calculate width needed for single row layout
+        # Each item: len(key_display) + 1 + len(description)
+        # Gap between items: 3 chars
+        total_width = 0
+        item_count = len(action_to_bindings)
+
+        for multi_bindings_list in action_to_bindings.values():
+            binding, _, _ = multi_bindings_list[0]
+            key_display = self.app.get_key_display(binding)
+            styled_desc = self._style_description(binding.description)
+            # Remove markup for width calculation (very rough - just remove tags)
+            plain_desc = styled_desc.replace("[bold]", "").replace("[/bold]", "")
+            total_width += len(key_display) + 1 + len(plain_desc)
+
+        # Add gaps (3 chars each between items)
+        if item_count > 1:
+            total_width += 3 * (item_count - 1)
+
+        # Determine layout based on available width
+        available_width = self.size.width if self.size.width > 0 else 80
+
+        if total_width <= available_width:
+            # Single row
+            self.styles.grid_size_columns = item_count
+            self.styles.grid_size_rows = 1
+            self.styles.max_height = 1
+            self.styles.grid_gutter_horizontal = 3
+        else:
+            # Two rows
+            cols = (item_count + 1) // 2  # ceiling division
+            self.styles.grid_size_columns = cols
+            self.styles.grid_size_rows = 2
+            self.styles.max_height = 2
+            self.styles.grid_gutter_horizontal = 3
 
         for group, multi_bindings_iterable in groupby(
             action_to_bindings.values(),
@@ -185,10 +218,11 @@ class StyledFooter(Footer):
                         if is_active and color:
                             classes += f" -active-{color}"
 
+                        key_display = self.app.get_key_display(binding)
                         yield StyledFooterKey(
                             binding.key,
-                            "",  # Don't show key display separately
-                            styled_desc,  # Show styled description only
+                            key_display,  # Show key display
+                            styled_desc,  # Show styled description
                             binding.action,
                             disabled=not enabled,
                             tooltip=tooltip or binding.description,
@@ -212,10 +246,11 @@ class StyledFooter(Footer):
                     if is_active and color:
                         classes = f"-active-{color}"
 
+                    key_display = self.app.get_key_display(binding)
                     yield StyledFooterKey(
                         binding.key,
-                        "",  # Don't show key display separately
-                        styled_desc,  # Show styled description only
+                        key_display,  # Show key display
+                        styled_desc,  # Show styled description
                         binding.action,
                         disabled=not enabled,
                         tooltip=tooltip,
@@ -254,26 +289,17 @@ class StyledFooter(Footer):
         """Get the accent color hex from palette."""
         return cc_dump.palette.PALETTE.accent
 
+    def on_resize(self, event):
+        """Recompose footer on resize to adapt layout."""
+        self.recompose()
+
     def _style_description(self, description: str) -> str:
-        """Convert pipe markers to rich markup for bold orange styling.
+        """Simplify description styling - with number keys, no pipe markers needed.
 
-        "x|yz" -> "[bold <accent>]x[/bold <accent>]yz"
-        "ab|c|de" -> "ab[bold <accent>]c[/bold <accent>]de"
+        Just return description unchanged. Keep method for potential future use
+        (e.g., level icons in update_active_state).
         """
-        parts = description.split("|")
-
-        if len(parts) == 1:
-            # No markers
-            return description
-        elif len(parts) == 2:
-            # Simple case: "x|yz"
-            return f"[bold {self._get_accent_color()}]{parts[0]}[/bold {self._get_accent_color()}]{parts[1]}"
-        elif len(parts) == 3:
-            # Middle marker: "ab|c|de"
-            return f"{parts[0]}[bold {self._get_accent_color()}]{parts[1]}[/bold {self._get_accent_color()}]{parts[2]}"
-        else:
-            # Fallback: remove all markers
-            return "".join(parts)
+        return description
 
 
 # Initialize palette colors at module load time

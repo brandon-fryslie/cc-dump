@@ -1,0 +1,338 @@
+[
+  {
+    "file": "core-app.xml",
+    "size_bytes": 94920,
+    "size_kb": 92.7,
+    "pattern": "src/textual/app.py",
+    "category": "core",
+    "name": "app"
+  },
+  {
+    "file": "core-widget.xml",
+    "size_bytes": 87346,
+    "size_kb": 85.3,
+    "pattern": "src/textual/widget.py",
+    "category": "core",
+    "name": "widget"
+  },
+  {
+    "file": "core-screen.xml",
+    "size_bytes": 35006,
+    "size_kb": 34.2,
+    "pattern": "src/textual/screen.py",
+    "category": "core",
+    "name": "screen"
+  },
+  {
+    "file": "core-containers.xml",
+    "size_bytes": 6201,
+    "size_kb": 6.1,
+    "pattern": "src/textual/containers.py",
+    "category": "core",
+    "name": "containers"
+  },
+  {
+    "file": "core-reactive.xml",
+    "size_bytes": 10541,
+    "size_kb": 10.3,
+    "pattern": "src/textual/reactive.py",
+    "category": "core",
+    "name": "reactive"
+  },
+  {
+    "file": "core-binding.xml",
+    "size_bytes": 10418,
+    "size_kb": 10.2,
+    "pattern": "src/textual/binding.py",
+    "category": "core",
+    "name": "binding"
+  },
+  {
+    "file": "core-dom.xml",
+    "size_bytes": 36162,
+    "size_kb": 35.3,
+    "pattern": "src/textual/dom.py",
+    "category": "core",
+    "name": "dom"
+  },
+  {
+    "file": "core-events.xml",
+    "size_bytes": 19318,
+    "size_kb": 18.9,
+    "pattern": "src/textual/events.py",
+    "category": "core",
+    "name": "events"
+  },
+  {
+    "file": "core-messages.xml",
+    "size_bytes": 4652,
+    "size_kb": 4.5,
+    "pattern": "src/textual/messages.py",
+    "category": "core",
+    "name": "messages"
+  },
+  {
+    "file": "core-worker.xml",
+    "size_bytes": 8844,
+    "size_kb": 8.6,
+    "pattern": "src/textual/worker.py",
+    "category": "core",
+    "name": "worker"
+  },
+  {
+    "file": "core-pilot.xml",
+    "size_bytes": 17362,
+    "size_kb": 17.0,
+    "pattern": "src/textual/pilot.py",
+    "category": "core",
+    "name": "pilot"
+  },
+  {
+    "file": "widget-button.xml",
+    "size_bytes": 7480,
+    "size_kb": 7.3,
+    "pattern": "src/textual/widgets/_button.py",
+    "category": "widget",
+    "name": "button"
+  },
+  {
+    "file": "widget-input.xml",
+    "size_bytes": 21879,
+    "size_kb": 21.4,
+    "pattern": "src/textual/widgets/_input.py",
+    "category": "widget",
+    "name": "input"
+  },
+  {
+    "file": "widget-label.xml",
+    "size_bytes": 2427,
+    "size_kb": 2.4,
+    "pattern": "src/textual/widgets/_label.py",
+    "category": "widget",
+    "name": "label"
+  },
+  {
+    "file": "widget-static.xml",
+    "size_bytes": 3985,
+    "size_kb": 3.9,
+    "pattern": "src/textual/widgets/_static.py",
+    "category": "widget",
+    "name": "static"
+  },
+  {
+    "file": "widget-data_table.xml",
+    "size_bytes": 54960,
+    "size_kb": 53.7,
+    "pattern": "src/textual/widgets/_data_table.py",
+    "category": "widget",
+    "name": "data_table"
+  },
+  {
+    "file": "widget-text_area.xml",
+    "size_bytes": 55173,
+    "size_kb": 53.9,
+    "pattern": "src/textual/widgets/_text_area.py",
+    "category": "widget",
+    "name": "text_area"
+  },
+  {
+    "file": "widget-markdown.xml",
+    "size_bytes": 24269,
+    "size_kb": 23.7,
+    "pattern": "src/textual/widgets/_markdown.py",
+    "category": "widget",
+    "name": "markdown"
+  },
+  {
+    "file": "widget-select.xml",
+    "size_bytes": 14438,
+    "size_kb": 14.1,
+    "pattern": "src/textual/widgets/_select.py",
+    "category": "widget",
+    "name": "select"
+  },
+  {
+    "file": "widget-option_list.xml",
+    "size_bytes": 21022,
+    "size_kb": 20.5,
+    "pattern": "src/textual/widgets/_option_list.py",
+    "category": "widget",
+    "name": "option_list"
+  },
+  {
+    "file": "widget-checkbox.xml",
+    "size_bytes": 2746,
+    "size_kb": 2.7,
+    "pattern": "src/textual/widgets/_checkbox.py",
+    "category": "widget",
+    "name": "checkbox"
+  },
+  {
+    "file": "widget-switch.xml",
+    "size_bytes": 4844,
+    "size_kb": 4.7,
+    "pattern": "src/textual/widgets/_switch.py",
+    "category": "widget",
+    "name": "switch"
+  },
+  {
+    "file": "widget-list_view.xml",
+    "size_bytes": 9584,
+    "size_kb": 9.4,
+    "pattern": "src/textual/widgets/_list_view.py",
+    "category": "widget",
+    "name": "list_view"
+  },
+  {
+    "file": "widget-tree.xml",
+    "size_bytes": 28509,
+    "size_kb": 27.8,
+    "pattern": "src/textual/widgets/_tree.py",
+    "category": "widget",
+    "name": "tree"
+  },
+  {
+    "file": "widget-directory_tree.xml",
+    "size_bytes": 13217,
+    "size_kb": 12.9,
+    "pattern": "src/textual/widgets/_directory_tree.py",
+    "category": "widget",
+    "name": "directory_tree"
+  },
+  {
+    "file": "widget-tabs.xml",
+    "size_bytes": 15002,
+    "size_kb": 14.7,
+    "pattern": "src/textual/widgets/_tabs.py",
+    "category": "widget",
+    "name": "tabs"
+  },
+  {
+    "file": "widget-tabbed_content.xml",
+    "size_bytes": 16433,
+    "size_kb": 16.0,
+    "pattern": "src/textual/widgets/_tabbed_content.py",
+    "category": "widget",
+    "name": "tabbed_content"
+  },
+  {
+    "file": "widget-collapsible.xml",
+    "size_bytes": 5855,
+    "size_kb": 5.7,
+    "pattern": "src/textual/widgets/_collapsible.py",
+    "category": "widget",
+    "name": "collapsible"
+  },
+  {
+    "file": "widget-progress_bar.xml",
+    "size_bytes": 8787,
+    "size_kb": 8.6,
+    "pattern": "src/textual/widgets/_progress_bar.py",
+    "category": "widget",
+    "name": "progress_bar"
+  },
+  {
+    "file": "widget-loading_indicator.xml",
+    "size_bytes": 3152,
+    "size_kb": 3.1,
+    "pattern": "src/textual/widgets/_loading_indicator.py",
+    "category": "widget",
+    "name": "loading_indicator"
+  },
+  {
+    "file": "widget-sparkline.xml",
+    "size_bytes": 4082,
+    "size_kb": 4.0,
+    "pattern": "src/textual/widgets/_sparkline.py",
+    "category": "widget",
+    "name": "sparkline"
+  },
+  {
+    "file": "widget-header.xml",
+    "size_bytes": 5302,
+    "size_kb": 5.2,
+    "pattern": "src/textual/widgets/_header.py",
+    "category": "widget",
+    "name": "header"
+  },
+  {
+    "file": "widget-footer.xml",
+    "size_bytes": 4568,
+    "size_kb": 4.5,
+    "pattern": "src/textual/widgets/_footer.py",
+    "category": "widget",
+    "name": "footer"
+  },
+  {
+    "file": "widget-log.xml",
+    "size_bytes": 7963,
+    "size_kb": 7.8,
+    "pattern": "src/textual/widgets/_log.py",
+    "category": "widget",
+    "name": "log"
+  },
+  {
+    "file": "widget-pretty.xml",
+    "size_bytes": 2828,
+    "size_kb": 2.8,
+    "pattern": "src/textual/widgets/_pretty.py",
+    "category": "widget",
+    "name": "pretty"
+  },
+  {
+    "file": "widget-radio_button.xml",
+    "size_bytes": 2984,
+    "size_kb": 2.9,
+    "pattern": "src/textual/widgets/_radio_button.py",
+    "category": "widget",
+    "name": "radio_button"
+  },
+  {
+    "file": "widget-radio_set.xml",
+    "size_bytes": 8384,
+    "size_kb": 8.2,
+    "pattern": "src/textual/widgets/_radio_set.py",
+    "category": "widget",
+    "name": "radio_set"
+  },
+  {
+    "file": "widget-selection_list.xml",
+    "size_bytes": 17795,
+    "size_kb": 17.4,
+    "pattern": "src/textual/widgets/_selection_list.py",
+    "category": "widget",
+    "name": "selection_list"
+  },
+  {
+    "file": "support-css.xml",
+    "size_bytes": 125193,
+    "size_kb": 122.3,
+    "pattern": "src/textual/css/**/*",
+    "category": "support",
+    "name": "css"
+  },
+  {
+    "file": "support-styling.xml",
+    "size_bytes": 29440,
+    "size_kb": 28.8,
+    "pattern": "src/textual/color.py,src/textual/theme.py,src/textual/design.py,src/textual/style.py",
+    "category": "support",
+    "name": "styling"
+  },
+  {
+    "file": "support-geometry.xml",
+    "size_bytes": 42433,
+    "size_kb": 41.4,
+    "pattern": "src/textual/geometry.py,src/textual/coordinate.py,src/textual/strip.py",
+    "category": "support",
+    "name": "geometry"
+  },
+  {
+    "file": "support-utils.xml",
+    "size_bytes": 28104,
+    "size_kb": 27.4,
+    "pattern": "src/textual/keys.py,src/textual/suggester.py,src/textual/fuzzy.py,src/textual/validation.py",
+    "category": "support",
+    "name": "utils"
+  }
+]
