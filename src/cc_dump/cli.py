@@ -179,13 +179,26 @@ def main():
     try:
         app.run()
     finally:
+        # Graceful shutdown with timeout for in-flight requests
+        if server:
+            print("\n🛑 Shutting down gracefully (press Ctrl+C again to force quit)...", file=sys.stderr)
+            sys.stderr.flush()
+
+            # Try graceful shutdown with 3 second timeout
+            shutdown_thread = threading.Thread(target=server.shutdown, daemon=True)
+            shutdown_thread.start()
+            shutdown_thread.join(timeout=3.0)
+
+            if shutdown_thread.is_alive():
+                # Timeout - force close
+                print("   ⏱️  Timeout - forcing shutdown", file=sys.stderr)
+            else:
+                # Graceful shutdown succeeded
+                print("   ✓ Server stopped", file=sys.stderr)
+
+            server.server_close()
+
+        # Clean up other resources
         router.stop()
         if har_recorder:
             har_recorder.close()
-        if server:
-            # Force close the socket immediately - don't wait for serve_forever()
-            server.server_close()
-            # NOTE: We skip server.shutdown() because it can hang waiting for
-            # the serve_forever() thread to finish. Since the thread is daemon=True,
-            # it will be killed when the process exits anyway. server_close()
-            # closes the socket immediately, preventing new connections.
