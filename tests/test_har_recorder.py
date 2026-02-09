@@ -1,7 +1,6 @@
 """Unit tests for har_recorder.py - HAR 1.2 recording and message reconstruction."""
 
 import json
-import pytest
 
 from cc_dump.har_recorder import (
     HARRecordingSubscriber,
@@ -26,7 +25,9 @@ def test_build_har_request_basic():
         "stream": True,
     }
 
-    har_req = build_har_request("POST", "https://api.anthropic.com/v1/messages", headers, body)
+    har_req = build_har_request(
+        "POST", "https://api.anthropic.com/v1/messages", headers, body
+    )
 
     # Verify structure
     assert har_req["method"] == "POST"
@@ -46,7 +47,9 @@ def test_build_har_request_basic():
 def test_build_har_request_synthetic_stream_false():
     """Request body is modified to stream=false for clarity."""
     body = {"model": "claude-3-opus-20240229", "stream": True}
-    har_req = build_har_request("POST", "https://api.anthropic.com/v1/messages", {}, body)
+    har_req = build_har_request(
+        "POST", "https://api.anthropic.com/v1/messages", {}, body
+    )
 
     post_body = json.loads(har_req["postData"]["text"])
     assert post_body["stream"] is False
@@ -113,8 +116,14 @@ def test_reconstruct_message_simple_text():
             },
         },
         {"type": "content_block_start", "content_block": {"type": "text"}},
-        {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hello"}},
-        {"type": "content_block_delta", "delta": {"type": "text_delta", "text": " world"}},
+        {
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": "Hello"},
+        },
+        {
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": " world"},
+        },
         {"type": "content_block_stop"},
         {
             "type": "message_delta",
@@ -200,7 +209,10 @@ def test_reconstruct_message_mixed_content():
             },
         },
         {"type": "content_block_start", "content_block": {"type": "text"}},
-        {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Let me read that file."}},
+        {
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": "Let me read that file."},
+        },
         {"type": "content_block_stop"},
         {
             "type": "content_block_start",
@@ -212,7 +224,10 @@ def test_reconstruct_message_mixed_content():
         },
         {
             "type": "content_block_delta",
-            "delta": {"type": "input_json_delta", "partial_json": '{"path": "data.json"}'},
+            "delta": {
+                "type": "input_json_delta",
+                "partial_json": '{"path": "data.json"}',
+            },
         },
         {"type": "content_block_stop"},
         {
@@ -246,7 +261,10 @@ def test_reconstruct_message_unicode():
             },
         },
         {"type": "content_block_start", "content_block": {"type": "text"}},
-        {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hello 👋 世界"}},
+        {
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": "Hello 👋 世界"},
+        },
         {"type": "content_block_stop"},
         {
             "type": "message_delta",
@@ -308,25 +326,35 @@ def test_reconstruct_message_malformed_tool_json():
 
 
 def test_har_subscriber_initialization(tmp_path):
-    """Subscriber initializes with correct structure."""
+    """Subscriber initializes with correct structure and valid empty HAR file."""
     har_path = tmp_path / "test.har"
     subscriber = HARRecordingSubscriber(str(har_path), "session_123")
 
     assert subscriber.path == str(har_path)
     assert subscriber.session_id == "session_123"
-    assert subscriber.har["log"]["version"] == "1.2"
-    assert subscriber.har["log"]["creator"]["name"] == "cc-dump"
-    assert subscriber.entries == []
+
+    # File should exist and be valid HAR even before close
+    assert har_path.exists()
+    with open(har_path, "r") as f:
+        har = json.load(f)
+
+    assert har["log"]["version"] == "1.2"
+    assert har["log"]["creator"]["name"] == "cc-dump"
+    assert har["log"]["entries"] == []
+
+    subscriber.close()
 
 
 def test_har_subscriber_accumulates_events(tmp_path):
-    """Subscriber accumulates events from event stream."""
+    """Subscriber accumulates events from event stream and writes to file."""
     har_path = tmp_path / "test.har"
     subscriber = HARRecordingSubscriber(str(har_path), "session_123")
 
     # Simulate event sequence
     subscriber.on_event(("request_headers", {"content-type": "application/json"}))
-    subscriber.on_event(("request", {"model": "claude-3-opus-20240229", "stream": True}))
+    subscriber.on_event(
+        ("request", {"model": "claude-3-opus-20240229", "stream": True})
+    )
     subscriber.on_event(("response_headers", 200, {}))
     subscriber.on_event(
         (
@@ -344,28 +372,47 @@ def test_har_subscriber_accumulates_events(tmp_path):
         )
     )
     subscriber.on_event(
-        ("response_event", "content_block_start", {"type": "content_block_start", "content_block": {"type": "text"}})
+        (
+            "response_event",
+            "content_block_start",
+            {"type": "content_block_start", "content_block": {"type": "text"}},
+        )
     )
     subscriber.on_event(
         (
             "response_event",
             "content_block_delta",
-            {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hello"}},
+            {
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": "Hello"},
+            },
         )
     )
-    subscriber.on_event(("response_event", "content_block_stop", {"type": "content_block_stop"}))
+    subscriber.on_event(
+        ("response_event", "content_block_stop", {"type": "content_block_stop"})
+    )
     subscriber.on_event(
         (
             "response_event",
             "message_delta",
-            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 5}},
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 5},
+            },
         )
     )
     subscriber.on_event(("response_done",))
 
+    # Close and read file
+    subscriber.close()
+
+    with open(har_path, "r") as f:
+        har = json.load(f)
+
     # Should have one entry
-    assert len(subscriber.entries) == 1
-    entry = subscriber.entries[0]
+    assert len(har["log"]["entries"]) == 1
+    entry = har["log"]["entries"][0]
 
     # Verify entry structure
     assert "startedDateTime" in entry
@@ -409,21 +456,34 @@ def test_har_subscriber_writes_file(tmp_path):
         )
     )
     subscriber.on_event(
-        ("response_event", "content_block_start", {"type": "content_block_start", "content_block": {"type": "text"}})
+        (
+            "response_event",
+            "content_block_start",
+            {"type": "content_block_start", "content_block": {"type": "text"}},
+        )
     )
     subscriber.on_event(
         (
             "response_event",
             "content_block_delta",
-            {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Test"}},
+            {
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": "Test"},
+            },
         )
     )
-    subscriber.on_event(("response_event", "content_block_stop", {"type": "content_block_stop"}))
+    subscriber.on_event(
+        ("response_event", "content_block_stop", {"type": "content_block_stop"})
+    )
     subscriber.on_event(
         (
             "response_event",
             "message_delta",
-            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 3}},
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 3},
+            },
         )
     )
     subscriber.on_event(("response_done",))
@@ -454,7 +514,15 @@ def test_har_subscriber_multiple_requests(tmp_path):
 
     # First request
     subscriber.on_event(("request_headers", {}))
-    subscriber.on_event(("request", {"model": "claude-3-opus-20240229", "messages": [{"role": "user", "content": "First"}]}))
+    subscriber.on_event(
+        (
+            "request",
+            {
+                "model": "claude-3-opus-20240229",
+                "messages": [{"role": "user", "content": "First"}],
+            },
+        )
+    )
     subscriber.on_event(("response_headers", 200, {}))
     subscriber.on_event(
         (
@@ -472,28 +540,49 @@ def test_har_subscriber_multiple_requests(tmp_path):
         )
     )
     subscriber.on_event(
-        ("response_event", "content_block_start", {"type": "content_block_start", "content_block": {"type": "text"}})
+        (
+            "response_event",
+            "content_block_start",
+            {"type": "content_block_start", "content_block": {"type": "text"}},
+        )
     )
     subscriber.on_event(
         (
             "response_event",
             "content_block_delta",
-            {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Response 1"}},
+            {
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": "Response 1"},
+            },
         )
     )
-    subscriber.on_event(("response_event", "content_block_stop", {"type": "content_block_stop"}))
+    subscriber.on_event(
+        ("response_event", "content_block_stop", {"type": "content_block_stop"})
+    )
     subscriber.on_event(
         (
             "response_event",
             "message_delta",
-            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 5}},
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 5},
+            },
         )
     )
     subscriber.on_event(("response_done",))
 
     # Second request
     subscriber.on_event(("request_headers", {}))
-    subscriber.on_event(("request", {"model": "claude-3-opus-20240229", "messages": [{"role": "user", "content": "Second"}]}))
+    subscriber.on_event(
+        (
+            "request",
+            {
+                "model": "claude-3-opus-20240229",
+                "messages": [{"role": "user", "content": "Second"}],
+            },
+        )
+    )
     subscriber.on_event(("response_headers", 200, {}))
     subscriber.on_event(
         (
@@ -511,32 +600,58 @@ def test_har_subscriber_multiple_requests(tmp_path):
         )
     )
     subscriber.on_event(
-        ("response_event", "content_block_start", {"type": "content_block_start", "content_block": {"type": "text"}})
+        (
+            "response_event",
+            "content_block_start",
+            {"type": "content_block_start", "content_block": {"type": "text"}},
+        )
     )
     subscriber.on_event(
         (
             "response_event",
             "content_block_delta",
-            {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Response 2"}},
+            {
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": "Response 2"},
+            },
         )
     )
-    subscriber.on_event(("response_event", "content_block_stop", {"type": "content_block_stop"}))
+    subscriber.on_event(
+        ("response_event", "content_block_stop", {"type": "content_block_stop"})
+    )
     subscriber.on_event(
         (
             "response_event",
             "message_delta",
-            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 5}},
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 5},
+            },
         )
     )
     subscriber.on_event(("response_done",))
 
+    # Close and read file
+    subscriber.close()
+
+    with open(har_path, "r") as f:
+        har = json.load(f)
+
     # Should have two entries
-    assert len(subscriber.entries) == 2
-    assert json.loads(subscriber.entries[0]["response"]["content"]["text"])["content"][0]["text"] == "Response 1"
-    assert json.loads(subscriber.entries[1]["response"]["content"]["text"])["content"][0]["text"] == "Response 2"
+    entries = har["log"]["entries"]
+    assert len(entries) == 2
+    assert (
+        json.loads(entries[0]["response"]["content"]["text"])["content"][0]["text"]
+        == "Response 1"
+    )
+    assert (
+        json.loads(entries[1]["response"]["content"]["text"])["content"][0]["text"]
+        == "Response 2"
+    )
 
 
-def test_har_subscriber_error_handling(tmp_path, capsys):
+def test_har_subscriber_error_handling(tmp_path):
     """Subscriber logs errors but doesn't crash."""
     har_path = tmp_path / "test.har"
     subscriber = HARRecordingSubscriber(str(har_path), "session_123")
@@ -544,9 +659,7 @@ def test_har_subscriber_error_handling(tmp_path, capsys):
     # Send malformed event
     subscriber.on_event(("invalid_event_type", None, None, None))
 
-    # Should not crash
-    captured = capsys.readouterr()
-    # May or may not log depending on implementation, but should not crash
+    # Should not crash (may log to stderr but should continue)
 
 
 def test_har_subscriber_incomplete_stream(tmp_path):
@@ -611,17 +724,34 @@ def test_har_subscriber_large_content(tmp_path):
         )
     )
     subscriber.on_event(
-        ("response_event", "content_block_start", {"type": "content_block_start", "content_block": {"type": "text"}})
+        (
+            "response_event",
+            "content_block_start",
+            {"type": "content_block_start", "content_block": {"type": "text"}},
+        )
     )
     subscriber.on_event(
-        ("response_event", "content_block_delta", {"type": "content_block_delta", "delta": {"type": "text_delta", "text": large_text}})
+        (
+            "response_event",
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": large_text},
+            },
+        )
     )
-    subscriber.on_event(("response_event", "content_block_stop", {"type": "content_block_stop"}))
+    subscriber.on_event(
+        ("response_event", "content_block_stop", {"type": "content_block_stop"})
+    )
     subscriber.on_event(
         (
             "response_event",
             "message_delta",
-            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 2500}},
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 2500},
+            },
         )
     )
     subscriber.on_event(("response_done",))

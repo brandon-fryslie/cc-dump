@@ -52,31 +52,44 @@ In forward proxy mode, requests are sent as plain HTTP to cc-dump, inspected, th
 
 ## TUI Controls
 
-Filter toggles — each has a colored vertical bar indicator (`▌`) when active:
+### 3-Level Visibility System
 
-| Key | Filter | Indicator |
-|-----|--------|-----------|
-| `h` | Headers | cyan |
-| `t` | Tools | blue |
-| `s` | System prompts | yellow |
-| `e` | Expand/context | green |
-| `m` | Metadata | magenta |
+Each content category has **3 visibility levels** (EXISTENCE · → SUMMARY ◐ → FULL ●). Press a key to cycle through levels:
 
-Panel toggles:
+| Key | Category | Default | What It Shows |
+|-----|----------|---------|---------------|
+| `h` | Headers | · | Separators, turn headers, HTTP headers |
+| `u` | User | ● | User messages and inputs |
+| `a` | Assistant | ● | Assistant responses |
+| `t` | Tools | ◐ | Tool use/results (summarized or detailed) |
+| `s` | System | ◐ | System prompts, tracked content with diffs |
+| `m` | Metadata | · | Request/response metadata |
+| `e` | Budget | · | Token accounting, cache stats |
+
+**Level meanings:**
+- `·` **EXISTENCE** — Minimal (1 line): content exists but details hidden
+- `◐` **SUMMARY** — Compact (3-12 lines): meaningful preview without full details
+- `●` **FULL** — Complete: all content visible
+
+**Click to expand/collapse:** Click any block with `▶` to expand it or `▼` to collapse it within the current level.
+
+**Example:** Press `t` to cycle tools: SUMMARY → FULL → EXISTENCE → SUMMARY. At FULL, individual tool blocks are shown. Click long results to collapse them.
+
+See [docs/VISIBILITY_SYSTEM.md](docs/VISIBILITY_SYSTEM.md) for detailed documentation and examples.
+
+### Panel Toggles
 
 | Key | Panel |
 |-----|-------|
-| `a` | Token statistics |
 | `c` | Per-tool cost aggregates |
 | `l` | Context growth timeline |
 
-Navigation:
+### Other Controls
 
 | Key | Action |
 |-----|--------|
-| `j` / `k` | Next / previous turn |
-| `n` / `N` | Next / previous tool turn |
-| `g` / `G` | Jump to first / last turn |
+| `f` | Toggle follow mode (auto-scroll) |
+| `q` | Quit |
 
 ## Development
 

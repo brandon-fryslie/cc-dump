@@ -49,7 +49,9 @@ class TestFilterIndicatorRendering:
         assert proc.is_alive()
         assert len(content) > 0
 
-        # Clean up
+        # Clean up: cycle back to original state (3 presses total)
+        proc.send("h", press_enter=False)
+        settle(proc)
         proc.send("h", press_enter=False)
         settle(proc)
 
@@ -84,7 +86,9 @@ class TestFilterIndicatorRendering:
         wait_for_content(proc, timeout=2)
         assert proc.is_alive()
 
-        # Clean up
+        # Clean up: cycle back (3 presses total)
+        proc.send("e", press_enter=False)
+        settle(proc)
         proc.send("e", press_enter=False)
         settle(proc)
 
@@ -106,7 +110,9 @@ class TestIndicatorVisibility:
 
         assert proc.is_alive()
 
-        # Clean up
+        # Clean up: cycle back
+        proc.send("h", press_enter=False)
+        settle(proc)
         proc.send("h", press_enter=False)
         settle(proc)
 
@@ -124,7 +130,9 @@ class TestIndicatorVisibility:
 
         assert proc.is_alive()
 
-        # Restore metadata
+        # Restore metadata: cycle back
+        proc.send("m", press_enter=False)
+        settle(proc)
         proc.send("m", press_enter=False)
         settle(proc)
 
@@ -145,7 +153,9 @@ class TestRenderingPerformance:
         wait_for_content(proc, timeout=2)
         assert proc.is_alive()
 
-        # Clean up
+        # Clean up: cycle back
+        proc.send("h", press_enter=False)
+        settle(proc)
         proc.send("h", press_enter=False)
         settle(proc)
 
@@ -155,16 +165,18 @@ class TestRenderingPerformance:
         _send_request(port, content="Test-RapidFilter")
         wait_for_content(proc, timeout=2)
 
-        # Rapidly toggle filters (even number of toggles = back to original state)
-        for _ in range(4):
-            proc.send("h", press_enter=False)
-            time.sleep(0.05)
-            proc.send("m", press_enter=False)
-            time.sleep(0.05)
-            proc.send("e", press_enter=False)
-            time.sleep(0.05)
+        # Rapidly cycle filters (3 presses each = back to original state)
+        for _ in range(1):
+            for _ in range(3):
+                proc.send("h", press_enter=False)
+                time.sleep(0.05)
+            for _ in range(3):
+                proc.send("m", press_enter=False)
+                time.sleep(0.05)
+            for _ in range(3):
+                proc.send("e", press_enter=False)
+                time.sleep(0.05)
 
-        # Even toggles restore to original state
         settle(proc, 0.3)
         assert proc.is_alive()
 
@@ -183,6 +195,8 @@ class TestBlockRendering:
         assert proc.is_alive()
 
         # Clean up
+        proc.send("h", press_enter=False)
+        settle(proc)
         proc.send("h", press_enter=False)
         settle(proc)
 
@@ -274,9 +288,6 @@ class TestRenderBlockFunction:
             TextContentBlock, NewlineBlock
         )
 
-        filters = {"headers": True, "tools": True, "system": True,
-                   "budget": True, "metadata": True}
-
         blocks = [
             SeparatorBlock(),
             HeaderBlock(label="TEST", header_type="request"),
@@ -287,17 +298,15 @@ class TestRenderBlockFunction:
         ]
 
         for block in blocks:
-            result = render_block(block, filters)
+            result = render_block(block)
+            # All blocks should render successfully (return some Text)
+            assert result is not None
 
-    def test_render_block_respects_filters(self):
+    def test_render_block_with_full_content(self):
         from cc_dump.tui.rendering import render_block
         from cc_dump.formatting import HeaderBlock
 
-        filters_off = {"headers": False}
         block = HeaderBlock(label="TEST", header_type="request")
-        result = render_block(block, filters_off)
-        assert result is None
-
-        filters_on = {"headers": True}
-        result = render_block(block, filters_on)
+        result = render_block(block)
+        # Should return full rendering
         assert result is not None

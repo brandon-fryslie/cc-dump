@@ -59,10 +59,13 @@ class StyledFooter(Footer):
     This footer ONLY shows the description (with bold styling), NOT the key prefix.
     """
 
-    # Maps toggle action -> (filter key, CSS class suffix)
+    # Maps cycle action -> (filter key, CSS class suffix)
     # Built dynamically at class load time from palette
     ACTION_TO_FILTER: dict = {}
     DEFAULT_CSS: str = ""
+
+    # Level display icons: · (existence), ◐ (summary), ● (full)
+    _LEVEL_ICONS = {1: "\u00b7", 2: "\u25d0", 3: "\u25cf"}
 
     @classmethod
     def _init_palette_colors(cls):
@@ -70,24 +73,24 @@ class StyledFooter(Footer):
         p = cc_dump.palette.PALETTE
 
         _filter_names = [
-            ("toggle_headers", "headers"),
-            ("toggle_tools", "tools"),
-            ("toggle_system", "system"),
-            ("toggle_budget", "budget"),
-            ("toggle_metadata", "metadata"),
-            ("toggle_stats", "stats"),
+            ("toggle_vis('headers')", "headers"),
+            ("toggle_vis('user')", "user"),
+            ("toggle_vis('assistant')", "assistant"),
+            ("toggle_vis('tools')", "tools"),
+            ("toggle_vis('system')", "system"),
+            ("toggle_vis('budget')", "budget"),
+            ("toggle_vis('metadata')", "metadata"),
             ("toggle_economics", "economics"),
             ("toggle_timeline", "timeline"),
         ]
         action_map = {}
         css_parts = []
         for action, filter_key in _filter_names:
-            # Use filter_key as CSS class suffix
             action_map[action] = (filter_key, filter_key)
-            bg_hex = p.filter_bg(filter_key)
+            fg_hex = p.filter_color(filter_key)
             css_parts.append(
                 f"    StyledFooterKey.-active-{filter_key} {{\n"
-                f"        background: {bg_hex};\n"
+                f"        color: {fg_hex};\n"
                 f"    }}"
             )
         cls.ACTION_TO_FILTER = action_map
@@ -113,16 +116,32 @@ class StyledFooter(Footer):
             compact=compact,
         )
         self._active_filters = {}
+        self._base_descriptions = {}  # Store original descriptions for icon updates
 
     def update_active_state(self, filters: dict):
-        """Update the active state of bindings by toggling CSS classes."""
+        """Update the active state of bindings based on filter levels.
+
+        For category filters (Level values): active when level > EXISTENCE (1).
+        For panel toggles (bool values): active when True.
+        Updates descriptions with level icons (·/◐/●).
+        """
         self._active_filters = filters
 
         for key_widget in self.query(StyledFooterKey):
             action = key_widget.action
             if action in self.ACTION_TO_FILTER:
                 filter_key, color = self.ACTION_TO_FILTER[action]
-                is_active = filters.get(filter_key, False)
+                value = filters.get(filter_key, False)
+                # Level int (1-3) or bool
+                if isinstance(value, int):
+                    is_active = value > 1  # active at SUMMARY or FULL
+                    icon = self._LEVEL_ICONS.get(value, "")
+                    # Update description with icon
+                    base = self._base_descriptions.get(action, "")
+                    if base:
+                        key_widget.description = f"{icon}{base}"
+                else:
+                    is_active = bool(value)
                 key_widget.set_class(is_active, f"-active-{color}")
 
     def compose(self) -> ComposeResult:
@@ -153,16 +172,14 @@ class StyledFooter(Footer):
                     for multi_bindings in multi_bindings:
                         binding, enabled, tooltip = multi_bindings[0]
                         styled_desc = self._style_description(binding.description)
+                        # Store base description for icon updates
+                        self._base_descriptions[binding.action] = styled_desc
 
                         # Check if this binding is active
                         filter_key, color = self.ACTION_TO_FILTER.get(
                             binding.action, (None, None)
                         )
-                        is_active = (
-                            self._active_filters.get(filter_key, False)
-                            if filter_key
-                            else False
-                        )
+                        is_active = self._is_filter_active(filter_key)
 
                         classes = "-grouped"
                         if is_active and color:
@@ -182,16 +199,14 @@ class StyledFooter(Footer):
                 for multi_bindings in multi_bindings:
                     binding, enabled, tooltip = multi_bindings[0]
                     styled_desc = self._style_description(binding.description)
+                    # Store base description for icon updates
+                    self._base_descriptions[binding.action] = styled_desc
 
                     # Check if this binding is active
                     filter_key, color = self.ACTION_TO_FILTER.get(
                         binding.action, (None, None)
                     )
-                    is_active = (
-                        self._active_filters.get(filter_key, False)
-                        if filter_key
-                        else False
-                    )
+                    is_active = self._is_filter_active(filter_key)
 
                     classes = ""
                     if is_active and color:
@@ -225,6 +240,15 @@ class StyledFooter(Footer):
                     disabled=not enabled,
                     tooltip=binding.tooltip or binding.description,
                 )
+
+    def _is_filter_active(self, filter_key: str | None) -> bool:
+        """Check if a filter is active (Level > EXISTENCE or bool True)."""
+        if filter_key is None:
+            return False
+        value = self._active_filters.get(filter_key, False)
+        if isinstance(value, int):
+            return value > 1  # active at SUMMARY or FULL
+        return bool(value)
 
     def _get_accent_color(self) -> str:
         """Get the accent color hex from palette."""

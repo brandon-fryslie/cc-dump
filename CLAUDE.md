@@ -72,8 +72,39 @@ When adding new modules, classify them as stable or reloadable and follow the co
 ## Key Types
 
 - `FormattedBlock` hierarchy in `formatting.py` — the IR between formatting and rendering. Subclasses: `HeaderBlock`, `MetadataBlock`, `TrackedContentBlock`, `ToolUseBlock`, `ToolResultBlock`, `TextDeltaBlock`, `StreamInfoBlock`, `TurnBudgetBlock`, etc.
+  - `Level` enum (IntEnum): EXISTENCE=1, SUMMARY=2, FULL=3 — visibility levels
+  - `Category` enum: HEADERS, USER, ASSISTANT, TOOLS, SYSTEM, METADATA, BUDGET — content groupings
+  - `expanded: bool | None` field — per-block expansion override (None = use level default)
+  - `category: Category | None` field — category assignment (None = use BLOCK_CATEGORY static mapping)
 - `TurnData` in `widget_factory.py` — completed turn: list of blocks + pre-rendered Rich strips.
 - `EventRouter` in `router.py` — fan-out with pluggable `QueueSubscriber` / `DirectSubscriber`.
+
+## 3-Level Visibility System
+
+**User-facing docs:** See [docs/VISIBILITY_SYSTEM.md](docs/VISIBILITY_SYSTEM.md) and [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)
+
+**Architecture:** Each category has 3 levels (EXISTENCE/SUMMARY/FULL) × 2 states (collapsed/expanded) = 6 visual representations.
+
+**Rendering pipeline:**
+1. `rendering.py:render_turn_to_strips()` — two-tier dispatch:
+   - Check `BLOCK_STATE_RENDERERS[(type_name, level, expanded)]` for custom renderer
+   - Fallback: `BLOCK_RENDERERS[type_name]` (full content) + generic truncation to `TRUNCATION_LIMITS[(level, expanded)]`
+2. Category resolved via `get_category(block)` → checks `block.category` then `BLOCK_CATEGORY[type_name]`
+3. Visibility resolved via `_resolve_visibility(block, filters)` → returns `(level, expanded)` tuple
+4. Generic truncation: post-render line limiting with `_make_collapse_indicator()` for truncated blocks
+5. `block._expandable` flag set when block exceeds line limit (enables click-to-expand)
+
+**Tool pre-pass:** At tools level ≤ SUMMARY, `collapse_tool_runs()` creates `ToolUseSummaryBlock` from consecutive tool use/result pairs.
+
+**Click behavior:** `on_click()` in `widget_factory.py` toggles `block.expanded` within current level (only if `block._expandable`).
+
+**Keyboard cycling:** `action_cycle_*()` in `app.py` cycles reactive `vis_*` (1→2→3→1) and clears per-block overrides via `_clear_overrides()`.
+
+**Key mappings:**
+- `h` headers, `u` user, `a` assistant, `t` tools, `s` system, `m` metadata, `e` budget
+- Default levels: headers/metadata/budget=EXISTENCE, user/assistant=FULL, tools/system=SUMMARY
+
+**Removed features:** Turn selection (j/k/n/N/g/G keys removed) — replaced with click-to-expand/collapse.
 
 ## Issue Tracking
 

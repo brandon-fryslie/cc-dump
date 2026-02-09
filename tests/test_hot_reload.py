@@ -340,7 +340,6 @@ class TestWidgetStatePreservation:
 
         widget = ConversationView()
         widget._follow_mode = False
-        widget._selected_turn = 2
 
         state = widget.get_state()
 
@@ -348,7 +347,6 @@ class TestWidgetStatePreservation:
         new_widget.restore_state(state)
 
         assert new_widget._follow_mode is False
-        assert new_widget._selected_turn == 2
 
     def test_economics_panel_state_roundtrip(self):
         from cc_dump.tui.widget_factory import ToolEconomicsPanel

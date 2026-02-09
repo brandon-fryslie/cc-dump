@@ -15,7 +15,6 @@ from textual.strip import Strip
 from textual.cache import LRUCache
 from textual.geometry import Size
 from rich.text import Text
-from rich.style import Style
 
 # Use module-level imports for hot-reload
 import cc_dump.palette
@@ -69,14 +68,14 @@ class TurnData:
     def compute_relevant_keys(self):
         """Compute which filter keys affect this turn's blocks.
 
-        Uses type(block).__name__ for lookup so blocks created before a
-        hot-reload still match filter keys from the reloaded module.
+        Uses get_category() for lookup so blocks created before a
+        hot-reload still match after the module is reloaded.
         """
         keys = set()
         for block in self.blocks:
-            key = cc_dump.tui.rendering.BLOCK_FILTER_KEY.get(type(block).__name__)
-            if key is not None:
-                keys.add(key)
+            cat = cc_dump.tui.rendering.get_category(block)
+            if cat is not None:
+                keys.add(cat.value)
         self.relevant_filter_keys = keys
 
     def re_render(
@@ -93,7 +92,9 @@ class TurnData:
             force: Force re-render even if filter snapshot hasn't changed.
             block_cache: Optional LRUCache for caching rendered strips per block.
         """
-        snapshot = {k: filters.get(k, False) for k in self.relevant_filter_keys}
+        from cc_dump.formatting import Level
+
+        snapshot = {k: filters.get(k, Level.FULL) for k in self.relevant_filter_keys}
         if not force and snapshot == self._last_filter_snapshot:
             return False
         self._last_filter_snapshot = snapshot
@@ -132,8 +133,6 @@ class ConversationView(ScrollView):
     }
     """
 
-    _SELECTED_STYLE = Style(bgcolor="grey15")
-
     def __init__(self):
         super().__init__()
         self._turns: list[TurnData] = []
@@ -150,8 +149,6 @@ class ConversationView(ScrollView):
         self._last_width: int = 78
         self._follow_mode: bool = True
         self._pending_restore: dict | None = None
-        # Sprint 2: selection and programmatic scroll guard
-        self._selected_turn: int | None = None
         self._scrolling_programmatically: bool = False
 
     def render_line(self, y: int) -> Strip:
@@ -163,8 +160,7 @@ class ConversationView(ScrollView):
         if actual_y >= self._total_lines:
             return Strip.blank(width, self.rich_style)
 
-        # Cache key includes selection state
-        key = (actual_y, scroll_x, width, self._widest_line, self._selected_turn)
+        key = (actual_y, scroll_x, width, self._widest_line)
         if key in self._line_cache:
             return self._line_cache[key].apply_style(self.rich_style)
 
@@ -188,10 +184,6 @@ class ConversationView(ScrollView):
 
         # Apply base style
         strip = strip.apply_style(self.rich_style)
-
-        # Apply selection highlight
-        if self._selected_turn is not None and self._selected_turn == turn.turn_index:
-            strip = strip.apply_style(self._SELECTED_STYLE)
 
         self._line_cache[key] = strip
 
@@ -351,8 +343,10 @@ class ConversationView(ScrollView):
         )
         td._widest_strip = _compute_widest(strips)
         td.compute_relevant_keys()
+        from cc_dump.formatting import Level
+
         td._last_filter_snapshot = {
-            k: filters.get(k, False) for k in td.relevant_filter_keys
+            k: filters.get(k, Level.FULL) for k in td.relevant_filter_keys
         }
         self._turns.append(td)
         self._recalculate_offsets()
@@ -470,6 +464,47 @@ class ConversationView(ScrollView):
         """
         self._recalculate_offsets()
 
+    def _handle_text_delta_block(self, block, td):
+        """Handle TextDeltaBlock - buffer and re-render tail."""
+        td._text_delta_buffer.append(block.text)
+        self._refresh_streaming_delta(td)
+
+    def _handle_non_delta_block(self, block, td, filters):
+        """Handle non-delta blocks - flush, render, and append to stable strips."""
+        # Flush delta buffer first
+        self._flush_streaming_delta(td, filters)
+
+        # Render this block
+        rendered = cc_dump.tui.rendering.render_block(block)
+        if rendered is not None:
+            width = (
+                self.scrollable_content_region.width
+                if self._size_known
+                else self._last_width
+            )
+            console = self.app.console
+            new_strips = self._render_single_block_to_strips(rendered, console, width)
+
+            # Add to stable strips
+            td.strips.extend(new_strips)
+            td._widest_strip = _compute_widest(td.strips)
+
+            # Update block_strip_map (track where this block starts)
+            block_idx = len(td.blocks) - 1
+            td.block_strip_map[block_idx] = td._stable_strip_count
+
+            # Advance stable boundary
+            td._stable_strip_count = len(td.strips)
+
+    # [LAW:dataflow-not-control-flow] Streaming block dispatch table
+    # Use string keys for hot-reload safety (isinstance fails across reloads)
+    def _get_streaming_block_handler(self, block_type_name: str):
+        """Get handler for a streaming block type."""
+        if block_type_name == "TextDeltaBlock":
+            return self._handle_text_delta_block
+        else:
+            return self._handle_non_delta_block
+
     def append_streaming_block(self, block, filters: dict = None):
         """Append a block to the streaming turn.
 
@@ -488,41 +523,15 @@ class ConversationView(ScrollView):
         # Add block to blocks list
         td.blocks.append(block)
 
-        # Use class name for hot-reload safety (isinstance fails across reloads)
-        if type(block).__name__ == "TextDeltaBlock":
-            # Buffer the delta text
-            td._text_delta_buffer.append(block.text)
+        # [LAW:dataflow-not-control-flow] Dispatch via handler lookup
+        block_type_name = type(block).__name__
+        handler = self._get_streaming_block_handler(block_type_name)
 
-            # Re-render delta tail
-            self._refresh_streaming_delta(td)
-
+        # TextDeltaBlock takes (block, td), others take (block, td, filters)
+        if block_type_name == "TextDeltaBlock":
+            handler(block, td)
         else:
-            # Non-delta block: flush delta buffer first
-            self._flush_streaming_delta(td, filters)
-
-            # Render this block
-            rendered = cc_dump.tui.rendering.render_block(block, filters)
-            if rendered is not None:
-                width = (
-                    self.scrollable_content_region.width
-                    if self._size_known
-                    else self._last_width
-                )
-                console = self.app.console
-                new_strips = self._render_single_block_to_strips(
-                    rendered, console, width
-                )
-
-                # Add to stable strips
-                td.strips.extend(new_strips)
-                td._widest_strip = _compute_widest(td.strips)
-
-                # Update block_strip_map (track where this block starts)
-                block_idx = len(td.blocks) - 1
-                td.block_strip_map[block_idx] = td._stable_strip_count
-
-                # Advance stable boundary
-                td._stable_strip_count = len(td.strips)
+            handler(block, td, filters)
 
         # Update virtual size
         self._update_streaming_size(td)
@@ -597,8 +606,10 @@ class ConversationView(ScrollView):
 
         # Compute relevant filter keys
         td.compute_relevant_keys()
+        from cc_dump.formatting import Level
+
         td._last_filter_snapshot = {
-            k: self._last_filters.get(k, False) for k in td.relevant_filter_keys
+            k: self._last_filters.get(k, Level.FULL) for k in td.relevant_filter_keys
         }
 
         # Recalculate offsets
@@ -641,16 +652,6 @@ class ConversationView(ScrollView):
         Single strategy: capture turn-level anchor before re-render,
         restore after. Stateless — no state persists between calls.
         """
-        # When global budget toggle changes, sync collapsed state on all blocks
-        old_budget = self._last_filters.get("budget", False)
-        new_budget = filters.get("budget", False)
-        if old_budget != new_budget:
-            for td in self._turns:
-                for block in td.blocks:
-                    name = type(block).__name__
-                    if name in ("TrackedContentBlock", "TurnBudgetBlock"):
-                        block.collapsed = not new_budget
-
         self._last_filters = filters
 
         if self._pending_restore is not None:
@@ -688,7 +689,11 @@ class ConversationView(ScrollView):
                         first_changed = idx
             else:
                 # Off-viewport turn: defer re-render, mark pending
-                snapshot = {k: filters.get(k, False) for k in td.relevant_filter_keys}
+                from cc_dump.formatting import Level
+
+                snapshot = {
+                    k: filters.get(k, Level.FULL) for k in td.relevant_filter_keys
+                }
                 if snapshot != td._last_filter_snapshot:
                     td._pending_filter_snapshot = snapshot
 
@@ -764,50 +769,6 @@ class ConversationView(ScrollView):
         self.scroll_end(animate=False)
         self._scrolling_programmatically = False
 
-    # ─── Sprint 2: Turn selection ────────────────────────────────────────────
-
-    def select_turn(self, turn_index: int):
-        """Select a turn by index. Refreshes affected line ranges."""
-        old_selected = self._selected_turn
-        self._selected_turn = turn_index
-
-        # Selective cache invalidation: only clear entries for affected turns
-        for idx in [old_selected, turn_index]:
-            if idx is not None and idx in self._cache_keys_by_turn:
-                for key in self._cache_keys_by_turn[idx]:
-                    self._line_cache.discard(key)
-                # Remove tracking entry
-                del self._cache_keys_by_turn[idx]
-
-        # Refresh old selection line range
-        if old_selected is not None and old_selected < len(self._turns):
-            old_turn = self._turns[old_selected]
-            if old_turn.line_count > 0:
-                self.refresh_lines(old_turn.line_offset, old_turn.line_count)
-
-        # Refresh new selection line range
-        if turn_index < len(self._turns):
-            new_turn = self._turns[turn_index]
-            if new_turn.line_count > 0:
-                self.refresh_lines(new_turn.line_offset, new_turn.line_count)
-
-    def deselect(self):
-        """Clear selection."""
-        if self._selected_turn is not None:
-            old = self._selected_turn
-            self._selected_turn = None
-
-            # Selective cache invalidation: only clear old selection
-            if old in self._cache_keys_by_turn:
-                for key in self._cache_keys_by_turn[old]:
-                    self._line_cache.discard(key)
-                del self._cache_keys_by_turn[old]
-
-            if old < len(self._turns):
-                turn = self._turns[old]
-                if turn.line_count > 0:
-                    self.refresh_lines(turn.line_offset, turn.line_count)
-
     def _block_index_at_line(self, turn: TurnData, content_y: int) -> int | None:
         """Find the block index within a turn for a given content line.
 
@@ -824,24 +785,16 @@ class ConversationView(ScrollView):
         return best_block_idx
 
     def _is_expandable_block(self, block) -> bool:
-        """Check if a block supports click-to-expand."""
-        name = type(block).__name__
-        if name == "TurnBudgetBlock":
-            return True
-        if name == "TrackedContentBlock":
-            # "ref" status blocks have no content to expand
-            return block.status in ("new", "changed")
-        return False
+        """Check if a block was truncated (set by render_turn_to_strips)."""
+        return getattr(block, "_expandable", False)
 
     def on_click(self, event) -> None:
-        """Select turn at click position. Toggle expand on collapsible blocks."""
+        """Toggle expand on truncated blocks."""
         # event.y is viewport-relative; add scroll offset for content-space
         content_y = int(event.y + self.scroll_offset.y)
         turn = self._find_turn_for_line(content_y)
         if turn is None:
             return
-
-        self.select_turn(turn.turn_index)
 
         # Check if click hit an expandable block
         block_idx = self._block_index_at_line(turn, content_y)
@@ -852,8 +805,23 @@ class ConversationView(ScrollView):
 
     def _toggle_block_expand(self, turn: TurnData, block_idx: int):
         """Toggle expand state for a single block and re-render its turn."""
+        from cc_dump.formatting import Level
+
         block = turn.blocks[block_idx]
-        block.collapsed = not block.collapsed
+
+        # [LAW:dataflow-not-control-flow] Coalesce None to default, then toggle
+        cat = cc_dump.tui.rendering.get_category(block)
+        level = self._last_filters.get(cat.value, Level.FULL) if cat else Level.FULL
+        default = cc_dump.tui.rendering.DEFAULT_EXPANDED[level]
+
+        # Coalesce: treat None as default
+        current = block.expanded if block.expanded is not None else default
+
+        # Toggle
+        new_value = not current
+
+        # Store override (None if matches default)
+        block.expanded = None if new_value == default else new_value
 
         # Re-render just this turn
         if not turn.is_streaming:
@@ -871,85 +839,6 @@ class ConversationView(ScrollView):
                 block_cache=self._block_strip_cache,
             )
             self._recalculate_offsets()
-
-    # ─── Sprint 2: Turn navigation ───────────────────────────────────────────
-
-    def _visible_turns(self) -> list[TurnData]:
-        """Returns turns with line_count > 0 (not fully filtered out)."""
-        return [t for t in self._turns if t.line_count > 0]
-
-    def select_next_turn(self, forward: bool = True):
-        """Select next/prev visible turn."""
-        visible = self._visible_turns()
-        if not visible:
-            return
-        self._follow_mode = False
-
-        if self._selected_turn is None:
-            # Nothing selected — pick first or last
-            target = visible[0] if forward else visible[-1]
-        else:
-            # Find current position in visible list
-            current_idx = None
-            for i, t in enumerate(visible):
-                if t.turn_index == self._selected_turn:
-                    current_idx = i
-                    break
-            if current_idx is None:
-                target = visible[0] if forward else visible[-1]
-            else:
-                next_idx = current_idx + (1 if forward else -1)
-                next_idx = max(0, min(next_idx, len(visible) - 1))
-                target = visible[next_idx]
-
-        self.select_turn(target.turn_index)
-        self.scroll_to(y=target.line_offset, animate=False)
-
-    def next_tool_turn(self, forward: bool = True):
-        """Select next/prev turn containing tool blocks."""
-        # Use class names for hot-reload safety (isinstance fails across reloads)
-        _tool_type_names = {"ToolUseBlock", "ToolResultBlock", "StreamToolUseBlock"}
-
-        visible = self._visible_turns()
-        tool_turns = [
-            t
-            for t in visible
-            if any(type(b).__name__ in _tool_type_names for b in t.blocks)
-        ]
-        if not tool_turns:
-            return
-        self._follow_mode = False
-
-        if self._selected_turn is None:
-            target = tool_turns[0] if forward else tool_turns[-1]
-        else:
-            if forward:
-                later = [t for t in tool_turns if t.turn_index > self._selected_turn]
-                target = later[0] if later else tool_turns[0]
-            else:
-                earlier = [t for t in tool_turns if t.turn_index < self._selected_turn]
-                target = earlier[-1] if earlier else tool_turns[-1]
-
-        self.select_turn(target.turn_index)
-        self.scroll_to(y=target.line_offset, animate=False)
-
-    def jump_to_first(self):
-        """Select first visible turn."""
-        visible = self._visible_turns()
-        if visible:
-            self._follow_mode = False
-            self.select_turn(visible[0].turn_index)
-            self.scroll_to(y=visible[0].line_offset, animate=False)
-
-    def jump_to_last(self):
-        """Select last visible turn and re-enable follow mode."""
-        visible = self._visible_turns()
-        if visible:
-            self.select_turn(visible[-1].turn_index)
-            self._follow_mode = True
-            self._scrolling_programmatically = True
-            self.scroll_end(animate=False)
-            self._scrolling_programmatically = False
 
     # ─── State management ────────────────────────────────────────────────────
 
@@ -975,7 +864,6 @@ class ConversationView(ScrollView):
         return {
             "all_blocks": all_blocks,
             "follow_mode": self._follow_mode,
-            "selected_turn": self._selected_turn,
             "turn_count": len(self._turns),
             "streaming_states": streaming_states,
         }
@@ -987,7 +875,6 @@ class ConversationView(ScrollView):
         """
         self._pending_restore = state
         self._follow_mode = state.get("follow_mode", True)
-        self._selected_turn = state.get("selected_turn", None)
 
         # Restore streaming states after _rebuild_from_state is called
         streaming_states = state.get("streaming_states", [])
@@ -1248,43 +1135,41 @@ class FilterStatusBar(Static):
         super().__init__("Active: (initializing...)")
 
     def update_filters(self, filters: dict):
-        """Update the status bar to show active filters.
+        """Update the status bar to show active filters with level indicators.
 
         Args:
-            filters: Dict with filter states (headers, tools, system, budget, metadata)
+            filters: Dict with filter states (category name -> Level int)
         """
+        from cc_dump.formatting import Level
 
-        # Filter names and their colors (from palette)
+        _LEVEL_ICONS = {
+            Level.EXISTENCE: "\u00b7",
+            Level.SUMMARY: "\u25d0",
+            Level.FULL: "\u25cf",
+        }
+
         p = cc_dump.palette.PALETTE
-        filter_info = [
-            ("h", "Headers", p.filter_color("headers"), filters.get("headers", False)),
-            ("t", "Tools", p.filter_color("tools"), filters.get("tools", False)),
-            ("s", "System", p.filter_color("system"), filters.get("system", False)),
-            ("e", "Budget", p.filter_color("budget"), filters.get("budget", False)),
-            (
-                "m",
-                "Metadata",
-                p.filter_color("metadata"),
-                filters.get("metadata", False),
-            ),
+        categories = [
+            ("h", "Headers", "headers"),
+            ("u", "User", "user"),
+            ("a", "Assistant", "assistant"),
+            ("t", "Tools", "tools"),
+            ("s", "System", "system"),
+            ("e", "Budget", "budget"),
+            ("m", "Metadata", "metadata"),
         ]
 
         text = Text()
-        text.append("Active: ", style="dim")
-
-        active_filters = [
-            (key, name, color) for key, name, color, active in filter_info if active
-        ]
-
-        if not active_filters:
-            text.append("none", style="dim")
-        else:
-            for i, (key, name, color) in enumerate(active_filters):
-                if i > 0:
-                    text.append(" ", style="dim")
-                # Add colored indicator bar
-                text.append("▌", style=f"bold {color}")
-                text.append(f"{name}", style=color)
+        for i, (key, name, cat_name) in enumerate(categories):
+            level = filters.get(cat_name, Level.FULL)
+            if not isinstance(level, Level):
+                level = Level(level)
+            color = p.filter_color(cat_name)
+            icon = _LEVEL_ICONS.get(level, "\u25cf")
+            if i > 0:
+                text.append(" ", style="dim")
+            text.append(icon, style=f"bold {color}")
+            text.append(f"{name}", style=color if level > Level.EXISTENCE else "dim")
 
         self.update(text)
 
@@ -1303,6 +1188,16 @@ class LogsPanel(RichLog):
     def __init__(self):
         super().__init__(highlight=False, markup=False, wrap=True, max_lines=1000)
 
+    # [LAW:dataflow-not-control-flow] Log level style dispatch
+    def _get_log_level_styles(self):
+        p = cc_dump.palette.PALETTE
+        return {
+            "ERROR": f"bold {p.error}",
+            "WARNING": f"bold {p.warning}",
+            "INFO": f"bold {p.info}",
+            "DEBUG": "dim",
+        }
+
     def log(self, level: str, message: str):
         """Add an application log entry.
 
@@ -1318,15 +1213,9 @@ class LogsPanel(RichLog):
         log_text.append(f"[{timestamp}] ", style="dim")
 
         # Color-code by level using palette
-        p = cc_dump.palette.PALETTE
-        if level == "ERROR":
-            log_text.append(f"{level:7s} ", style=f"bold {p.error}")
-        elif level == "WARNING":
-            log_text.append(f"{level:7s} ", style=f"bold {p.warning}")
-        elif level == "INFO":
-            log_text.append(f"{level:7s} ", style=f"bold {p.info}")
-        else:  # DEBUG
-            log_text.append(f"{level:7s} ", style="dim")
+        styles = self._get_log_level_styles()
+        style = styles.get(level, "dim")
+        log_text.append(f"{level:7s} ", style=style)
 
         log_text.append(message)
         self.write(log_text)

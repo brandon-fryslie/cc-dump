@@ -87,6 +87,96 @@ def build_har_response(
     }
 
 
+# [LAW:dataflow-not-control-flow] State container for event reconstruction
+class _ReconstructionState:
+    """Shared state for event reconstructors."""
+
+    def __init__(self, message: dict, content_blocks: list, current_text_block: dict | None):
+        self.message = message
+        self.content_blocks = content_blocks
+        self.current_text_block = current_text_block
+
+
+def _handle_message_start(event: dict, state: _ReconstructionState) -> None:
+    """Handle message_start event."""
+    msg = event.get("message", {})
+    state.message["id"] = msg.get("id", "")
+    state.message["model"] = msg.get("model", "")
+    state.message["role"] = msg.get("role", "assistant")
+    state.message["usage"] = dict(msg.get("usage", {}))
+
+
+def _handle_content_block_start(event: dict, state: _ReconstructionState) -> None:
+    """Handle content_block_start event."""
+    block = event.get("content_block", {})
+    block_type = block.get("type", "")
+    if block_type == "text":
+        state.current_text_block = {"type": "text", "text": ""}
+        state.content_blocks.append(state.current_text_block)
+    elif block_type == "tool_use":
+        tool_block = {
+            "type": "tool_use",
+            "id": block.get("id", ""),
+            "name": block.get("name", ""),
+            "input": {},
+        }
+        state.content_blocks.append(tool_block)
+        state.current_text_block = None
+
+
+def _handle_content_block_delta(event: dict, state: _ReconstructionState) -> None:
+    """Handle content_block_delta event."""
+    delta = event.get("delta", {})
+    delta_type = delta.get("type", "")
+
+    if delta_type == "text_delta" and state.current_text_block:
+        state.current_text_block["text"] += delta.get("text", "")
+
+    elif delta_type == "input_json_delta":
+        # For tool use blocks, accumulate JSON input
+        if state.content_blocks and state.content_blocks[-1].get("type") == "tool_use":
+            # Accumulate JSON string (will need parsing at end)
+            if "_input_json_str" not in state.content_blocks[-1]:
+                state.content_blocks[-1]["_input_json_str"] = ""
+            state.content_blocks[-1]["_input_json_str"] += delta.get("partial_json", "")
+
+
+def _handle_content_block_stop(event: dict, state: _ReconstructionState) -> None:
+    """Handle content_block_stop event."""
+    # Finalize current block
+    if state.content_blocks and state.content_blocks[-1].get("type") == "tool_use":
+        # Parse accumulated JSON
+        json_str = state.content_blocks[-1].pop("_input_json_str", "{}")
+        try:
+            state.content_blocks[-1]["input"] = json.loads(json_str)
+        except json.JSONDecodeError:
+            state.content_blocks[-1]["input"] = {}
+    state.current_text_block = None
+
+
+def _handle_message_delta(event: dict, state: _ReconstructionState) -> None:
+    """Handle message_delta event."""
+    delta = event.get("delta", {})
+    if "stop_reason" in delta:
+        state.message["stop_reason"] = delta["stop_reason"]
+    if "stop_sequence" in delta:
+        state.message["stop_sequence"] = delta["stop_sequence"]
+    # Update usage with output tokens
+    usage_delta = event.get("usage", {})
+    if usage_delta:
+        state.message["usage"].update(usage_delta)
+
+
+# [LAW:dataflow-not-control-flow] Event reconstruction dispatch table
+_EVENT_RECONSTRUCTORS = {
+    "message_start": _handle_message_start,
+    "content_block_start": _handle_content_block_start,
+    "content_block_delta": _handle_content_block_delta,
+    "content_block_stop": _handle_content_block_stop,
+    "message_delta": _handle_message_delta,
+}
+
+
 def reconstruct_message_from_events(events: list[dict]) -> dict:
     """Reconstruct complete Claude message from SSE event sequence.
 
@@ -110,90 +200,34 @@ def reconstruct_message_from_events(events: list[dict]) -> dict:
         "usage": {},
     }
 
-    # Track content blocks being built
-    content_blocks = []
-    current_text_block = None
+    # Initialize reconstruction state
+    state = _ReconstructionState(
+        message=message,
+        content_blocks=[],
+        current_text_block=None,
+    )
 
+    # [LAW:dataflow-not-control-flow] Dispatch via table lookup
     for event in events:
         event_type = event.get("type", "")
+        handler = _EVENT_RECONSTRUCTORS.get(event_type)
+        if handler:
+            handler(event, state)
 
-        if event_type == "message_start":
-            msg = event.get("message", {})
-            message["id"] = msg.get("id", "")
-            message["model"] = msg.get("model", "")
-            message["role"] = msg.get("role", "assistant")
-            message["usage"] = dict(msg.get("usage", {}))
-
-        elif event_type == "content_block_start":
-            block = event.get("content_block", {})
-            block_type = block.get("type", "")
-            if block_type == "text":
-                current_text_block = {"type": "text", "text": ""}
-                content_blocks.append(current_text_block)
-            elif block_type == "tool_use":
-                tool_block = {
-                    "type": "tool_use",
-                    "id": block.get("id", ""),
-                    "name": block.get("name", ""),
-                    "input": {},
-                }
-                content_blocks.append(tool_block)
-                current_text_block = None
-
-        elif event_type == "content_block_delta":
-            delta = event.get("delta", {})
-            delta_type = delta.get("type", "")
-
-            if delta_type == "text_delta" and current_text_block:
-                current_text_block["text"] += delta.get("text", "")
-
-            elif delta_type == "input_json_delta":
-                # For tool use blocks, accumulate JSON input
-                # This requires tracking which block is current
-                if content_blocks and content_blocks[-1].get("type") == "tool_use":
-                    # Accumulate JSON string (will need parsing at end)
-                    if "_input_json_str" not in content_blocks[-1]:
-                        content_blocks[-1]["_input_json_str"] = ""
-                    content_blocks[-1]["_input_json_str"] += delta.get(
-                        "partial_json", ""
-                    )
-
-        elif event_type == "content_block_stop":
-            # Finalize current block
-            if content_blocks and content_blocks[-1].get("type") == "tool_use":
-                # Parse accumulated JSON
-                json_str = content_blocks[-1].pop("_input_json_str", "{}")
-                try:
-                    content_blocks[-1]["input"] = json.loads(json_str)
-                except json.JSONDecodeError:
-                    content_blocks[-1]["input"] = {}
-            current_text_block = None
-
-        elif event_type == "message_delta":
-            delta = event.get("delta", {})
-            if "stop_reason" in delta:
-                message["stop_reason"] = delta["stop_reason"]
-            if "stop_sequence" in delta:
-                message["stop_sequence"] = delta["stop_sequence"]
-            # Update usage with output tokens
-            usage_delta = event.get("usage", {})
-            if usage_delta:
-                message["usage"].update(usage_delta)
-
-    message["content"] = content_blocks
-    return message
+    state.message["content"] = state.content_blocks
+    return state.message
 
 
 class HARRecordingSubscriber:
-    """Subscriber that accumulates events and writes HAR entries.
+    """Subscriber that accumulates events and writes HAR entries incrementally.
 
     This is a DirectSubscriber-style component that runs inline in the router
-    thread. It accumulates streaming events in memory, then writes complete
-    HAR entries when each request/response completes.
+    thread. It writes each complete HAR entry immediately to disk, so the file
+    is always valid HAR JSON and close() is instant.
     """
 
     def __init__(self, path: str, session_id: str):
-        """Initialize HAR recorder.
+        """Initialize HAR recorder and open file with valid empty HAR.
 
         Args:
             path: Output file path for HAR file
@@ -201,7 +235,6 @@ class HARRecordingSubscriber:
         """
         self.path = path
         self.session_id = session_id
-        self.entries = []
 
         # State machine for current request/response
         self.pending_request = None
@@ -211,14 +244,29 @@ class HARRecordingSubscriber:
         self.response_events = []
         self.request_start_time = None
 
-        # Initialize HAR structure
-        self.har = {
+        # Open file and write valid empty HAR structure
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+
+        # Build HAR header through the opening bracket of entries array
+        har_header = {
             "log": {
                 "version": "1.2",
                 "creator": {"name": "cc-dump", "version": "0.2.0"},
                 "entries": [],
             }
         }
+        header_json = json.dumps(har_header, ensure_ascii=False)
+        # Strip trailing ]}} to get preamble through opening [
+        preamble = header_json[:-3]  # Remove ]}}
+
+        self._file = open(self.path, "w", encoding="utf-8")
+        self._file.write(preamble)
+        self._entries_end_pos = self._file.tell()
+        self._file.write("\n]}}")
+        self._file.flush()
+
+        self._first_entry = True
+        self._entry_count = 0
 
     def on_event(self, event: tuple) -> None:
         """Handle an event from the router.
@@ -268,53 +316,79 @@ class HARRecordingSubscriber:
             self._commit_entry()
 
     def _commit_entry(self) -> None:
-        """Reconstruct complete message and create HAR entry."""
+        """Reconstruct complete message and write HAR entry to disk immediately."""
         if not self.pending_request or not self.response_events:
             return
 
-        # Reconstruct complete message from events
-        complete_message = reconstruct_message_from_events(self.response_events)
+        try:
+            # Reconstruct complete message from events
+            complete_message = reconstruct_message_from_events(self.response_events)
 
-        # Calculate timing
-        end_time = datetime.now(timezone.utc)
-        time_ms = (
-            (end_time - self.request_start_time).total_seconds() * 1000
-            if self.request_start_time
-            else 0.0
-        )
+            # Calculate timing
+            end_time = datetime.now(timezone.utc)
+            time_ms = (
+                (end_time - self.request_start_time).total_seconds() * 1000
+                if self.request_start_time
+                else 0.0
+            )
 
-        # Build HAR request/response
-        har_request = build_har_request(
-            method="POST",
-            url="https://api.anthropic.com/v1/messages",
-            headers=self.pending_request_headers or {},
-            body=self.pending_request,
-        )
+            # Build HAR request/response
+            har_request = build_har_request(
+                method="POST",
+                url="https://api.anthropic.com/v1/messages",
+                headers=self.pending_request_headers or {},
+                body=self.pending_request,
+            )
 
-        har_response = build_har_response(
-            status=self.response_status or 200,
-            headers=self.response_headers or {},
-            complete_message=complete_message,
-            time_ms=time_ms,
-        )
+            har_response = build_har_response(
+                status=self.response_status or 200,
+                headers=self.response_headers or {},
+                complete_message=complete_message,
+                time_ms=time_ms,
+            )
 
-        # Create HAR entry
-        entry = {
-            "startedDateTime": self.request_start_time.isoformat()
-            if self.request_start_time
-            else datetime.now(timezone.utc).isoformat(),
-            "time": time_ms,
-            "request": har_request,
-            "response": har_response,
-            "cache": {},
-            "timings": {
-                "send": 0,
-                "wait": time_ms,
-                "receive": 0,
-            },
-        }
+            # Create HAR entry
+            entry = {
+                "startedDateTime": self.request_start_time.isoformat()
+                if self.request_start_time
+                else datetime.now(timezone.utc).isoformat(),
+                "time": time_ms,
+                "request": har_request,
+                "response": har_response,
+                "cache": {},
+                "timings": {
+                    "send": 0,
+                    "wait": time_ms,
+                    "receive": 0,
+                },
+            }
 
-        self.entries.append(entry)
+            # Serialize entry (compact JSON, no indent)
+            entry_json = json.dumps(entry, ensure_ascii=False)
+
+            # Seek to entries end position and overwrite footer
+            self._file.seek(self._entries_end_pos)
+
+            # Write entry with comma separator (if not first)
+            if self._first_entry:
+                self._file.write(f"\n{entry_json}")
+                self._first_entry = False
+            else:
+                self._file.write(f",\n{entry_json}")
+
+            # Update entries end position
+            self._entries_end_pos = self._file.tell()
+
+            # Write footer to maintain valid HAR
+            self._file.write("\n]}}")
+            self._file.flush()
+
+            self._entry_count += 1
+
+        except Exception as e:
+            # Skip bad entries without corrupting file
+            sys.stderr.write(f"[har] error serializing entry: {e}\n")
+            sys.stderr.flush()
 
         # Clear state for next request
         self.pending_request = None
@@ -325,18 +399,9 @@ class HARRecordingSubscriber:
         self.request_start_time = None
 
     def close(self) -> None:
-        """Write final HAR structure to disk and close."""
+        """Close file handle - file is already valid HAR."""
         try:
-            # Update HAR with all entries
-            self.har["log"]["entries"] = self.entries
-
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(self.path), exist_ok=True)
-
-            # Write HAR file
-            with open(self.path, "w", encoding="utf-8") as f:
-                json.dump(self.har, f, indent=2, ensure_ascii=False)
-
+            self._file.close()
         except Exception as e:
-            sys.stderr.write(f"[har] error writing file: {e}\n")
+            sys.stderr.write(f"[har] error closing file: {e}\n")
             sys.stderr.flush()

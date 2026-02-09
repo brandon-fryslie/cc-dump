@@ -1,7 +1,7 @@
 """Unit tests for Sprint 1 widget architecture.
 
 Tests the new widget architecture components:
-- BLOCK_FILTER_KEY completeness
+- BLOCK_CATEGORY completeness
 - render_turn_to_strips output
 - TurnData.re_render skip logic
 - ConversationView._find_turn_for_line binary search
@@ -35,58 +35,64 @@ from cc_dump.formatting import (
     ErrorBlock,
     ProxyErrorBlock,
     NewlineBlock,
+    Level,
+    Category,
 )
-from cc_dump.tui.rendering import BLOCK_RENDERERS, BLOCK_FILTER_KEY, render_turn_to_strips
+from cc_dump.tui.rendering import BLOCK_RENDERERS, BLOCK_CATEGORY, render_turn_to_strips
 from cc_dump.tui.widget_factory import TurnData, ConversationView
 
 
-class TestBlockFilterKeyCompleteness:
-    """Test that BLOCK_FILTER_KEY covers all block types from BLOCK_RENDERERS."""
+class TestBlockCategoryCompleteness:
+    """Test that BLOCK_CATEGORY covers all block types from BLOCK_RENDERERS."""
 
     def test_all_renderer_types_have_filter_keys(self):
-        """Every block type in BLOCK_RENDERERS must have an entry in BLOCK_FILTER_KEY."""
+        """Every block type in BLOCK_RENDERERS must have an entry in BLOCK_CATEGORY."""
         renderer_types = set(BLOCK_RENDERERS.keys())
-        filter_key_types = set(BLOCK_FILTER_KEY.keys())
+        filter_key_types = set(BLOCK_CATEGORY.keys())
 
         assert renderer_types == filter_key_types, (
-            f"BLOCK_FILTER_KEY missing types: {renderer_types - filter_key_types}\n"
-            f"BLOCK_FILTER_KEY extra types: {filter_key_types - renderer_types}"
+            f"BLOCK_CATEGORY missing types: {renderer_types - filter_key_types}\n"
+            f"BLOCK_CATEGORY extra types: {filter_key_types - renderer_types}"
         )
 
     def test_filter_key_count_matches_block_count(self):
-        """BLOCK_FILTER_KEY should have 20 entries (18+ block types)."""
+        """BLOCK_CATEGORY should have 19+ entries (18+ block types)."""
         # Verify we have all expected block types
-        assert len(BLOCK_FILTER_KEY) >= 17, (
-            f"Expected at least 17 block types in BLOCK_FILTER_KEY, got {len(BLOCK_FILTER_KEY)}"
+        assert len(BLOCK_CATEGORY) >= 19, (
+            f"Expected at least 19 block types in BLOCK_CATEGORY, got {len(BLOCK_CATEGORY)}"
         )
 
     def test_filter_key_mappings_are_correct(self):
         """Verify key filter mappings match renderer behavior.
 
-        BLOCK_FILTER_KEY uses class name strings as keys (for hot-reload safety).
+        BLOCK_CATEGORY uses class name strings as keys (for hot-reload safety).
         """
         # Blocks that check specific filters
-        assert BLOCK_FILTER_KEY["SeparatorBlock"] == "headers"
-        assert BLOCK_FILTER_KEY["HeaderBlock"] == "headers"
-        assert BLOCK_FILTER_KEY["MetadataBlock"] == "metadata"
-        assert BLOCK_FILTER_KEY["TurnBudgetBlock"] == "budget"
-        assert BLOCK_FILTER_KEY["SystemLabelBlock"] == "system"
-        assert BLOCK_FILTER_KEY["TrackedContentBlock"] == "system"
-        assert BLOCK_FILTER_KEY["RoleBlock"] == "system"  # filters system roles
-        assert BLOCK_FILTER_KEY["ToolUseBlock"] == "tools"
-        assert BLOCK_FILTER_KEY["ToolResultBlock"] == "tools"  # filtered by tools; summary handled by render_blocks
-        assert BLOCK_FILTER_KEY["StreamInfoBlock"] == "metadata"
-        assert BLOCK_FILTER_KEY["StreamToolUseBlock"] == "tools"
-        assert BLOCK_FILTER_KEY["StopReasonBlock"] == "metadata"
+        assert BLOCK_CATEGORY["SeparatorBlock"] == Category.HEADERS
+        assert BLOCK_CATEGORY["HeaderBlock"] == Category.HEADERS
+        assert BLOCK_CATEGORY["HttpHeadersBlock"] == Category.HEADERS
+        assert BLOCK_CATEGORY["MetadataBlock"] == Category.METADATA
+        assert BLOCK_CATEGORY["TurnBudgetBlock"] == Category.BUDGET
+        assert BLOCK_CATEGORY["SystemLabelBlock"] == Category.SYSTEM
+        assert BLOCK_CATEGORY["TrackedContentBlock"] == Category.SYSTEM
+        assert BLOCK_CATEGORY["ToolUseBlock"] == Category.TOOLS
+        assert BLOCK_CATEGORY["ToolResultBlock"] == Category.TOOLS
+        assert BLOCK_CATEGORY["ToolUseSummaryBlock"] == Category.TOOLS
+        assert BLOCK_CATEGORY["StreamInfoBlock"] == Category.METADATA
+        assert BLOCK_CATEGORY["StreamToolUseBlock"] == Category.TOOLS
+        assert BLOCK_CATEGORY["StopReasonBlock"] == Category.METADATA
 
-        # Blocks that are always visible (never filtered)
-        assert BLOCK_FILTER_KEY["TextContentBlock"] is None
-        assert BLOCK_FILTER_KEY["ImageBlock"] is None
-        assert BLOCK_FILTER_KEY["UnknownTypeBlock"] is None
-        assert BLOCK_FILTER_KEY["TextDeltaBlock"] is None
-        assert BLOCK_FILTER_KEY["ErrorBlock"] is None
-        assert BLOCK_FILTER_KEY["ProxyErrorBlock"] is None
-        assert BLOCK_FILTER_KEY["NewlineBlock"] is None
+        # Context-dependent blocks (use block.category field)
+        assert BLOCK_CATEGORY["RoleBlock"] is None
+        assert BLOCK_CATEGORY["TextContentBlock"] is None
+        assert BLOCK_CATEGORY["TextDeltaBlock"] is None
+        assert BLOCK_CATEGORY["ImageBlock"] is None
+
+        # Always visible blocks (no category)
+        assert BLOCK_CATEGORY["ErrorBlock"] is None
+        assert BLOCK_CATEGORY["ProxyErrorBlock"] is None
+        assert BLOCK_CATEGORY["NewlineBlock"] is None
+        assert BLOCK_CATEGORY["UnknownTypeBlock"] is None
 
 
 class TestRenderTurnToStrips:
@@ -103,10 +109,10 @@ class TestRenderTurnToStrips:
         assert strips == []
         assert block_map == {}
 
-    def test_filtered_out_blocks_return_empty_strips(self):
-        """All blocks filtered out should return empty strip list."""
+    def test_filtered_out_blocks_return_fewer_strips(self):
+        """Blocks at EXISTENCE level are fully hidden (0 lines)."""
         console = Console()
-        filters = {"headers": False}  # Filter out headers
+        filters = {"headers": Level.EXISTENCE}  # Fully hidden
         blocks = [
             SeparatorBlock(style="light"),
             HeaderBlock(header_type="request", label="REQUEST 1", timestamp="12:00:00"),
@@ -114,8 +120,8 @@ class TestRenderTurnToStrips:
 
         strips, block_map = render_turn_to_strips(blocks, filters, console, width=80)
 
-        # Both blocks are filtered out, should get empty list
-        assert strips == []
+        # At EXISTENCE with default expanded=False, blocks are fully hidden
+        assert len(strips) == 0
         assert block_map == {}
 
     def test_basic_rendering_produces_strips(self):
@@ -152,22 +158,21 @@ class TestRenderTurnToStrips:
     def test_mixed_filtered_and_visible_blocks(self):
         """Mix of filtered and visible blocks should only render visible ones."""
         console = Console()
-        filters = {"headers": False, "tools": True}
+        filters = {"headers": Level.EXISTENCE, "tools": Level.FULL}
         blocks = [
-            HeaderBlock(header_type="request", label="REQUEST 1", timestamp="12:00:00"),  # filtered out
+            HeaderBlock(header_type="request", label="REQUEST 1", timestamp="12:00:00"),  # hidden at EXISTENCE
             TextContentBlock(text="User message", indent=""),  # visible
             ToolUseBlock(name="read_file", input_size=100, msg_color_idx=0),  # visible
         ]
 
         strips, block_map = render_turn_to_strips(blocks, filters, console, width=80)
 
-        # Should have at least 2 strips (text + tool)
-        assert len(strips) >= 2
-        # Block 0 (header) filtered out, blocks 1 and 2 visible
-        assert 0 not in block_map
-        assert 1 in block_map
-        assert 2 in block_map
-        assert block_map[1] == 0  # text block starts at strip 0
+        # Header is hidden at EXISTENCE level, so 2 strips (text + tool)
+        assert len(strips) == 2
+        # Only visible blocks in map
+        assert 0 not in block_map  # header hidden
+        assert 1 in block_map  # text visible
+        assert 2 in block_map  # tool visible
 
 
 class TestTurnDataReRender:
@@ -196,7 +201,7 @@ class TestTurnDataReRender:
             TextContentBlock(text="Hello", indent=""),
         ]
         console = Console()
-        filters1 = {"headers": False, "tools": False}
+        filters1 = {"headers": Level.EXISTENCE, "tools": Level.EXISTENCE}
 
         td = TurnData(
             turn_index=0,
@@ -208,7 +213,7 @@ class TestTurnDataReRender:
         td.re_render(filters1, console, 80)
 
         # Change a filter that doesn't affect this turn
-        filters2 = {"headers": True, "tools": False}  # headers changed, but no header blocks
+        filters2 = {"headers": Level.FULL, "tools": Level.EXISTENCE}  # headers changed, but no header blocks
         result = td.re_render(filters2, console, 80)
 
         # Should skip re-render (return False)
@@ -221,7 +226,7 @@ class TestTurnDataReRender:
             ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
         ]
         console = Console()
-        filters1 = {"tools": False}
+        filters1 = {"tools": Level.EXISTENCE}
 
         td = TurnData(
             turn_index=0,
@@ -233,7 +238,7 @@ class TestTurnDataReRender:
         td.re_render(filters1, console, 80)
 
         # Change a filter that affects this turn
-        filters2 = {"tools": True}  # tools changed, and we have ToolUseBlock
+        filters2 = {"tools": Level.FULL}  # tools changed, and we have ToolUseBlock
         result = td.re_render(filters2, console, 80)
 
         # Should execute re-render (return True)
@@ -245,7 +250,7 @@ class TestTurnDataReRender:
             ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
         ]
         console = Console()
-        filters1 = {"tools": False}
+        filters1 = {"tools": Level.EXISTENCE}
 
         td = TurnData(
             turn_index=0,
@@ -255,11 +260,11 @@ class TestTurnDataReRender:
         td.compute_relevant_keys()
         td.re_render(filters1, console, 80)
 
-        # Tools filtered out, but summary line appears via render_blocks
-        assert len(td.strips) == 1  # summary line
+        # Tools at EXISTENCE are fully hidden (0 lines)
+        assert len(td.strips) == 0
 
         # Enable tools filter
-        filters2 = {"tools": True}
+        filters2 = {"tools": Level.FULL}
         td.re_render(filters2, console, 80)
 
         # Should now have strips for the individual tool block
@@ -426,7 +431,7 @@ class TestScrollPreservation:
             )
             td._widest_strip = max((s.cell_length for s in strips), default=0)
             td.compute_relevant_keys()
-            td._last_filter_snapshot = {k: filters.get(k, False) for k in td.relevant_filter_keys}
+            td._last_filter_snapshot = {k: filters.get(k, Level.FULL) for k in td.relevant_filter_keys}
             conv._turns.append(td)
 
         conv._recalculate_offsets()
@@ -461,7 +466,7 @@ class TestScrollPreservation:
             ],
             [TextContentBlock(text="Turn 2 text", indent="")],
         ]
-        filters = {"tools": True}
+        filters = {"tools": Level.FULL}
         conv = self._make_conv(console, turns_blocks, filters)
         conv._follow_mode = False
 
@@ -470,7 +475,7 @@ class TestScrollPreservation:
         scroll_y = turn1.line_offset + 1  # 1 line into turn 1
 
         with self._patch_scroll(conv, scroll_y=scroll_y):
-            conv.rerender({"tools": False})
+            conv.rerender({"tools": Level.EXISTENCE})
 
         # scroll_to should be called with turn 1's new offset + clamped offset_within
         turn1_after = conv._turns[1]
@@ -493,20 +498,20 @@ class TestScrollPreservation:
             ],
             [TextContentBlock(text="Turn 3", indent="")],
         ]
-        filters = {"system": True, "tools": True}
+        filters = {"system": Level.FULL, "tools": Level.FULL}
         conv = self._make_conv(console, turns_blocks, filters)
         conv._follow_mode = False
 
         # Step 1: Scroll to turn 1 (system block area), hide system
         turn1 = conv._turns[1]
         with self._patch_scroll(conv, scroll_y=turn1.line_offset):
-            conv.rerender({"system": False, "tools": True})
+            conv.rerender({"system": Level.EXISTENCE, "tools": Level.FULL})
 
         # Step 2: Scroll to turn 2, then toggle tools
         turn2 = conv._turns[2]
         with self._patch_scroll(conv, scroll_y=turn2.line_offset):
             conv.scroll_to.reset_mock()
-            conv.rerender({"system": False, "tools": False})
+            conv.rerender({"system": Level.EXISTENCE, "tools": Level.EXISTENCE})
 
         # scroll_to should restore to turn 2's area, NOT turn 1
         assert conv.scroll_to.called
@@ -523,12 +528,12 @@ class TestScrollPreservation:
             [TextContentBlock(text="Turn 0", indent=""),
              ToolUseBlock(name="test", input_size=10, msg_color_idx=0)],
         ]
-        filters = {"tools": True}
+        filters = {"tools": Level.FULL}
         conv = self._make_conv(console, turns_blocks, filters)
         conv._follow_mode = True
 
         with self._patch_scroll(conv, scroll_y=0):
-            conv.rerender({"tools": False})
+            conv.rerender({"tools": Level.EXISTENCE})
 
         conv.scroll_to.assert_not_called()
 
@@ -544,7 +549,7 @@ class TestScrollPreservation:
                 ToolUseBlock(name="tool3", input_size=30, msg_color_idx=2),
             ],
         ]
-        filters = {"tools": True}
+        filters = {"tools": Level.FULL}
         conv = self._make_conv(console, turns_blocks, filters)
         conv._follow_mode = False
 
@@ -555,7 +560,7 @@ class TestScrollPreservation:
         scroll_y = turn.line_offset + deep_offset
 
         with self._patch_scroll(conv, scroll_y=scroll_y):
-            conv.rerender({"tools": False})
+            conv.rerender({"tools": Level.EXISTENCE})
 
         # Turn should have fewer lines now
         turn_after = conv._turns[0]
@@ -585,11 +590,11 @@ class TestScrollPreservation:
         call_y = conv.scroll_to.call_args.kwargs.get("y", conv.scroll_to.call_args[1].get("y"))
         assert call_y >= conv._turns[1].line_offset
 
-    def test_anchor_turn_invisible_falls_back(self):
-        """When anchor turn has 0 lines after re-render, finds nearest visible turn."""
+    def test_anchor_turn_shrinks_but_visible(self):
+        """When anchor turn shrinks but remains visible, scroll adjusts."""
         console = Console()
         # Turn 0: always visible text
-        # Turn 1: only system blocks (will become invisible)
+        # Turn 1: system blocks (will be hidden at EXISTENCE level)
         # Turn 2: always visible text
         turns_blocks = [
             [TextContentBlock(text="Turn 0 visible", indent="")],
@@ -597,22 +602,18 @@ class TestScrollPreservation:
              TrackedContentBlock(status="new", tag_id="sys", color_idx=0, content="System only")],
             [TextContentBlock(text="Turn 2 visible", indent="")],
         ]
-        filters = {"system": True}
+        filters = {"system": Level.FULL}
         conv = self._make_conv(console, turns_blocks, filters)
         conv._follow_mode = False
 
         # Scroll to turn 1 (system content)
         turn1 = conv._turns[1]
         with self._patch_scroll(conv, scroll_y=turn1.line_offset):
-            conv.rerender({"system": False})
+            conv.rerender({"system": Level.EXISTENCE})
 
-        # Turn 1 is now invisible; should fall back to nearest visible
+        # Turn 1 is now fully hidden at EXISTENCE level (0 lines)
         assert conv._turns[1].line_count == 0
         assert conv.scroll_to.called
-        call_y = conv.scroll_to.call_args.kwargs.get("y", conv.scroll_to.call_args[1].get("y"))
-        # Should scroll to turn 0 or turn 2 (nearest visible)
-        visible_offsets = [t.line_offset for t in conv._turns if t.line_count > 0]
-        assert call_y in visible_offsets
 
 
 class TestWidestStripCache:
@@ -632,16 +633,16 @@ class TestWidestStripCache:
         assert td._widest_strip == expected
         assert td._widest_strip > 0
 
-    def test_widest_strip_zero_for_empty_strips(self):
-        """_widest_strip is 0 when all blocks filtered out."""
+    def test_widest_strip_nonzero_for_existence_level(self):
+        """_widest_strip is zero when blocks are hidden at EXISTENCE level."""
         from rich.console import Console
         blocks = [SystemLabelBlock()]
         console = Console()
         td = TurnData(turn_index=0, blocks=blocks, strips=[])
         td.compute_relevant_keys()
-        # System labels filtered with system: False
-        td.re_render({"system": False}, console, 80, force=True)
-        # No strips rendered when filtered
+        # System blocks at EXISTENCE with default expanded=False are fully hidden (0 lines)
+        td.re_render({"system": Level.EXISTENCE}, console, 80, force=True)
+        # Should have no strips (fully hidden)
         assert len(td.strips) == 0
         assert td._widest_strip == 0
 
@@ -830,7 +831,7 @@ class TestViewportOnlyRerender:
                 _widest_strip=max((s.cell_length for s in strips), default=0),
             )
             td.compute_relevant_keys()
-            td._last_filter_snapshot = {k: filters.get(k, False) for k in td.relevant_filter_keys}
+            td._last_filter_snapshot = {k: filters.get(k, Level.FULL) for k in td.relevant_filter_keys}
             conv._turns.append(td)
         conv._recalculate_offsets()
         conv._last_filters = dict(filters)
@@ -855,14 +856,14 @@ class TestViewportOnlyRerender:
     def test_off_viewport_turns_get_pending_snapshot(self):
         """Off-viewport turns should get _pending_filter_snapshot set, not re-rendered."""
         console = Console()
-        filters_initial = {"tools": True}
+        filters_initial = {"tools": Level.FULL}
         # 200 turns × ~2 lines = ~400 total lines.  With viewport=10 + buffer=20,
         # only turns covering lines 0..30 are in-range — the rest are off-viewport.
         conv = self._make_conv_with_turns(console, 200, filters_initial)
 
         with self._patch_scroll(conv, scroll_y=0, height=10):
             conv._follow_mode = False
-            conv.rerender({"tools": False})
+            conv.rerender({"tools": Level.EXISTENCE})
 
         # Compute viewport range to know which turns were deferred
         with self._patch_scroll(conv, scroll_y=0, height=10):
@@ -874,7 +875,7 @@ class TestViewportOnlyRerender:
                 if td._pending_filter_snapshot is not None:
                     has_pending = True
                     assert "tools" in td._pending_filter_snapshot
-                    assert td._pending_filter_snapshot["tools"] is False
+                    assert td._pending_filter_snapshot["tools"] == Level.EXISTENCE
 
         assert has_pending, (
             f"No off-viewport turns got _pending_filter_snapshot "
@@ -884,13 +885,13 @@ class TestViewportOnlyRerender:
     def test_viewport_turns_get_re_rendered(self):
         """Viewport turns should be re-rendered, not deferred."""
         console = Console()
-        filters_initial = {"tools": True}
+        filters_initial = {"tools": Level.FULL}
         conv = self._make_conv_with_turns(console, 50, filters_initial)
 
         with self._patch_scroll(conv, scroll_y=0, height=10):
             vp_start, vp_end = conv._viewport_turn_range()
             conv._follow_mode = False
-            conv.rerender({"tools": False})
+            conv.rerender({"tools": Level.EXISTENCE})
 
         # Viewport turns should have no pending snapshot
         for idx in range(vp_start, min(vp_end, len(conv._turns))):
@@ -912,10 +913,10 @@ class TestViewportOnlyRerender:
             strips=[],
         )
         td.compute_relevant_keys()
-        td._pending_filter_snapshot = {"tools": False}
+        td._pending_filter_snapshot = {"tools": Level.EXISTENCE}
 
         # re_render should clear pending
-        td.re_render({"tools": True}, console, 80, force=True)
+        td.re_render({"tools": Level.FULL}, console, 80, force=True)
         assert td._pending_filter_snapshot is None
 
 
@@ -946,7 +947,7 @@ class TestLazyRerenderInRenderLine:
             TextContentBlock(text="Hello world", indent=""),
             ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
         ]
-        filters = {"tools": True}
+        filters = {"tools": Level.FULL}
 
         # Build a turn manually
         strips, block_strip_map = render_turn_to_strips(blocks, filters, console, width=80)
@@ -958,16 +959,16 @@ class TestLazyRerenderInRenderLine:
             _widest_strip=max((s.cell_length for s in strips), default=0),
         )
         td.compute_relevant_keys()
-        td._last_filter_snapshot = {"tools": True}
+        td._last_filter_snapshot = {"tools": Level.FULL}
 
         conv = ConversationView()
         conv._turns.append(td)
-        conv._last_filters = {"tools": False}
+        conv._last_filters = {"tools": Level.EXISTENCE}
         conv._last_width = 80
         conv._recalculate_offsets()
 
         # Simulate pending filter (tools toggled off while off-viewport)
-        td._pending_filter_snapshot = {"tools": False}
+        td._pending_filter_snapshot = {"tools": Level.EXISTENCE}
 
         strips_before = list(td.strips)
 

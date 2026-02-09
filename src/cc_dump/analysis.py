@@ -67,6 +67,45 @@ class TurnBudget:
         return self.user_text_tokens_est + self.assistant_text_tokens_est
 
 
+# [LAW:dataflow-not-control-flow] Role token field mapping
+_ROLE_TOKEN_FIELDS = {
+    "user": "user_text_tokens_est",
+    "assistant": "assistant_text_tokens_est",
+}
+
+
+def _estimate_text_block(block: dict) -> int:
+    """Estimate tokens for a text content block."""
+    text = block.get("text", "")
+    return estimate_tokens(text)
+
+
+def _estimate_tool_use_block(block: dict) -> int:
+    """Estimate tokens for a tool_use content block."""
+    tool_input = block.get("input", {})
+    return estimate_tokens(json.dumps(tool_input))
+
+
+def _estimate_tool_result_block(block: dict) -> int:
+    """Estimate tokens for a tool_result content block."""
+    content_val = block.get("content", "")
+    if isinstance(content_val, list):
+        size = sum(len(json.dumps(p)) for p in content_val)
+    elif isinstance(content_val, str):
+        size = len(content_val)
+    else:
+        size = len(json.dumps(content_val))
+    return estimate_tokens("x" * size)
+
+
+# [LAW:dataflow-not-control-flow] Block type estimator dispatch
+_BLOCK_TYPE_ESTIMATORS = {
+    "text": _estimate_text_block,
+    "tool_use": _estimate_tool_use_block,
+    "tool_result": _estimate_tool_result_block,
+}
+
+
 def compute_turn_budget(request_body: dict) -> TurnBudget:
     """Analyze a full API request body and compute token budget breakdown."""
     budget = TurnBudget()
@@ -95,42 +134,30 @@ def compute_turn_budget(request_body: dict) -> TurnBudget:
 
         if isinstance(content, str):
             tokens = estimate_tokens(content)
-            if role == "user":
-                budget.user_text_tokens_est += tokens
-            elif role == "assistant":
-                budget.assistant_text_tokens_est += tokens
+            field = _ROLE_TOKEN_FIELDS.get(role)
+            if field:
+                setattr(budget, field, getattr(budget, field) + tokens)
         elif isinstance(content, list):
             for block in content:
                 if isinstance(block, str):
                     tokens = estimate_tokens(block)
-                    if role == "user":
-                        budget.user_text_tokens_est += tokens
-                    elif role == "assistant":
-                        budget.assistant_text_tokens_est += tokens
+                    field = _ROLE_TOKEN_FIELDS.get(role)
+                    if field:
+                        setattr(budget, field, getattr(budget, field) + tokens)
                     continue
 
                 btype = block.get("type", "")
+
+                # [LAW:dataflow-not-control-flow] Special handling for text blocks with role attribution
                 if btype == "text":
-                    text = block.get("text", "")
-                    tokens = estimate_tokens(text)
-                    if role == "user":
-                        budget.user_text_tokens_est += tokens
-                    elif role == "assistant":
-                        budget.assistant_text_tokens_est += tokens
+                    tokens = _estimate_text_block(block)
+                    field = _ROLE_TOKEN_FIELDS.get(role)
+                    if field:
+                        setattr(budget, field, getattr(budget, field) + tokens)
                 elif btype == "tool_use":
-                    tool_input = block.get("input", {})
-                    budget.tool_use_tokens_est += estimate_tokens(
-                        json.dumps(tool_input)
-                    )
+                    budget.tool_use_tokens_est += _estimate_tool_use_block(block)
                 elif btype == "tool_result":
-                    content_val = block.get("content", "")
-                    if isinstance(content_val, list):
-                        size = sum(len(json.dumps(p)) for p in content_val)
-                    elif isinstance(content_val, str):
-                        size = len(content_val)
-                    else:
-                        size = len(json.dumps(content_val))
-                    budget.tool_result_tokens_est += estimate_tokens("x" * size)
+                    budget.tool_result_tokens_est += _estimate_tool_result_block(block)
 
     budget.total_est = (
         budget.system_tokens_est
@@ -330,6 +357,14 @@ def classify_model(model_str: str) -> tuple[str, ModelPricing]:
     return ("unknown", FALLBACK_PRICING)
 
 
+# [LAW:dataflow-not-control-flow] [LAW:one-source-of-truth] Model display names
+_MODEL_DISPLAY = {
+    "opus": "Opus 4.5",
+    "sonnet": "Sonnet 4.5",
+    "haiku": "Haiku 4.5",
+}
+
+
 def format_model_short(model: str) -> str:
     """Format model string as short display name.
 
@@ -337,20 +372,18 @@ def format_model_short(model: str) -> str:
         "claude-opus-4-20250514" -> "Opus 4.5"
         "claude-sonnet-4-20250514" -> "Sonnet 4.5"
         "claude-haiku-4-20250514" -> "Haiku 4.5"
+        "" -> "Unknown"
+        "some-long-unknown-model-name-12345678" -> "some-long-unknown-mo"
     """
     if not model:
         return "Unknown"
 
-    lower = model.lower()
-    if "opus" in lower:
-        return "Opus 4.5"
-    elif "sonnet" in lower:
-        return "Sonnet 4.5"
-    elif "haiku" in lower:
-        return "Haiku 4.5"
+    # [LAW:one-source-of-truth] Reuse classify_model for family detection
+    family, _ = classify_model(model)
+    display_name = _MODEL_DISPLAY.get(family)
 
-    # Fallback: truncate to 20 chars
-    return model[:20]
+    # Fallback: truncate to 20 chars for truly unknown models
+    return display_name if display_name else model[:20]
 
 
 @dataclass

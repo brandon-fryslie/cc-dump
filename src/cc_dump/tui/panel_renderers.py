@@ -39,6 +39,36 @@ def render_stats_panel(
     return " | ".join(parts)
 
 
+def _format_economics_row_input(row) -> str:
+    """Format input tokens with cache percentage.
+
+    Args:
+        row: ToolEconomicsRow with input_tokens and cache_read_tokens
+
+    Returns:
+        Formatted string like "1.2k (35%)" or "68" or "--"
+    """
+    if row.input_tokens > 0:
+        total_input = row.input_tokens + row.cache_read_tokens
+        if row.cache_read_tokens > 0 and total_input > 0:
+            cache_pct = 100 * row.cache_read_tokens / total_input
+            return "{} ({:.0f}%)".format(_fmt_tokens(row.input_tokens), cache_pct)
+        else:
+            return _fmt_tokens(row.input_tokens)
+    else:
+        return "--"
+
+
+def _format_economics_row_output(row) -> str:
+    """Format output tokens."""
+    return _fmt_tokens(row.result_tokens) if row.result_tokens > 0 else "--"
+
+
+def _format_economics_row_cost(row) -> str:
+    """Format normalized cost."""
+    return "{:,.0f}".format(row.norm_cost) if row.norm_cost > 0 else "--"
+
+
 def render_economics_panel(rows: list) -> str:
     """Render the tool economics panel display text.
 
@@ -53,81 +83,41 @@ def render_economics_panel(rows: list) -> str:
     # Detect breakdown mode by checking if any row has a model
     is_breakdown = any(row.model is not None for row in rows)
 
-    lines = []
+    # [LAW:dataflow-not-control-flow] Layout config drives rendering
     if is_breakdown:
-        lines.append("Tool Economics (by model):")
-        lines.append(
-            "  {:<12} {:<11} {:>5}  {:>14}  {:>8}  {:>10}".format(
-                "Tool", "Model", "Calls", "Input (Cached)", "Output", "Norm Cost"
-            )
-        )
-        for row in rows:
-            # Format input with cache percentage
-            if row.input_tokens > 0:
-                total_input = row.input_tokens + row.cache_read_tokens
-                if row.cache_read_tokens > 0 and total_input > 0:
-                    cache_pct = 100 * row.cache_read_tokens / total_input
-                    input_str = "{} ({:.0f}%)".format(
-                        _fmt_tokens(row.input_tokens), cache_pct
-                    )
-                else:
-                    input_str = _fmt_tokens(row.input_tokens)
-            else:
-                input_str = "--"
+        title = "Tool Economics (by model):"
+        header_fmt = "  {:<12} {:<11} {:>5}  {:>14}  {:>8}  {:>10}"
+        header_cols = ("Tool", "Model", "Calls", "Input (Cached)", "Output", "Norm Cost")
+        row_fmt = "  {:<12} {:<11} {:>5}  {:>14}  {:>8}  {:>10}"
 
-            output_str = (
-                _fmt_tokens(row.result_tokens) if row.result_tokens > 0 else "--"
-            )
-            cost_str = "{:,.0f}".format(row.norm_cost) if row.norm_cost > 0 else "--"
-
-            # Format model name
-            model_short = cc_dump.analysis.format_model_short(row.model or "")
-
-            lines.append(
-                "  {:<12} {:<11} {:>5}  {:>14}  {:>8}  {:>10}".format(
-                    row.name[:12],
-                    model_short[:11],
-                    row.calls,
-                    input_str,
-                    output_str,
-                    cost_str,
-                )
+        def row_fields(row):
+            return (
+                row.name[:12],
+                cc_dump.analysis.format_model_short(row.model or "")[:11],
+                row.calls,
+                _format_economics_row_input(row),
+                _format_economics_row_output(row),
+                _format_economics_row_cost(row),
             )
     else:
-        lines.append("Tool Economics (session total):")
-        lines.append(
-            "  {:<12} {:>5}  {:>14}  {:>8}  {:>10}".format(
-                "Tool", "Calls", "Input (Cached)", "Output", "Norm Cost"
-            )
-        )
-        for row in rows:
-            # Format input with cache percentage
-            if row.input_tokens > 0:
-                total_input = row.input_tokens + row.cache_read_tokens
-                if row.cache_read_tokens > 0 and total_input > 0:
-                    cache_pct = 100 * row.cache_read_tokens / total_input
-                    input_str = "{} ({:.0f}%)".format(
-                        _fmt_tokens(row.input_tokens), cache_pct
-                    )
-                else:
-                    input_str = _fmt_tokens(row.input_tokens)
-            else:
-                input_str = "--"
+        title = "Tool Economics (session total):"
+        header_fmt = "  {:<12} {:>5}  {:>14}  {:>8}  {:>10}"
+        header_cols = ("Tool", "Calls", "Input (Cached)", "Output", "Norm Cost")
+        row_fmt = "  {:<12} {:>5}  {:>14}  {:>8}  {:>10}"
 
-            output_str = (
-                _fmt_tokens(row.result_tokens) if row.result_tokens > 0 else "--"
+        def row_fields(row):
+            return (
+                row.name[:12],
+                row.calls,
+                _format_economics_row_input(row),
+                _format_economics_row_output(row),
+                _format_economics_row_cost(row),
             )
-            cost_str = "{:,.0f}".format(row.norm_cost) if row.norm_cost > 0 else "--"
 
-            lines.append(
-                "  {:<12} {:>5}  {:>14}  {:>8}  {:>10}".format(
-                    row.name[:12],
-                    row.calls,
-                    input_str,
-                    output_str,
-                    cost_str,
-                )
-            )
+    # Single rendering loop
+    lines = [title, header_fmt.format(*header_cols)]
+    for row in rows:
+        lines.append(row_fmt.format(*row_fields(row)))
 
     return "\n".join(lines)
 

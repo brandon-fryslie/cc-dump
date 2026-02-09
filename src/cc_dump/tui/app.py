@@ -15,8 +15,26 @@ from cc_dump.tui.custom_footer import StyledFooter
 # Use module-level imports so hot-reload takes effect
 import cc_dump.analysis
 import cc_dump.formatting
+import cc_dump.tui.rendering
 import cc_dump.tui.widget_factory
 import cc_dump.tui.event_handlers
+
+
+# [LAW:one-source-of-truth] [LAW:one-type-per-behavior]
+# (key, category, description, default_level, default_detail)
+_CATEGORY_CONFIG = [
+    ("h", "headers", "h|eaders", 1, 2),
+    ("u", "user", "u|ser", 3, 3),
+    ("a", "assistant", "a|ssistant", 3, 3),
+    ("t", "tools", "t|ools", 2, 2),
+    ("s", "system", "s|ystem", 2, 2),
+    ("e", "budget", "budg|e|t", 1, 2),
+    ("m", "metadata", "m|etadata", 1, 2),
+]
+
+# Build lookup dicts from config
+_VIS_ATTR = {name: f"vis_{name}" for _, name, _, _, _ in _CATEGORY_CONFIG}
+_DEFAULT_DETAIL = {name: detail for _, name, _, _, detail in _CATEGORY_CONFIG}
 
 
 class CcDumpApp(App):
@@ -24,33 +42,34 @@ class CcDumpApp(App):
 
     CSS_PATH = "styles.css"
 
-    BINDINGS = [
-        Binding("h", "toggle_headers", "h|eaders", show=True),
-        Binding("t", "toggle_tools", "t|ools", show=True),
-        Binding("s", "toggle_system", "s|ystem", show=True),
-        Binding("e", "toggle_budget", "budg|e|t", show=True),
-        Binding("m", "toggle_metadata", "m|etadata", show=True),
-        Binding("a", "toggle_stats", "st|a|ts", show=True),
-        Binding("c", "toggle_economics", "c|ost", show=True),
-        Binding("l", "toggle_timeline", "time|l|ine", show=True),
-        Binding("ctrl+l", "toggle_logs", "Logs", show=False),
-        Binding("ctrl+m", "toggle_economics_breakdown", "Model breakdown", show=False),
-        # Sprint 2: Follow mode and navigation
-        Binding("f", "toggle_follow", "f|ollow", show=True),
-        Binding("j", "next_turn", "next", show=False),
-        Binding("k", "prev_turn", "prev", show=False),
-        Binding("n", "next_tool_turn", "next tool", show=False),
-        Binding("N", "prev_tool_turn", "prev tool", show=False),
-        Binding("g", "first_turn", "top", show=False),
-        Binding("G", "last_turn", "bottom", show=False),
-    ]
+    # Generate BINDINGS from config
+    BINDINGS = []
+    for key, name, desc, _, _ in _CATEGORY_CONFIG:
+        BINDINGS.append(Binding(key, f"toggle_vis('{name}')", desc, show=True))
+        BINDINGS.append(Binding(key.upper(), f"toggle_detail('{name}')", show=False))
+        BINDINGS.append(
+            Binding(f"ctrl+shift+{key}", f"toggle_expand('{name}')", show=False)
+        )
+    # Non-category bindings stay explicit
+    BINDINGS.extend(
+        [
+            Binding("c", "toggle_economics", "c|ost", show=True),
+            Binding("l", "toggle_timeline", "time|l|ine", show=True),
+            Binding("ctrl+l", "toggle_logs", "Logs", show=False),
+            Binding("C", "toggle_economics_breakdown", "Model breakdown", show=False),
+            Binding("f", "toggle_follow", "f|ollow", show=True),
+        ]
+    )
 
-    show_headers = reactive(False)
-    show_tools = reactive(True)
-    show_system = reactive(True)
-    show_budget = reactive(False)
-    show_metadata = reactive(True)
-    show_stats = reactive(True)
+    # Category visibility levels (3-state cycle: EXISTENCE → SUMMARY → FULL → EXISTENCE)
+    vis_headers = reactive(1)  # Level.EXISTENCE
+    vis_user = reactive(3)  # Level.FULL
+    vis_assistant = reactive(3)  # Level.FULL
+    vis_tools = reactive(2)  # Level.SUMMARY
+    vis_system = reactive(2)  # Level.SUMMARY
+    vis_metadata = reactive(1)  # Level.EXISTENCE
+    vis_budget = reactive(1)  # Level.EXISTENCE
+    # Panel visibility (bool toggles)
     show_economics = reactive(False)
     show_timeline = reactive(False)
     show_logs = reactive(False)
@@ -85,6 +104,9 @@ class CcDumpApp(App):
         self._app_state = {
             "current_turn_usage": {},  # Token counts for incomplete turn
         }
+
+        # Remember detail level when toggling visibility
+        self._remembered_detail = dict(_DEFAULT_DETAIL)
 
         # Widget IDs for querying (set after compose)
         self._conv_id = "conversation-view"
@@ -146,10 +168,7 @@ class CcDumpApp(App):
         # Start worker to drain events
         self.run_worker(self._drain_events, thread=True, exclusive=False)
 
-        # Set initial panel visibility
-        stats = self._get_stats()
-        if stats is not None:
-            stats.display = self.show_stats
+        # Set initial panel visibility (stats always visible)
         economics = self._get_economics()
         if economics is not None:
             economics.display = self.show_economics
@@ -219,21 +238,10 @@ class CcDumpApp(App):
             complete_message,
         ) in self._replay_data:
             try:
-                # Format request blocks
+                # [LAW:one-source-of-truth] Header injection moved into format_request
                 request_blocks = cc_dump.formatting.format_request(
-                    req_body, self._state
+                    req_body, self._state, request_headers=req_headers
                 )
-
-                # Add request headers if present
-                if req_headers:
-                    header_blocks = cc_dump.formatting.format_request_headers(
-                        req_headers
-                    )
-                    # Insert after MetadataBlock
-                    for i, block in enumerate(request_blocks):
-                        if isinstance(block, cc_dump.formatting.MetadataBlock):
-                            request_blocks[i + 1 : i + 1] = header_blocks
-                            break
 
                 # Add request turn
                 conv.add_turn(request_blocks)
@@ -376,7 +384,7 @@ class CcDumpApp(App):
         timeline_state = old_timeline.get_state() if old_timeline else {}
         logs_state = old_logs.get_state() if old_logs else {}
 
-        stats_visible = old_stats.display if old_stats else self.show_stats
+        stats_visible = True  # stats always visible
         economics_visible = (
             old_economics.display if old_economics else self.show_economics
         )
@@ -461,114 +469,120 @@ class CcDumpApp(App):
         stats = self._get_stats()
         if conv is None or stats is None:
             return  # Widgets not ready
+
+        # [LAW:dataflow-not-control-flow] Unified context dict — all handlers get same args
         widgets = {
             "conv": conv,
             "stats": stats,
             "filters": self.active_filters,
-            "show_budget": self.show_budget,
-        }
-
-        # Build database context for handlers
-        db_context = {
-            "db_path": self._db_path,
-            "session_id": self._session_id,
-        }
-
-        # Build refresh callbacks
-        refresh_callbacks = {
-            "refresh_economics": self._refresh_economics,
-            "refresh_timeline": self._refresh_timeline,
+            "refresh_callbacks": {
+                "refresh_economics": self._refresh_economics,
+                "refresh_timeline": self._refresh_timeline,
+            },
+            "db_context": {
+                "db_path": self._db_path,
+                "session_id": self._session_id,
+            },
         }
 
         # Build log callback
         log_callback = self._log
 
-        if kind == "request_headers":
-            self._app_state = cc_dump.tui.event_handlers.handle_request_headers(
+        # [LAW:dataflow-not-control-flow] Dispatch via table lookup — uniform signature
+        handler = cc_dump.tui.event_handlers.EVENT_HANDLERS.get(kind)
+        if handler:
+            self._app_state = handler(
                 event, self._state, widgets, self._app_state, log_callback
             )
-
-        elif kind == "request":
-            self._app_state = cc_dump.tui.event_handlers.handle_request(
-                event, self._state, widgets, self._app_state, log_callback
-            )
-
-        elif kind == "response_headers":
-            self._app_state = cc_dump.tui.event_handlers.handle_response_headers(
-                event, self._state, widgets, self._app_state, log_callback
-            )
-
-        elif kind == "response_start":
-            # Response starts are now handled by response_headers event
-            pass
-
-        elif kind == "response_event":
-            self._app_state = cc_dump.tui.event_handlers.handle_response_event(
-                event, self._state, widgets, self._app_state, log_callback
-            )
-
-        elif kind == "response_done":
-            self._app_state = cc_dump.tui.event_handlers.handle_response_done(
-                event,
-                self._state,
-                widgets,
-                self._app_state,
-                refresh_callbacks,
-                db_context,
-                log_callback,
-            )
-
-        elif kind == "error":
-            self._app_state = cc_dump.tui.event_handlers.handle_error(
-                event, self._state, widgets, self._app_state, log_callback
-            )
-
-        elif kind == "proxy_error":
-            self._app_state = cc_dump.tui.event_handlers.handle_proxy_error(
-                event, self._state, widgets, self._app_state, log_callback
-            )
-
-        elif kind == "log":
-            # HTTP proxy logs - log them to app logs
-            _, method, path, status = event
-            self._log("DEBUG", f"HTTP {method} {path} -> {status}")
 
     @property
     def active_filters(self):
-        """Current filter state as a dict."""
+        """Current filter state as a dict (category name -> Level int)."""
+        Level = cc_dump.formatting.Level
+
         return {
-            "headers": self.show_headers,
-            "tools": self.show_tools,
-            "system": self.show_system,
-            "budget": self.show_budget,
-            "metadata": self.show_metadata,
-            "stats": self.show_stats,
-            "economics": self.show_economics,
-            "timeline": self.show_timeline,
+            "headers": Level(self.vis_headers),
+            "tools": Level(self.vis_tools),
+            "system": Level(self.vis_system),
+            "budget": Level(self.vis_budget),
+            "metadata": Level(self.vis_metadata),
+            "user": Level(self.vis_user),
+            "assistant": Level(self.vis_assistant),
         }
 
-    # Action handlers for key bindings
+    # Action handlers — category visibility and detail
 
-    def action_toggle_headers(self):
-        self.show_headers = not self.show_headers
+    def _clear_overrides(self, category_name: str):
+        """Reset per-block expanded overrides for a category."""
+        cat = cc_dump.formatting.Category(category_name)
+        conv = self._get_conv()
+        if conv is None:
+            return
+        for td in conv._turns:
+            for block in td.blocks:
+                block_cat = cc_dump.tui.rendering.get_category(block)
+                if block_cat == cat:
+                    block.expanded = None  # reset to level default
 
-    def action_toggle_tools(self):
-        self.show_tools = not self.show_tools
+    def action_toggle_vis(self, category: str):
+        """Toggle hidden (1) ↔ visible (remembered detail level)."""
+        attr = _VIS_ATTR[category]
+        current = getattr(self, attr)
+        if current > 1:
+            self._remembered_detail[category] = current
+            setattr(self, attr, 1)
+        else:
+            setattr(self, attr, self._remembered_detail[category])
+        self._clear_overrides(category)
 
-    def action_toggle_system(self):
-        self.show_system = not self.show_system
+    def action_toggle_detail(self, category: str):
+        """Toggle SUMMARY (2) ↔ FULL (3). If hidden, show at opposite of remembered."""
+        attr = _VIS_ATTR[category]
+        current = getattr(self, attr)
+        if current <= 1:
+            # Hidden → show at OPPOSITE of remembered (toggle while showing)
+            remembered = self._remembered_detail[category]
+            new_level = 2 if remembered == 3 else 3
+            setattr(self, attr, new_level)
+            self._remembered_detail[category] = new_level
+        elif current == 2:
+            setattr(self, attr, 3)
+            self._remembered_detail[category] = 3
+        else:
+            setattr(self, attr, 2)
+            self._remembered_detail[category] = 2
+        self._clear_overrides(category)
 
-    def action_toggle_budget(self):
-        self.show_budget = not self.show_budget
-
-    def action_toggle_metadata(self):
-        self.show_metadata = not self.show_metadata
-
-    def action_toggle_stats(self):
-        self.show_stats = not self.show_stats
-        stats = self._get_stats()
-        if stats is not None:
-            stats.display = self.show_stats
+    def action_toggle_expand(self, category: str):
+        """Toggle all blocks in category between expanded and collapsed."""
+        cat = cc_dump.formatting.Category(category)
+        level = cc_dump.formatting.Level(getattr(self, _VIS_ATTR[category]))
+        default_exp = cc_dump.tui.rendering.DEFAULT_EXPANDED[level]
+        conv = self._get_conv()
+        if conv is None:
+            return
+        # If any block is at default → set all to opposite. Else reset all to default.
+        target = not default_exp  # toggle direction
+        for td in conv._turns:
+            for block in td.blocks:
+                if cc_dump.tui.rendering.get_category(block) == cat:
+                    current = (
+                        block.expanded if block.expanded is not None else default_exp
+                    )
+                    if current == default_exp:
+                        # Found one at default → confirm toggle to opposite
+                        break
+            else:
+                continue
+            break
+        else:
+            target = default_exp  # all already toggled → reset to default (None)
+        for td in conv._turns:
+            for block in td.blocks:
+                if cc_dump.tui.rendering.get_category(block) == cat:
+                    block.expanded = None if target == default_exp else target
+        conv.rerender(self.active_filters)
+        self._update_footer_state()
 
     def action_toggle_economics(self):
         self.show_economics = not self.show_economics
@@ -605,36 +619,6 @@ class CcDumpApp(App):
         if conv is not None:
             conv.toggle_follow()
 
-    def action_next_turn(self):
-        conv = self._get_conv()
-        if conv is not None:
-            conv.select_next_turn(forward=True)
-
-    def action_prev_turn(self):
-        conv = self._get_conv()
-        if conv is not None:
-            conv.select_next_turn(forward=False)
-
-    def action_next_tool_turn(self):
-        conv = self._get_conv()
-        if conv is not None:
-            conv.next_tool_turn(forward=True)
-
-    def action_prev_tool_turn(self):
-        conv = self._get_conv()
-        if conv is not None:
-            conv.next_tool_turn(forward=False)
-
-    def action_first_turn(self):
-        conv = self._get_conv()
-        if conv is not None:
-            conv.jump_to_first()
-
-    def action_last_turn(self):
-        conv = self._get_conv()
-        if conv is not None:
-            conv.jump_to_last()
-
     def _refresh_economics(self):
         """Update tool economics panel with current data from database."""
         if not self.is_running or not self._db_path or not self._session_id:
@@ -651,7 +635,7 @@ class CcDumpApp(App):
         if panel is not None:
             panel.refresh_from_db(self._db_path, self._session_id)
 
-    # Reactive watchers - trigger re-render when filters change
+    # Reactive watchers - trigger re-render when category levels change
 
     def _rerender_if_mounted(self):
         """Re-render conversation if the app is mounted."""
@@ -661,23 +645,26 @@ class CcDumpApp(App):
                 conv.rerender(self.active_filters)
             self._update_footer_state()
 
-    def watch_show_headers(self, value):
+    def watch_vis_headers(self, value):
         self._rerender_if_mounted()
 
-    def watch_show_tools(self, value):
+    def watch_vis_user(self, value):
         self._rerender_if_mounted()
 
-    def watch_show_system(self, value):
+    def watch_vis_assistant(self, value):
         self._rerender_if_mounted()
 
-    def watch_show_budget(self, value):
+    def watch_vis_tools(self, value):
         self._rerender_if_mounted()
 
-    def watch_show_metadata(self, value):
+    def watch_vis_system(self, value):
         self._rerender_if_mounted()
 
-    def watch_show_stats(self, value):
-        self._update_footer_state()
+    def watch_vis_budget(self, value):
+        self._rerender_if_mounted()
+
+    def watch_vis_metadata(self, value):
+        self._rerender_if_mounted()
 
     def watch_show_economics(self, value):
         self._update_footer_state()

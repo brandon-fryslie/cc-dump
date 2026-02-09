@@ -47,29 +47,9 @@ def handle_request(event, state, widgets, app_state, log_fn):
     body = event[1]
 
     try:
-        blocks = cc_dump.formatting.format_request(body, state)
-
-        # Inject request headers if they were captured
+        # [LAW:one-source-of-truth] Header injection moved into format_request
         pending_headers = app_state.pop("pending_request_headers", None)
-        if pending_headers:
-            # Insert HttpHeadersBlock after MetadataBlock (which is typically at index 5)
-            # Find MetadataBlock position
-            meta_idx = None
-            for i, block in enumerate(blocks):
-                if isinstance(block, cc_dump.formatting.MetadataBlock):
-                    meta_idx = i
-                    break
-
-            if meta_idx is not None:
-                # Insert after MetadataBlock
-                header_blocks = cc_dump.formatting.format_request_headers(
-                    pending_headers
-                )
-                blocks[meta_idx + 1 : meta_idx + 1] = header_blocks
-                log_fn(
-                    "DEBUG",
-                    f"Injected request headers after MetadataBlock at index {meta_idx}",
-                )
+        blocks = cc_dump.formatting.format_request(body, state, request_headers=pending_headers)
 
         conv = widgets["conv"]
         stats = widgets["stats"]
@@ -191,18 +171,14 @@ def handle_response_event(event, state, widgets, app_state, log_fn):
     return app_state
 
 
-def handle_response_done(
-    event, state, widgets, app_state, refresh_callbacks, db_context, log_fn
-):
+def handle_response_done(event, state, widgets, app_state, log_fn):
     """Handle response_done event.
 
     Args:
         event: The event tuple ("response_done",)
         state: The content tracking state dict
-        widgets: Dict with widget references
+        widgets: Dict with widget references (includes refresh_callbacks and db_context)
         app_state: Dict with app-level state
-        refresh_callbacks: Dict with refresh functions (economics, timeline)
-        db_context: Dict with db_path and session_id for database access
         log_fn: Function to log application messages
 
     Returns:
@@ -212,7 +188,8 @@ def handle_response_done(
         conv = widgets["conv"]
         stats = widgets["stats"]
         filters = widgets["filters"]
-        show_budget = widgets.get("show_budget", False)
+        refresh_callbacks = widgets.get("refresh_callbacks", {})
+        db_context = widgets.get("db_context", {})
 
         # Finalize streaming turn in ConversationView
         _ = conv.finalize_streaming_turn()
@@ -226,8 +203,10 @@ def handle_response_done(
         if db_path and session_id:
             stats.refresh_from_db(db_path, session_id, current_turn=None)
 
-        # Re-render expand view to show cache data
-        if show_budget:
+        # Re-render to show cache data in budget blocks
+        from cc_dump.formatting import Level
+
+        if filters.get("budget", Level.EXISTENCE) >= Level.SUMMARY:
             conv.rerender(filters)
 
         # Update economics and timeline panels (these query database)
@@ -296,3 +275,40 @@ def handle_proxy_error(event, state, widgets, app_state, log_fn):
     conv.add_turn([block])
 
     return app_state
+
+
+def handle_log(event, state, widgets, app_state, log_fn):
+    """Handle a log event.
+
+    Args:
+        event: The event tuple ("log", method, path, status)
+        state: The content tracking state dict
+        widgets: Dict with widget references
+        app_state: Dict with app-level state
+        log_fn: Function to log application messages
+
+    Returns:
+        Updated app_state dict
+    """
+    _, method, path, status = event
+    log_fn("DEBUG", f"HTTP {method} {path} -> {status}")
+    return app_state
+
+
+def _noop(event, state, widgets, app_state, log_fn):
+    """No-op handler for events that need no action."""
+    return app_state
+
+
+# [LAW:dataflow-not-control-flow] Event dispatch table
+EVENT_HANDLERS = {
+    "request_headers": handle_request_headers,
+    "request": handle_request,
+    "response_headers": handle_response_headers,
+    "response_start": _noop,
+    "response_event": handle_response_event,
+    "response_done": handle_response_done,
+    "error": handle_error,
+    "proxy_error": handle_proxy_error,
+    "log": handle_log,
+}

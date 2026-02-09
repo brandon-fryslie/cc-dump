@@ -72,6 +72,8 @@ _FILTER_INDICATOR_INDEX: dict[str, int] = {
     "stats": 5,  # willow-green
     "economics": 6,  # mint-leaf
     "timeline": 7,  # seagrass
+    "user": 8,  # dark-cyan
+    "assistant": 9,  # blue-slate
 }
 
 

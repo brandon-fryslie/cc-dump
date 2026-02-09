@@ -431,14 +431,11 @@ def test_track_content_new(fresh_state):
     """First occurrence tagged 'new'."""
     result = track_content("Hello world", "system:0", fresh_state)
 
-    assert result[0] == "new"
-    tag_id = result[1]
-    color_idx = result[2]
-    content = result[3]
-
-    assert tag_id.startswith("sp-")
-    assert isinstance(color_idx, int)
-    assert content == "Hello world"
+    assert isinstance(result, TrackedContentBlock)
+    assert result.status == "new"
+    assert result.tag_id.startswith("sp-")
+    assert isinstance(result.color_idx, int)
+    assert result.content == "Hello world"
 
     # State should be updated
     assert "system:0" in fresh_state["positions"]
@@ -453,12 +450,10 @@ def test_track_content_ref(fresh_state):
     # Second call with same content at different position
     result = track_content("Hello", "msg:1", fresh_state)
 
-    assert result[0] == "ref"
-    tag_id = result[1]
-    color_idx = result[2]
-
-    assert tag_id.startswith("sp-")
-    assert isinstance(color_idx, int)
+    assert isinstance(result, TrackedContentBlock)
+    assert result.status == "ref"
+    assert result.tag_id.startswith("sp-")
+    assert isinstance(result.color_idx, int)
 
 
 def test_track_content_changed(fresh_state):
@@ -469,15 +464,12 @@ def test_track_content_changed(fresh_state):
     # Second call with different content at same position
     result = track_content("Modified", "system:0", fresh_state)
 
-    assert result[0] == "changed"
-    tag_id = result[1]
-    color_idx = result[2]
-    old_content = result[3]
-    new_content = result[4]
-
-    assert old_content == "Original"
-    assert new_content == "Modified"
-    assert tag_id.startswith("sp-")
+    assert isinstance(result, TrackedContentBlock)
+    assert result.status == "changed"
+    assert result.tag_id.startswith("sp-")
+    assert isinstance(result.color_idx, int)
+    assert result.old_content == "Original"
+    assert result.new_content == "Modified"
 
 
 def test_track_content_multiple_positions_same_content(fresh_state):
@@ -486,12 +478,14 @@ def test_track_content_multiple_positions_same_content(fresh_state):
     result2 = track_content("Shared", "pos:2", fresh_state)
 
     # First is new
-    assert result1[0] == "new"
-    tag_id_1 = result1[1]
+    assert isinstance(result1, TrackedContentBlock)
+    assert result1.status == "new"
+    tag_id_1 = result1.tag_id
 
     # Second is ref to same tag
-    assert result2[0] == "ref"
-    tag_id_2 = result2[1]
+    assert isinstance(result2, TrackedContentBlock)
+    assert result2.status == "ref"
+    tag_id_2 = result2.tag_id
 
     assert tag_id_1 == tag_id_2
 
@@ -632,11 +626,11 @@ def test_content_tracking_preserves_color_across_refs(fresh_state):
     """Content tracking preserves color index across references."""
     # Track content first time
     result1 = track_content("Shared content", "pos:1", fresh_state)
-    color1 = result1[2]
+    color1 = result1.color_idx
 
     # Track same content at different position
     result2 = track_content("Shared content", "pos:2", fresh_state)
-    color2 = result2[2]
+    color2 = result2.color_idx
 
     # Should have same color
     assert color1 == color2
