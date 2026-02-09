@@ -14,6 +14,7 @@ from pathlib import Path
 _RELOAD_ORDER = [
     "surview.palette",     # no deps within project, base for all colors
     "surview.colors",      # depends on: palette
+    "surview.event_adapter",  # pure functions, no deps
     "surview.formatting",  # depends on: colors
     "surview.tui.rendering",  # depends on: formatting, colors
     "surview.tui.panel_renderers",  # depends on: (none currently)
@@ -33,6 +34,7 @@ _RELOAD_IF_CHANGED = [
 _EXCLUDED_FILES = {
     "proxy.py",      # stable boundary, never reload
     "cli.py",        # entry point, not reloadable at runtime
+    "certs.py",      # stable boundary, CA state
     "hot_reload.py", # this file
     "__init__.py",   # module init
     "__main__.py",   # entry point

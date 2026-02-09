@@ -35,11 +35,9 @@ All events are tuples emitted via event_queue.put(). Downstream consumers
 
 import http.server
 import ssl
-import sys
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import urlparse
 
 # Headers to exclude from emitted events (security + noise reduction)
 _EXCLUDED_HEADERS = frozenset({
@@ -61,6 +59,8 @@ def _safe_headers(headers):
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
     target_host = "https://api.anthropic.com"
     event_queue = None  # set by cli.py before server starts
+    ca_cert = None  # set by cli.py for MITM
+    ca_key = None  # set by cli.py for MITM
 
     def log_message(self, fmt, *args):
         self.event_queue.put(("log", self.command, self.path, args[0] if args else ""))
@@ -72,9 +72,11 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         body_bytes = self.rfile.read(content_len) if content_len else b""
 
         # Detect proxy mode and determine target URL
-        if self.path.startswith("http://") or self.path.startswith("https://"):
+        if hasattr(self, '_tunnel_host'):
+            # CONNECT tunnel mode - use tunnel host + relative path
+            url = self._tunnel_host + self.path
+        elif self.path.startswith("http://") or self.path.startswith("https://"):
             # Forward proxy mode - absolute URI
-            parsed = urlparse(self.path)
             # Upgrade to HTTPS for security
             url = self.path
             if url.startswith("http://"):
@@ -211,3 +213,66 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "*")
         self.end_headers()
+
+    def do_CONNECT(self):
+        """Handle HTTPS CONNECT tunnel for MITM proxy."""
+        if not self.ca_cert or not self.ca_key:
+            self.send_error(501, "CONNECT not implemented (no CA configured)")
+            return
+
+        # Parse host:port from path
+        try:
+            host, port_str = self.path.split(":", 1)
+            port = int(port_str)
+        except ValueError:
+            self.send_error(400, "Invalid CONNECT target")
+            return
+
+        # Import certs module (stable boundary, use qualified import)
+        import surview.certs
+
+        # Get host certificate signed by our CA
+        try:
+            cert_path = surview.certs.get_host_cert(host, self.ca_cert, self.ca_key)
+        except Exception as e:
+            self.send_error(500, f"Certificate generation failed: {e}")
+            return
+
+        # Send 200 Connection Established
+        self.send_response(200, "Connection Established")
+        self.end_headers()
+
+        # Wrap connection with TLS using host cert
+        try:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(cert_path)
+
+            # Wrap the socket
+            tls_conn = ctx.wrap_socket(
+                self.connection,
+                server_side=True,
+                suppress_ragged_eofs=True,
+            )
+
+            # Replace connection streams with TLS socket
+            self.connection = tls_conn
+            self.rfile = self.connection.makefile('rb', buffering=0)
+            self.wfile = self.connection.makefile('wb', buffering=0)
+
+            # Store tunnel host for URL construction
+            self._tunnel_host = f"https://{host}:{port}"
+
+            # Handle subsequent HTTP requests through tunnel
+            # BaseHTTPRequestHandler.handle() calls handle_one_request() in a loop
+            # We just need to keep processing requests until connection closes
+            while True:
+                self.handle_one_request()
+                if self.close_connection:
+                    break
+
+        except ssl.SSLError:
+            # Client disconnected or SSL handshake failed - this is normal
+            pass
+        except Exception as e:
+            # Log error but don't crash the server
+            self.event_queue.put(("proxy_error", f"CONNECT tunnel error: {e}"))

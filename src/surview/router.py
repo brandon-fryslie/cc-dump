@@ -41,8 +41,9 @@ class DirectSubscriber:
 class EventRouter:
     """Router that drains a source queue and fans out to subscribers."""
 
-    def __init__(self, source: queue.Queue):
+    def __init__(self, source: queue.Queue, transform=None):
         self._source = source
+        self._transform = transform  # Optional event -> list[event] transform
         self._subscribers: list[Subscriber] = []
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -70,14 +71,18 @@ class EventRouter:
             except queue.Empty:
                 continue
 
+            # Apply transform if configured (1-to-N expansion)
+            events = self._transform(event) if self._transform else [event]
+
             # Fan out to all subscribers
-            for sub in self._subscribers:
-                try:
-                    sub.on_event(event)
-                except Exception as e:
-                    # Don't let one subscriber's error kill the router
-                    import sys
-                    import traceback
-                    sys.stderr.write("[router] subscriber error: {}\n".format(e))
-                    traceback.print_exc(file=sys.stderr)
-                    sys.stderr.flush()
+            for e in events:
+                for sub in self._subscribers:
+                    try:
+                        sub.on_event(e)
+                    except Exception as err:
+                        # Don't let one subscriber's error kill the router
+                        import sys
+                        import traceback
+                        sys.stderr.write("[router] subscriber error: {}\n".format(err))
+                        traceback.print_exc(file=sys.stderr)
+                        sys.stderr.flush()

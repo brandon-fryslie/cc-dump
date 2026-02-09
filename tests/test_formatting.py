@@ -24,7 +24,6 @@ from surview.formatting import (
     ToolResultBlock,
     ToolUseBlock,
     TrackedContentBlock,
-    TurnBudgetBlock,
     UnknownTypeBlock,
     format_request,
     format_request_headers,
@@ -595,7 +594,6 @@ def test_block_types_can_be_instantiated():
     assert isinstance(NewlineBlock(), FormattedBlock)
     assert isinstance(TrackedContentBlock(status="new"), FormattedBlock)
     assert isinstance(DiffBlock(), FormattedBlock)
-    assert isinstance(TurnBudgetBlock(), FormattedBlock)
 
 
 def test_tracked_content_block_fields():
