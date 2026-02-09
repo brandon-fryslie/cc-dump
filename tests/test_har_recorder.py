@@ -765,3 +765,165 @@ def test_har_subscriber_large_content(tmp_path):
 
     response_text = json.loads(har["log"]["entries"][0]["response"]["content"]["text"])
     assert response_text["content"][0]["text"] == large_text
+
+
+def test_har_subscriber_progressive_saving(tmp_path):
+    """Entries are written to disk BEFORE close() is called.
+
+    This is the key invariant of progressive saving - entries appear on disk
+    immediately after response_done, not buffered until close(). This prevents
+    the 30+ second hang on exit that occurred with the old buffer-on-exit approach.
+    """
+    har_path = tmp_path / "test.har"
+    subscriber = HARRecordingSubscriber(str(har_path), "session_123")
+
+    # First request/response cycle
+    subscriber.on_event(("request_headers", {}))
+    subscriber.on_event(
+        (
+            "request",
+            {
+                "model": "claude-3-opus-20240229",
+                "messages": [{"role": "user", "content": "First"}],
+            },
+        )
+    )
+    subscriber.on_event(("response_headers", 200, {}))
+    subscriber.on_event(
+        (
+            "response_event",
+            "message_start",
+            {
+                "type": "message_start",
+                "message": {
+                    "id": "msg_1",
+                    "model": "claude-3-opus-20240229",
+                    "role": "assistant",
+                    "usage": {"input_tokens": 10, "output_tokens": 0},
+                },
+            },
+        )
+    )
+    subscriber.on_event(
+        (
+            "response_event",
+            "content_block_start",
+            {"type": "content_block_start", "content_block": {"type": "text"}},
+        )
+    )
+    subscriber.on_event(
+        (
+            "response_event",
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": "Response 1"},
+            },
+        )
+    )
+    subscriber.on_event(
+        ("response_event", "content_block_stop", {"type": "content_block_stop"})
+    )
+    subscriber.on_event(
+        (
+            "response_event",
+            "message_delta",
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 5},
+            },
+        )
+    )
+    subscriber.on_event(("response_done",))
+
+    # Verify first entry is on disk BEFORE close() - this is progressive saving
+    assert har_path.exists()
+    with open(har_path, "r") as f:
+        har = json.load(f)
+    assert len(har["log"]["entries"]) == 1
+    assert (
+        json.loads(har["log"]["entries"][0]["response"]["content"]["text"])["content"][
+            0
+        ]["text"]
+        == "Response 1"
+    )
+
+    # Second request/response cycle
+    subscriber.on_event(("request_headers", {}))
+    subscriber.on_event(
+        (
+            "request",
+            {
+                "model": "claude-3-opus-20240229",
+                "messages": [{"role": "user", "content": "Second"}],
+            },
+        )
+    )
+    subscriber.on_event(("response_headers", 200, {}))
+    subscriber.on_event(
+        (
+            "response_event",
+            "message_start",
+            {
+                "type": "message_start",
+                "message": {
+                    "id": "msg_2",
+                    "model": "claude-3-opus-20240229",
+                    "role": "assistant",
+                    "usage": {"input_tokens": 10, "output_tokens": 0},
+                },
+            },
+        )
+    )
+    subscriber.on_event(
+        (
+            "response_event",
+            "content_block_start",
+            {"type": "content_block_start", "content_block": {"type": "text"}},
+        )
+    )
+    subscriber.on_event(
+        (
+            "response_event",
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": "Response 2"},
+            },
+        )
+    )
+    subscriber.on_event(
+        ("response_event", "content_block_stop", {"type": "content_block_stop"})
+    )
+    subscriber.on_event(
+        (
+            "response_event",
+            "message_delta",
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 5},
+            },
+        )
+    )
+    subscriber.on_event(("response_done",))
+
+    # Verify second entry is on disk BEFORE close()
+    with open(har_path, "r") as f:
+        har = json.load(f)
+    assert len(har["log"]["entries"]) == 2
+    assert (
+        json.loads(har["log"]["entries"][1]["response"]["content"]["text"])["content"][
+            0
+        ]["text"]
+        == "Response 2"
+    )
+
+    # Finally close - this should be instant (no buffered writes)
+    subscriber.close()
+
+    # Verify file still valid after close
+    with open(har_path, "r") as f:
+        har = json.load(f)
+    assert len(har["log"]["entries"]) == 2
