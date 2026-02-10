@@ -133,6 +133,7 @@ class ConversationView(ScrollView):
         background: $surface;
         color: $foreground;
         overflow-y: scroll;
+        overflow-x: hidden;
         &:focus {
             background-tint: $foreground 5%;
         }
@@ -161,7 +162,7 @@ class ConversationView(ScrollView):
         """Line API: render a single line at virtual position y."""
         scroll_x, scroll_y = self.scroll_offset
         actual_y = scroll_y + y
-        width = self.scrollable_content_region.width
+        width = self._content_width
 
         if actual_y >= self._total_lines:
             return Strip.blank(width, self.rich_style)
@@ -259,11 +260,7 @@ class ConversationView(ScrollView):
         scrolls into view. Re-renders the turn with the pending filters,
         then schedules offset recalculation for after the current render pass.
         """
-        width = (
-            self.scrollable_content_region.width
-            if self._size_known
-            else self._last_width
-        )
+        width = self._content_width if self._size_known else self._last_width
         console = self.app.console
 
         # Apply the pending filters
@@ -331,11 +328,7 @@ class ConversationView(ScrollView):
         """Add a completed turn from block list."""
         if filters is None:
             filters = self._last_filters
-        width = (
-            self.scrollable_content_region.width
-            if self._size_known
-            else self._last_width
-        )
+        width = self._content_width if self._size_known else self._last_width
         console = self.app.console
 
         strips, block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
@@ -415,11 +408,7 @@ class ConversationView(ScrollView):
             td._widest_strip = _compute_widest(td.strips)
             return
 
-        width = (
-            self.scrollable_content_region.width
-            if self._size_known
-            else self._last_width
-        )
+        width = self._content_width if self._size_known else self._last_width
         console = self.app.console
 
         # Combine delta buffer into Markdown (streaming deltas are ASSISTANT)
@@ -442,11 +431,7 @@ class ConversationView(ScrollView):
         if not td._text_delta_buffer:
             return
 
-        width = (
-            self.scrollable_content_region.width
-            if self._size_known
-            else self._last_width
-        )
+        width = self._content_width if self._size_known else self._last_width
         console = self.app.console
 
         # Render delta buffer to strips as Markdown (streaming deltas are ASSISTANT)
@@ -484,11 +469,7 @@ class ConversationView(ScrollView):
         # Render this block
         rendered = cc_dump.tui.rendering.render_block(block)
         if rendered is not None:
-            width = (
-                self.scrollable_content_region.width
-                if self._size_known
-                else self._last_width
-            )
+            width = self._content_width if self._size_known else self._last_width
             console = self.app.console
             new_strips = self._render_single_block_to_strips(rendered, console, width)
 
@@ -605,11 +586,7 @@ class ConversationView(ScrollView):
             )
 
         # Full re-render from consolidated blocks
-        width = (
-            self.scrollable_content_region.width
-            if self._size_known
-            else self._last_width
-        )
+        width = self._content_width if self._size_known else self._last_width
         console = self.app.console
         strips, block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
             consolidated,
@@ -689,11 +666,7 @@ class ConversationView(ScrollView):
         # Capture turn-level anchor BEFORE re-render (skip if follow mode)
         anchor = self._find_viewport_anchor() if not self._follow_mode else None
 
-        width = (
-            self.scrollable_content_region.width
-            if self._size_known
-            else self._last_width
-        )
+        width = self._content_width if self._size_known else self._last_width
         console = self.app.console
 
         # Viewport-only re-rendering: only process visible turns + buffer
@@ -746,12 +719,17 @@ class ConversationView(ScrollView):
             self.add_turn(block_list, filters)
 
     @property
+    def _content_width(self) -> int:
+        """Render width for content, with margin to prevent horizontal scrollbar."""
+        return max(1, self.scrollable_content_region.width - 1)
+
+    @property
     def _size_known(self) -> bool:
         return self.size.width > 0
 
     def on_resize(self, event):
         """Re-render all strips at new width."""
-        width = self.scrollable_content_region.width
+        width = self._content_width
         if width != self._last_width and width > 0:
             self._last_width = width
             console = self.app.console
@@ -879,11 +857,7 @@ class ConversationView(ScrollView):
 
         # Re-render just this turn
         if not turn.is_streaming:
-            width = (
-                self.scrollable_content_region.width
-                if self._size_known
-                else self._last_width
-            )
+            width = self._content_width if self._size_known else self._last_width
             console = self.app.console
             turn.re_render(
                 self._last_filters,
@@ -950,11 +924,7 @@ class ConversationView(ScrollView):
             if turn_idx in streaming_by_index:
                 # Restore as streaming turn
                 s = streaming_by_index[turn_idx]
-                width = (
-                    self.scrollable_content_region.width
-                    if self._size_known
-                    else self._last_width
-                )
+                width = self._content_width if self._size_known else self._last_width
                 console = self.app.console
 
                 # Render blocks to get initial strips
