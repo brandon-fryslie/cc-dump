@@ -843,17 +843,22 @@ class ConversationView(ScrollView):
 
         # [LAW:dataflow-not-control-flow] Coalesce None to default, then toggle
         cat = cc_dump.tui.rendering.get_category(block)
-        level = self._last_filters.get(cat.value, Level.FULL) if cat else Level.FULL
-        default = cc_dump.tui.rendering.DEFAULT_EXPANDED[level]
+        filter_value = self._last_filters.get(cat.value, Level.FULL) if cat else Level.FULL
+        # _last_filters stores (Level, bool) tuples or bare Level values
+        if isinstance(filter_value, tuple):
+            level, category_expanded = filter_value
+        else:
+            level = filter_value
+            category_expanded = cc_dump.tui.rendering.DEFAULT_EXPANDED[level]
 
         # Coalesce: treat None as default
-        current = block.expanded if block.expanded is not None else default
+        current = block.expanded if block.expanded is not None else category_expanded
 
         # Toggle
         new_value = not current
 
         # Store override (None if matches default)
-        block.expanded = None if new_value == default else new_value
+        block.expanded = None if new_value == category_expanded else new_value
 
         # Re-render just this turn
         if not turn.is_streaming:
