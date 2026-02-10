@@ -206,7 +206,8 @@ def handle_response_done(event, state, widgets, app_state, log_fn):
         # Re-render to show cache data in budget blocks
         from cc_dump.formatting import Level
 
-        if filters.get("budget", Level.EXISTENCE) >= Level.SUMMARY:
+        budget_level, _ = filters.get("budget", (Level.EXISTENCE, False))
+        if budget_level >= Level.SUMMARY:
             conv.rerender(filters)
 
         # Update economics and timeline panels (these query database)

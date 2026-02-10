@@ -1,6 +1,7 @@
 """Main TUI application using Textual."""
 
 import queue
+import threading
 from typing import Optional
 
 from textual.app import App, ComposeResult, SystemCommand
@@ -10,7 +11,7 @@ from textual.reactive import reactive
 from textual.widgets import Header
 
 # Use custom footer with Rich markup support
-from cc_dump.tui.custom_footer import StyledFooter
+from cc_dump.tui.custom_footer import StatusFooter
 
 # Use module-level imports so hot-reload takes effect
 import cc_dump.analysis
@@ -116,6 +117,11 @@ class CcDumpApp(App):
         self._closing = False
         self._replacing_widgets = False
 
+        # Gate for drain worker: block until replay is complete
+        self._replay_complete = threading.Event()
+        if not replay_data:
+            self._replay_complete.set()
+
         # App-level state (preserved across hot-reloads)
         # Only track minimal in-progress turn data for real-time streaming feedback
         self._app_state = {
@@ -124,6 +130,16 @@ class CcDumpApp(App):
 
         # Remember detail level when toggling visibility
         self._remembered_detail = dict(_DEFAULT_DETAIL)
+
+        # [LAW:one-source-of-truth] Category-level expansion state
+        # Sole authority for whether a category is expanded/collapsed.
+        # Per-block `block.expanded` is strictly per-block override (click-to-expand).
+        self._category_expanded = {
+            name: cc_dump.tui.rendering.DEFAULT_EXPANDED[
+                cc_dump.formatting.Level(default_level)
+            ]
+            for _, name, _, default_level, _ in _CATEGORY_CONFIG
+        }
 
         # Search state
         self._search_state = cc_dump.tui.search.SearchState()
@@ -151,15 +167,20 @@ class CcDumpApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        # Create widgets from factory with IDs for later lookup
+
+        # Stats panel docked to top (below header)
+        stats = cc_dump.tui.widget_factory.create_stats_panel()
+        stats.id = self._stats_id
+        yield stats
+
+        # Main conversation view
         conv = cc_dump.tui.widget_factory.create_conversation_view()
         conv.id = self._conv_id
         yield conv
 
-        search_bar = cc_dump.tui.search.SearchBar()
-        search_bar.id = self._search_bar_id
-        yield search_bar
-
+        # [LAW:dataflow-not-control-flow] Bottom panels stack bottom-to-top
+        # Mount order (first→last): farthest from bottom edge → closest to bottom edge
+        # Economics and Timeline appear above SearchBar
         economics = cc_dump.tui.widget_factory.create_economics_panel()
         economics.id = self._economics_id
         yield economics
@@ -172,11 +193,12 @@ class CcDumpApp(App):
         logs.id = self._logs_id
         yield logs
 
-        stats = cc_dump.tui.widget_factory.create_stats_panel()
-        stats.id = self._stats_id
-        yield stats
+        # SearchBar mounted near footer so it's always visible at bottom when active
+        search_bar = cc_dump.tui.search.SearchBar()
+        search_bar.id = self._search_bar_id
+        yield search_bar
 
-        yield StyledFooter()
+        yield StatusFooter()
 
     def on_mount(self):
         """Initialize app after mounting."""
@@ -253,7 +275,7 @@ class CcDumpApp(App):
 
     def _get_footer(self):
         try:
-            return self.query_one(StyledFooter)
+            return self.query_one(StatusFooter)
         except NoMatches:
             return None
 
@@ -318,6 +340,9 @@ class CcDumpApp(App):
             f"Replay complete: {self._state['request_counter']} requests processed",
         )
 
+        # Signal that replay is complete, allowing drain worker to process live events
+        self._replay_complete.set()
+
     def _log(self, level: str, message: str):
         """Log a message to the application logs panel."""
         if self.is_running:
@@ -330,10 +355,20 @@ class CcDumpApp(App):
         if self.is_running:
             footer = self._get_footer()
             if footer is not None:
-                footer.update_active_state(self.active_filters)
+                conv = self._get_conv()
+                state = {
+                    **self.active_filters,
+                    "economics": self.show_economics,
+                    "timeline": self.show_timeline,
+                    "follow": conv._follow_mode if conv is not None else True,
+                }
+                footer.update_display(state)
 
     def _drain_events(self):
         """Worker: drain event queue and post to app main thread."""
+        # Wait for replay to complete before processing live events
+        self._replay_complete.wait()
+
         while not self._closing:
             try:
                 event = self._event_queue.get(timeout=1.0)
@@ -482,11 +517,12 @@ class CcDumpApp(App):
         new_logs.display = logs_visible
 
         header = self.query_one(Header)
-        await self.mount(new_conv, after=header)
+        await self.mount(new_stats, after=header)
+        await self.mount(new_conv, after=new_stats)
         await self.mount(new_economics, after=new_conv)
         await self.mount(new_timeline, after=new_economics)
         await self.mount(new_logs, after=new_timeline)
-        await self.mount(new_stats, after=new_logs)
+        # Note: SearchBar is not replaced during hot-reload (only panels are)
 
         # 5. Re-render with current filters
         new_conv.rerender(self.active_filters)
@@ -546,17 +582,15 @@ class CcDumpApp(App):
 
     @property
     def active_filters(self):
-        """Current filter state as a dict (category name -> Level int)."""
-        Level = cc_dump.formatting.Level
+        """Current filter state: category name -> (Level, expanded).
 
+        // [LAW:one-source-of-truth] Same tuples flow to rendering AND footer.
+        // [LAW:dataflow-not-control-flow] Uniform shape for all consumers.
+        """
+        Level = cc_dump.formatting.Level
         return {
-            "headers": Level(self.vis_headers),
-            "tools": Level(self.vis_tools),
-            "system": Level(self.vis_system),
-            "budget": Level(self.vis_budget),
-            "metadata": Level(self.vis_metadata),
-            "user": Level(self.vis_user),
-            "assistant": Level(self.vis_assistant),
+            name: (Level(getattr(self, f"vis_{name}")), self._category_expanded[name])
+            for _, name, _, _, _ in _CATEGORY_CONFIG
         }
 
     # Action handlers — category visibility and detail
@@ -603,34 +637,15 @@ class CcDumpApp(App):
         self._clear_overrides(category)
 
     def action_toggle_expand(self, category: str):
-        """Toggle all blocks in category between expanded and collapsed."""
-        cat = cc_dump.formatting.Category(category)
-        level = cc_dump.formatting.Level(getattr(self, _VIS_ATTR[category]))
-        default_exp = cc_dump.tui.rendering.DEFAULT_EXPANDED[level]
+        """Toggle category expansion state.
+
+        // [LAW:one-source-of-truth] Reads/writes _category_expanded directly.
+        """
+        self._category_expanded[category] = not self._category_expanded[category]
+        self._clear_overrides(category)  # reset per-block overrides
         conv = self._get_conv()
-        if conv is None:
-            return
-        # If any block is at default → set all to opposite. Else reset all to default.
-        target = not default_exp  # toggle direction
-        for td in conv._turns:
-            for block in td.blocks:
-                if cc_dump.tui.rendering.get_category(block) == cat:
-                    current = (
-                        block.expanded if block.expanded is not None else default_exp
-                    )
-                    if current == default_exp:
-                        # Found one at default → confirm toggle to opposite
-                        break
-            else:
-                continue
-            break
-        else:
-            target = default_exp  # all already toggled → reset to default (None)
-        for td in conv._turns:
-            for block in td.blocks:
-                if cc_dump.tui.rendering.get_category(block) == cat:
-                    block.expanded = None if target == default_exp else target
-        conv.rerender(self.active_filters)
+        if conv is not None:
+            conv.rerender(self.active_filters)
         self._update_footer_state()
 
     def action_toggle_economics(self):
@@ -667,6 +682,7 @@ class CcDumpApp(App):
         conv = self._get_conv()
         if conv is not None:
             conv.toggle_follow()
+        self._update_footer_state()
 
     def action_go_top(self):
         """Scroll to top and disable follow mode."""
@@ -674,12 +690,14 @@ class CcDumpApp(App):
         if conv is not None:
             conv._follow_mode = False
             conv.scroll_home(animate=False)
+        self._update_footer_state()
 
     def action_go_bottom(self):
         """Scroll to bottom and enable follow mode."""
         conv = self._get_conv()
         if conv is not None:
             conv.scroll_to_bottom()
+        self._update_footer_state()
 
     def action_scroll_down_line(self):
         """Scroll down one line."""
@@ -757,26 +775,33 @@ class CcDumpApp(App):
                 conv.rerender(self.active_filters)
             self._update_footer_state()
 
-    def watch_vis_headers(self, value):
+    def _watch_vis_category(self, category: str, new_level: int):
+        """Reset expansion to level default when level changes."""
+        self._category_expanded[category] = cc_dump.tui.rendering.DEFAULT_EXPANDED[
+            cc_dump.formatting.Level(new_level)
+        ]
         self._rerender_if_mounted()
+
+    def watch_vis_headers(self, value):
+        self._watch_vis_category("headers", value)
 
     def watch_vis_user(self, value):
-        self._rerender_if_mounted()
+        self._watch_vis_category("user", value)
 
     def watch_vis_assistant(self, value):
-        self._rerender_if_mounted()
+        self._watch_vis_category("assistant", value)
 
     def watch_vis_tools(self, value):
-        self._rerender_if_mounted()
+        self._watch_vis_category("tools", value)
 
     def watch_vis_system(self, value):
-        self._rerender_if_mounted()
+        self._watch_vis_category("system", value)
 
     def watch_vis_budget(self, value):
-        self._rerender_if_mounted()
+        self._watch_vis_category("budget", value)
 
     def watch_vis_metadata(self, value):
-        self._rerender_if_mounted()
+        self._watch_vis_category("metadata", value)
 
     def watch_show_economics(self, value):
         self._update_footer_state()
@@ -840,9 +865,14 @@ class CcDumpApp(App):
             self._commit_search()
             return
 
-        # Cancel
+        # Exit search - keep current position
         if key == "escape":
-            self._cancel_search()
+            self._exit_search_keep_position()
+            return
+
+        # Exit search - restore original position
+        if key == "q":
+            self._exit_search_restore_position()
             return
 
         # Backspace
@@ -933,17 +963,24 @@ class CcDumpApp(App):
             self._update_search_bar()
             return
 
-        # Cancel
+        # Exit search - keep current position
         if key == "escape":
             event.prevent_default()
             event.stop()
-            self._cancel_search()
+            self._exit_search_keep_position()
+            return
+
+        # Exit search - restore original position
+        if key == "q":
+            event.prevent_default()
+            event.stop()
+            self._exit_search_restore_position()
             return
 
         # All other keys pass through for normal scrolling/commands
 
     def _start_search(self) -> None:
-        """Transition: INACTIVE → EDITING. Save filter state."""
+        """Transition: INACTIVE → EDITING. Save filter state and scroll position."""
         SearchPhase = cc_dump.tui.search.SearchPhase
         state = self._search_state
         state.phase = SearchPhase.EDITING
@@ -958,10 +995,16 @@ class CcDumpApp(App):
             name: getattr(self, f"vis_{name}")
             for _, name, _, _, _ in _CATEGORY_CONFIG
         }
+        # Save current scroll position
+        conv = self._get_conv()
+        if conv is not None:
+            state.saved_scroll_y = conv.scroll_offset.y
+        else:
+            state.saved_scroll_y = None
         self._update_search_bar()
 
-    def _cancel_search(self) -> None:
-        """Transition: EDITING/NAVIGATING → INACTIVE. Restore filters."""
+    def _exit_search_common(self) -> None:
+        """Common cleanup when exiting search (any mode)."""
         SearchPhase = cc_dump.tui.search.SearchPhase
         state = self._search_state
 
@@ -990,6 +1033,22 @@ class CcDumpApp(App):
         conv = self._get_conv()
         if conv is not None:
             conv.rerender(self.active_filters)
+
+    def _exit_search_keep_position(self) -> None:
+        """Exit search and stay at current scroll position (Esc)."""
+        self._exit_search_common()
+        # Don't restore scroll — stay where we are
+
+    def _exit_search_restore_position(self) -> None:
+        """Exit search and restore original scroll position (q)."""
+        self._exit_search_common()
+        # Restore scroll position to where we were before search
+        state = self._search_state
+        if state.saved_scroll_y is not None:
+            conv = self._get_conv()
+            if conv is not None:
+                conv.scroll_to(y=state.saved_scroll_y, animate=False)
+        state.saved_scroll_y = None
 
     def _commit_search(self) -> None:
         """Transition: EDITING → NAVIGATING. Run final search, navigate to first result."""
@@ -1142,10 +1201,18 @@ class CcDumpApp(App):
         conv.rerender(self.active_filters, search_ctx=search_ctx)
 
     def _update_search_bar(self) -> None:
-        """Update the search bar widget display."""
+        """Update the search bar widget display and toggle Footer visibility."""
+        SearchPhase = cc_dump.tui.search.SearchPhase
         bar = self._get_search_bar()
+        footer = self._get_footer()
+
         if bar is not None:
             bar.update_display(self._search_state)
+
+        # Footer hidden when search is active, visible when inactive
+        search_active = self._search_state.phase != SearchPhase.INACTIVE
+        if footer is not None:
+            footer.display = not search_active
 
     def on_unmount(self):
         """Clean up when app exits."""

@@ -32,14 +32,51 @@ HTTP_PROXY=http://127.0.0.1:3344 ANTHROPIC_BASE_URL=http://api.minimax.com claud
 
 In forward proxy mode, requests are sent as plain HTTP to cc-dump, inspected, then upgraded to HTTPS for the upstream API. Set `ANTHROPIC_BASE_URL` to an HTTP URL (not HTTPS) to avoid TLS tunneling.
 
+### Recording and Replay
+
+cc-dump automatically records all API traffic to HAR files for later replay:
+
+```bash
+# Normal operation - records to ~/.local/share/cc-dump/recordings/
+cc-dump
+
+# Replay a previous session (proxy still runs for new traffic)
+cc-dump --replay path/to/recording.har
+cc-dump --replay latest  # replay most recent recording
+
+# Continue from most recent recording (replay + capture new traffic)
+cc-dump --continue
+
+# List available recordings
+cc-dump --list
+
+# Disable recording
+cc-dump --no-record
+
+# Custom recording path
+cc-dump --record /path/to/output.har
+```
+
+**Key features:**
+- HAR files are the source of truth for events
+- Replay mode loads previous data, then proxy accepts new traffic
+- `--continue` combines replay with live capture for session continuity
+- SQLite database provides analytics on recorded sessions
+
 ### Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--port PORT` | 3344 | Listen port |
 | `--target URL` | `https://api.anthropic.com` | Upstream API URL (empty string for forward proxy mode) |
-| `--seed-hue HUE` | 190.0 | Base hue for the color palette |
+| `--replay PATH` | - | Replay a HAR file (`latest` for most recent) |
+| `--continue` | - | Continue from most recent recording (replay + live) |
+| `--record PATH` | auto | Custom HAR recording output path |
+| `--no-record` | - | Disable HAR recording |
+| `--list` | - | List available recordings and exit |
 | `--db PATH` | auto | SQLite database path |
+| `--no-db` | - | Disable database persistence |
+| `--seed-hue HUE` | 190.0 | Base hue for the color palette |
 
 ## What It Shows
 
@@ -83,6 +120,24 @@ See [docs/VISIBILITY_SYSTEM.md](docs/VISIBILITY_SYSTEM.md) for detailed document
 |-----|-------|
 | `c` | Per-tool cost aggregates |
 | `l` | Context growth timeline |
+
+### Search
+
+| Key | Action |
+|-----|--------|
+| `/` | Start search (opens search bar at bottom) |
+| `Enter` | Commit search and navigate to first match |
+| `n` | Next match (in navigation mode) |
+| `N` | Previous match (in navigation mode) |
+| `Esc` | Cancel search and restore filters |
+
+**Search modes** (toggle during editing with `Alt+key`):
+- `Alt+c` — Case sensitivity toggle (default: insensitive)
+- `Alt+w` — Word boundary matching
+- `Alt+r` — Regex mode (default: on)
+- `Alt+i` — Incremental search (default: on)
+
+Search automatically raises category visibility to FULL and expands blocks containing matches.
 
 ### Other Controls
 

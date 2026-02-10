@@ -17,6 +17,7 @@ from typing import Callable
 from rich.text import Text
 from rich.markdown import Markdown
 from rich.console import ConsoleRenderable
+from rich.theme import Theme
 
 from collections import Counter
 
@@ -49,6 +50,34 @@ from cc_dump.formatting import (
 )
 
 import cc_dump.palette
+
+
+# ─── Markdown Theme ───────────────────────────────────────────────────────────
+
+# [LAW:one-source-of-truth] All markdown text styling defined here.
+MARKDOWN_THEME = Theme({
+    # Inline code: warm tone on subtle dark background (not bold cyan on black)
+    "markdown.code": "color(223) on color(236)",
+    # Code blocks background (overridden by Syntax, but used as fallback)
+    "markdown.code_block": "on color(236)",
+    # Headings: blue tones matching the TUI palette
+    "markdown.h1": "bold underline color(117)",
+    "markdown.h2": "bold color(117)",
+    "markdown.h3": "bold color(152)",
+    "markdown.h4": "italic color(152)",
+    "markdown.h5": "italic color(249)",
+    "markdown.h6": "dim italic",
+    # Links
+    "markdown.link": "underline color(117)",
+    "markdown.link_url": "dim underline color(75)",
+    # Block quotes
+    "markdown.block_quote": "color(249) italic",
+    # Table
+    "markdown.table.border": "color(240)",
+    "markdown.table.header": "bold color(117)",
+    # Horizontal rules
+    "markdown.hr": "color(240)",
+})
 
 
 # ─── Visibility model constants ───────────────────────────────────────────────
@@ -116,23 +145,29 @@ def get_category(block: FormattedBlock) -> Category | None:
 
 
 def _resolve_visibility(
-    block: FormattedBlock, filters: dict[str, Level]
+    block: FormattedBlock, filters: dict
 ) -> tuple[Level, bool]:
     """Determine (level, expanded) for a block given current filter state.
 
+    Filters contain (Level, category_expanded) tuples.
+    Per-block `block.expanded` overrides category-level expansion.
     Returns (Level.FULL, True) for blocks with no category (always visible).
     """
     cat = get_category(block)
     if cat is None:
         return (Level.FULL, True)  # always fully visible
 
-    level = filters.get(cat.value, Level.FULL)
-
-    # Per-block expanded override, or level default
-    if block.expanded is not None:
-        expanded = block.expanded
+    filter_value = filters.get(cat.value, (Level.FULL, True))
+    # Handle both (Level, expanded) tuples and bare Level values
+    if isinstance(filter_value, tuple):
+        level, category_expanded = filter_value
     else:
-        expanded = DEFAULT_EXPANDED[level]
+        level = filter_value
+        category_expanded = DEFAULT_EXPANDED[level]
+
+    # Per-block override takes precedence over category expansion
+    # [LAW:one-source-of-truth] category_expanded is the default; block.expanded is override
+    expanded = block.expanded if block.expanded is not None else category_expanded
 
     return (level, expanded)
 
@@ -342,7 +377,7 @@ def _render_text_content(block: TextContentBlock) -> ConsoleRenderable | None:
         return None
     # Render as Markdown for USER and ASSISTANT categories
     if block.category in _MARKDOWN_CATEGORIES:
-        return Markdown(block.text)
+        return Markdown(block.text, code_theme="github-dark")
     return _indent_text(block.text, block.indent)
 
 
@@ -412,7 +447,7 @@ def _render_stream_tool_use(block: StreamToolUseBlock) -> Text | None:
 def _render_text_delta(block: TextDeltaBlock) -> ConsoleRenderable | None:
     # TextDeltaBlock is always ASSISTANT category during streaming
     if block.category in _MARKDOWN_CATEGORIES:
-        return Markdown(block.text)
+        return Markdown(block.text, code_theme="github-dark")
     return Text(block.text)
 
 
@@ -631,6 +666,11 @@ def collapse_tool_runs(
         first_idx = pending[0][0]
         # Count only ToolUseBlocks for the summary counts
         use_blocks = [b for _, b in pending if type(b).__name__ == "ToolUseBlock"]
+        # [LAW:dataflow-not-control-flow] No tool uses = no summary to create;
+        # orphaned ToolResultBlocks without a preceding ToolUseBlock are dropped
+        if not use_blocks:
+            pending.clear()
+            return
         counts = Counter(b.name for b in use_blocks)
         result.append(
             (
@@ -656,10 +696,11 @@ def collapse_tool_runs(
 
 
 def _prepare_blocks(
-    blocks: list, filters: dict[str, Level]
+    blocks: list, filters: dict
 ) -> list[tuple[int, FormattedBlock]]:
     """Pre-pass: apply tool summarization based on tools level."""
-    tools_level = filters.get("tools", Level.FULL)
+    tools_filter = filters.get("tools", (Level.FULL, True))
+    tools_level = tools_filter[0] if isinstance(tools_filter, tuple) else tools_filter
     # At SUMMARY or EXISTENCE, collapse tool runs
     tools_on = tools_level >= Level.FULL
     return collapse_tool_runs(blocks, tools_on)

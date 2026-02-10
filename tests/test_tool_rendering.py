@@ -248,14 +248,10 @@ class TestRenderBlocksToolSummary:
         ]
         result = render_blocks(blocks, {"tools": Level.EXISTENCE})
 
-        # At EXISTENCE, tool results get collapsed to summary via pre-pass
-        # The summary shows 0 lines when there are only results (no use blocks)
-        # Actually, ToolResultBlock is not a ToolUseBlock, so it won't collapse
-        # At EXISTENCE level with default expanded=True, it should render title (1 line)
-        # But the render_blocks pre-pass only collapses ToolUseBlock runs
-        # So ToolResultBlock goes through normal rendering with level=EXISTENCE
-        # With truncation to 1 line
-        assert len(result) >= 0  # May be empty or have truncated result
+        # Orphaned ToolResultBlock (no preceding ToolUseBlock) is dropped by
+        # collapse_tool_runs, so no "used 0 tools" summary appears
+        rendered_text = "\n".join(str(s) for s in result)
+        assert "used 0 tools" not in rendered_text
 
 
 class TestCollapseToolRuns:
@@ -367,6 +363,31 @@ class TestCollapseToolRuns:
         original_len = len(blocks)
         collapse_tool_runs(blocks, tools_on=False)
         assert len(blocks) == original_len
+
+    def test_result_only_run_produces_no_summary(self):
+        """Orphaned ToolResultBlocks (no ToolUseBlock) produce no summary."""
+        blocks = [
+            ToolResultBlock(size=500, tool_name="Read", msg_color_idx=0),
+            ToolResultBlock(size=300, tool_name="Bash", msg_color_idx=1),
+        ]
+        result = collapse_tool_runs(blocks, tools_on=False)
+        # No ToolUseSummaryBlock should be created for result-only runs
+        assert len(result) == 0
+
+    def test_mixed_result_only_and_use_runs(self):
+        """Result-only run dropped, use run summarized, text preserved."""
+        blocks = [
+            ToolResultBlock(size=500, tool_name="Read", msg_color_idx=0),
+            TextContentBlock(text="middle"),
+            ToolUseBlock(name="Bash", input_size=100, msg_color_idx=1),
+            ToolResultBlock(size=300, tool_name="Bash", msg_color_idx=2),
+        ]
+        result = collapse_tool_runs(blocks, tools_on=False)
+        # Orphaned result dropped, text preserved, use+result summarized
+        assert len(result) == 2
+        assert type(result[0][1]).__name__ == "TextContentBlock"
+        assert type(result[1][1]).__name__ == "ToolUseSummaryBlock"
+        assert result[1][1].total == 1
 
 
 class TestRenderToolUseSummary:

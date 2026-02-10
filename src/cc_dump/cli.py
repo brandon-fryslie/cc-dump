@@ -51,6 +51,13 @@ def main():
         help="Replay a recorded session (path to .har file)",
     )
     parser.add_argument(
+        "--continue",
+        dest="continue_session",
+        action="store_true",
+        default=False,
+        help="Continue from most recent recording (replay + live proxy)",
+    )
+    parser.add_argument(
         "--seed-hue",
         type=float,
         default=None,
@@ -63,17 +70,28 @@ def main():
 
     cc_dump.palette.init_palette(args.seed_hue)
 
+    # Resolve --continue to load latest recording
+    if args.continue_session:
+        import cc_dump.sessions
+
+        latest = cc_dump.sessions.get_latest_recording()
+        if latest is None:
+            print("No recordings found to continue from.")
+            return
+        args.replay = latest
+        print(f"🔄 Continuing from: {latest}")
+
     event_q = queue.Queue()
 
-    # Replay mode or live mode
+    # Load replay data if specified, but always start proxy
     server = None
     replay_data = None
+
     if args.replay:
-        # Replay mode: load HAR (complete messages, NO event conversion)
+        # Load HAR file (complete messages, NO event conversion)
         import cc_dump.har_replayer
 
-        print("🎬 cc-dump replay mode")
-        print(f"   Loading: {args.replay}")
+        print(f"   Loading replay: {args.replay}")
 
         try:
             replay_data = cc_dump.har_replayer.load_har(args.replay)
@@ -82,26 +100,26 @@ def main():
         except Exception as e:
             print(f"   Error loading HAR file: {e}")
             return
+
+    # Always start proxy server
+    ProxyHandler.target_host = args.target.rstrip("/") if args.target else None
+    ProxyHandler.event_queue = event_q
+
+    server = http.server.HTTPServer((args.host, args.port), ProxyHandler)
+
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    print("🚀 cc-dump proxy started")
+    print(f"   Listening on: http://{args.host}:{args.port}")
+    if ProxyHandler.target_host:
+        print(f"   Reverse proxy mode: {ProxyHandler.target_host}")
+        print(f"   Usage: ANTHROPIC_BASE_URL=http://{args.host}:{args.port} claude")
     else:
-        # Live mode: start proxy server
-        ProxyHandler.target_host = args.target.rstrip("/") if args.target else None
-        ProxyHandler.event_queue = event_q
-
-        server = http.server.HTTPServer((args.host, args.port), ProxyHandler)
-
-        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-        server_thread.start()
-
-        print("🚀 cc-dump proxy started")
-        print(f"   Listening on: http://{args.host}:{args.port}")
-        if ProxyHandler.target_host:
-            print(f"   Reverse proxy mode: {ProxyHandler.target_host}")
-            print(f"   Usage: ANTHROPIC_BASE_URL=http://{args.host}:{args.port} claude")
-        else:
-            print("   Forward proxy mode (dynamic targets)")
-            print(
-                f"   Usage: HTTP_PROXY=http://{args.host}:{args.port} ANTHROPIC_BASE_URL=http://api.minimax.com claude"
-            )
+        print("   Forward proxy mode (dynamic targets)")
+        print(
+            f"   Usage: HTTP_PROXY=http://{args.host}:{args.port} ANTHROPIC_BASE_URL=http://api.minimax.com claude"
+        )
 
     # State dict for content tracking (used by formatting layer)
     state = {
@@ -171,9 +189,9 @@ def main():
         router,
         db_path=db_path,
         session_id=session_id,
-        host=args.host if not args.replay else None,
-        port=args.port if not args.replay else None,
-        target=ProxyHandler.target_host if not args.replay else None,
+        host=args.host,
+        port=args.port,
+        target=ProxyHandler.target_host,
         replay_data=replay_data,
     )
     try:

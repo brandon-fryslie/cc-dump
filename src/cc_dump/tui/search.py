@@ -81,6 +81,7 @@ class SearchState:
     )  # (turn_index, block_index) pairs we expanded
     raised_categories: set = field(default_factory=set)  # category names we raised
     debounce_timer: object | None = None  # Timer handle
+    saved_scroll_y: float | None = None  # Scroll position before search started
 
 
 # ─── Text extraction ─────────────────────────────────────────────────────────
@@ -198,7 +199,7 @@ def find_all_matches(turns: list, pattern: re.Pattern) -> list[SearchMatch]:
 
 
 class SearchBar(Static):
-    """Bottom search bar — renders as a single Rich Text line.
+    """Bottom search bar — renders as multi-line search interface.
 
     Not an Input widget. The app's on_key handles all text editing.
     """
@@ -206,10 +207,13 @@ class SearchBar(Static):
     DEFAULT_CSS = """
     SearchBar {
         dock: bottom;
-        height: 1;
+        height: auto;
+        max-height: 6;
         background: $surface;
         color: $text;
         display: none;
+        padding: 0 1;
+        border-top: solid $accent;
     }
     """
 
@@ -223,51 +227,112 @@ class SearchBar(Static):
             return
 
         self.display = True
-        t = Text()
 
-        # Mode indicators
-        t.append("[", style="dim")
-        # Case insensitive
-        ci_style = "bold" if state.modes & SearchMode.CASE_INSENSITIVE else "dim"
-        t.append("i", style=ci_style)
-        # Word boundary
-        wb_style = "bold" if state.modes & SearchMode.WORD_BOUNDARY else "dim"
-        t.append("w", style=wb_style)
-        # Regex
-        rx_style = "bold" if state.modes & SearchMode.REGEX else "dim"
-        t.append(".*", style=rx_style)
-        t.append("] ", style="dim")
+        # Build multi-line display with explicit color codes
+        lines = []
 
-        # Slash + query
-        t.append("/", style="bold")
+        # Line 1: Search input
+        search_line = Text()
+        search_line.append("/ ", style="bold blue")
 
         if state.phase == SearchPhase.EDITING:
             # Show query with cursor
             query = state.query
             cursor = state.cursor_pos
             if cursor < len(query):
-                t.append(query[:cursor])
-                t.append(query[cursor], style="reverse")
-                t.append(query[cursor + 1 :])
+                search_line.append(query[:cursor], style="bold")
+                search_line.append(query[cursor], style="bold reverse")  # Inverted cursor
+                search_line.append(query[cursor + 1 :], style="bold")
             else:
-                t.append(query)
-                t.append(" ", style="reverse")  # cursor at end
+                search_line.append(query, style="bold")
+                search_line.append("█", style="")  # Block cursor at end
         else:
             # Navigating: show query without cursor
-            t.append(state.query)
+            search_line.append(state.query, style="bold")
 
-        # Match count
+        # Match count on same line
         if state.matches:
-            t.append(
-                f"  {state.current_index + 1}/{len(state.matches)}",
-                style="bold",
+            search_line.append(
+                f"  [{state.current_index + 1}/{len(state.matches)}]",
+                style="bold green",
             )
         elif state.query:
             # Check if pattern is invalid
             pattern = compile_search_pattern(state.query, state.modes)
             if pattern is None and state.query:
-                t.append("  invalid pattern", style="bold red")
+                search_line.append("  [invalid pattern]", style="bold red")
             else:
-                t.append("  0 matches", style="dim")
+                search_line.append("  [no matches]", style="dim")
 
-        self.update(t)
+        lines.append(search_line)
+
+        # Line 2: Mode indicators
+        mode_line = Text()
+        mode_line.append("Modes: ", style="dim")
+
+        # Case insensitive
+        if state.modes & SearchMode.CASE_INSENSITIVE:
+            mode_line.append("i ", style="bold green")
+        else:
+            mode_line.append("i ", style="dim")
+
+        # Word boundary
+        if state.modes & SearchMode.WORD_BOUNDARY:
+            mode_line.append("w ", style="bold green")
+        else:
+            mode_line.append("w ", style="dim")
+
+        # Regex
+        if state.modes & SearchMode.REGEX:
+            mode_line.append(".* ", style="bold green")
+        else:
+            mode_line.append(".* ", style="dim")
+
+        # Incremental
+        if state.modes & SearchMode.INCREMENTAL:
+            mode_line.append("inc", style="bold green")
+        else:
+            mode_line.append("inc", style="dim")
+
+        lines.append(mode_line)
+
+        # Line 3: Mode toggle help
+        help_line = Text()
+        help_line.append("Toggle: ", style="dim")
+        help_line.append("Alt+c", style="bold yellow")
+        help_line.append("=case ", style="dim")
+        help_line.append("Alt+w", style="bold yellow")
+        help_line.append("=word ", style="dim")
+        help_line.append("Alt+r", style="bold yellow")
+        help_line.append("=regex ", style="dim")
+        help_line.append("Alt+i", style="bold yellow")
+        help_line.append("=incr", style="dim")
+        lines.append(help_line)
+
+        # Line 4: Navigation help
+        nav_line = Text()
+        if state.phase == SearchPhase.EDITING:
+            nav_line.append("Keys: ", style="dim")
+            nav_line.append("Enter", style="bold yellow")
+            nav_line.append("=search ", style="dim")
+            nav_line.append("Esc", style="bold yellow")
+            nav_line.append("=exit(stay) ", style="dim")
+            nav_line.append("q", style="bold yellow")
+            nav_line.append("=exit(restore)", style="dim")
+        else:
+            nav_line.append("Keys: ", style="dim")
+            nav_line.append("n", style="bold yellow")
+            nav_line.append("=next ", style="dim")
+            nav_line.append("N", style="bold yellow")
+            nav_line.append("=prev ", style="dim")
+            nav_line.append("/", style="bold yellow")
+            nav_line.append("=edit ", style="dim")
+            nav_line.append("Esc", style="bold yellow")
+            nav_line.append("=exit(stay) ", style="dim")
+            nav_line.append("q", style="bold yellow")
+            nav_line.append("=exit(restore)", style="dim")
+        lines.append(nav_line)
+
+        # Join lines with newlines
+        combined = Text("\n").join(lines)
+        self.update(combined)

@@ -158,6 +158,49 @@ class ConversationView(ScrollView):
         self._pending_restore: dict | None = None
         self._scrolling_programmatically: bool = False
 
+    def on_mount(self):
+        """Push markdown theme onto console when widget mounts.
+
+        Builds theme dynamically from Textual's theme colors for consistency.
+        """
+        # Extract colors from Textual's theme
+        # Use screen styles as reference for theme colors
+        text_color = str(self.app.screen.styles.color.rich_color)
+        bg_color = str(self.app.screen.styles.background.rich_color)
+
+        # Derive semantic colors from theme
+        # For code backgrounds, we want a subtle contrast
+        is_dark = self.app.dark
+
+        # Build markdown theme dynamically from Textual colors
+        from rich.theme import Theme
+
+        markdown_theme = Theme({
+            # Inline code: primary text on subtle background variation
+            # Use a slightly different background for contrast
+            "markdown.code": f"{text_color} on {bg_color}",
+            "markdown.code_block": f"on {bg_color}",
+            # Headings: use primary text color with emphasis
+            "markdown.h1": f"bold underline {text_color}",
+            "markdown.h2": f"bold {text_color}",
+            "markdown.h3": f"bold {text_color}",
+            "markdown.h4": f"italic {text_color}",
+            "markdown.h5": f"italic {text_color}",
+            "markdown.h6": f"dim italic {text_color}",
+            # Links: use primary text color with underline
+            "markdown.link": f"underline {text_color}",
+            "markdown.link_url": f"dim underline {text_color}",
+            # Block quotes: dimmed text
+            "markdown.block_quote": f"dim italic {text_color}",
+            # Table: dim borders, bold headers
+            "markdown.table.border": f"dim {text_color}",
+            "markdown.table.header": f"bold {text_color}",
+            # Horizontal rules: very dim
+            "markdown.hr": f"dim {text_color}",
+        })
+
+        self.app.console.push_theme(markdown_theme)
+
     def render_line(self, y: int) -> Strip:
         """Line API: render a single line at virtual position y."""
         scroll_x, scroll_y = self.scroll_offset
@@ -413,7 +456,7 @@ class ConversationView(ScrollView):
 
         # Combine delta buffer into Markdown (streaming deltas are ASSISTANT)
         combined_text = "".join(td._text_delta_buffer)
-        renderable = Markdown(combined_text)
+        renderable = Markdown(combined_text, code_theme="github-dark")
 
         # Render to strips
         delta_strips = self._render_single_block_to_strips(renderable, console, width)
@@ -436,7 +479,7 @@ class ConversationView(ScrollView):
 
         # Render delta buffer to strips as Markdown (streaming deltas are ASSISTANT)
         combined_text = "".join(td._text_delta_buffer)
-        renderable = Markdown(combined_text)
+        renderable = Markdown(combined_text, code_theme="github-dark")
         delta_strips = self._render_single_block_to_strips(renderable, console, width)
 
         # Replace delta tail with stable strips

@@ -27,19 +27,24 @@ TimelinePanel {
 
 SearchBar {
     dock: bottom;
-    height: 1;
+    height: auto;
+    max-height: 6;
     background: $surface;
     padding: 0 1;
+    border-top: solid $accent;
 }
 
 StatsPanel {
-    height: 3;
-    dock: bottom;
+    height: 1;
+    dock: top;
     background: $surface;
     padding: 0 1;
-    border: solid $primary;
 }
 
-Footer {
+StatusFooter {
     dock: bottom;
+    height: auto;
+    max-height: 3;
+    background: $surface;
+    padding: 0 1;
 }
