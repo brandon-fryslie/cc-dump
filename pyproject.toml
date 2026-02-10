@@ -43,8 +43,10 @@ packages = ["src/cc_dump"]
 dev = [
     "ptydriver>=0.2.0",
     "pytest>=9.0.2",
+    "pytest-asyncio>=0.24.0",
     "requests>=2.31.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
