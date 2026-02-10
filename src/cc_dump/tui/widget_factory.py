@@ -165,12 +165,8 @@ class ConversationView(ScrollView):
         """
         # Extract colors from Textual's theme
         # Use screen styles as reference for theme colors
-        text_color = str(self.app.screen.styles.color.rich_color)
-        bg_color = str(self.app.screen.styles.background.rich_color)
-
-        # Derive semantic colors from theme
-        # For code backgrounds, we want a subtle contrast
-        is_dark = self.app.dark
+        text_color = self.app.screen.styles.color.rich_color.name
+        bg_color = self.app.screen.styles.background.rich_color.name
 
         # Build markdown theme dynamically from Textual colors
         from rich.theme import Theme
