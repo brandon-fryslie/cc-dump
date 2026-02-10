@@ -1,0 +1,304 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/widgets/_list_view.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    widgets/
+      _list_view.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/widgets/_list_view.py">
+class ListView(VerticalScroll, can_focus=True, can_focus_children=False)
+⋮----
+"""A vertical list view widget.
+
+    Displays a vertical list of `ListItem`s which can be highlighted and
+    selected using the mouse or keyboard.
+
+    Attributes:
+        index: The index in the list that's currently highlighted.
+    """
+⋮----
+ALLOW_MAXIMIZE = True
+⋮----
+DEFAULT_CSS = """
+⋮----
+BINDINGS: ClassVar[list[BindingType]] = [
+"""
+    | Key(s) | Description |
+    | :- | :- |
+    | enter | Select the current item. |
+    | up | Move the cursor up. |
+    | down | Move the cursor down. |
+    """
+⋮----
+index = reactive[Optional[int]](None, init=False)
+"""The index of the currently highlighted item."""
+⋮----
+class Highlighted(Message)
+⋮----
+"""Posted when the highlighted item changes.
+
+        Highlighted item is controlled using up/down keys.
+        Can be handled using `on_list_view_highlighted` in a subclass of `ListView`
+        or in a parent widget in the DOM.
+        """
+⋮----
+ALLOW_SELECTOR_MATCH = {"item"}
+"""Additional message attributes that can be used with the [`on` decorator][textual.on]."""
+⋮----
+def __init__(self, list_view: ListView, item: ListItem | None) -> None
+⋮----
+"""The view that contains the item highlighted."""
+⋮----
+"""The highlighted item, if there is one highlighted."""
+⋮----
+@property
+        def control(self) -> ListView
+⋮----
+"""The view that contains the item highlighted.
+
+            This is an alias for [`Highlighted.list_view`][textual.widgets.ListView.Highlighted.list_view]
+            and is used by the [`on`][textual.on] decorator.
+            """
+⋮----
+class Selected(Message)
+⋮----
+"""Posted when a list item is selected, e.g. when you press the enter key on it.
+
+        Can be handled using `on_list_view_selected` in a subclass of `ListView` or in
+        a parent widget in the DOM.
+        """
+⋮----
+def __init__(self, list_view: ListView, item: ListItem, index: int) -> None
+⋮----
+"""The view that contains the item selected."""
+⋮----
+"""The selected item."""
+⋮----
+"""Index of the selected item."""
+⋮----
+"""The view that contains the item selected.
+
+            This is an alias for [`Selected.list_view`][textual.widgets.ListView.Selected.list_view]
+            and is used by the [`on`][textual.on] decorator.
+            """
+⋮----
+"""
+        Initialize a ListView.
+
+        Args:
+            *children: The ListItems to display in the list.
+            initial_index: The index that should be highlighted when the list is first mounted.
+            name: The name of the widget.
+            id: The unique ID of the widget used in CSS/query selection.
+            classes: The CSS classes of the widget.
+            disabled: Whether the ListView is disabled or not.
+        """
+⋮----
+def _on_mount(self, _: Mount) -> None
+⋮----
+"""Ensure the ListView is fully-settled after mounting."""
+⋮----
+index = self._initial_index
+⋮----
+index = 0
+⋮----
+@property
+    def highlighted_child(self) -> ListItem | None
+⋮----
+"""The currently highlighted ListItem, or None if nothing is highlighted."""
+⋮----
+list_item = self._nodes[self.index]
+⋮----
+def validate_index(self, index: int | None) -> int | None
+⋮----
+"""Clamp the index to the valid range, or set to None if there's nothing to highlight.
+
+        Args:
+            index: The index to clamp.
+
+        Returns:
+            The clamped index.
+        """
+⋮----
+def _is_valid_index(self, index: int | None) -> TypeGuard[int]
+⋮----
+"""Determine whether the current index is valid into the list of children."""
+⋮----
+def watch_index(self, old_index: int | None, new_index: int | None) -> None
+⋮----
+"""Updates the highlighting when the index changes."""
+⋮----
+selected_widget = self._nodes[new_index]
+⋮----
+# Call after refresh to permit a refresh operation
+⋮----
+old_child = self._nodes[old_index]
+⋮----
+new_child = self._nodes[new_index]
+⋮----
+def extend(self, items: Iterable[ListItem]) -> AwaitMount
+⋮----
+"""Append multiple new ListItems to the end of the ListView.
+
+        Args:
+            items: The ListItems to append.
+
+        Returns:
+            An awaitable that yields control to the event loop
+                until the DOM has been updated with the new child items.
+        """
+await_mount = self.mount(*items)
+⋮----
+def append(self, item: ListItem) -> AwaitMount
+⋮----
+"""Append a new ListItem to the end of the ListView.
+
+        Args:
+            item: The ListItem to append.
+
+        Returns:
+            An awaitable that yields control to the event loop
+                until the DOM has been updated with the new child item.
+        """
+⋮----
+def clear(self) -> AwaitRemove
+⋮----
+"""Clear all items from the ListView.
+
+        Returns:
+            An awaitable that yields control to the event loop until
+                the DOM has been updated to reflect all children being removed.
+        """
+await_remove = self.query("ListView > ListItem").remove()
+⋮----
+def insert(self, index: int, items: Iterable[ListItem]) -> AwaitMount
+⋮----
+"""Insert new ListItem(s) to specified index.
+
+        Args:
+            index: index to insert new ListItem.
+            items: The ListItems to insert.
+
+        Returns:
+            An awaitable that yields control to the event loop
+                until the DOM has been updated with the new child item.
+        """
+await_mount = self.mount(*items, before=index)
+⋮----
+def pop(self, index: Optional[int] = None) -> AwaitComplete
+⋮----
+"""Remove last ListItem from ListView or
+           Remove ListItem from ListView by index
+
+        Args:
+            index: index of ListItem to remove from ListView
+
+        Returns:
+            An awaitable that yields control to the event loop until
+                the DOM has been updated to reflect item being removed.
+        """
+⋮----
+index = index if index is not None else -1
+item_to_remove = self.query("ListItem")[index]
+normalized_index = index if index >= 0 else index + len(self)
+⋮----
+async def do_pop() -> None
+⋮----
+"""Remove the item and update the highlighted index."""
+⋮----
+old_index = self.index
+# Force a re-validation of the index
+⋮----
+# If the index hasn't changed, the watcher won't be called
+# but we need to update the highlighted item
+⋮----
+def remove_items(self, indices: Iterable[int]) -> AwaitComplete
+⋮----
+"""Remove ListItems from ListView by indices
+
+        Args:
+            indices: index(s) of ListItems to remove from ListView
+
+        Returns:
+            An awaitable object that waits for the direct children to be removed.
+        """
+items = self.query("ListItem")
+items_to_remove = [items[index] for index in indices]
+normalized_indices = set(
+⋮----
+async def do_remove_items() -> None
+⋮----
+"""Remove the items and update the highlighted index."""
+⋮----
+removed_before_highlighted = sum(
+⋮----
+def action_select_cursor(self) -> None
+⋮----
+"""Select the current item in the list."""
+selected_child = self.highlighted_child
+⋮----
+def action_cursor_down(self) -> None
+⋮----
+"""Highlight the next item in the list."""
+⋮----
+index = self.index
+⋮----
+def action_cursor_up(self) -> None
+⋮----
+"""Highlight the previous item in the list."""
+⋮----
+def _on_list_item__child_clicked(self, event: ListItem._ChildClicked) -> None
+⋮----
+def __len__(self) -> int
+⋮----
+"""Compute the length (in number of items) of the list view."""
+</file>
+
+</files>

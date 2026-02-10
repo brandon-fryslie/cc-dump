@@ -1,0 +1,958 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/keys.py, src/textual/suggester.py, src/textual/fuzzy.py, src/textual/validation.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    fuzzy.py
+    keys.py
+    suggester.py
+    validation.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/fuzzy.py">
+"""
+Fuzzy matcher.
+
+This class is used by the [command palette](/guide/command_palette) to match search terms.
+
+"""
+⋮----
+class FuzzySearch
+⋮----
+"""Performs a fuzzy search.
+
+    Unlike a regex solution, this will finds all possible matches.
+    """
+⋮----
+"""Initialize fuzzy search.
+
+        Args:
+            case_sensitive: Is the match case sensitive?
+            cache_size: Number of queries to cache.
+        """
+⋮----
+def match(self, query: str, candidate: str) -> tuple[float, Sequence[int]]
+⋮----
+"""Match against a query.
+
+        Args:
+            query: The fuzzy query.
+            candidate: A candidate to check,.
+
+        Returns:
+            A pair of (score, tuple of offsets). `(0, ())` for no result.
+        """
+⋮----
+cache_key = (query, candidate)
+⋮----
+default: tuple[float, Sequence[int]] = (0.0, [])
+result = max(self._match(query, candidate), key=itemgetter(0), default=default)
+⋮----
+@classmethod
+@lru_cache(maxsize=1024)
+    def get_first_letters(cls, candidate: str) -> frozenset[int]
+⋮----
+def score(self, candidate: str, positions: Sequence[int]) -> float
+⋮----
+"""Score a search.
+
+        Args:
+            search: Search object.
+
+        Returns:
+            Score.
+        """
+first_letters = self.get_first_letters(candidate)
+# This is a heuristic, and can be tweaked for better results
+# Boost first letter matches
+offset_count = len(positions)
+score: float = offset_count + len(first_letters.intersection(positions))
+⋮----
+groups = 1
+⋮----
+last_offset = offset
+⋮----
+# Boost to favor less groups
+normalized_groups = (offset_count - (groups - 1)) / offset_count
+⋮----
+letter_positions: list[list[int]] = []
+position = 0
+⋮----
+candidate = candidate.lower()
+query = query.lower()
+score = self.score
+⋮----
+# Quick exit when the query exists as a substring
+query_location = candidate.find(query)
+offsets = list(range(query_location, query_location + len(query)))
+⋮----
+last_index = len(candidate) - offset
+positions: list[int] = []
+⋮----
+index = position
+⋮----
+index = location + 1
+⋮----
+position = positions[0] + 1
+⋮----
+possible_offsets: list[list[int]] = []
+query_length = len(query)
+⋮----
+def get_offsets(offsets: list[int], positions_index: int) -> None
+⋮----
+"""Recursively match offsets.
+
+            Args:
+                offsets: A list of offsets.
+                positions_index: Index of query letter.
+
+            """
+⋮----
+new_offsets = [*offsets, offset]
+⋮----
+@rich.repr.auto
+class Matcher
+⋮----
+"""A fuzzy matcher."""
+⋮----
+"""Initialise the fuzzy matching object.
+
+        Args:
+            query: A query as typed in by the user.
+            match_style: The style to use to highlight matched portions of a string.
+            case_sensitive: Should matching be case sensitive?
+        """
+⋮----
+@property
+    def query(self) -> str
+⋮----
+"""The query string to look for."""
+⋮----
+@property
+    def match_style(self) -> Style
+⋮----
+"""The style that will be used to highlight hits in the matched text."""
+⋮----
+@property
+    def case_sensitive(self) -> bool
+⋮----
+"""Is this matcher case sensitive?"""
+⋮----
+def match(self, candidate: str) -> float
+⋮----
+"""Match the candidate against the query.
+
+        Args:
+            candidate: Candidate string to match against the query.
+
+        Returns:
+            Strength of the match from 0 to 1.
+        """
+⋮----
+def highlight(self, candidate: str) -> Content
+⋮----
+"""Highlight the candidate with the fuzzy match.
+
+        Args:
+            candidate: The candidate string to match against the query.
+
+        Returns:
+            A [`Text`][rich.text.Text] object with highlighted matches.
+        """
+content = Content.from_markup(candidate)
+⋮----
+content = content.stylize(self._match_style, offset, offset + 1)
+⋮----
+fuzzy_search = FuzzySearch()
+</file>
+
+<file path="src/textual/keys.py">
+# Adapted from prompt toolkit https://github.com/prompt-toolkit/python-prompt-toolkit/blob/master/prompt_toolkit/keys.py
+class Keys(str, Enum):  # type: ignore[no-redef]
+⋮----
+"""
+    List of keys for use in key bindings.
+
+    Note that this is an "StrEnum", all values can be compared against
+    strings.
+    """
+⋮----
+@property
+    def value(self) -> str
+⋮----
+Escape = "escape"  # Also Control-[
+ShiftEscape = "shift+escape"
+Return = "return"
+⋮----
+ControlAt = "ctrl+@"  # Also Control-Space.
+⋮----
+ControlA = "ctrl+a"
+ControlB = "ctrl+b"
+ControlC = "ctrl+c"
+ControlD = "ctrl+d"
+ControlE = "ctrl+e"
+ControlF = "ctrl+f"
+ControlG = "ctrl+g"
+ControlH = "ctrl+h"
+ControlI = "ctrl+i"  # Tab
+ControlJ = "ctrl+j"  # Newline
+ControlK = "ctrl+k"
+ControlL = "ctrl+l"
+ControlM = "ctrl+m"  # Carriage return
+ControlN = "ctrl+n"
+ControlO = "ctrl+o"
+ControlP = "ctrl+p"
+ControlQ = "ctrl+q"
+ControlR = "ctrl+r"
+ControlS = "ctrl+s"
+ControlT = "ctrl+t"
+ControlU = "ctrl+u"
+ControlV = "ctrl+v"
+ControlW = "ctrl+w"
+ControlX = "ctrl+x"
+ControlY = "ctrl+y"
+ControlZ = "ctrl+z"
+⋮----
+Control1 = "ctrl+1"
+Control2 = "ctrl+2"
+Control3 = "ctrl+3"
+Control4 = "ctrl+4"
+Control5 = "ctrl+5"
+Control6 = "ctrl+6"
+Control7 = "ctrl+7"
+Control8 = "ctrl+8"
+Control9 = "ctrl+9"
+Control0 = "ctrl+0"
+⋮----
+ControlShift1 = "ctrl+shift+1"
+ControlShift2 = "ctrl+shift+2"
+ControlShift3 = "ctrl+shift+3"
+ControlShift4 = "ctrl+shift+4"
+ControlShift5 = "ctrl+shift+5"
+ControlShift6 = "ctrl+shift+6"
+ControlShift7 = "ctrl+shift+7"
+ControlShift8 = "ctrl+shift+8"
+ControlShift9 = "ctrl+shift+9"
+ControlShift0 = "ctrl+shift+0"
+⋮----
+ControlBackslash = "ctrl+backslash"
+ControlSquareClose = "ctrl+right_square_bracket"
+ControlCircumflex = "ctrl+circumflex_accent"
+ControlUnderscore = "ctrl+underscore"
+⋮----
+Left = "left"
+Right = "right"
+Up = "up"
+Down = "down"
+Home = "home"
+End = "end"
+Insert = "insert"
+Delete = "delete"
+PageUp = "pageup"
+PageDown = "pagedown"
+⋮----
+ControlLeft = "ctrl+left"
+ControlRight = "ctrl+right"
+ControlUp = "ctrl+up"
+ControlDown = "ctrl+down"
+ControlHome = "ctrl+home"
+ControlEnd = "ctrl+end"
+ControlInsert = "ctrl+insert"
+ControlDelete = "ctrl+delete"
+ControlPageUp = "ctrl+pageup"
+ControlPageDown = "ctrl+pagedown"
+⋮----
+ShiftLeft = "shift+left"
+ShiftRight = "shift+right"
+ShiftUp = "shift+up"
+ShiftDown = "shift+down"
+ShiftHome = "shift+home"
+ShiftEnd = "shift+end"
+ShiftInsert = "shift+insert"
+ShiftDelete = "shift+delete"
+ShiftPageUp = "shift+pageup"
+ShiftPageDown = "shift+pagedown"
+⋮----
+ControlShiftLeft = "ctrl+shift+left"
+ControlShiftRight = "ctrl+shift+right"
+ControlShiftUp = "ctrl+shift+up"
+ControlShiftDown = "ctrl+shift+down"
+ControlShiftHome = "ctrl+shift+home"
+ControlShiftEnd = "ctrl+shift+end"
+ControlShiftInsert = "ctrl+shift+insert"
+ControlShiftDelete = "ctrl+shift+delete"
+ControlShiftPageUp = "ctrl+shift+pageup"
+ControlShiftPageDown = "ctrl+shift+pagedown"
+⋮----
+BackTab = "shift+tab"  # shift + tab
+⋮----
+F1 = "f1"
+F2 = "f2"
+F3 = "f3"
+F4 = "f4"
+F5 = "f5"
+F6 = "f6"
+F7 = "f7"
+F8 = "f8"
+F9 = "f9"
+F10 = "f10"
+F11 = "f11"
+F12 = "f12"
+F13 = "f13"
+F14 = "f14"
+F15 = "f15"
+F16 = "f16"
+F17 = "f17"
+F18 = "f18"
+F19 = "f19"
+F20 = "f20"
+F21 = "f21"
+F22 = "f22"
+F23 = "f23"
+F24 = "f24"
+⋮----
+ControlF1 = "ctrl+f1"
+ControlF2 = "ctrl+f2"
+ControlF3 = "ctrl+f3"
+ControlF4 = "ctrl+f4"
+ControlF5 = "ctrl+f5"
+ControlF6 = "ctrl+f6"
+ControlF7 = "ctrl+f7"
+ControlF8 = "ctrl+f8"
+ControlF9 = "ctrl+f9"
+ControlF10 = "ctrl+f10"
+ControlF11 = "ctrl+f11"
+ControlF12 = "ctrl+f12"
+ControlF13 = "ctrl+f13"
+ControlF14 = "ctrl+f14"
+ControlF15 = "ctrl+f15"
+ControlF16 = "ctrl+f16"
+ControlF17 = "ctrl+f17"
+ControlF18 = "ctrl+f18"
+ControlF19 = "ctrl+f19"
+ControlF20 = "ctrl+f20"
+ControlF21 = "ctrl+f21"
+ControlF22 = "ctrl+f22"
+ControlF23 = "ctrl+f23"
+ControlF24 = "ctrl+f24"
+⋮----
+# Matches any key.
+Any = "<any>"
+⋮----
+# Special.
+ScrollUp = "<scroll-up>"
+ScrollDown = "<scroll-down>"
+⋮----
+# For internal use: key which is ignored.
+# (The key binding for this key should not do anything.)
+Ignore = "<ignore>"
+⋮----
+# Some 'Key' aliases (for backwardshift+compatibility).
+ControlSpace = "ctrl-at"
+Tab = "tab"
+Space = "space"
+Enter = "enter"
+Backspace = "backspace"
+⋮----
+# ShiftControl was renamed to ControlShift in
+# 888fcb6fa4efea0de8333177e1bbc792f3ff3c24 (20 Feb 2020).
+ShiftControlLeft = ControlShiftLeft
+ShiftControlRight = ControlShiftRight
+ShiftControlHome = ControlShiftHome
+ShiftControlEnd = ControlShiftEnd
+⋮----
+# Unicode db contains some obscure names
+# This mapping replaces them with more common terms
+KEY_NAME_REPLACEMENTS = {
+REPLACED_KEYS = {value: key for key, value in KEY_NAME_REPLACEMENTS.items()}
+⋮----
+# Convert the friendly versions of character key Unicode names
+# back to their original names.
+# This is because we go from Unicode to friendly by replacing spaces and dashes
+# with underscores, which cannot be undone by replacing underscores with spaces/dashes.
+KEY_TO_UNICODE_NAME = {
+⋮----
+# Some keys have aliases. For example, if you press `ctrl+m` on your keyboard,
+# it's treated the same way as if you press `enter`. Key handlers `key_ctrl_m` and
+# `key_enter` are both valid in this case.
+KEY_ALIASES = {
+⋮----
+KEY_DISPLAY_ALIASES = {
+⋮----
+ASCII_KEY_NAMES = {"\t": "tab"}
+⋮----
+def _get_unicode_name_from_key(key: str) -> str
+⋮----
+"""Get the best guess for the Unicode name of the char corresponding to the key.
+
+    This function can be seen as a pseudo-inverse of the function `_character_to_key`.
+    """
+⋮----
+def _get_key_aliases(key: str) -> list[str]
+⋮----
+"""Return all aliases for the given key, including the key itself"""
+⋮----
+@lru_cache(1024)
+def format_key(key: str) -> str
+⋮----
+"""Given a key (i.e. the `key` string argument to Binding __init__),
+    return the value that should be displayed in the app when referring
+    to this key (e.g. in the Footer widget)."""
+⋮----
+display_alias = KEY_DISPLAY_ALIASES.get(key)
+⋮----
+original_key = REPLACED_KEYS.get(key, key)
+tentative_unicode_name = _get_unicode_name_from_key(original_key)
+⋮----
+unicode_name = unicodedata.lookup(tentative_unicode_name)
+⋮----
+@lru_cache(1024)
+def key_to_character(key: str) -> str | None
+⋮----
+"""Given a key identifier, return the character associated with it.
+
+    Args:
+        key: The key identifier.
+
+    Returns:
+        A key if one could be found, otherwise `None`.
+    """
+⋮----
+# If there is a separator, then it means a modifier (other than shift) is applied.
+# Keys with modifiers, don't come from printable keys.
+⋮----
+# Key identifiers with a length of one, are also characters.
+⋮----
+# Return None if we couldn't identify the key.
+⋮----
+def _character_to_key(character: str) -> str
+⋮----
+"""Convert a single character to a key value.
+
+    This transformation can be undone by the function `_get_unicode_name_from_key`.
+    """
+⋮----
+key = (
+⋮----
+key = ASCII_KEY_NAMES.get(character, character)
+⋮----
+key = character
+key = KEY_NAME_REPLACEMENTS.get(key, key)
+⋮----
+def _normalize_key_list(keys: str) -> str
+⋮----
+"""Normalizes a comma separated list of keys.
+
+    Replaces single letter keys with full name.
+    """
+⋮----
+keys_list = [key.strip() for key in keys.split(",")]
+</file>
+
+<file path="src/textual/suggester.py">
+"""
+
+Contains the `Suggester` class, used by the [Input](/widgets/input) widget.
+
+"""
+⋮----
+@dataclass
+class SuggestionReady(Message)
+⋮----
+"""Sent when a completion suggestion is ready."""
+⋮----
+value: str
+"""The value to which the suggestion is for."""
+suggestion: str
+"""The string suggestion."""
+⋮----
+class Suggester(ABC)
+⋮----
+"""Defines how widgets generate completion suggestions.
+
+    To define a custom suggester, subclass `Suggester` and implement the async method
+    `get_suggestion`.
+    See [`SuggestFromList`][textual.suggester.SuggestFromList] for an example.
+    """
+⋮----
+cache: LRUCache[str, str | None] | None
+"""Suggestion cache, if used."""
+⋮----
+def __init__(self, *, use_cache: bool = True, case_sensitive: bool = False) -> None
+⋮----
+"""Create a suggester object.
+
+        Args:
+            use_cache: Whether to cache suggestion results.
+            case_sensitive: Whether suggestions are case sensitive or not.
+                If they are not, incoming values are casefolded before generating
+                the suggestion.
+        """
+⋮----
+async def _get_suggestion(self, requester: DOMNode, value: str) -> None
+⋮----
+"""Used by widgets to get completion suggestions.
+
+        Note:
+            When implementing custom suggesters, this method does not need to be
+            overridden.
+
+        Args:
+            requester: The message target that requested a suggestion.
+            value: The current value to complete.
+        """
+⋮----
+normalized_value = value if self.case_sensitive else value.casefold()
+⋮----
+suggestion = await self.get_suggestion(normalized_value)
+⋮----
+suggestion = self.cache[normalized_value]
+⋮----
+@abstractmethod
+    async def get_suggestion(self, value: str) -> str | None
+⋮----
+"""Try to get a completion suggestion for the given input value.
+
+        Custom suggesters should implement this method.
+
+        Note:
+            The value argument will be casefolded if `self.case_sensitive` is `False`.
+
+        Note:
+            If your implementation is not deterministic, you may need to disable caching.
+
+        Args:
+            value: The current value of the requester widget.
+
+        Returns:
+            A valid suggestion or `None`.
+        """
+⋮----
+class SuggestFromList(Suggester)
+⋮----
+"""Give completion suggestions based on a fixed list of options.
+
+    Example:
+        ```py
+        countries = ["England", "Scotland", "Portugal", "Spain", "France"]
+
+        class MyApp(App[None]):
+            def compose(self) -> ComposeResult:
+                yield Input(suggester=SuggestFromList(countries, case_sensitive=False))
+        ```
+
+        If the user types ++p++ inside the input widget, a completion suggestion
+        for `"Portugal"` appears.
+    """
+⋮----
+"""Creates a suggester based off of a given iterable of possibilities.
+
+        Args:
+            suggestions: Valid suggestions sorted by decreasing priority.
+            case_sensitive: Whether suggestions are computed in a case sensitive manner
+                or not. The values provided in the argument `suggestions` represent the
+                canonical representation of the completions and they will be suggested
+                with that same casing.
+        """
+⋮----
+async def get_suggestion(self, value: str) -> str | None
+⋮----
+"""Gets a completion from the given possibilities.
+
+        Args:
+            value: The current value.
+
+        Returns:
+            A valid completion suggestion or `None`.
+        """
+</file>
+
+<file path="src/textual/validation.py">
+"""
+
+This module provides a number of classes for validating input.
+
+See [Validating Input](/widgets/input/#validating-input) for details.
+
+"""
+⋮----
+@dataclass
+class ValidationResult
+⋮----
+"""The result of calling a `Validator.validate` method."""
+⋮----
+failures: Sequence[Failure] = field(default_factory=list)
+"""A list of reasons why the value was invalid. Empty if valid=True"""
+⋮----
+@staticmethod
+    def merge(results: Sequence["ValidationResult"]) -> "ValidationResult"
+⋮----
+"""Merge multiple ValidationResult objects into one.
+
+        Args:
+            results: List of ValidationResult objects to merge.
+
+        Returns:
+            Merged ValidationResult object.
+        """
+is_valid = all(result.is_valid for result in results)
+failures = [failure for result in results for failure in result.failures]
+⋮----
+@staticmethod
+    def success() -> ValidationResult
+⋮----
+"""Construct a successful ValidationResult.
+
+        Returns:
+            A successful ValidationResult.
+        """
+⋮----
+@staticmethod
+    def failure(failures: Sequence[Failure]) -> ValidationResult
+⋮----
+"""Construct a failure ValidationResult.
+
+        Args:
+            failures: The failures.
+
+        Returns:
+            A failure ValidationResult.
+        """
+⋮----
+@property
+    def failure_descriptions(self) -> list[str]
+⋮----
+"""Utility for extracting failure descriptions as strings.
+
+        Useful if you don't care about the additional metadata included in the `Failure` objects.
+
+        Returns:
+            A list of the string descriptions explaining the failing validations.
+        """
+⋮----
+@property
+    def is_valid(self) -> bool
+⋮----
+"""True if the validation was successful."""
+⋮----
+@dataclass
+class Failure
+⋮----
+"""Information about a validation failure."""
+⋮----
+validator: Validator
+"""The Validator which produced the failure."""
+value: str | None = None
+"""The value which resulted in validation failing."""
+description: str | None = None
+"""An optional override for describing this failure. Takes precedence over any messages set in the Validator."""
+⋮----
+def __post_init__(self) -> None
+⋮----
+# If a failure message isn't supplied, try to get it from the Validator.
+⋮----
+def __rich_repr__(self) -> rich.repr.Result:  # pragma: no cover
+⋮----
+class Validator(ABC)
+⋮----
+'''Base class for the validation of string values.
+
+    Commonly used in conjunction with the `Input` widget, which accepts a
+    list of validators via its constructor. This validation framework can also be used to validate any 'stringly-typed'
+    values (for example raw command line input from `sys.args`).
+
+    To implement your own `Validator`, subclass this class.
+
+    Example:
+        ```python
+        def is_palindrome(value: str) -> bool:
+            """Check has string has the same code points left to right, as right to left."""
+            return value == value[::-1]
+
+        class Palindrome(Validator):
+            def validate(self, value: str) -> ValidationResult:
+                if is_palindrome(value):
+                    return self.success()
+                else:
+                    return self.failure("Not a palindrome!")
+        ```
+    '''
+⋮----
+def __init__(self, failure_description: str | None = None) -> None
+⋮----
+"""A description of why the validation failed.
+
+        The description (intended to be user-facing) to attached to the Failure if the validation fails.
+        This failure description is ultimately accessible at the time of validation failure  via the `Input.Changed`
+        or `Input.Submitted` event, and you can access it on your message handler (a method called, for example,
+        `on_input_changed` or a method decorated with `@on(Input.Changed)`.
+        """
+⋮----
+@abstractmethod
+    def validate(self, value: str) -> ValidationResult
+⋮----
+"""Validate the value and return a ValidationResult describing the outcome of the validation.
+
+        Implement this method when defining custom validators.
+
+        Args:
+            value: The value to validate.
+
+        Returns:
+            The result of the validation ([`self.success()`][textual.validation.Validator.success) or [`self.failure(...)`][textual.validation.Validator.failure]).
+        """
+⋮----
+def describe_failure(self, failure: Failure) -> str | None
+⋮----
+"""Return a string description of the Failure.
+
+        Used to provide a more fine-grained description of the failure. A Validator could fail for multiple
+        reasons, so this method could be used to provide a different reason for different types of failure.
+
+        !!! warning
+
+            This method is only called if no other description has been supplied. If you supply a description
+            inside a call to `self.failure(description="...")`, or pass a description into the constructor of
+            the validator, those will take priority, and this method won't be called.
+
+        Args:
+            failure: Information about why the validation failed.
+
+        Returns:
+            A string description of the failure.
+        """
+⋮----
+def success(self) -> ValidationResult
+⋮----
+"""Shorthand for `ValidationResult(True)`.
+
+        Return `self.success()` from [`validate()`][textual.validation.Validator.validate] to indicated that validation *succeeded*.
+
+        Returns:
+            A ValidationResult indicating validation succeeded.
+        """
+⋮----
+"""Shorthand for signaling validation failure.
+
+        Return `self.failure(...)` from [`validate()`][textual.validation.Validator.validate] to indicated that validation *failed*.
+
+        Args:
+            description: The failure description that will be used. When used in conjunction with the Input widget,
+                this is the description that will ultimately be available inside the handler for `Input.Changed`. If not
+                supplied, the `failure_description` from the `Validator` will be used. If that is not supplied either,
+                then the `describe_failure` method on `Validator` will be called.
+            value: The value that was considered invalid. This is optional, and only needs to be supplied if required
+                in your `Input.Changed` handler.
+            failures: The reasons the validator failed. If not supplied, a generic `Failure` will be included in the
+                ValidationResult returned from this function.
+
+        Returns:
+            A ValidationResult representing failed validation, and containing the metadata supplied
+                to this function.
+        """
+⋮----
+failures = [failures]
+⋮----
+result = ValidationResult(
+⋮----
+class Regex(Validator)
+⋮----
+"""A validator that checks the value matches a regex (via `re.fullmatch`)."""
+⋮----
+"""The regex which we'll validate is matched by the value."""
+⋮----
+"""The flags to pass to `re.fullmatch`."""
+⋮----
+class NoResults(Failure)
+⋮----
+"""Indicates validation failed because the regex could not be found within the value string."""
+⋮----
+def validate(self, value: str) -> ValidationResult
+⋮----
+"""Ensure that the value matches the regex.
+
+        Args:
+            value: The value that should match the regex.
+
+        Returns:
+            The result of the validation.
+        """
+regex = self.regex
+has_match = re.fullmatch(regex, value, flags=self.flags) is not None
+⋮----
+failures = [Regex.NoResults(self, value)]
+⋮----
+"""Describes why the validator failed.
+
+        Args:
+            failure: Information about why the validation failed.
+
+        Returns:
+            A string description of the failure.
+        """
+⋮----
+class Number(Validator)
+⋮----
+"""Validator that ensures the value is a number, with an optional range check."""
+⋮----
+"""The minimum value of the number, inclusive. If `None`, the minimum is unbounded."""
+⋮----
+"""The maximum value of the number, inclusive. If `None`, the maximum is unbounded."""
+⋮----
+class NotANumber(Failure)
+⋮----
+"""Indicates a failure due to the value not being a valid number (decimal/integer, inc. scientific notation)"""
+⋮----
+class NotInRange(Failure)
+⋮----
+"""Indicates a failure due to the number not being within the range [minimum, maximum]."""
+⋮----
+"""Ensure that `value` is a valid number, optionally within a range.
+
+        Args:
+            value: The value to validate.
+
+        Returns:
+            The result of the validation.
+        """
+⋮----
+float_value = float(value)
+⋮----
+def _validate_range(self, value: float) -> bool
+⋮----
+"""Return a boolean indicating whether the number is within the range specified in the attributes."""
+⋮----
+class Integer(Number)
+⋮----
+"""Validator which ensures the value is an integer which falls within a range."""
+⋮----
+class NotAnInteger(Failure)
+⋮----
+"""Indicates a failure due to the value not being a valid integer."""
+⋮----
+"""Ensure that `value` is an integer, optionally within a range.
+
+        Args:
+            value: The value to validate.
+
+        Returns:
+            The result of the validation.
+        """
+# First, check that we're dealing with a number in the range.
+number_validation_result = super().validate(value)
+⋮----
+# We know it's a number, but is that number an integer?
+⋮----
+int_value = int(value)
+⋮----
+class Length(Validator)
+⋮----
+"""Validate that a string is within a range (inclusive)."""
+⋮----
+"""The inclusive minimum length of the value, or None if unbounded."""
+⋮----
+"""The inclusive maximum length of the value, or None if unbounded."""
+⋮----
+class Incorrect(Failure)
+⋮----
+"""Indicates a failure due to the length of the value being outside the range."""
+⋮----
+"""Ensure that value falls within the maximum and minimum length constraints.
+
+        Args:
+            value: The value to validate.
+
+        Returns:
+            The result of the validation.
+        """
+too_short = self.minimum is not None and len(value) < self.minimum
+too_long = self.maximum is not None and len(value) > self.maximum
+⋮----
+class Function(Validator)
+⋮----
+"""A flexible validator which allows you to provide custom validation logic."""
+⋮----
+"""Function which takes the value to validate and returns True if valid, and False otherwise."""
+⋮----
+class ReturnedFalse(Failure)
+⋮----
+"""Indicates validation failed because the supplied function returned False."""
+⋮----
+"""Validate that the supplied function returns True.
+
+        Args:
+            value: The value to pass into the supplied function.
+
+        Returns:
+            A ValidationResult indicating success if the function returned True,
+                and failure if the function return False.
+        """
+is_valid = self.function(value)
+⋮----
+class URL(Validator)
+⋮----
+"""Validator that checks if a URL is valid (ensuring a scheme is present)."""
+⋮----
+class InvalidURL(Failure)
+⋮----
+"""Indicates that the URL is not valid."""
+⋮----
+"""Validates that `value` is a valid URL (contains a scheme).
+
+        Args:
+            value: The value to validate.
+
+        Returns:
+            The result of the validation.
+        """
+invalid_url = ValidationResult.failure([URL.InvalidURL(self, value)])
+⋮----
+parsed_url = urlparse(value)
+</file>
+
+</files>

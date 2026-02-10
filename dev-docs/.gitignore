@@ -1,5 +1,2 @@
 # Ignore the cloned Textual repository
 textual-repo/
-
-# Ignore generated documentation (regenerate with script)
-textual-docs/

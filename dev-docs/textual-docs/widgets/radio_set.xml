@@ -1,0 +1,242 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/widgets/_radio_set.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    widgets/
+      _radio_set.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/widgets/_radio_set.py">
+"""Provides a RadioSet widget, which groups radio buttons."""
+⋮----
+class RadioSet(VerticalScroll, can_focus=True, can_focus_children=False)
+⋮----
+"""Widget for grouping a collection of radio buttons into a set.
+
+    When a collection of [`RadioButton`][textual.widgets.RadioButton]s are
+    grouped with this widget, they will be treated as a mutually-exclusive
+    grouping. If one button is turned on, the previously-on button will be
+    turned off.
+    """
+⋮----
+ALLOW_SELECT = False
+ALLOW_MAXIMIZE = True
+⋮----
+DEFAULT_CSS = """
+⋮----
+BINDINGS: ClassVar[list[BindingType]] = [
+"""
+    | Key(s) | Description |
+    | :- | :- |
+    | enter, space | Toggle the currently-selected button. |
+    | left, up | Select the previous radio button in the set. |
+    | right, down | Select the next radio button in the set. |
+    """
+⋮----
+_selected: var[int | None] = var[Optional[int]](None)
+"""The index of the currently-selected radio button."""
+⋮----
+compact: reactive[bool] = reactive(False, toggle_class="-textual-compact")
+"""Enable compact display?"""
+⋮----
+@rich.repr.auto
+    class Changed(Message)
+⋮----
+"""Posted when the pressed button in the set changes.
+
+        This message can be handled using an `on_radio_set_changed` method.
+        """
+⋮----
+ALLOW_SELECTOR_MATCH = {"pressed"}
+"""Additional message attributes that can be used with the [`on` decorator][textual.on]."""
+⋮----
+def __init__(self, radio_set: RadioSet, pressed: RadioButton) -> None
+⋮----
+"""Initialise the message.
+
+            Args:
+                pressed: The radio button that was pressed.
+            """
+⋮----
+"""A reference to the [`RadioSet`][textual.widgets.RadioSet] that was changed."""
+⋮----
+"""The [`RadioButton`][textual.widgets.RadioButton] that was pressed to make the change."""
+⋮----
+"""The index of the [`RadioButton`][textual.widgets.RadioButton] that was pressed to make the change."""
+⋮----
+@property
+        def control(self) -> RadioSet
+⋮----
+"""A reference to the [`RadioSet`][textual.widgets.RadioSet] that was changed.
+
+            This is an alias for [`Changed.radio_set`][textual.widgets.RadioSet.Changed.radio_set]
+            and is used by the [`on`][textual.on] decorator.
+            """
+⋮----
+def __rich_repr__(self) -> rich.repr.Result
+⋮----
+"""Initialise the radio set.
+
+        Args:
+            buttons: The labels or [`RadioButton`][textual.widgets.RadioButton]s to group together.
+            name: The name of the radio set.
+            id: The ID of the radio set in the DOM.
+            classes: The CSS classes of the radio set.
+            disabled: Whether the radio set is disabled or not.
+            tooltip: Optional tooltip.
+            compact: Enable compact radio set style
+
+        Note:
+            When a `str` label is provided, a
+            [RadioButton][textual.widgets.RadioButton] will be created from
+            it.
+        """
+⋮----
+"""Holds the radio buttons we're responsible for."""
+⋮----
+def _on_mount(self, _: Mount) -> None
+⋮----
+"""Perform some processing once mounted in the DOM."""
+⋮----
+# If there are radio buttons, select the first available one.
+⋮----
+# Get all the buttons within us; we'll be doing a couple of things
+# with that list.
+buttons = list(self.query(RadioButton))
+⋮----
+# RadioButtons can have focus, by default. But we're going to take
+# that over and handle movement between them. So here we tell them
+# all they can't focus.
+⋮----
+# It's possible for the user to pass in a collection of radio
+# buttons, with more than one set to on; they shouldn't, but we
+# can't stop them. So here we check for that and, for want of a
+# better approach, we keep the first one on and turn all the others
+# off.
+switched_on = [button for button in buttons if button.value]
+⋮----
+# Keep track of which button is initially pressed.
+⋮----
+def watch__selected(self) -> None
+⋮----
+def _on_radio_button_changed(self, event: RadioButton.Changed) -> None
+⋮----
+"""Respond to the value of a button in the set being changed.
+
+        Args:
+            event: The event.
+        """
+# We're going to consume the underlying radio button events, making
+# it appear as if they don't emit their own, as far as the caller is
+# concerned. As such, stop the event bubbling and also prohibit the
+# same event being sent out if/when we make a value change in here.
+⋮----
+# If the message pertains to a button being clicked to on...
+⋮----
+# If there's a button pressed right now and it's not really a
+# case of the user mashing on the same button...
+⋮----
+# Make the pressed button this new button.
+⋮----
+# Emit a message to say our state has changed.
+⋮----
+# We're being clicked off, we don't want that.
+⋮----
+def _on_radio_set_changed(self, event: RadioSet.Changed) -> None
+⋮----
+"""Handle a change to which button in the set is pressed.
+
+        This handler ensures that, when a button is pressed, it's also the
+        selected button.
+        """
+⋮----
+async def _on_click(self, _: Click) -> None
+⋮----
+"""Handle a click on or within the radio set.
+
+        This handler ensures that focus moves to the clicked radio set, even
+        if there's a click on one of the radio buttons it contains.
+        """
+⋮----
+@property
+    def pressed_button(self) -> RadioButton | None
+⋮----
+"""The currently-pressed [`RadioButton`][textual.widgets.RadioButton], or `None` if none are pressed."""
+⋮----
+@property
+    def pressed_index(self) -> int
+⋮----
+"""The index of the currently-pressed [`RadioButton`][textual.widgets.RadioButton], or -1 if none are pressed."""
+⋮----
+def action_previous_button(self) -> None
+⋮----
+"""Navigate to the previous button in the set.
+
+        Note that this will wrap around to the end if at the start.
+        """
+⋮----
+def action_next_button(self) -> None
+⋮----
+"""Navigate to the next button in the set.
+
+        Note that this will wrap around to the start if at the end.
+        """
+⋮----
+def action_toggle_button(self) -> None
+⋮----
+"""Toggle the state of the currently-selected button."""
+⋮----
+button = self._nodes[self._selected]
+⋮----
+def _scroll_to_selected(self) -> None
+⋮----
+"""Ensure that the selected button is in view."""
+</file>
+
+</files>

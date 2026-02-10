@@ -1,0 +1,762 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/widgets/_option_list.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    widgets/
+      _option_list.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/widgets/_option_list.py">
+OptionListContent: TypeAlias = "Option | VisualType | None"
+"""Types accepted in OptionList constructor and [add_options()][textual.widgets.OptionList.ads_options]."""
+⋮----
+class OptionListError(Exception)
+⋮----
+"""An error occurred in the option list."""
+⋮----
+class DuplicateID(OptionListError)
+⋮----
+"""Raised if a duplicate ID is used when adding options to an option list."""
+⋮----
+class OptionDoesNotExist(OptionListError)
+⋮----
+"""Raised when a request has been made for an option that doesn't exist."""
+⋮----
+@rich.repr.auto
+class Option
+⋮----
+"""This class holds details of options in the list."""
+⋮----
+"""Initialise the option.
+
+        Args:
+            prompt: The prompt (text displayed) for the option.
+            id: An option ID for the option.
+            disabled: Disable the option (will be shown grayed out, and will not be selectable).
+
+        """
+⋮----
+@property
+    def prompt(self) -> VisualType
+⋮----
+"""The original prompt."""
+⋮----
+@property
+    def id(self) -> str | None
+⋮----
+"""Optional ID for the option."""
+⋮----
+def _set_prompt(self, prompt: VisualType) -> None
+⋮----
+"""Update the prompt.
+
+        Args:
+            prompt: New prompt.
+
+        """
+⋮----
+def __hash__(self) -> int
+⋮----
+def __rich_repr__(self) -> rich.repr.Result
+⋮----
+@dataclass
+class _LineCache
+⋮----
+"""Cached line information."""
+⋮----
+lines: list[tuple[int, int]] = field(default_factory=list)
+heights: dict[int, int] = field(default_factory=dict)
+index_to_line: dict[int, int] = field(default_factory=dict)
+⋮----
+def clear(self) -> None
+⋮----
+"""Reset all caches."""
+⋮----
+class OptionList(ScrollView, can_focus=True)
+⋮----
+"""A navigable list of options."""
+⋮----
+ALLOW_SELECT = False
+BINDINGS: ClassVar[list[BindingType]] = [
+"""
+    | Key(s) | Description |
+    | :- | :- |
+    | down | Move the highlight down. |
+    | end | Move the highlight to the last option. |
+    | enter | Select the current option. |
+    | home | Move the highlight to the first option. |
+    | pagedown | Move the highlight down a page of options. |
+    | pageup | Move the highlight up a page of options. |
+    | up | Move the highlight up. |
+    """
+⋮----
+DEFAULT_CSS = """
+⋮----
+COMPONENT_CLASSES: ClassVar[set[str]] = {
+"""
+    | Class | Description |
+    | :- | :- |
+    | `option-list--option` | Target options that are not disabled, highlighted or have the mouse over them. |
+    | `option-list--option-disabled` | Target disabled options. |
+    | `option-list--option-highlighted` | Target the highlighted option. |
+    | `option-list--option-hover` | Target an option that has the mouse over it. |
+    | `option-list--separator` | Target the separators. |
+    """
+⋮----
+highlighted: reactive[int | None] = reactive(None)
+"""The index of the currently-highlighted option, or `None` if no option is highlighted."""
+⋮----
+_mouse_hovering_over: reactive[int | None] = reactive(None)
+"""The index of the option under the mouse or `None`."""
+⋮----
+compact: reactive[bool] = reactive(False, toggle_class="-textual-compact")
+"""Enable compact display?"""
+⋮----
+class OptionMessage(Message)
+⋮----
+"""Base class for all option messages."""
+⋮----
+def __init__(self, option_list: OptionList, option: Option, index: int) -> None
+⋮----
+"""Initialise the option message.
+
+            Args:
+                option_list: The option list that owns the option.
+                index: The index of the option that the message relates to.
+            """
+⋮----
+"""The option list that sent the message."""
+⋮----
+"""The highlighted option."""
+⋮----
+"""The ID of the option that the message relates to."""
+⋮----
+"""The index of the option that the message relates to."""
+⋮----
+@property
+        def control(self) -> OptionList
+⋮----
+"""The option list that sent the message.
+
+            This is an alias for [`OptionMessage.option_list`][textual.widgets.OptionList.OptionMessage.option_list]
+            and is used by the [`on`][textual.on] decorator.
+            """
+⋮----
+class OptionHighlighted(OptionMessage)
+⋮----
+"""Message sent when an option is highlighted.
+
+        Can be handled using `on_option_list_option_highlighted` in a subclass of
+        `OptionList` or in a parent node in the DOM.
+        """
+⋮----
+class OptionSelected(OptionMessage)
+⋮----
+"""Message sent when an option is selected.
+
+        Can be handled using `on_option_list_option_selected` in a subclass of
+        `OptionList` or in a parent node in the DOM.
+        """
+⋮----
+"""Initialize an OptionList.
+
+        Args:
+            *content: Positional arguments become the options.
+            name: Name of the OptionList.
+            id: The ID of the OptionList in the DOM.
+            classes: Initial CSS classes.
+            disabled: Disable the widget?
+            markup: Strips should be rendered as content markup if `True`, or plain text if `False`.
+            compact: Enable compact style?
+        """
+⋮----
+"""List of options."""
+⋮----
+"""Maps an Options's ID on to the option itself."""
+⋮----
+"""Maps an Option to its index in self._options."""
+⋮----
+"""Caches rendered options."""
+⋮----
+"""Used to cache additional information that can be recomputed."""
+⋮----
+# TODO: Inherited from previous version. Do we always want this?
+⋮----
+@property
+    def options(self) -> Sequence[Option]
+⋮----
+"""Sequence of options in the OptionList.
+
+        !!! note "This is read-only"
+
+        """
+⋮----
+@property
+    def option_count(self) -> int
+⋮----
+"""The number of options."""
+⋮----
+@property
+    def highlighted_option(self) -> Option | None
+⋮----
+"""The currently highlighted option, or `None` if no option is highlighted.
+
+        Returns:
+            An Option, or `None`.
+        """
+⋮----
+def clear_options(self) -> Self
+⋮----
+"""Clear the content of the option list.
+
+        Returns:
+            The `OptionList` instance.
+        """
+⋮----
+def set_options(self, options: Iterable[OptionListContent]) -> Self
+⋮----
+"""Set options, potentially clearing existing options.
+
+        Args:
+            options: Options to set.
+
+        Returns:
+            The `OptionList` instance.
+        """
+⋮----
+def add_options(self, new_options: Iterable[OptionListContent]) -> Self
+⋮----
+"""Add new options.
+
+        Args:
+            new_options: Content of new options.
+
+        Returns:
+            The `OptionList` instance.
+        """
+⋮----
+new_options = list(new_options)
+⋮----
+option_ids = [
+⋮----
+# Handle the case where the first new option is None,
+# which would update the previous option.
+# This is sub-optimal, but hopefully not a common occurrence
+⋮----
+options = self._options
+add_option = self._options.append
+⋮----
+option = prompt
+⋮----
+option = Option(prompt)
+⋮----
+def add_option(self, option: Option | VisualType | None = None) -> Self
+⋮----
+"""Add a new option to the end of the option list.
+
+        Args:
+            option: New option to add, or `None` for a separator.
+
+        Returns:
+            The `OptionList` instance.
+
+        Raises:
+            DuplicateID: If there is an attempt to use a duplicate ID.
+        """
+⋮----
+def get_option(self, option_id: str) -> Option
+⋮----
+"""Get the option with the given ID.
+
+        Args:
+            option_id: The ID of the option to get.
+
+        Returns:
+            The option with the ID.
+
+        Raises:
+            OptionDoesNotExist: If no option has the given ID.
+        """
+⋮----
+def get_option_index(self, option_id: str) -> int
+⋮----
+"""Get the index (offset in `self.options`) of the option with the given ID.
+
+        Args:
+            option_id: The ID of the option to get the index of.
+
+        Returns:
+            The index of the item with the given ID.
+
+        Raises:
+            OptionDoesNotExist: If no option has the given ID.
+        """
+option = self.get_option(option_id)
+⋮----
+def get_option_at_index(self, index: int) -> Option
+⋮----
+"""Get the option at the given index.
+
+        Args:
+            index: The index of the option to get.
+
+        Returns:
+            The option at that index.
+
+        Raises:
+            OptionDoesNotExist: If there is no option with the given index.
+        """
+⋮----
+def _set_option_disabled(self, index: int, disabled: bool) -> Self
+⋮----
+"""Set the disabled state of an option in the list.
+
+        Args:
+            index: The index of the option to set the disabled state of.
+            disabled: The disabled state to set.
+
+        Returns:
+            The `OptionList` instance.
+        """
+⋮----
+# TODO: Refresh only if the affected option is visible.
+⋮----
+def enable_option_at_index(self, index: int) -> Self
+⋮----
+"""Enable the option at the given index.
+
+        Returns:
+            The `OptionList` instance.
+
+        Raises:
+            OptionDoesNotExist: If there is no option with the given index.
+        """
+⋮----
+def disable_option_at_index(self, index: int) -> Self
+⋮----
+"""Disable the option at the given index.
+
+        Returns:
+            The `OptionList` instance.
+
+        Raises:
+            OptionDoesNotExist: If there is no option with the given index.
+        """
+⋮----
+def enable_option(self, option_id: str) -> Self
+⋮----
+"""Enable the option with the given ID.
+
+        Args:
+            option_id: The ID of the option to enable.
+
+        Returns:
+            The `OptionList` instance.
+
+        Raises:
+            OptionDoesNotExist: If no option has the given ID.
+        """
+⋮----
+def disable_option(self, option_id: str) -> Self
+⋮----
+"""Disable the option with the given ID.
+
+        Args:
+            option_id: The ID of the option to disable.
+
+        Returns:
+            The `OptionList` instance.
+
+        Raises:
+            OptionDoesNotExist: If no option has the given ID.
+        """
+⋮----
+def _remove_option(self, option: Option) -> Self
+⋮----
+"""Remove the option with the given ID.
+
+        Args:
+            option: The Option to return.
+
+        Returns:
+            The `OptionList` instance.
+
+        Raises:
+            OptionDoesNotExist: If no option has the given ID.
+        """
+⋮----
+index = self._option_to_index[option]
+⋮----
+current_index = self._option_to_index[option]
+⋮----
+option = self._options[index]
+⋮----
+def _pre_remove_option(self, option: Option, index: int) -> None
+⋮----
+"""Hook called prior to removing an option.
+
+        Args:
+            option: Option being removed.
+            index: Index of option being removed.
+
+        """
+⋮----
+def remove_option(self, option_id: str) -> Self
+⋮----
+"""Remove the option with the given ID.
+
+        Args:
+            option_id: The ID of the option to remove.
+
+        Returns:
+            The `OptionList` instance.
+
+        Raises:
+            OptionDoesNotExist: If no option has the given ID.
+        """
+⋮----
+def remove_option_at_index(self, index: int) -> Self
+⋮----
+"""Remove the option at the given index.
+
+        Args:
+            index: The index of the option to remove.
+
+        Returns:
+            The `OptionList` instance.
+
+        Raises:
+            OptionDoesNotExist: If there is no option with the given index.
+        """
+⋮----
+def _replace_option_prompt(self, index: int, prompt: VisualType) -> None
+⋮----
+"""Replace the prompt of an option in the list.
+
+        Args:
+            index: The index of the option to replace the prompt of.
+            prompt: The new prompt for the option.
+
+        Raises:
+            OptionDoesNotExist: If there is no option with the given index.
+        """
+⋮----
+def replace_option_prompt(self, option_id: str, prompt: VisualType) -> Self
+⋮----
+"""Replace the prompt of the option with the given ID.
+
+        Args:
+            option_id: The ID of the option to replace the prompt of.
+            prompt: The new prompt for the option.
+
+        Returns:
+            The `OptionList` instance.
+
+        Raises:
+            OptionDoesNotExist: If no option has the given ID.
+        """
+⋮----
+def replace_option_prompt_at_index(self, index: int, prompt: VisualType) -> Self
+⋮----
+"""Replace the prompt of the option at the given index.
+
+        Args:
+            index: The index of the option to replace the prompt of.
+            prompt: The new prompt for the option.
+
+        Returns:
+            The `OptionList` instance.
+
+        Raises:
+            OptionDoesNotExist: If there is no option with the given index.
+        """
+⋮----
+@property
+    def _lines(self) -> Sequence[tuple[int, int]]
+⋮----
+"""A sequence of pairs of ints for each line, used internally.
+
+        The first int is the index of the option, and second is the line offset.
+
+        !!! note "This is read-only"
+
+        Returns:
+            A sequence of tuples.
+        """
+⋮----
+@property
+    def _heights(self) -> dict[int, int]
+⋮----
+@property
+    def _index_to_line(self) -> dict[int, int]
+⋮----
+def _clear_caches(self) -> None
+⋮----
+def notify_style_update(self) -> None
+⋮----
+def _on_resize(self)
+⋮----
+def on_show(self) -> None
+⋮----
+def on_mount(self) -> None
+⋮----
+async def _on_click(self, event: events.Click) -> None
+⋮----
+"""React to the mouse being clicked on an item.
+
+        Args:
+            event: The click event.
+        """
+clicked_option: int | None = event.style.meta.get("option")
+⋮----
+def _get_left_gutter_width(self) -> int
+⋮----
+"""Returns the size of any left gutter that should be taken into account.
+
+        Returns:
+            The width of the left gutter.
+        """
+⋮----
+def _on_mouse_move(self, event: events.MouseMove) -> None
+⋮----
+"""React to the mouse moving.
+
+        Args:
+            event: The mouse movement event.
+        """
+⋮----
+def _on_leave(self, _: events.Leave) -> None
+⋮----
+"""React to the mouse leaving the widget."""
+⋮----
+def _get_visual(self, option: Option) -> Visual
+⋮----
+"""Get a visual for the given option.
+
+        Args:
+            option: An option.
+
+        Returns:
+            A Visual.
+
+        """
+⋮----
+visual = visualize(self, option.prompt, markup=self._markup)
+⋮----
+def _get_visual_from_index(self, index: int) -> Visual
+⋮----
+"""Get a visual from the given index.
+
+        Args:
+            index: An index (offset in self.options).
+
+        Returns:
+            A Visual.
+        """
+option = self.get_option_at_index(index)
+⋮----
+def _get_option_render(self, option: Option, style: Style) -> list[Strip]
+⋮----
+"""Get rendered option with a given style.
+
+        Args:
+            option: An option.
+            style: Style of render.
+
+        Returns:
+            A list of strips.
+        """
+padding = self.get_component_styles("option-list--option").padding
+render_width = self.scrollable_content_region.width
+width = render_width - self._get_left_gutter_width()
+cache_key = (option, style, padding)
+⋮----
+visual = self._get_visual(option)
+⋮----
+visual = Padding(visual, padding)
+strips = visual.to_strips(self, visual, width, None, style)
+meta = {"option": self._option_to_index[option]}
+strips = [
+⋮----
+style = self.get_visual_style("option-list--separator")
+rule_segments = [Segment("─" * width, style.rich_style)]
+⋮----
+def _update_lines(self) -> None
+⋮----
+"""Update internal structures when new lines are added."""
+⋮----
+line_cache = self._line_cache
+lines = line_cache.lines
+next_index = lines[-1][0] + 1 if lines else 0
+get_visual = self._get_visual
+width = self.scrollable_content_region.width - self._get_left_gutter_width()
+⋮----
+line_count = (
+⋮----
+last_divider = self.options and self.options[-1]._divider
+virtual_size = Size(width, len(lines) - (1 if last_divider else 0))
+⋮----
+def get_content_width(self, container: Size, viewport: Size) -> int
+⋮----
+"""Get maximum width of options."""
+⋮----
+styles = self.styles
+get_visual_from_index = self._get_visual_from_index
+⋮----
+gutter_width = self._get_left_gutter_width()
+container_width = container.width
+width = (
+⋮----
+def get_content_height(self, container: Size, viewport: Size, width: int) -> int
+⋮----
+"""Get height for the given width."""
+⋮----
+rules = cast(RulesMap, styles)
+padding_width = self.get_component_styles("option-list--option").padding.width
+⋮----
+height = sum(
+⋮----
+def _get_line(self, style: Style, y: int) -> Strip
+⋮----
+strips = self._get_option_render(option, style)
+⋮----
+def render_lines(self, crop: Region) -> list[Strip]
+⋮----
+def render_line(self, y: int) -> Strip
+⋮----
+line_number = self.scroll_offset.y + y
+⋮----
+option = self.options[option_index]
+⋮----
+mouse_over = self._mouse_hovering_over == option_index
+component_class = ""
+⋮----
+component_class = "option-list--option-disabled"
+⋮----
+component_class = "option-list--option-highlighted"
+⋮----
+component_class = "option-list--option-hover"
+⋮----
+style = self.get_visual_style("option-list--option", component_class)
+⋮----
+style = self.get_visual_style("option-list--option")
+⋮----
+strip = strips[line_offset]
+⋮----
+def validate_highlighted(self, highlighted: int | None) -> int | None
+⋮----
+"""Validate the `highlighted` property value on access."""
+⋮----
+def watch_highlighted(self, highlighted: int | None) -> None
+⋮----
+"""React to the highlighted option having changed."""
+⋮----
+def scroll_to_highlight(self, top: bool = False) -> None
+⋮----
+"""Scroll to the highlighted option.
+
+        Args:
+            top: Ensure highlighted option is at the top of the widget.
+        """
+highlighted = self.highlighted
+⋮----
+y = self._index_to_line[highlighted]
+⋮----
+height = self._heights[highlighted]
+⋮----
+def action_cursor_up(self) -> None
+⋮----
+"""Move the highlight up to the previous enabled option."""
+⋮----
+def action_cursor_down(self) -> None
+⋮----
+"""Move the highlight down to the next enabled option."""
+⋮----
+def action_first(self) -> None
+⋮----
+"""Move the highlight to the first enabled option."""
+⋮----
+def action_last(self) -> None
+⋮----
+"""Move the highlight to the last enabled option."""
+⋮----
+def _move_page(self, direction: _widget_navigation.Direction) -> None
+⋮----
+"""Move the height roughly by one page in the given direction.
+
+        This method will attempt to avoid selecting a disabled option.
+
+        Args:
+            direction: `-1` to move up a page, `1` to move down a page.
+        """
+⋮----
+height = self.scrollable_content_region.height
+y = clamp(
+option_index = self._lines[y][0]
+⋮----
+def action_page_up(self)
+⋮----
+"""Move the highlight up one page."""
+⋮----
+def action_page_down(self)
+⋮----
+"""Move the highlight down one page."""
+⋮----
+def action_select(self) -> None
+⋮----
+"""Select the currently highlighted option.
+
+        If an option is selected then a
+        [OptionList.OptionSelected][textual.widgets.OptionList.OptionSelected] will be posted.
+        """
+⋮----
+option = self._options[highlighted]
+</file>
+
+</files>

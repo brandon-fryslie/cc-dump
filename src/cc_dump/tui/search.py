@@ -18,6 +18,7 @@ from rich.text import Text
 from textual.widgets import Static
 
 import cc_dump.palette
+import cc_dump.tui.rendering
 
 
 # ─── Data types ──────────────────────────────────────────────────────────────
@@ -228,12 +229,13 @@ class SearchBar(Static):
 
         self.display = True
 
-        # Build multi-line display with explicit color codes
+        # Build multi-line display with theme-aware colors
+        tc = cc_dump.tui.rendering.get_theme_colors()
         lines = []
 
         # Line 1: Search input
         search_line = Text()
-        search_line.append("/ ", style="bold blue")
+        search_line.append("/ ", style=tc.search_prompt_style)
 
         if state.phase == SearchPhase.EDITING:
             # Show query with cursor
@@ -254,13 +256,13 @@ class SearchBar(Static):
         if state.matches:
             search_line.append(
                 f"  [{state.current_index + 1}/{len(state.matches)}]",
-                style="bold green",
+                style=tc.search_active_style,
             )
         elif state.query:
             # Check if pattern is invalid
             pattern = compile_search_pattern(state.query, state.modes)
             if pattern is None and state.query:
-                search_line.append("  [invalid pattern]", style="bold red")
+                search_line.append("  [invalid pattern]", style=tc.search_error_style)
             else:
                 search_line.append("  [no matches]", style="dim")
 
@@ -272,25 +274,25 @@ class SearchBar(Static):
 
         # Case insensitive
         if state.modes & SearchMode.CASE_INSENSITIVE:
-            mode_line.append("i ", style="bold green")
+            mode_line.append("i ", style=tc.search_active_style)
         else:
             mode_line.append("i ", style="dim")
 
         # Word boundary
         if state.modes & SearchMode.WORD_BOUNDARY:
-            mode_line.append("w ", style="bold green")
+            mode_line.append("w ", style=tc.search_active_style)
         else:
             mode_line.append("w ", style="dim")
 
         # Regex
         if state.modes & SearchMode.REGEX:
-            mode_line.append(".* ", style="bold green")
+            mode_line.append(".* ", style=tc.search_active_style)
         else:
             mode_line.append(".* ", style="dim")
 
         # Incremental
         if state.modes & SearchMode.INCREMENTAL:
-            mode_line.append("inc", style="bold green")
+            mode_line.append("inc", style=tc.search_active_style)
         else:
             mode_line.append("inc", style="dim")
 
@@ -299,13 +301,13 @@ class SearchBar(Static):
         # Line 3: Mode toggle help
         help_line = Text()
         help_line.append("Toggle: ", style="dim")
-        help_line.append("Alt+c", style="bold yellow")
+        help_line.append("Alt+c", style=tc.search_keys_style)
         help_line.append("=case ", style="dim")
-        help_line.append("Alt+w", style="bold yellow")
+        help_line.append("Alt+w", style=tc.search_keys_style)
         help_line.append("=word ", style="dim")
-        help_line.append("Alt+r", style="bold yellow")
+        help_line.append("Alt+r", style=tc.search_keys_style)
         help_line.append("=regex ", style="dim")
-        help_line.append("Alt+i", style="bold yellow")
+        help_line.append("Alt+i", style=tc.search_keys_style)
         help_line.append("=incr", style="dim")
         lines.append(help_line)
 
@@ -313,23 +315,23 @@ class SearchBar(Static):
         nav_line = Text()
         if state.phase == SearchPhase.EDITING:
             nav_line.append("Keys: ", style="dim")
-            nav_line.append("Enter", style="bold yellow")
+            nav_line.append("Enter", style=tc.search_keys_style)
             nav_line.append("=search ", style="dim")
-            nav_line.append("Esc", style="bold yellow")
+            nav_line.append("Esc", style=tc.search_keys_style)
             nav_line.append("=exit(stay) ", style="dim")
-            nav_line.append("q", style="bold yellow")
+            nav_line.append("q", style=tc.search_keys_style)
             nav_line.append("=exit(restore)", style="dim")
         else:
             nav_line.append("Keys: ", style="dim")
-            nav_line.append("n", style="bold yellow")
+            nav_line.append("n", style=tc.search_keys_style)
             nav_line.append("=next ", style="dim")
-            nav_line.append("N", style="bold yellow")
+            nav_line.append("N", style=tc.search_keys_style)
             nav_line.append("=prev ", style="dim")
-            nav_line.append("/", style="bold yellow")
+            nav_line.append("/", style=tc.search_keys_style)
             nav_line.append("=edit ", style="dim")
-            nav_line.append("Esc", style="bold yellow")
+            nav_line.append("Esc", style=tc.search_keys_style)
             nav_line.append("=exit(stay) ", style="dim")
-            nav_line.append("q", style="bold yellow")
+            nav_line.append("q", style=tc.search_keys_style)
             nav_line.append("=exit(restore)", style="dim")
         lines.append(nav_line)
 

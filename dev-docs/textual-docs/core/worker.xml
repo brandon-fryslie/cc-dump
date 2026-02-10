@@ -1,0 +1,330 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/worker.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    worker.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/worker.py">
+"""
+This module contains the `Worker` class and related objects.
+
+See the guide for how to use [workers](/guide/workers).
+
+"""
+⋮----
+active_worker: ContextVar[Worker] = ContextVar("active_worker")
+"""Currently active worker context var."""
+⋮----
+class NoActiveWorker(Exception)
+⋮----
+"""There is no active worker."""
+⋮----
+class WorkerError(Exception)
+⋮----
+"""A worker related error."""
+⋮----
+class WorkerFailed(WorkerError)
+⋮----
+"""The worker raised an exception and did not complete."""
+⋮----
+def __init__(self, error: BaseException) -> None
+⋮----
+class DeadlockError(WorkerError)
+⋮----
+"""The operation would result in a deadlock."""
+⋮----
+class WorkerCancelled(WorkerError)
+⋮----
+"""The worker was cancelled and did not complete."""
+⋮----
+def get_current_worker() -> Worker
+⋮----
+"""Get the currently active worker.
+
+    Raises:
+        NoActiveWorker: If there is no active worker.
+
+    Returns:
+        A Worker instance.
+    """
+⋮----
+class WorkerState(enum.Enum)
+⋮----
+"""A description of the worker's current state."""
+⋮----
+PENDING = 1
+"""Worker is initialized, but not running."""
+RUNNING = 2
+"""Worker is running."""
+CANCELLED = 3
+"""Worker is not running, and was cancelled."""
+ERROR = 4
+"""Worker is not running, and exited with an error."""
+SUCCESS = 5
+"""Worker is not running, and completed successfully."""
+⋮----
+ResultType = TypeVar("ResultType")
+⋮----
+WorkType: TypeAlias = Union[
+"""Type used for [workers](/guide/workers/)."""
+⋮----
+class _ReprText
+⋮----
+"""Shim to insert a word into the Worker's repr."""
+⋮----
+def __init__(self, text: str) -> None
+⋮----
+def __repr__(self) -> str
+⋮----
+@rich.repr.auto(angular=True)
+class Worker(Generic[ResultType])
+⋮----
+"""A class to manage concurrent work (either a task or a thread)."""
+⋮----
+@rich.repr.auto
+    class StateChanged(Message, bubble=False, namespace="worker")
+⋮----
+"""The worker state changed."""
+⋮----
+def __init__(self, worker: Worker, state: WorkerState) -> None
+⋮----
+"""Initialize the StateChanged message.
+
+            Args:
+                worker: The worker object.
+                state: New state.
+            """
+⋮----
+def __rich_repr__(self) -> rich.repr.Result
+⋮----
+"""Initialize a Worker.
+
+        Args:
+            node: The widget, screen, or App that initiated the work.
+            work: A callable, coroutine, or other awaitable object to run in the worker.
+            name: Name of the worker (short string to help identify when debugging).
+            group: The worker group.
+            description: Description of the worker (longer string with more details).
+            exit_on_error: Exit the app if the worker raises an error. Set to `False` to suppress exceptions.
+            thread: Mark the worker as a thread worker.
+        """
+⋮----
+"""A threading event set when the worker is cancelled."""
+⋮----
+@property
+    def node(self) -> DOMNode
+⋮----
+"""The node where this worker was run from."""
+⋮----
+@property
+    def state(self) -> WorkerState
+⋮----
+"""The current state of the worker."""
+⋮----
+@state.setter
+    def state(self, state: WorkerState) -> None
+⋮----
+"""Set the state, and send a message."""
+changed = state != self._state
+⋮----
+@property
+    def is_cancelled(self) -> bool
+⋮----
+"""Has the work been cancelled?
+
+        Note that cancelled work may still be running.
+        """
+⋮----
+@property
+    def is_running(self) -> bool
+⋮----
+"""Is the task running?"""
+⋮----
+@property
+    def is_finished(self) -> bool
+⋮----
+"""Has the task finished (cancelled, error, or success)?"""
+⋮----
+@property
+    def completed_steps(self) -> int
+⋮----
+"""The number of completed steps."""
+⋮----
+@property
+    def total_steps(self) -> int | None
+⋮----
+"""The number of total steps, or None if indeterminate."""
+⋮----
+@property
+    def progress(self) -> float
+⋮----
+"""Progress as a percentage.
+
+        If the total steps is None, then this will return 0. The percentage will be clamped between 0 and 100.
+        """
+⋮----
+@property
+    def result(self) -> ResultType | None
+⋮----
+"""The result of the worker, or `None` if there is no result."""
+⋮----
+@property
+    def error(self) -> BaseException | None
+⋮----
+"""The exception raised by the worker, or `None` if there was no error."""
+⋮----
+"""Update the number of completed steps.
+
+        Args:
+            completed_steps: The number of completed seps, or `None` to not change.
+            total_steps: The total number of steps, `None` for indeterminate, or -1 to leave unchanged.
+        """
+⋮----
+def advance(self, steps: int = 1) -> None
+⋮----
+"""Advance the number of completed steps.
+
+        Args:
+            steps: Number of steps to advance.
+        """
+⋮----
+async def _run_threaded(self) -> ResultType
+⋮----
+"""Run a threaded worker.
+
+        Returns:
+            Return value of the work.
+        """
+⋮----
+def run_awaitable(work: Awaitable[ResultType]) -> ResultType
+⋮----
+"""Set the active worker and await the awaitable."""
+⋮----
+async def do_work() -> ResultType
+⋮----
+"""Set the active worker and await coroutine."""
+⋮----
+def run_callable(work: Callable[[], ResultType]) -> ResultType
+⋮----
+"""Set the active worker, and call the callable."""
+⋮----
+runner = run_coroutine
+⋮----
+runner = run_awaitable
+⋮----
+runner = run_callable
+⋮----
+loop = asyncio.get_running_loop()
+⋮----
+async def _run_async(self) -> ResultType
+⋮----
+"""Run an async worker.
+
+        Returns:
+            Return value of the work.
+        """
+⋮----
+async def run(self) -> ResultType
+⋮----
+"""Run the work.
+
+        Implement this method in a subclass, or pass a callable to the constructor.
+
+        Returns:
+            Return value of the work.
+        """
+⋮----
+async def _run(self, app: App) -> None
+⋮----
+"""Run the worker.
+
+        Args:
+            app: App instance.
+        """
+⋮----
+worker_failed = WorkerFailed(self._error)
+⋮----
+"""Start the worker.
+
+        Args:
+            app: An app instance.
+            done_callback: A callback to call when the task is done.
+        """
+⋮----
+def task_done_callback(_task: asyncio.Task) -> None
+⋮----
+"""Run the callback.
+
+            Called by `Task.add_done_callback`.
+
+            Args:
+                The worker's task.
+            """
+⋮----
+def cancel(self) -> None
+⋮----
+"""Cancel the task."""
+⋮----
+async def wait(self) -> ResultType
+⋮----
+"""Wait for the work to complete.
+
+        Raises:
+            WorkerFailed: If the Worker raised an exception.
+            WorkerCancelled: If the Worker was cancelled before it completed.
+
+        Returns:
+            The return value of the work.
+        """
+⋮----
+# Not in a worker
+</file>
+
+</files>

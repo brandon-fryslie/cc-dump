@@ -202,6 +202,10 @@ class CcDumpApp(App):
 
     def on_mount(self):
         """Initialize app after mounting."""
+        # Initialize theme colors before any rendering
+        cc_dump.tui.rendering.set_theme(self.current_theme)
+        self._apply_markdown_theme()
+
         # Log startup messages (mirror what was printed to console)
         self._log("INFO", "🚀 cc-dump proxy started")
         self._log("INFO", f"Listening on: http://{self._host}:{self._port}")
@@ -412,6 +416,10 @@ class CcDumpApp(App):
             bar = self._get_search_bar()
             if bar is not None:
                 bar.display = False
+
+        # Rebuild theme state after modules reload (before any rendering)
+        cc_dump.tui.rendering.set_theme(self.current_theme)
+        self._apply_markdown_theme()
 
         # Check if widget_factory was reloaded - if so, replace widgets
         try:
@@ -811,6 +819,36 @@ class CcDumpApp(App):
 
     def watch_show_logs(self, value):
         pass  # visibility handled in action handler
+
+    def watch_theme(self, theme_name: str) -> None:
+        """Respond to Textual theme changes — rebuild all theme-derived state."""
+        if not self.is_running:
+            return
+        cc_dump.tui.rendering.set_theme(self.current_theme)
+        self._apply_markdown_theme()
+        # Invalidate caches and rerender all content
+        conv = self._get_conv()
+        if conv is not None:
+            conv._block_strip_cache.clear()
+            conv._line_cache.clear()
+            conv.rerender(self.active_filters)
+
+    def _apply_markdown_theme(self) -> None:
+        """Push/replace markdown Rich theme on the console.
+
+        Pops the old theme (if any) and pushes a fresh one from ThemeColors.
+        """
+        tc = cc_dump.tui.rendering.get_theme_colors()
+        from rich.theme import Theme as RichTheme
+
+        # Pop old markdown theme if we pushed one before
+        if hasattr(self, "_markdown_theme_pushed") and self._markdown_theme_pushed:
+            try:
+                self.console.pop_theme()
+            except Exception:
+                pass  # No theme to pop on first call
+        self.console.push_theme(RichTheme(tc.markdown_theme_dict))
+        self._markdown_theme_pushed = True
 
     # ─── Search ────────────────────────────────────────────────────────────
 

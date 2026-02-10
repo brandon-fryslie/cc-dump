@@ -1,0 +1,178 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/containers.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    containers.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/containers.py">
+"""
+Container widgets for quick styling.
+
+With the exception of `Center` and `Middle` containers will fill all of the space in the parent widget.
+
+"""
+⋮----
+class Container(Widget)
+⋮----
+"""Simple container widget, with vertical layout."""
+⋮----
+DEFAULT_CSS = """
+⋮----
+class ScrollableContainer(Widget, can_focus=True)
+⋮----
+"""A scrollable container with vertical layout, and auto scrollbars on both axis."""
+⋮----
+# We don't typically want to maximize scrollable containers,
+# since the user can easily navigate the contents
+ALLOW_MAXIMIZE = False
+⋮----
+BINDINGS: ClassVar[list[BindingType]] = [
+"""Keyboard bindings for scrollable containers.
+
+    | Key(s) | Description |
+    | :- | :- |
+    | up | Scroll up, if vertical scrolling is available. |
+    | down | Scroll down, if vertical scrolling is available. |
+    | left | Scroll left, if horizontal scrolling is available. |
+    | right | Scroll right, if horizontal scrolling is available. |
+    | home | Scroll to the home position, if scrolling is available. |
+    | end | Scroll to the end position, if scrolling is available. |
+    | pageup | Scroll up one page, if vertical scrolling is available. |
+    | pagedown | Scroll down one page, if vertical scrolling is available. |
+    | ctrl+pageup | Scroll left one page, if horizontal scrolling is available. |
+    | ctrl+pagedown | Scroll right one page, if horizontal scrolling is available. |
+    """
+⋮----
+"""
+        Construct a scrollable container.
+
+        Args:
+            *children: Child widgets.
+            name: The name of the widget.
+            id: The ID of the widget in the DOM.
+            classes: The CSS classes for the widget.
+            disabled: Whether the widget is disabled or not.
+            can_focus: Can this container be focused?
+            can_focus_children: Can this container's children be focused?
+            can_maximized: Allow this container to maximize? `None` to use default logic.,
+        """
+⋮----
+@property
+    def allow_maximize(self) -> bool
+⋮----
+class Vertical(Widget)
+⋮----
+"""An expanding container with vertical layout and no scrollbars."""
+⋮----
+class VerticalGroup(Widget)
+⋮----
+"""A non-expanding container with vertical layout and no scrollbars."""
+⋮----
+class VerticalScroll(ScrollableContainer)
+⋮----
+"""A container with vertical layout and an automatic scrollbar on the Y axis."""
+⋮----
+class Horizontal(Widget)
+⋮----
+"""An expanding container with horizontal layout and no scrollbars."""
+⋮----
+class HorizontalGroup(Widget)
+⋮----
+"""A non-expanding container with horizontal layout and no scrollbars."""
+⋮----
+class HorizontalScroll(ScrollableContainer)
+⋮----
+"""A container with horizontal layout and an automatic scrollbar on the X axis."""
+⋮----
+class Center(Widget)
+⋮----
+"""A container which aligns children on the X axis."""
+⋮----
+class Right(Widget)
+⋮----
+class Middle(Widget)
+⋮----
+"""A container which aligns children on the Y axis."""
+⋮----
+class CenterMiddle(Widget)
+⋮----
+"""A container which aligns its children on both axis."""
+⋮----
+class Grid(Widget)
+⋮----
+"""A container with grid layout."""
+⋮----
+class ItemGrid(Widget)
+⋮----
+"""A container with grid layout and automatic columns."""
+⋮----
+stretch_height: reactive[bool] = reactive(True)
+min_column_width: reactive[int | None] = reactive(None, layout=True)
+max_column_width: reactive[int | None] = reactive(None, layout=True)
+regular: reactive[bool] = reactive(False)
+⋮----
+"""
+        Construct a ItemGrid.
+
+        Args:
+            *children: Child widgets.
+            name: The name of the widget.
+            id: The ID of the widget in the DOM.
+            classes: The CSS classes for the widget.
+            disabled: Whether the widget is disabled or not.
+            stretch_height: Expand the height of widgets to the row height.
+            min_column_width: The smallest permitted column width.
+            regular: All rows should have the same number of items.
+        """
+⋮----
+def pre_layout(self, layout: Layout) -> None
+</file>
+
+</files>

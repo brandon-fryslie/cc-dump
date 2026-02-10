@@ -1,0 +1,447 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/widgets/_select.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    widgets/
+      _select.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/widgets/_select.py">
+class NonSelectableStatic(Static)
+⋮----
+ALLOW_SELECT = False
+⋮----
+class NoSelection
+⋮----
+"""Used by the `Select` widget to flag the unselected state. See [`Select.BLANK`][textual.widgets.Select.BLANK]."""
+⋮----
+def __repr__(self) -> str
+⋮----
+BLANK = NoSelection()
+⋮----
+class InvalidSelectValueError(Exception)
+⋮----
+"""Raised when setting a [`Select`][textual.widgets.Select] to an unknown option."""
+⋮----
+class EmptySelectError(Exception)
+⋮----
+"""Raised when a [`Select`][textual.widgets.Select] has no options and `allow_blank=False`."""
+⋮----
+class SelectOverlay(OptionList)
+⋮----
+"""The 'pop-up' overlay for the Select control."""
+⋮----
+BINDINGS = [("escape", "dismiss", "Dismiss menu")]
+⋮----
+@dataclass
+    class Dismiss(Message)
+⋮----
+"""Inform ancestor the overlay should be dismissed."""
+⋮----
+lost_focus: bool = False
+"""True if the overlay lost focus."""
+⋮----
+@dataclass
+    class UpdateSelection(Message)
+⋮----
+"""Inform ancestor the selection was changed."""
+⋮----
+option_index: int
+"""The index of the new selection."""
+⋮----
+def __init__(self, type_to_search: bool = True) -> None
+⋮----
+"""If True (default), the user can type to search for a matching option and the cursor will jump to it."""
+⋮----
+"""The current search query used to find a matching option and jump to it."""
+⋮----
+"""The number of seconds to wait after the most recent key press before resetting the search query."""
+⋮----
+def on_mount(self) -> None
+⋮----
+def reset_query() -> None
+⋮----
+def watch_has_focus(self, value: bool) -> None
+⋮----
+async def _on_key(self, event: events.Key) -> None
+⋮----
+# Update the search query and jump to the next option that matches.
+⋮----
+index = self._find_search_match(self._search_query)
+⋮----
+def check_consume_key(self, key: str, character: str | None = None) -> bool
+⋮----
+"""Check if the widget may consume the given key."""
+⋮----
+def select(self, index: int | None) -> None
+⋮----
+"""Move selection.
+
+        Args:
+            index: Index of new selection.
+        """
+⋮----
+def _find_search_match(self, query: str) -> int | None
+⋮----
+"""A simple substring search which favors options containing the substring
+        earlier in the prompt.
+
+        Args:
+            query: The substring to search for.
+
+        Returns:
+            The index of the option that matches the query, or `None` if no match is found.
+        """
+best_match: int | None = None
+minimum_index: int | None = None
+⋮----
+query = query.lower()
+⋮----
+prompt = option.prompt
+⋮----
+lower_prompt = prompt.plain.lower()
+⋮----
+lower_prompt = prompt.lower()
+⋮----
+match_index = lower_prompt.find(query)
+⋮----
+best_match = index
+minimum_index = match_index
+⋮----
+def action_dismiss(self) -> None
+⋮----
+"""Dismiss the overlay."""
+⋮----
+def _on_blur(self, _event: events.Blur) -> None
+⋮----
+"""On blur we want to dismiss the overlay."""
+⋮----
+def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None
+⋮----
+"""Inform parent when an option is selected."""
+⋮----
+"""Stop option list highlighted messages leaking."""
+⋮----
+class SelectCurrent(Horizontal)
+⋮----
+"""Displays the currently selected option."""
+⋮----
+DEFAULT_CSS = """
+⋮----
+has_value: var[bool] = var(False)
+"""True if there is a current value, or False if it is None."""
+⋮----
+class Toggle(Message)
+⋮----
+"""Request toggle overlay."""
+⋮----
+def __init__(self, placeholder: str) -> None
+⋮----
+"""Initialize the SelectCurrent.
+
+        Args:
+            placeholder: A string to display when there is nothing selected.
+        """
+⋮----
+def update(self, label: RenderableType | NoSelection) -> None
+⋮----
+"""Update the content in the widget.
+
+        Args:
+            label: A renderable to display, or `None` for the placeholder.
+        """
+⋮----
+def compose(self) -> ComposeResult
+⋮----
+"""Compose label and down arrow."""
+⋮----
+def _watch_has_value(self, has_value: bool) -> None
+⋮----
+"""Toggle the class."""
+⋮----
+def _on_click(self, event: events.Click) -> None
+⋮----
+"""Inform ancestor we want to toggle."""
+⋮----
+SelectType = TypeVar("SelectType", bound=Hashable)
+"""The type used for data in the Select."""
+SelectOption: TypeAlias = "tuple[str, SelectType]"
+"""The type used for options in the Select."""
+⋮----
+class Select(Generic[SelectType], Vertical, can_focus=True)
+⋮----
+"""Widget to select from a list of possible options.
+
+    A Select displays the current selection.
+    When activated with ++enter++ the widget displays an overlay with a list of all possible options.
+    """
+⋮----
+BLANK = BLANK
+"""Constant to flag that the widget has no selection."""
+⋮----
+BINDINGS = [
+"""
+    | Key(s) | Description |
+    | :- | :- |
+    | enter,down,space,up | Activate the overlay |
+    """
+⋮----
+expanded: var[bool] = var(False, init=False)
+"""True to show the overlay, otherwise False."""
+prompt: var[str] = var[str]("Select")
+"""The prompt to show when no value is selected."""
+value: var[SelectType | NoSelection] = var[Union[SelectType, NoSelection]](
+"""The value of the selection.
+
+    If the widget has no selection, its value will be [`Select.BLANK`][textual.widgets.Select.BLANK].
+    Setting this to an illegal value will raise a [`InvalidSelectValueError`][textual.widgets.select.InvalidSelectValueError]
+    exception.
+    """
+⋮----
+compact = reactive(False, toggle_class="-textual-compact")
+"""Make the select compact (without borders)."""
+⋮----
+@rich.repr.auto
+    class Changed(Message)
+⋮----
+"""Posted when the select value was changed.
+
+        This message can be handled using a `on_select_changed` method.
+        """
+⋮----
+"""
+            Initialize the Changed message.
+            """
+⋮----
+"""The select widget."""
+⋮----
+"""The value of the Select when it changed."""
+⋮----
+def __rich_repr__(self) -> rich.repr.Result
+⋮----
+@property
+        def control(self) -> Select[SelectType]
+⋮----
+"""The Select that sent the message."""
+⋮----
+"""Initialize the Select control.
+
+        Args:
+            options: Options to select from. If no options are provided then
+                `allow_blank` must be set to `True`.
+            prompt: Text to show in the control when no option is selected.
+            allow_blank: Enables or disables the ability to have the widget in a state
+                with no selection made, in which case its value is set to the constant
+                [`Select.BLANK`][textual.widgets.Select.BLANK].
+            value: Initial value selected. Should be one of the values in `options`.
+                If no initial value is set and `allow_blank` is `False`, the widget
+                will auto-select the first available option.
+            type_to_search: If `True`, typing will search for options.
+            name: The name of the select control.
+            id: The ID of the control in the DOM.
+            classes: The CSS classes of the control.
+            disabled: Whether the control is disabled or not.
+            tooltip: Optional tooltip.
+            compact: Enable compact select (without borders).
+
+        Raises:
+            EmptySelectError: If no options are provided and `allow_blank` is `False`.
+        """
+⋮----
+"""Initialize the Select control with values specified by an arbitrary iterable
+
+        The options shown in the control are computed by calling the built-in `str`
+        on each value.
+
+        Args:
+            values: Values used to generate options to select from.
+            prompt: Text to show in the control when no option is selected.
+            allow_blank: Enables or disables the ability to have the widget in a state
+                with no selection made, in which case its value is set to the constant
+                [`Select.BLANK`][textual.widgets.Select.BLANK].
+            value: Initial value selected. Should be one of the values in `values`.
+                If no initial value is set and `allow_blank` is `False`, the widget
+                will auto-select the first available value.
+            type_to_search: If `True`, typing will search for options.
+            name: The name of the select control.
+            id: The ID of the control in the DOM.
+            classes: The CSS classes of the control.
+            disabled: Whether the control is disabled or not.
+            compact: Enable compact style?
+
+        Returns:
+            A new Select widget with the provided values as options.
+        """
+options_iterator = [(str(value), value) for value in values]
+⋮----
+@property
+    def selection(self) -> SelectType | None
+⋮----
+"""The currently selected item.
+
+        Unlike [value][textual.widgets.Select.value], this will not return Blanks.
+        If nothing is selected, this will return `None`.
+
+        """
+value = self.value
+⋮----
+"""Setup function for the auxiliary variables related to options.
+
+        This method sets up `self._options` and `self._legal_values`.
+        """
+⋮----
+def _setup_options_renderables(self) -> None
+⋮----
+"""Sets up the `Option` renderables associated with the `Select` options."""
+options: list[Option] = [
+⋮----
+option_list = self.query_one(SelectOverlay)
+⋮----
+def _init_selected_option(self, hint: SelectType | NoSelection = BLANK) -> None
+⋮----
+"""Initialises the selected option for the `Select`."""
+⋮----
+hint = self._options[0][1]
+⋮----
+def set_options(self, options: Iterable[tuple[RenderableType, SelectType]]) -> None
+⋮----
+"""Set the options for the Select.
+
+        This will reset the selection. The selection will be empty, if allowed, otherwise
+        the first valid option is picked.
+
+        Args:
+            options: An iterable of tuples containing the renderable to display for each
+                option and the corresponding internal value.
+
+        Raises:
+            EmptySelectError: If the options iterable is empty and `allow_blank` is
+                `False`.
+        """
+⋮----
+"""Ensure the new value is a valid option.
+
+        If `allow_blank` is `True`, `None` is also a valid value and corresponds to no
+            selection.
+
+        Raises:
+            InvalidSelectValueError: If the new value does not correspond to any known
+                value.
+        """
+⋮----
+# It would make sense to use `None` to flag that the Select has no selection,
+# so we provide a helpful message to catch this mistake in case people didn't
+# realise we use a special value to flag "no selection".
+help_text = " Did you mean to use Select.clear()?" if value is None else ""
+⋮----
+def _watch_value(self, value: SelectType | NoSelection) -> None
+⋮----
+"""Update the current value when it changes."""
+⋮----
+select_current = self.query_one(SelectCurrent)
+⋮----
+select_overlay = self.query_one(SelectOverlay)
+⋮----
+"""Compose Select with overlay and current value."""
+⋮----
+def _on_mount(self, _event: events.Mount) -> None
+⋮----
+"""Set initial values."""
+⋮----
+def _watch_expanded(self, expanded: bool) -> None
+⋮----
+"""Display or hide overlay."""
+⋮----
+overlay = self.query_one(SelectOverlay)
+⋮----
+# The widget has likely been removed
+⋮----
+@on(SelectCurrent.Toggle)
+    def _select_current_toggle(self, event: SelectCurrent.Toggle) -> None
+⋮----
+"""Show the overlay when toggled."""
+⋮----
+@on(SelectOverlay.Dismiss)
+    def _select_overlay_dismiss(self, event: SelectOverlay.Dismiss) -> None
+⋮----
+# If the overlay didn't lose focus, we want to re-focus the select.
+⋮----
+@on(SelectOverlay.UpdateSelection)
+    def _update_selection(self, event: SelectOverlay.UpdateSelection) -> None
+⋮----
+"""Update the current selection."""
+⋮----
+value = self._options[event.option_index][1]
+⋮----
+def action_show_overlay(self) -> None
+⋮----
+"""Show the overlay."""
+⋮----
+# If we haven't opened the overlay yet, highlight the first option.
+⋮----
+def is_blank(self) -> bool
+⋮----
+"""Indicates whether this `Select` is blank or not.
+
+        Returns:
+            True if the selection is blank, False otherwise.
+        """
+⋮----
+def clear(self) -> None
+⋮----
+"""Clear the selection if `allow_blank` is `True`.
+
+        Raises:
+            InvalidSelectValueError: If `allow_blank` is set to `False`.
+        """
+⋮----
+def _watch_prompt(self, prompt: str) -> None
+</file>
+
+</files>

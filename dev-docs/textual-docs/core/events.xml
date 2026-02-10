@@ -1,0 +1,761 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/events.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    events.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/events.py">
+"""
+
+Builtin events sent by Textual.
+
+Events may be marked as "Bubbles" and "Verbose".
+See the [events guide](/guide/events/#bubbling) for an explanation of bubbling.
+Verbose events are excluded from the textual console, unless you explicitly request them with the `-v` switch as follows:
+
+```
+textual console -v
+```
+"""
+⋮----
+MouseEventT = TypeVar("MouseEventT", bound="MouseEvent")
+⋮----
+@rich.repr.auto
+class Event(Message)
+⋮----
+"""The base class for all events."""
+⋮----
+@rich.repr.auto
+class Callback(Event, bubble=False, verbose=True)
+⋮----
+"""Sent by Textual to invoke a callback
+    (see [call_next][textual.message_pump.MessagePump.call_next] and
+    [call_later][textual.message_pump.MessagePump.call_later]).
+    """
+⋮----
+def __init__(self, callback: CallbackType) -> None
+⋮----
+def __rich_repr__(self) -> rich.repr.Result
+⋮----
+@dataclass
+class CursorPosition(Event, bubble=False)
+⋮----
+"""Internal event used to retrieve the terminal's cursor position."""
+⋮----
+x: int
+y: int
+⋮----
+class Load(Event, bubble=False)
+⋮----
+"""
+    Sent when the App is running but *before* the terminal is in application mode.
+
+    Use this event to run any setup that doesn't require any visuals such as loading
+    configuration and binding keys.
+
+    - [ ] Bubbles
+    - [ ] Verbose
+    """
+⋮----
+class Idle(Event, bubble=False)
+⋮----
+"""Sent when there are no more items in the message queue.
+
+    This is a pseudo-event in that it is created by the Textual system and doesn't go
+    through the usual message queue.
+
+    - [ ] Bubbles
+    - [ ] Verbose
+    """
+⋮----
+class Action(Event)
+⋮----
+__slots__ = ["action"]
+⋮----
+def __init__(self, action: str) -> None
+⋮----
+class Resize(Event, bubble=False)
+⋮----
+"""Sent when the app or widget has been resized.
+
+    - [ ] Bubbles
+    - [ ] Verbose
+
+    Args:
+        size: The new size of the Widget.
+        virtual_size: The virtual size (scrollable size) of the Widget.
+        container_size: The size of the Widget's container widget.
+    """
+⋮----
+__slots__ = ["size", "virtual_size", "container_size"]
+⋮----
+"""The new size of the Widget."""
+⋮----
+"""The virtual size (scrollable size) of the Widget."""
+⋮----
+"""The size of the Widget's container widget."""
+⋮----
+"""Size of terminal window in pixels if known, or `None` if not known."""
+⋮----
+"""Construct from basic dimensions.
+
+        Args:
+            cells: tuple of (<width>, <height>) in cells.
+            pixels: tuple of (<width>, <height>) in pixels if known, or `None` if not known.
+
+        """
+size = Size(*cells)
+pixel_size = Size(*pixels) if pixels is not None else None
+⋮----
+def can_replace(self, message: "Message") -> bool
+⋮----
+class Compose(Event, bubble=False, verbose=True)
+⋮----
+"""Sent to a widget to request it to compose and mount children.
+
+    This event is used internally by Textual.
+    You won't typically need to explicitly handle it,
+
+    - [ ] Bubbles
+    - [X] Verbose
+    """
+⋮----
+class Mount(Event, bubble=False, verbose=False)
+⋮----
+"""Sent when a widget is *mounted* and may receive messages.
+
+    - [ ] Bubbles
+    - [ ] Verbose
+    """
+⋮----
+class Unmount(Event, bubble=False, verbose=False)
+⋮----
+"""Sent when a widget is unmounted and may no longer receive messages.
+
+    - [ ] Bubbles
+    - [ ] Verbose
+    """
+⋮----
+class Show(Event, bubble=False)
+⋮----
+"""Sent when a widget is first displayed.
+
+    - [ ] Bubbles
+    - [ ] Verbose
+    """
+⋮----
+class Hide(Event, bubble=False)
+⋮----
+"""Sent when a widget has been hidden.
+
+    - [ ] Bubbles
+    - [ ] Verbose
+
+    Sent when any of the following conditions apply:
+
+    - The widget is removed from the DOM.
+    - The widget is no longer displayed because it has been scrolled or clipped from the terminal or its container.
+    - The widget has its `display` attribute set to `False`.
+    - The widget's `display` style is set to `"none"`.
+    """
+⋮----
+class Ready(Event, bubble=False)
+⋮----
+"""Sent to the `App` when the DOM is ready and the first frame has been displayed.
+
+    - [ ] Bubbles
+    - [ ] Verbose
+    """
+⋮----
+@rich.repr.auto
+class MouseCapture(Event, bubble=False)
+⋮----
+"""Sent when the mouse has been captured.
+
+    - [ ] Bubbles
+    - [ ] Verbose
+
+    When a mouse has been captured, all further mouse events will be sent to the capturing widget.
+
+    Args:
+        mouse_position: The position of the mouse when captured.
+    """
+⋮----
+def __init__(self, mouse_position: Offset) -> None
+⋮----
+"""The position of the mouse when captured."""
+⋮----
+@rich.repr.auto
+class MouseRelease(Event, bubble=False)
+⋮----
+"""Mouse has been released.
+
+    - [ ] Bubbles
+    - [ ] Verbose
+
+    Args:
+        mouse_position: The position of the mouse when released.
+    """
+⋮----
+"""The position of the mouse when released."""
+⋮----
+class InputEvent(Event)
+⋮----
+"""Base class for input events."""
+⋮----
+@rich.repr.auto
+class Key(InputEvent)
+⋮----
+"""Sent when the user hits a key on the keyboard.
+
+    - [X] Bubbles
+    - [ ] Verbose
+
+    Args:
+        key: The key that was pressed.
+        character: A printable character or `None` if it is not printable.
+    """
+⋮----
+__slots__ = ["key", "character", "aliases"]
+⋮----
+def __init__(self, key: str, character: str | None) -> None
+⋮----
+"""The key that was pressed."""
+⋮----
+"""A printable character or ``None`` if it is not printable."""
+⋮----
+"""The aliases for the key, including the key itself."""
+⋮----
+@property
+    def name(self) -> str
+⋮----
+"""Name of a key suitable for use as a Python identifier."""
+⋮----
+@property
+    def name_aliases(self) -> list[str]
+⋮----
+"""The corresponding name for every alias in `aliases` list."""
+⋮----
+@property
+    def is_printable(self) -> bool
+⋮----
+"""Check if the key is printable (produces a unicode character).
+
+        Returns:
+            `True` if the key is printable.
+        """
+⋮----
+def _key_to_identifier(key: str) -> str
+⋮----
+"""Convert the key string to a name suitable for use as a Python identifier."""
+key_no_modifiers = key.split("+")[-1]
+⋮----
+key = f"{key.rpartition('+')[0]}+upper_{key_no_modifiers}"
+⋮----
+key = f"upper_{key_no_modifiers}"
+⋮----
+@rich.repr.auto
+class MouseEvent(InputEvent, bubble=True)
+⋮----
+"""Sent in response to a mouse event.
+
+    - [X] Bubbles
+    - [ ] Verbose
+
+    Args:
+        widget: The widget under the mouse.
+        x: The relative x coordinate.
+        y: The relative y coordinate.
+        delta_x: Change in x since the last message.
+        delta_y: Change in y since the last message.
+        button: Indexed of the pressed button.
+        shift: True if the shift key is pressed.
+        meta: True if the meta key is pressed.
+        ctrl: True if the ctrl key is pressed.
+        screen_x: The absolute x coordinate.
+        screen_y: The absolute y coordinate.
+        style: The Rich Style under the mouse cursor.
+    """
+⋮----
+__slots__ = [
+⋮----
+"""The widget under the mouse at the time of a click."""
+⋮----
+"""The relative x coordinate."""
+⋮----
+"""The relative y coordinate."""
+⋮----
+"""Change in x since the last message."""
+⋮----
+"""Change in y since the last message."""
+⋮----
+"""Indexed of the pressed button."""
+⋮----
+"""`True` if the shift key is pressed."""
+⋮----
+"""`True` if the meta key is pressed."""
+⋮----
+"""`True` if the ctrl key is pressed."""
+⋮----
+"""The absolute x coordinate."""
+⋮----
+"""The absolute y coordinate."""
+⋮----
+@property
+    def x(self) -> int
+⋮----
+"""The relative X coordinate of the cell under the mouse."""
+⋮----
+@property
+    def y(self) -> int
+⋮----
+"""The relative Y coordinate of the cell under the mouse."""
+⋮----
+@property
+    def delta_x(self) -> int
+⋮----
+"""Change in `x` since last message."""
+⋮----
+@property
+    def delta_y(self) -> int
+⋮----
+"""Change in `y` since the last message."""
+⋮----
+@property
+    def screen_x(self) -> int
+⋮----
+"""X coordinate of the cell relative to top left of screen."""
+⋮----
+@property
+    def screen_y(self) -> int
+⋮----
+"""Y coordinate of the cell relative to top left of screen."""
+⋮----
+@property
+    def pointer_x(self) -> float
+⋮----
+"""The relative X coordinate of the pointer."""
+⋮----
+@property
+    def pointer_y(self) -> float
+⋮----
+"""The relative Y coordinate of the pointer."""
+⋮----
+@property
+    def pointer_screen_x(self) -> float
+⋮----
+"""The X coordinate of the pointer relative to the screen."""
+⋮----
+@property
+    def pointer_screen_y(self) -> float
+⋮----
+"""The Y coordinate of the pointer relative to the screen."""
+⋮----
+new_event = cls(
+⋮----
+@property
+    def control(self) -> Widget | None
+⋮----
+@property
+    def offset(self) -> Offset
+⋮----
+"""The mouse coordinate as an offset.
+
+        Returns:
+            Mouse coordinate.
+        """
+⋮----
+@property
+    def screen_offset(self) -> Offset
+⋮----
+"""Mouse coordinate relative to the screen."""
+⋮----
+@property
+    def delta(self) -> Offset
+⋮----
+"""Mouse coordinate delta (change since last event)."""
+⋮----
+@property
+    def style(self) -> Style
+⋮----
+"""The (Rich) Style under the cursor."""
+⋮----
+@style.setter
+    def style(self, style: Style) -> None
+⋮----
+def get_content_offset(self, widget: Widget) -> Offset | None
+⋮----
+"""Get offset within a widget's content area, or None if offset is not in content (i.e. padding or border).
+
+        Args:
+            widget: Widget receiving the event.
+
+        Returns:
+            An offset where the origin is at the top left of the content area.
+        """
+⋮----
+def get_content_offset_capture(self, widget: Widget) -> Offset
+⋮----
+"""Get offset from a widget's content area.
+
+        This method works even if the offset is outside the widget content region.
+
+        Args:
+            widget: Widget receiving the event.
+
+        Returns:
+            An offset where the origin is at the top left of the content area.
+        """
+⋮----
+def _apply_offset(self, x: int, y: int) -> MouseEvent
+⋮----
+@rich.repr.auto
+class MouseMove(MouseEvent, bubble=True, verbose=True)
+⋮----
+"""Sent when the mouse cursor moves.
+
+    - [X] Bubbles
+    - [X] Verbose
+    """
+⋮----
+@rich.repr.auto
+class MouseDown(MouseEvent, bubble=True, verbose=True)
+⋮----
+"""Sent when a mouse button is pressed.
+
+    - [X] Bubbles
+    - [X] Verbose
+    """
+⋮----
+@rich.repr.auto
+class MouseUp(MouseEvent, bubble=True, verbose=True)
+⋮----
+"""Sent when a mouse button is released.
+
+    - [X] Bubbles
+    - [X] Verbose
+    """
+⋮----
+@rich.repr.auto
+class MouseScrollDown(MouseEvent, bubble=True, verbose=True)
+⋮----
+"""Sent when the mouse wheel is scrolled *down*.
+
+    - [X] Bubbles
+    - [X] Verbose
+    """
+⋮----
+@rich.repr.auto
+class MouseScrollUp(MouseEvent, bubble=True, verbose=True)
+⋮----
+"""Sent when the mouse wheel is scrolled *up*.
+
+    - [X] Bubbles
+    - [X] Verbose
+    """
+⋮----
+@rich.repr.auto
+class MouseScrollRight(MouseEvent, bubble=True, verbose=True)
+⋮----
+"""Sent when the mouse wheel is scrolled *right*.
+
+    - [X] Bubbles
+    - [X] Verbose
+    """
+⋮----
+@rich.repr.auto
+class MouseScrollLeft(MouseEvent, bubble=True, verbose=True)
+⋮----
+"""Sent when the mouse wheel is scrolled *left*.
+
+    - [X] Bubbles
+    - [X] Verbose
+    """
+⋮----
+class Click(MouseEvent, bubble=True)
+⋮----
+"""Sent when a widget is clicked.
+
+    - [X] Bubbles
+    - [ ] Verbose
+
+    Args:
+        chain: The number of clicks in the chain. 2 is a double click, 3 is a triple click, etc.
+    """
+⋮----
+def _apply_offset(self, x: int, y: int) -> Self
+⋮----
+@rich.repr.auto
+class Timer(Event, bubble=False, verbose=True)
+⋮----
+"""Sent in response to a timer.
+
+    - [ ] Bubbles
+    - [X] Verbose
+    """
+⋮----
+__slots__ = ["timer", "time", "count", "callback"]
+⋮----
+class Enter(Event, bubble=True, verbose=True)
+⋮----
+"""Sent when the mouse is moved over a widget.
+
+    Note that this event bubbles, so a widget may receive this event when the mouse
+    moves over a child widget. Check the `node` attribute for the widget directly under
+    the mouse.
+
+    - [X] Bubbles
+    - [X] Verbose
+    """
+⋮----
+__slots__ = ["node"]
+⋮----
+def __init__(self, node: DOMNode) -> None
+⋮----
+"""The node directly under the mouse."""
+⋮----
+@property
+    def control(self) -> DOMNode
+⋮----
+"""Alias for the `node` under the mouse."""
+⋮----
+class Leave(Event, bubble=True, verbose=True)
+⋮----
+"""Sent when the mouse is moved away from a widget, or if a widget is
+    programmatically disabled while hovered.
+
+    Note that this widget bubbles, so a widget may receive Leave events for any child widgets.
+    Check the `node` parameter for the original widget that was previously under the mouse.
+
+
+    - [X] Bubbles
+    - [X] Verbose
+    """
+⋮----
+"""The node that was previously directly under the mouse."""
+⋮----
+"""Alias for the `node` that was previously under the mouse."""
+⋮----
+class Focus(Event, bubble=False)
+⋮----
+"""Sent when a widget is focussed.
+
+    - [ ] Bubbles
+    - [ ] Verbose
+
+    Args:
+        from_app_focus: True if this focus event has been sent because the app itself has
+            regained focus (via an AppFocus event). False if the focus came from within
+            the Textual app (e.g. via the user pressing tab or a programmatic setting
+            of the focused widget).
+    """
+⋮----
+def __init__(self, from_app_focus: bool = False) -> None
+⋮----
+class Blur(Event, bubble=False)
+⋮----
+"""Sent when a widget is blurred (un-focussed).
+
+    - [ ] Bubbles
+    - [ ] Verbose
+    """
+⋮----
+class AppFocus(Event, bubble=False)
+⋮----
+"""Sent when the app has focus.
+
+    - [ ] Bubbles
+    - [ ] Verbose
+
+    Note:
+        Only available when running within a terminal that supports
+        `FocusIn`, or when running via textual-web.
+    """
+⋮----
+class AppBlur(Event, bubble=False)
+⋮----
+"""Sent when the app loses focus.
+
+    - [ ] Bubbles
+    - [ ] Verbose
+
+    Note:
+        Only available when running within a terminal that supports
+        `FocusOut`, or when running via textual-web.
+    """
+⋮----
+@dataclass
+class DescendantFocus(Event, bubble=True, verbose=True)
+⋮----
+"""Sent when a child widget is focussed.
+
+    - [X] Bubbles
+    - [X] Verbose
+    """
+⋮----
+widget: Widget
+"""The widget that was focused."""
+⋮----
+@property
+    def control(self) -> Widget
+⋮----
+"""The widget that was focused (alias of `widget`)."""
+⋮----
+@dataclass
+class DescendantBlur(Event, bubble=True, verbose=True)
+⋮----
+"""Sent when a child widget is blurred.
+
+    - [X] Bubbles
+    - [X] Verbose
+    """
+⋮----
+"""The widget that was blurred."""
+⋮----
+"""The widget that was blurred (alias of `widget`)."""
+⋮----
+@rich.repr.auto
+class Paste(Event, bubble=True)
+⋮----
+"""Event containing text that was pasted into the Textual application.
+    This event will only appear when running in a terminal emulator that supports
+    bracketed paste mode. Textual will enable bracketed pastes when an app starts,
+    and disable it when the app shuts down.
+
+    - [X] Bubbles
+    - [ ] Verbose
+
+
+    Args:
+        text: The text that has been pasted.
+    """
+⋮----
+def __init__(self, text: str) -> None
+⋮----
+"""The text that was pasted."""
+⋮----
+@dataclass
+class ScreenResume(Event, bubble=False)
+⋮----
+"""Sent to screen that has been made active.
+
+    - [ ] Bubbles
+    - [ ] Verbose
+    """
+⋮----
+refresh_styles: bool = True
+"""Should the resuming screen refresh its styles?"""
+⋮----
+class ScreenSuspend(Event, bubble=False)
+⋮----
+"""Sent to screen when it is no longer active.
+
+    - [ ] Bubbles
+    - [ ] Verbose
+    """
+⋮----
+@rich.repr.auto
+class Print(Event, bubble=False)
+⋮----
+"""Sent to a widget that is capturing [`print`][print].
+
+    - [ ] Bubbles
+    - [ ] Verbose
+
+    Args:
+        text: Text that was printed.
+        stderr: `True` if the print was to stderr, or `False` for stdout.
+
+    Note:
+        Python's [`print`][print] output can be captured with
+        [`App.begin_capture_print`][textual.app.App.begin_capture_print].
+    """
+⋮----
+def __init__(self, text: str, stderr: bool = False) -> None
+⋮----
+"""The text that was printed."""
+⋮----
+"""`True` if the print was to stderr, or `False` for stdout."""
+⋮----
+@dataclass
+class DeliveryComplete(Event, bubble=False)
+⋮----
+"""Sent to App when a file has been delivered."""
+⋮----
+key: str
+"""The delivery key associated with the delivery.
+    
+    This is the same key that was returned by `App.deliver_text`/`App.deliver_binary`.
+    """
+⋮----
+path: Path | None = None
+"""The path where the file was saved, or `None` if the path is not available, for
+    example if the file was delivered via web browser.
+    """
+⋮----
+name: str | None = None
+"""Optional name returned to the app to identify the download."""
+⋮----
+@dataclass
+class DeliveryFailed(Event, bubble=False)
+⋮----
+"""Sent to App when a file delivery fails."""
+⋮----
+"""The delivery key associated with the delivery."""
+⋮----
+exception: BaseException
+"""The exception that was raised during the delivery."""
+⋮----
+class TextSelected(Event, bubble=True)
+⋮----
+"""Sent from the screen when text is selected (Not Input and TextArea)"""
+</file>
+
+</files>

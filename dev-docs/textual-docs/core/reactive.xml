@@ -1,0 +1,337 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/reactive.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    reactive.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/reactive.py">
+"""
+
+This module contains the `Reactive` class which implements [reactivity](/guide/reactivity/).
+"""
+⋮----
+Reactable = DOMNode
+⋮----
+ReactiveType = TypeVar("ReactiveType")
+ReactableType = TypeVar("ReactableType", bound="DOMNode")
+⋮----
+class _Mutated
+⋮----
+"""A wrapper to indicate a value was mutated."""
+⋮----
+def __init__(self, value: Any) -> None
+⋮----
+class ReactiveError(Exception)
+⋮----
+"""Base class for reactive errors."""
+⋮----
+class TooManyComputesError(ReactiveError)
+⋮----
+"""Raised when an attribute has public and private compute methods."""
+⋮----
+class Initialize(Generic[ReactiveType])
+⋮----
+"""Initialize a reactive by calling a method parent object.
+
+    Example:
+        ```python
+            class InitializeApp(App):
+
+                def get_names(self) -> list[str]:
+                    return ["foo", "bar", "baz"]
+
+                # The `names` property will call `get_names` to get its default when first referenced.
+                names = reactive(Initialize(get_names))
+        ```
+
+    """
+⋮----
+def __init__(self, callback: Callable[[ReactableType], ReactiveType]) -> None
+⋮----
+def __call__(self, obj: ReactableType) -> ReactiveType
+⋮----
+async def await_watcher(obj: Reactable, awaitable: Awaitable[object]) -> None
+⋮----
+"""Coroutine to await an awaitable returned from a watcher"""
+_rich_traceback_omit = True
+⋮----
+# Watcher may have changed the state, so run compute again
+⋮----
+"""Invoke a watch function.
+
+    Args:
+        watcher_object: The object watching for the changes.
+        watch_function: A watch function, which may be sync or async.
+        old_value: The old value of the attribute.
+        value: The new value of the attribute.
+    """
+⋮----
+param_count = count_parameters(watch_function)
+⋮----
+watch_result = cast(WatchCallbackBothValuesType, watch_function)(
+⋮----
+watch_result = cast(WatchCallbackNewValueType, watch_function)(value)
+⋮----
+watch_result = cast(WatchCallbackNoArgsType, watch_function)()
+⋮----
+# Result is awaitable, so we need to await it within an async context
+⋮----
+@rich.repr.auto
+class Reactive(Generic[ReactiveType])
+⋮----
+"""Reactive descriptor.
+
+    Args:
+        default: A default value or callable that returns a default.
+        layout: Perform a layout on change.
+        repaint: Perform a repaint on change.
+        init: Call watchers on initialize (post mount).
+        always_update: Call watchers even when the new value equals the old value.
+        compute: Run compute methods when attribute is changed.
+        recompose: Compose the widget again when the attribute changes.
+        bindings: Refresh bindings when the reactive changes.
+        toggle_class: An optional TCSS classname(s) to toggle based on the truthiness of the value.
+    """
+⋮----
+_reactives: ClassVar[dict[str, object]] = {}
+⋮----
+def __rich_repr__(self) -> rich.repr.Result
+⋮----
+@classmethod
+    def _clear_watchers(cls, obj: Reactable) -> None
+⋮----
+"""Clear any watchers on a given object.
+
+        Args:
+            obj: A reactive object.
+        """
+⋮----
+@property
+    def owner(self) -> Type[MessageTarget]
+⋮----
+"""The owner (class) where the reactive was declared."""
+⋮----
+def _initialize_reactive(self, obj: Reactable, name: str) -> None
+⋮----
+"""Initialized a reactive attribute on an object.
+
+        Args:
+            obj: An object with reactive attributes.
+            name: Name of attribute.
+        """
+⋮----
+internal_name = f"_reactive_{name}"
+⋮----
+# Attribute already has a value
+⋮----
+compute_method = getattr(obj, self.compute_name, None)
+⋮----
+default = compute_method()
+⋮----
+default_or_callable = self._default
+default = (
+⋮----
+@classmethod
+    def _initialize_object(cls, obj: Reactable) -> None
+⋮----
+"""Set defaults and call any watchers / computes for the first time.
+
+        Args:
+            obj: An object with Reactive descriptors
+        """
+⋮----
+@classmethod
+    def _reset_object(cls, obj: object) -> None
+⋮----
+"""Reset reactive structures on object (to avoid reference cycles).
+
+        Args:
+            obj: A reactive object.
+        """
+⋮----
+def __set_name__(self, owner: Type[MessageTarget], name: str) -> None
+⋮----
+# Check for compute method
+⋮----
+public_compute = f"compute_{name}"
+private_compute = f"_compute_{name}"
+compute_name = (
+⋮----
+# Compute methods are stored in a list called `__computes`
+⋮----
+computes = getattr(owner, "__computes")
+⋮----
+computes = []
+⋮----
+# The name of the attribute
+⋮----
+# The internal name where the attribute's value is stored
+⋮----
+default = self._default
+⋮----
+# obj is None means we are invoking the descriptor via the class, and not the instance
+⋮----
+value: ReactiveType
+old_value = getattr(obj, internal_name)
+value = getattr(obj, self.compute_name)()
+⋮----
+def _set(self, obj: Reactable, value: ReactiveType, always: bool = False) -> None
+⋮----
+value = value.value
+always = True
+⋮----
+name = self.name
+current_value = getattr(obj, name)
+# Check for private and public validate functions.
+private_validate_function = getattr(obj, f"_validate_{name}", None)
+⋮----
+value = private_validate_function(value)
+public_validate_function = getattr(obj, f"validate_{name}", None)
+⋮----
+value = public_validate_function(value)
+⋮----
+# Toggle the classes using the value's truthiness
+⋮----
+# If the value has changed, or this is the first time setting the value
+⋮----
+# Store the internal value
+⋮----
+# Check all watchers
+⋮----
+# Refresh according to descriptor flags
+⋮----
+def __set__(self, obj: Reactable, value: ReactiveType) -> None
+⋮----
+@classmethod
+    def _check_watchers(cls, obj: Reactable, name: str, old_value: Any) -> None
+⋮----
+"""Check watchers, and call watch methods / computes
+
+        Args:
+            obj: The reactable object.
+            name: Attribute name.
+            old_value: The old (previous) value of the attribute.
+        """
+⋮----
+# Get the current value.
+⋮----
+value = getattr(obj, internal_name)
+⋮----
+private_watch_function = getattr(obj, f"_watch_{name}", None)
+⋮----
+public_watch_function = getattr(obj, f"watch_{name}", None)
+⋮----
+# Process "global" watchers
+watchers: list[tuple[Reactable, WatchCallbackType]]
+watchers = getattr(obj, "__watchers", {}).get(name, [])
+# Remove any watchers for reactables that have since closed
+⋮----
+@classmethod
+    def _compute(cls, obj: Reactable) -> None
+⋮----
+"""Invoke all computes.
+
+        Args:
+            obj: Reactable object.
+        """
+_rich_traceback_guard = True
+⋮----
+compute_method = getattr(obj, f"compute_{compute}")
+⋮----
+compute_method = getattr(obj, f"_compute_{compute}")
+⋮----
+current_value = getattr(
+value = compute_method()
+⋮----
+class reactive(Reactive[ReactiveType])
+⋮----
+"""Create a reactive attribute.
+
+    Args:
+        default: A default value or callable that returns a default.
+        layout: Perform a layout on change.
+        repaint: Perform a repaint on change.
+        init: Call watchers on initialize (post mount).
+        always_update: Call watchers even when the new value equals the old value.
+        recompose: Compose the widget again when the attribute changes.
+        bindings: Refresh bindings when the reactive changes.
+        toggle_class: An optional TCSS classname(s) to toggle based on the truthiness of the value.
+    """
+⋮----
+class var(Reactive[ReactiveType])
+⋮----
+"""Create a reactive attribute (with no auto-refresh).
+
+    Args:
+        default: A default value or callable that returns a default.
+        init: Call watchers on initialize (post mount).
+        always_update: Call watchers even when the new value equals the old value.
+        bindings: Refresh bindings when the reactive changes.
+        toggle_class: An optional TCSS classname(s) to toggle based on the truthiness of the value.
+    """
+⋮----
+"""Watch a reactive variable on an object.
+
+    Args:
+        node: The node that created the watcher.
+        obj: The parent object.
+        attribute_name: The attribute to watch.
+        callback: A callable to call when the attribute changes.
+        init: True to call watcher initialization.
+    """
+⋮----
+watchers: dict[str, list[tuple[Reactable, WatchCallbackType]]]
+watchers = getattr(obj, "__watchers")
+watcher_list = watchers.setdefault(attribute_name, [])
+⋮----
+current_value = getattr(obj, attribute_name, None)
+</file>
+
+</files>

@@ -1,0 +1,174 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/widgets/_header.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    widgets/
+      _header.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/widgets/_header.py">
+"""Provides a Textual application header widget."""
+⋮----
+class HeaderIcon(Widget)
+⋮----
+"""Display an 'icon' on the left of the header."""
+⋮----
+DEFAULT_CSS = """
+⋮----
+icon = Reactive("⭘")
+"""The character to use as the icon within the header."""
+⋮----
+def on_mount(self) -> None
+⋮----
+async def on_click(self, event: Click) -> None
+⋮----
+"""Launch the command palette when icon is clicked."""
+⋮----
+def render(self) -> RenderResult
+⋮----
+"""Render the header icon.
+
+        Returns:
+            The rendered icon.
+        """
+⋮----
+class HeaderClockSpace(Widget)
+⋮----
+"""The space taken up by the clock on the right of the header."""
+⋮----
+"""Render the header clock space.
+
+        Returns:
+            The rendered space.
+        """
+⋮----
+class HeaderClock(HeaderClockSpace)
+⋮----
+"""Display a clock on the right of the header."""
+⋮----
+time_format: Reactive[str] = Reactive("%X")
+⋮----
+def _on_mount(self, _: Mount) -> None
+⋮----
+"""Render the header clock.
+
+        Returns:
+            The rendered clock.
+        """
+⋮----
+class HeaderTitle(Static)
+⋮----
+"""Display the title / subtitle in the header."""
+⋮----
+class Header(Widget)
+⋮----
+"""A header widget with icon and clock."""
+⋮----
+DEFAULT_CLASSES = ""
+⋮----
+tall: Reactive[bool] = Reactive(False)
+"""Set to `True` for a taller header or `False` for a single line header."""
+⋮----
+icon: Reactive[str] = Reactive("⭘")
+"""A character for the icon at the top left."""
+⋮----
+"""Time format of the clock."""
+⋮----
+"""Initialise the header widget.
+
+        Args:
+            show_clock: ``True`` if the clock should be shown on the right of the header.
+            name: The name of the header widget.
+            id: The ID of the header widget in the DOM.
+            classes: The CSS classes of the header widget.
+            icon: Single character to use as an icon, or `None` for default.
+            time_format: Time format (used by strftime) for clock, or `None` for default.
+        """
+⋮----
+def compose(self) -> ComposeResult
+⋮----
+def watch_tall(self, tall: bool) -> None
+⋮----
+def _on_click(self)
+⋮----
+def format_title(self) -> Content
+⋮----
+"""Format the title and subtitle.
+
+        Defers to [App.format_title][textual.app.App.format_title] by default.
+        Override this method if you want to customize how the title is displayed in the header.
+
+        Returns:
+            Content for title display.
+        """
+⋮----
+@property
+    def screen_title(self) -> str
+⋮----
+"""The title that this header will display.
+
+        This depends on [`Screen.title`][textual.screen.Screen.title] and [`App.title`][textual.app.App.title].
+        """
+screen_title = self.screen.title
+title = screen_title if screen_title is not None else self.app.title
+⋮----
+@property
+    def screen_sub_title(self) -> str
+⋮----
+"""The sub-title that this header will display.
+
+        This depends on [`Screen.sub_title`][textual.screen.Screen.sub_title] and [`App.sub_title`][textual.app.App.sub_title].
+        """
+screen_sub_title = self.screen.sub_title
+sub_title = (
+⋮----
+async def set_title() -> None
+</file>
+
+</files>

@@ -18,6 +18,7 @@ _RELOAD_ORDER = [
     "cc_dump.formatting",  # depends on: colors, analysis
     "cc_dump.tui.search",  # depends on: palette
     "cc_dump.tui.rendering",  # depends on: formatting, colors
+    "cc_dump.tui.custom_footer",  # depends on: palette, rendering
     "cc_dump.tui.panel_renderers",  # depends on: analysis
     "cc_dump.tui.event_handlers",  # depends on: analysis, formatting
     "cc_dump.tui.widget_factory",  # depends on: analysis, rendering, panel_renderers

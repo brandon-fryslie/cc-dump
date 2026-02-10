@@ -1,0 +1,1157 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/screen.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    screen.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/screen.py">
+"""
+
+This module contains the `Screen` class and related objects.
+
+The `Screen` class is a special widget which represents the content in the terminal. See [Screens](/guide/screens/) for details.
+
+"""
+⋮----
+# Unused & ignored imports are needed for the docs to link to these objects:
+⋮----
+# Screen updates will be batched so that they don't happen more often than 60 times per second:
+UPDATE_PERIOD: Final[float] = 1 / constants.MAX_FPS
+⋮----
+ScreenResultType = TypeVar("ScreenResultType")
+"""The result type of a screen."""
+⋮----
+ScreenResultCallbackType = Union[
+"""Type of a screen result callback function."""
+⋮----
+class HoverWidgets(NamedTuple)
+⋮----
+"""Result of [get_hover_widget_at][textual.screen.Screen.get_hover_widget_at]"""
+⋮----
+mouse_over: tuple[Widget, Region]
+"""Widget and region directly under the mouse."""
+hover_over: tuple[Widget, Region] | None
+"""Widget with a hover style under the mouse, or `None` for no hover style widget."""
+⋮----
+@property
+    def widgets(self) -> tuple[Widget, Widget | None]
+⋮----
+"""Just the widgets."""
+⋮----
+@rich.repr.auto
+class ResultCallback(Generic[ScreenResultType])
+⋮----
+"""Holds the details of a callback."""
+⋮----
+"""Initialise the result callback object.
+
+        Args:
+            requester: The object making a request for the callback.
+            callback: The callback function.
+            future: A Future to hold the result.
+        """
+⋮----
+"""The object in the DOM that requested the callback."""
+⋮----
+"""The callback function."""
+⋮----
+"""A future for the result"""
+⋮----
+def __call__(self, result: ScreenResultType) -> None
+⋮----
+"""Call the callback, passing the given result.
+
+        Args:
+            result: The result to pass to the callback.
+
+        Note:
+            If the requested or the callback are `None` this will be a no-op.
+        """
+⋮----
+@rich.repr.auto
+class Screen(Generic[ScreenResultType], Widget)
+⋮----
+"""The base class for screens."""
+⋮----
+AUTO_FOCUS: ClassVar[str | None] = None
+"""A selector to determine what to focus automatically when the screen is activated.
+
+    The widget focused is the first that matches the given [CSS selector](/guide/queries/#query-selectors).
+    Set to `None` to inherit the value from the screen's app.
+    Set to `""` to disable auto focus.
+    """
+⋮----
+CSS: ClassVar[str] = ""
+"""Inline CSS, useful for quick scripts. Rules here take priority over CSS_PATH.
+
+    Note:
+        This CSS applies to the whole app.
+    """
+CSS_PATH: ClassVar[CSSPathType | None] = None
+"""File paths to load CSS from.
+
+    Note:
+        This CSS applies to the whole app.
+    """
+⋮----
+COMPONENT_CLASSES = {"screen--selection"}
+⋮----
+DEFAULT_CSS = """
+⋮----
+TITLE: ClassVar[str | None] = None
+"""A class variable to set the *default* title for the screen.
+
+    This overrides the app title.
+    To update the title while the screen is running,
+    you can set the [title][textual.screen.Screen.title] attribute.
+    """
+⋮----
+SUB_TITLE: ClassVar[str | None] = None
+"""A class variable to set the *default* sub-title for the screen.
+
+    This overrides the app sub-title.
+    To update the sub-title while the screen is running,
+    you can set the [sub_title][textual.screen.Screen.sub_title] attribute.
+    """
+⋮----
+HORIZONTAL_BREAKPOINTS: ClassVar[list[tuple[int, str]]] | None = None
+"""Horizontal breakpoints, will override [App.HORIZONTAL_BREAKPOINTS][textual.app.App.HORIZONTAL_BREAKPOINTS] if not `None`."""
+VERTICAL_BREAKPOINTS: ClassVar[list[tuple[int, str]]] | None = None
+"""Vertical breakpoints, will override [App.VERTICAL_BREAKPOINTS][textual.app.App.VERTICAL_BREAKPOINTS] if not `None`."""
+⋮----
+focused: Reactive[Widget | None] = Reactive(None)
+"""The focused [widget][textual.widget.Widget] or `None` for no focus.
+    To set focus, do not update this value directly. Use [set_focus][textual.screen.Screen.set_focus] instead."""
+stack_updates: Reactive[int] = Reactive(0, repaint=False)
+"""An integer that updates when the screen is resumed."""
+sub_title: Reactive[str | None] = Reactive(None, compute=False)
+"""Screen sub-title to override [the app sub-title][textual.app.App.sub_title]."""
+title: Reactive[str | None] = Reactive(None, compute=False)
+"""Screen title to override [the app title][textual.app.App.title]."""
+⋮----
+COMMANDS: ClassVar[set[type[Provider] | Callable[[], type[Provider]]]] = set()
+"""Command providers used by the [command palette](/guide/command_palette), associated with the screen.
+
+    Should be a set of [`command.Provider`][textual.command.Provider] classes.
+    """
+ALLOW_IN_MAXIMIZED_VIEW: ClassVar[str | None] = None
+"""A selector for the widgets (direct children of Screen) that are allowed in the maximized view (in addition to maximized widget). Or
+    `None` to default to [App.ALLOW_IN_MAXIMIZED_VIEW][textual.app.App.ALLOW_IN_MAXIMIZED_VIEW]"""
+⋮----
+ESCAPE_TO_MINIMIZE: ClassVar[bool | None] = None
+"""Use escape key to minimize (potentially overriding bindings) or `None` to defer to [`App.ESCAPE_TO_MINIMIZE`][textual.app.App.ESCAPE_TO_MINIMIZE]."""
+⋮----
+maximized: Reactive[Widget | None] = Reactive(None, layout=True)
+"""The currently maximized widget, or `None` for no maximized widget."""
+⋮----
+selections: var[dict[Widget, Selection]] = var(dict)
+"""Map of widgets and selected ranges."""
+⋮----
+_selecting = var(False)
+"""Indicates mouse selection is in progress."""
+⋮----
+_box_select = var(False)
+"""Should text selection be limited to a box?"""
+⋮----
+_select_start: Reactive[tuple[Widget, Offset, Offset] | None] = Reactive(None)
+"""Tuple of (widget, screen offset, text offset) where selection started."""
+_select_end: Reactive[tuple[Widget, Offset, Offset] | None] = Reactive(None)
+"""Tuple of (widget, screen offset, text offset) where selection ends."""
+⋮----
+_mouse_down_offset: var[Offset | None] = var(None)
+"""Last mouse down screen offset, or `None` if the mouse is up."""
+⋮----
+_pointer_shape: var[PointerShape] = var("default")
+"""The current mouse pointer shape."""
+⋮----
+BINDINGS = [
+⋮----
+"""
+        Initialize the screen.
+
+        Args:
+            name: The name of the screen.
+            id: The ID of the screen in the DOM.
+            classes: The CSS classes for the screen.
+        """
+⋮----
+css_paths = [
+⋮----
+"""The signal that is published when the screen's layout is refreshed."""
+⋮----
+"""A signal published when the bindings have been updated"""
+⋮----
+"""A signal published when text selection has started."""
+⋮----
+"""Track updates to CSS."""
+⋮----
+"""Widgets whose layout may have changed."""
+⋮----
+@property
+    def is_modal(self) -> bool
+⋮----
+"""Is the screen modal?"""
+⋮----
+@property
+    def is_current(self) -> bool
+⋮----
+"""Is the screen current (i.e. visible to user)?"""
+⋮----
+@property
+    def _update_timer(self) -> Timer
+⋮----
+"""Timer used to perform updates."""
+⋮----
+@property
+    def layers(self) -> tuple[str, ...]
+⋮----
+"""Layers from parent.
+
+        Returns:
+            Tuple of layer names.
+        """
+extras = ["_loading"]
+⋮----
+@property
+    def size(self) -> Size
+⋮----
+"""The size of the screen."""
+⋮----
+def _watch_focused(self)
+⋮----
+def _watch_stack_updates(self)
+⋮----
+def refresh_bindings(self) -> None
+⋮----
+"""Call to request a refresh of bindings."""
+⋮----
+# The screen gets a `-maximized-view` class if there is a maximized widget
+# The widget gets a `-maximized` class if it is maximized
+⋮----
+@property
+    def _binding_chain(self) -> list[tuple[DOMNode, BindingsMap]]
+⋮----
+"""Binding chain from this screen."""
+⋮----
+focused = self.focused
+⋮----
+focused = None
+⋮----
+namespace_bindings: list[tuple[DOMNode, BindingsMap]]
+⋮----
+namespace_bindings = [
+⋮----
+# Filter out bindings that could be captures by widgets (such as Input, TextArea)
+filter_namespaces: list[DOMNode] = []
+⋮----
+check_consume_key = filter_namespace.check_consume_key
+⋮----
+# If the widget consumes the key (e.g. like an Input widget),
+# then remove the key from the bindings map.
+⋮----
+keymap = self.app._keymap
+⋮----
+result = bindings_map.apply_keymap(keymap)
+⋮----
+@property
+    def _modal_binding_chain(self) -> list[tuple[DOMNode, BindingsMap]]
+⋮----
+"""The binding chain, ignoring everything before the last modal."""
+binding_chain = self._binding_chain
+⋮----
+@property
+    def active_bindings(self) -> dict[str, ActiveBinding]
+⋮----
+"""Get currently active bindings for this screen.
+
+        If no widget is focused, then app-level bindings are returned.
+        If a widget is focused, then any bindings present in the screen and app are merged and returned.
+
+        This property may be used to inspect current bindings.
+
+        Returns:
+            A map of keys to a tuple containing (NAMESPACE, BINDING, ENABLED).
+        """
+bindings_map: dict[str, ActiveBinding] = {}
+app = self.app
+⋮----
+# This will call the nodes `check_action` method.
+action_state = app._check_action_state(binding.action, namespace)
+⋮----
+# An action_state of False indicates the action is disabled and not shown
+# Note that None has a different meaning, which is why there is an `is False`
+# rather than a truthy check.
+⋮----
+enabled = bool(action_state)
+⋮----
+# This key has already been bound
+# Replace priority bindings
+⋮----
+# New binding
+⋮----
+def arrange(self, size: Size, _optimal: bool = False) -> DockArrangeResult
+⋮----
+"""Arrange children.
+
+        Args:
+            size: Size of container.
+            optimal: Ignored on screen.
+
+        Returns:
+            Widget locations.
+        """
+# This is customized over the base class to allow for a widget to be maximized
+cache_key = (size, self._nodes._updates, self.maximized)
+cached_result = self._arrangement_cache.get(cache_key)
+⋮----
+allow_in_maximized_view = (
+⋮----
+def get_maximize_widgets(maximized: Widget) -> list[Widget]
+⋮----
+"""Get widgets to display in maximized view.
+
+            Returns:
+                A list of widgets.
+
+            """
+# De-duplicate with a set
+widgets = {
+# Restore order of widgets.
+maximize_widgets = [widget for widget in self.children if widget in widgets]
+# Add the maximized widget, if its not already included
+⋮----
+arrangement = self._arrangement_cache[cache_key] = arrange(
+⋮----
+@property
+    def is_active(self) -> bool
+⋮----
+"""Is the screen active (i.e. visible and top of the stack)?"""
+⋮----
+@property
+    def allow_select(self) -> bool
+⋮----
+"""Check if this widget permits text selection."""
+⋮----
+def get_loading_widget(self) -> Widget
+⋮----
+"""Get a widget to display a loading indicator.
+
+        The default implementation will defer to App.get_loading_widget.
+
+        Returns:
+            A widget in place of this widget to indicate a loading.
+        """
+loading_widget = self.app.get_loading_widget()
+⋮----
+def _watch__pointer_shape(self, pointer_shape: PointerShape) -> None
+⋮----
+def update_pointer_shape(self) -> None
+⋮----
+"""Get the screen's current pointer shape."""
+⋮----
+widget = self if self.app.mouse_over is None else self.app.mouse_over
+pointer_shape = "default"
+⋮----
+pointer_shape = "wait"
+⋮----
+def render(self) -> RenderableType
+⋮----
+"""Render method inherited from widget, used to render the screen's background.
+
+        Returns:
+            Background renderable.
+        """
+background = self.styles.background
+⋮----
+base_screen = visible_screen_stack.get().pop()
+⋮----
+base_screen = None
+⋮----
+# If background is translucent, render a background screen
+⋮----
+# If the background is transparent, defer to App.render
+⋮----
+# Render a screen of a solid color.
+⋮----
+def get_offset(self, widget: Widget) -> Offset
+⋮----
+"""Get the absolute offset of a given Widget.
+
+        Args:
+            widget: A widget
+
+        Returns:
+            The widget's offset relative to the top left of the terminal.
+        """
+⋮----
+def get_widget_at(self, x: int, y: int) -> tuple[Widget, Region]
+⋮----
+"""Get the widget at a given coordinate.
+
+        Args:
+            x: X Coordinate.
+            y: Y Coordinate.
+
+        Returns:
+            Widget and screen region.
+
+        Raises:
+            NoWidget: If there is no widget under the screen coordinate.
+        """
+⋮----
+def get_hover_widgets_at(self, x: int, y: int) -> HoverWidgets
+⋮----
+"""Get the widget, and its region directly under the mouse, and the first
+        widget, region pair with a hover style.
+
+        Args:
+            x: X Coordinate.
+            y: Y Coordinate.
+
+        Returns:
+            A pair of (WIDGET, REGION) tuples for the top most and first hover style respectively.
+
+        Raises:
+            NoWidget: If there is no widget under the screen coordinate.
+
+        """
+widgets_under_coordinate = iter(self._compositor.get_widgets_at(x, y))
+⋮----
+def get_widgets_at(self, x: int, y: int) -> Iterable[tuple[Widget, Region]]
+⋮----
+"""Get all widgets under a given coordinate.
+
+        Args:
+            x: X coordinate.
+            y: Y coordinate.
+
+        Returns:
+            Sequence of (WIDGET, REGION) tuples.
+        """
+⋮----
+def get_focusable_widget_at(self, x: int, y: int) -> Widget | None
+⋮----
+"""Get the focusable widget under a given coordinate.
+
+        If the widget directly under the given coordinate is not focusable, then this method will check
+        if any of the ancestors are focusable. If no ancestors are focusable, then `None` will be returned.
+
+        Args:
+            x: X coordinate.
+            y: Y coordinate.
+
+        Returns:
+            A `Widget`, or `None` if there is no focusable widget underneath the coordinate.
+        """
+⋮----
+# Clicking Textual system widgets should not focus anything
+⋮----
+def get_style_at(self, x: int, y: int) -> Style
+⋮----
+"""Get the style under a given coordinate.
+
+        Args:
+            x: X Coordinate.
+            y: Y Coordinate.
+
+        Returns:
+            Rich Style object.
+        """
+⋮----
+"""Get the widget under a given coordinate, and an offset within the original content.
+
+        Args:
+            x: X Coordinate.
+            y: Y Coordinate.
+
+        Returns:
+            Tuple of Widget and Offset, both of which may be None.
+        """
+⋮----
+def find_widget(self, widget: Widget) -> MapGeometry
+⋮----
+"""Get the screen region of a Widget.
+
+        Args:
+            widget: A Widget within the composition.
+
+        Returns:
+            Region relative to screen.
+
+        Raises:
+            NoWidget: If the widget could not be found in this screen.
+        """
+⋮----
+def clear_selection(self) -> None
+⋮----
+"""Clear any selected text."""
+⋮----
+def _select_all_in_widget(self, widget: Widget) -> None
+⋮----
+"""Select a widget and all its children.
+
+        Args:
+            widget: Widget to select.
+        """
+select_all = SELECT_ALL
+⋮----
+@property
+    def focus_chain(self) -> list[Widget]
+⋮----
+"""A list of widgets that may receive focus, in focus order."""
+# TODO: Calculating a focus chain is moderately expensive.
+# Suspect we can move focus without calculating the entire thing again.
+⋮----
+widgets: list[Widget] = []
+add_widget = widgets.append
+focus_sorter = attrgetter("_focus_sort_key")
+# We traverse the DOM and keep track of where we are at with a node stack.
+# Additionally, we manually keep track of the visibility of the DOM
+# instead of relying on the property `.visible` to save on DOM traversals.
+# node_stack: list[tuple[iterator over node children, node visibility]]
+⋮----
+root_node = self.screen
+⋮----
+root_node = node
+⋮----
+node_stack: list[tuple[Iterator[Widget], bool]] = [
+pop = node_stack.pop
+push = node_stack.append
+⋮----
+node = next(children_iterator, None)
+⋮----
+node_styles_visibility = node.styles.get_rule("visibility")
+node_is_visible = (
+⋮----
+else parent_visibility  # Inherit visibility if the style is unset.
+⋮----
+sorted_displayed_children = sorted(
+⋮----
+# Same check as `if node.focusable`, but we cached inherited visibility
+# and we also skipped disabled nodes altogether.
+⋮----
+"""Move the focus in the given direction.
+
+        If no widget is currently focused, this will focus the first focusable widget.
+        If no focusable widget matches the given CSS selector, focus is set to `None`.
+
+        Args:
+            direction: 1 to move forward, -1 to move backward, or
+                0 to keep the current focus.
+            selector: CSS selector to filter
+                what nodes can be focused.
+
+        Returns:
+            Newly focused widget, or None for no focus. If the return
+                is not `None`, then it is guaranteed that the widget returned matches
+                the CSS selectors given in the argument.
+        """
+⋮----
+selector = selector.__name__
+selector_set = parse_selectors(selector)
+focus_chain = self.focus_chain
+⋮----
+# If a widget is maximized we want to limit the focus chain to the visible widgets
+⋮----
+focusable = set(self.maximized.walk_children(with_self=True))
+focus_chain = [widget for widget in focus_chain if widget in focusable]
+⋮----
+filtered_focus_chain = (
+⋮----
+# Nothing focusable, so nothing to do
+⋮----
+# Nothing currently focused, so focus the first one.
+to_focus = next(filtered_focus_chain, None)
+⋮----
+# Ensure focus will be in a node that matches the selectors.
+⋮----
+direction = 1
+⋮----
+# Find the index of the currently focused widget
+current_index = focus_chain.index(self.focused)
+⋮----
+# Focused widget was removed in the interim, start again
+⋮----
+# Only move the focus if we are currently showing the focus
+⋮----
+to_focus = None
+chain_length = len(focus_chain)
+⋮----
+node = focus_chain[
+⋮----
+to_focus = node
+⋮----
+def focus_next(self, selector: str | type[QueryType] = "*") -> Widget | None
+⋮----
+"""Focus the next widget, optionally filtered by a CSS selector.
+
+        If no widget is currently focused, this will focus the first focusable widget.
+        If no focusable widget matches the given CSS selector, focus is set to `None`.
+
+        Args:
+            selector: CSS selector to filter
+                what nodes can be focused.
+
+        Returns:
+            Newly focused widget, or None for no focus. If the return
+                is not `None`, then it is guaranteed that the widget returned matches
+                the CSS selectors given in the argument.
+        """
+⋮----
+def focus_previous(self, selector: str | type[QueryType] = "*") -> Widget | None
+⋮----
+"""Focus the previous widget, optionally filtered by a CSS selector.
+
+        If no widget is currently focused, this will focus the first focusable widget.
+        If no focusable widget matches the given CSS selector, focus is set to `None`.
+
+        Args:
+            selector: CSS selector to filter
+                what nodes can be focused.
+
+        Returns:
+            Newly focused widget, or None for no focus. If the return
+                is not `None`, then it is guaranteed that the widget returned matches
+                the CSS selectors given in the argument.
+        """
+⋮----
+def maximize(self, widget: Widget, container: bool = True) -> bool
+⋮----
+"""Maximize a widget, so it fills the screen.
+
+        Args:
+            widget: Widget to maximize.
+            container: If one of the widgets ancestors is a maximizeable widget, maximize that instead.
+
+        Returns:
+            `True` if the widget was maximized, otherwise `False`.
+        """
+⋮----
+# If we want to maximize the container, look up the dom to find a suitable widget
+⋮----
+def minimize(self) -> None
+⋮----
+"""Restore any maximized widget to normal state."""
+⋮----
+def get_selected_text(self) -> str | None
+⋮----
+"""Get text under selection.
+
+        Returns:
+            Selected text, or `None` if no text was selected.
+        """
+⋮----
+widget_text: list[str] = []
+⋮----
+selected_text_in_widget = widget.get_selection(selection)
+⋮----
+selected_text = "".join(widget_text).rstrip("\n")
+⋮----
+def action_copy_text(self) -> None
+⋮----
+"""Copy selected text to clipboard."""
+selection = self.get_selected_text()
+⋮----
+# No text selected
+⋮----
+def action_maximize(self) -> None
+⋮----
+"""Action to maximize the currently focused widget."""
+⋮----
+def action_minimize(self) -> None
+⋮----
+"""Action to minimize the currently maximized widget."""
+⋮----
+def action_blur(self) -> None
+⋮----
+"""Action to remove focus (if set)."""
+⋮----
+async def action_focus(self, selector: str) -> None
+⋮----
+"""An [action](/guide/actions) to focus the given widget.
+
+        Args:
+            selector: Selector of widget to focus (first match).
+        """
+⋮----
+node = self.query(selector).first()
+⋮----
+"""Reset the focus when a widget is removed
+
+        Args:
+            widget: A widget that is removed.
+            avoiding: Optional list of nodes to avoid.
+        """
+⋮----
+avoiding = avoiding or []
+⋮----
+# Make this a NOP if we're being asked to deal with a widget that
+# isn't actually the currently-focused widget.
+⋮----
+# Grab the list of widgets that we can set focus to.
+focusable_widgets = self.focus_chain
+⋮----
+# If there's nothing to focus... give up now.
+⋮----
+# Find the location of the widget we're taking focus from, in
+# the focus chain.
+widget_index = focusable_widgets.index(widget)
+⋮----
+# widget is not in focusable widgets
+# It may have been made invisible
+# Move to a sibling if possible
+⋮----
+# Now go looking for something before it, that isn't about to be
+# removed, and which can receive focus, and go focus that.
+chosen: Widget | None = None
+⋮----
+chosen = candidate
+⋮----
+# Go with what was found.
+⋮----
+"""Update CSS for focus changes.
+
+        Args:
+            focused: The widget that was focused.
+            blurred: The widget that was blurred.
+        """
+widgets: set[DOMNode] = set()
+⋮----
+"""Focus (or un-focus) a widget. A focused widget will receive key events first.
+
+        Args:
+            widget: Widget to focus, or None to un-focus.
+            scroll_visible: Scroll widget into view.
+            from_app_focus: True if this focus is due to the app itself having regained
+                focus. False if the focus is being set because a widget within the app
+                regained focus.
+        """
+⋮----
+# Widget is already focused
+⋮----
+focused: Widget | None = None
+blurred: Widget | None = None
+⋮----
+# No focus, so blur currently focused widget if it exists
+⋮----
+blurred = self.focused
+⋮----
+# Blur currently focused widget
+⋮----
+# Change focus
+⋮----
+# Send focus event
+⋮----
+focused = widget
+⋮----
+def scroll_to_center(widget: Widget) -> None
+⋮----
+"""Scroll to center (after a refresh)."""
+⋮----
+def _extend_compose(self, widgets: list[Widget]) -> None
+⋮----
+"""Insert Textual's own internal widgets.
+
+        Args:
+            widgets: The list of widgets to be composed.
+
+        This method adds the tooltip, if required, and also adds the
+        container for `Toast`s.
+        """
+⋮----
+def _on_mount(self, event: events.Mount) -> None
+⋮----
+"""Set up the tooltip-clearing signal when we mount."""
+⋮----
+async def _on_idle(self, event: events.Idle) -> None
+⋮----
+# Check for any widgets marked as 'dirty' (needs a repaint)
+⋮----
+def _compositor_refresh(self) -> None
+⋮----
+"""Perform a compositor refresh."""
+⋮----
+inline_height = app._get_inline_height()
+clear = (
+⋮----
+# Top screen
+update = self._compositor.render_update(
+⋮----
+def _on_timer_update(self) -> None
+⋮----
+"""Called by the _update_timer."""
+⋮----
+async def _invoke_and_clear_callbacks(self) -> None
+⋮----
+"""If there are scheduled callbacks to run, call them and clear
+        the callback queue."""
+⋮----
+callbacks = self._callbacks[:]
+⋮----
+def _invoke_later(self, callback: CallbackType, sender: MessagePump) -> None
+⋮----
+"""Enqueue a callback to be invoked after the screen is repainted.
+
+        Args:
+            callback: A callback.
+            sender: The sender (active message pump) of the callback.
+        """
+⋮----
+"""Add a result callback to the screen.
+
+        Args:
+            requester: The object requesting the callback.
+            callback: The callback.
+            future: A Future to hold the result.
+        """
+⋮----
+async def _message_loop_exit(self) -> None
+⋮----
+def _pop_result_callback(self) -> None
+⋮----
+"""Remove the latest result callback from the stack."""
+⋮----
+def _refresh_layout(self, size: Size | None = None, scroll: bool = False) -> None
+⋮----
+"""Refresh the layout (can change size and positions of widgets)."""
+size = self.outer_size if size is None else size
+⋮----
+size = size.with_height(self.app._get_inline_height())
+⋮----
+ResizeEvent = events.Resize
+⋮----
+exposed_widgets = self._compositor.reflow_visible(self, size)
+⋮----
+layers = self._compositor.layers
+⋮----
+Hide = events.Hide
+Show = events.Show
+⋮----
+# We want to send a resize event to widgets that were just added or change since last layout
+send_resize = shown | resized
+⋮----
+async def _on_update(self, message: messages.Update) -> None
+⋮----
+widget = message.widget
+⋮----
+async def _on_layout(self, message: messages.Layout) -> None
+⋮----
+layout_required = False
+widget: DOMNode = message.widget
+⋮----
+layout_required = True
+⋮----
+widget = ancestor
+⋮----
+async def _on_update_scroll(self, message: messages.UpdateScroll) -> None
+⋮----
+def _get_inline_height(self, size: Size) -> int
+⋮----
+"""Get the inline height (number of lines to display when running inline mode).
+
+        Args:
+            size: Size of the terminal
+
+        Returns:
+            Height for inline mode.
+        """
+height_scalar = self.styles.height
+⋮----
+inline_height = self.get_content_height(size, size, size.width)
+⋮----
+inline_height = int(height_scalar.resolve(size, size))
+⋮----
+min_height = self.styles.min_height
+max_height = self.styles.max_height
+⋮----
+inline_height = max(inline_height, int(min_height.resolve(size, size)))
+⋮----
+inline_height = min(inline_height, int(max_height.resolve(size, size)))
+inline_height = min(self.app.size.height, inline_height)
+⋮----
+def _screen_resized(self, size: Size) -> None
+⋮----
+"""Called by App when the screen is resized."""
+⋮----
+def _on_screen_resume(self, event: events.ScreenResume) -> None
+⋮----
+"""Screen has resumed."""
+⋮----
+size = self.app.size
+⋮----
+async def _compose(self) -> None
+⋮----
+def _update_auto_focus(self) -> None
+⋮----
+"""Update auto focus."""
+⋮----
+auto_focus = (
+⋮----
+def _on_screen_suspend(self) -> None
+⋮----
+"""Screen has suspended."""
+⋮----
+async def _on_resize(self, event: events.Resize) -> None
+⋮----
+horizontal_breakpoints = (
+⋮----
+vertical_breakpoints = (
+⋮----
+"""Set horizontal or vertical breakpoints.
+
+        Args:
+            dimension: Either the width or the height.
+            breakpoints: A list of breakpoints.
+
+        """
+class_names = [class_name for _breakpoint, class_name in breakpoints]
+⋮----
+def _update_tooltip(self, widget: Widget) -> None
+⋮----
+"""Update the content of the tooltip."""
+⋮----
+tooltip = self.get_child_by_type(Tooltip)
+⋮----
+def _clear_tooltip(self) -> None
+⋮----
+"""Unconditionally clear any existing tooltip."""
+⋮----
+def _maybe_clear_tooltip(self, _) -> None
+⋮----
+"""Check if the widget under the mouse cursor still pertains to the tooltip.
+
+        If they differ, the tooltip will be removed.
+        """
+# If there's a widget associated with the tooltip at all...
+⋮----
+# ...look at what's currently under the mouse.
+⋮----
+# If it's not the same widget...
+⋮----
+# ...clear the tooltip.
+⋮----
+def _handle_tooltip_timer(self, widget: Widget) -> None
+⋮----
+"""Called by a timer from _handle_mouse_move to update the tooltip.
+
+        Args:
+            widget: The widget under the mouse.
+        """
+⋮----
+tooltip_content: RenderableType | None = None
+⋮----
+tooltip_content = node.tooltip
+⋮----
+def _handle_mouse_move(self, event: events.MouseMove) -> None
+⋮----
+hover_widget: Widget | None = None
+⋮----
+widget = self.app.mouse_captured
+region = self.find_widget(widget).region
+⋮----
+hover_widget = hover[0]
+⋮----
+mouse_event = self._translate_mouse_move_event(event, widget, region)
+⋮----
+"""
+        Returns a mouse move event whose relative coordinates are translated to
+        the origin of the specified region.
+        """
+⋮----
+def _forward_event(self, event: events.Event) -> None
+⋮----
+end_widget = self._select_end[0]
+select_offset = end_widget.content_region.bottom_right_inclusive
+⋮----
+focusable_widget = self.get_focusable_widget_at(event.x, event.y)
+⋮----
+def _key_escape(self) -> None
+⋮----
+"""When select_end changes, we need to compute which widgets and regions are selected.
+
+        Args:
+            select_end: The end selection.
+        """
+⋮----
+# Nothing to select
+⋮----
+select_start = self._select_start
+⋮----
+# Simplest case, selection starts and ends on the same widget
+⋮----
+select_regions: list[Region] = []
+start_region = start_widget.content_region
+end_region = end_widget.content_region
+⋮----
+container_region = Region.from_union(
+⋮----
+start_region = Region.from_corners(
+end_region = Region.from_corners(
+⋮----
+mid_height = end_region.y - start_region.bottom
+⋮----
+mid_region = Region.from_corners(
+⋮----
+spatial_map: SpatialMap[Widget] = SpatialMap()
+⋮----
+highlighted_widgets: set[Widget] = set()
+⋮----
+covered_widgets = spatial_map.get_values_in_region(region)
+covered_widgets = [
+⋮----
+def dismiss(self, result: ScreenResultType | None = None) -> AwaitComplete
+⋮----
+"""Dismiss the screen, optionally with a result.
+
+        Any callback provided in [push_screen][textual.app.App.push_screen] will be invoked with the supplied result.
+
+        Only the active screen may be dismissed. This method will produce a warning in the logs if
+        called on an inactive screen (but otherwise have no effect).
+
+        !!! warning
+
+            Textual will raise a [`ScreenError`][textual.app.ScreenError] if you await the return value from a
+            message handler on the Screen being dismissed. If you want to dismiss the current screen, you can
+            call `self.dismiss()` _without_ awaiting.
+
+        Args:
+            result: The optional result to be passed to the result callback.
+
+        """
+_rich_traceback_omit = True
+⋮----
+callback = self._result_callbacks[-1]
+⋮----
+await_pop = self.app.pop_screen()
+⋮----
+def pre_await() -> None
+⋮----
+"""Called by the AwaitComplete object."""
+⋮----
+def pop_until_active(self) -> None
+⋮----
+"""Pop any screens on top of this one, until this screen is active.
+
+        Raises:
+            ScreenError: If this screen is not in the current mode.
+
+        """
+⋮----
+# More specific error message
+⋮----
+async def action_dismiss(self, result: ScreenResultType | None = None) -> None
+⋮----
+"""A wrapper around [`dismiss`][textual.screen.Screen.dismiss] that can be called as an action.
+
+        Args:
+            result: The optional result to be passed to the result callback.
+        """
+⋮----
+def can_view_entire(self, widget: Widget) -> bool
+⋮----
+"""Check if a given widget is fully within the current screen.
+
+        Note: This doesn't necessarily equate to a widget being visible.
+        There are other reasons why a widget may not be visible.
+
+        Args:
+            widget: A widget.
+
+        Returns:
+            `True` if the entire widget is in view, `False` if it is partially visible or not in view.
+        """
+⋮----
+# If the widget is one that overlays the screen...
+⋮----
+# ...simply check if it's within the screen's region.
+⋮----
+# Failing that fall back to normal checking.
+⋮----
+def can_view_partial(self, widget: Widget) -> bool
+⋮----
+"""Check if a given widget is at least partially within the current view.
+
+        Args:
+            widget: A widget.
+
+        Returns:
+            `True` if the any part of the widget is in view, `False` if it is completely outside of the screen.
+        """
+⋮----
+def validate_title(self, title: Any) -> str | None
+⋮----
+"""Ensure the title is a string or `None`."""
+⋮----
+def validate_sub_title(self, sub_title: Any) -> str | None
+⋮----
+"""Ensure the sub-title is a string or `None`."""
+⋮----
+@rich.repr.auto
+class ModalScreen(Screen[ScreenResultType])
+⋮----
+"""A screen with bindings that take precedence over the App's key bindings.
+
+    The default styling of a modal screen will dim the screen underneath.
+    """
+⋮----
+class SystemModalScreen(ModalScreen[ScreenResultType], inherit_css=False)
+⋮----
+"""A variant of `ModalScreen` for internal use.
+
+    This version of `ModalScreen` allows us to build system-level screens;
+    the type being used to indicate that the screen should be isolated from
+    the main application.
+
+    Note:
+        This screen is set to *not* inherit CSS.
+    """
+</file>
+
+</files>

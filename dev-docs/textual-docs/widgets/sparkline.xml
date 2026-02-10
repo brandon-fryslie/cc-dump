@@ -1,0 +1,110 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/widgets/_sparkline.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    widgets/
+      _sparkline.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/widgets/_sparkline.py">
+def _max_factory() -> Callable[[Sequence[float]], float]
+⋮----
+"""Callable that returns the built-in max to initialise a reactive."""
+⋮----
+class Sparkline(Widget)
+⋮----
+"""A sparkline widget to display numerical data."""
+⋮----
+COMPONENT_CLASSES: ClassVar[set[str]] = {
+"""
+    Use these component classes to define the two colors that the sparkline
+    interpolates to represent its numerical data.
+
+    Note:
+        These two component classes are used exclusively for the _color_ of the
+        sparkline widget. Setting any style other than [`color`](/styles/color.md)
+        will have no effect.
+
+    | Class | Description |
+    | :- | :- |
+    | `sparkline--max-color` | The color used for the larger values in the data. |
+    | `sparkline--min-color` | The color used for the smaller values in the data. |
+    """
+⋮----
+DEFAULT_CSS = """
+⋮----
+data = reactive[Optional[Sequence[float]]](None)
+"""The data that populates the sparkline."""
+summary_function = reactive[Callable[[Sequence[float]], float]](_max_factory)
+"""The function that computes the value that represents each bar."""
+⋮----
+"""Initialize a sparkline widget.
+
+        Args:
+            data: The initial data to populate the sparkline with.
+            min_color: The color of the minimum value, or `None` to take from CSS.
+            max_color: the color of the maximum value, or `None` to take from CSS.
+            summary_function: Summarizes bar values into a single value used to
+                represent each bar.
+            name: The name of the widget.
+            id: The ID of the widget in the DOM.
+            classes: The CSS classes for the widget.
+            disabled: Whether the widget is disabled or not.
+        """
+⋮----
+def render(self) -> RenderResult
+⋮----
+"""Renders the sparkline when there is data available."""
+data = self.data or []
+⋮----
+min_color = base + (
+max_color = base + (
+</file>
+
+</files>

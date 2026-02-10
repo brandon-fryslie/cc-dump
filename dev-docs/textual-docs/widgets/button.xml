@@ -1,0 +1,222 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/widgets/_button.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    widgets/
+      _button.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/widgets/_button.py">
+ButtonVariant = Literal["default", "primary", "success", "warning", "error"]
+"""The names of the valid button variants.
+
+These are the variants that can be used with a [`Button`][textual.widgets.Button].
+"""
+⋮----
+_VALID_BUTTON_VARIANTS = {"default", "primary", "success", "warning", "error"}
+⋮----
+class InvalidButtonVariant(Exception)
+⋮----
+"""Exception raised if an invalid button variant is used."""
+⋮----
+class Button(Widget, can_focus=True)
+⋮----
+"""A simple clickable button.
+
+    Clicking the button will send a [Button.Pressed][textual.widgets.Button.Pressed] message,
+    unless the `action` parameter is provided.
+
+    """
+⋮----
+ALLOW_SELECT = False
+⋮----
+DEFAULT_CSS = """
+⋮----
+BINDINGS = [Binding("enter", "press", "Press button", show=False)]
+⋮----
+label: reactive[ContentText] = reactive[ContentText](Content.empty())
+"""The text label that appears within the button."""
+⋮----
+variant = reactive("default", init=False)
+"""The variant name for the button."""
+⋮----
+compact = reactive(False, toggle_class="-textual-compact")
+"""Make the button compact (without borders)."""
+⋮----
+flat = reactive(False)
+"""Enable alternative flat button style."""
+⋮----
+class Pressed(Message)
+⋮----
+"""Event sent when a `Button` is pressed and there is no Button action.
+
+        Can be handled using `on_button_pressed` in a subclass of
+        [`Button`][textual.widgets.Button] or in a parent widget in the DOM.
+        """
+⋮----
+def __init__(self, button: Button) -> None
+⋮----
+"""The button that was pressed."""
+⋮----
+@property
+        def control(self) -> Button
+⋮----
+"""An alias for [Pressed.button][textual.widgets.Button.Pressed.button].
+
+            This will be the same value as [Pressed.button][textual.widgets.Button.Pressed.button].
+            """
+⋮----
+"""Create a Button widget.
+
+        Args:
+            label: The text that appears within the button.
+            variant: The variant of the button.
+            name: The name of the button.
+            id: The ID of the button in the DOM.
+            classes: The CSS classes of the button.
+            disabled: Whether the button is disabled or not.
+            tooltip: Optional tooltip.
+            action: Optional action to run when clicked.
+            compact: Enable compact button style.
+            flat: Enable alternative flat look buttons.
+        """
+⋮----
+label = self.css_identifier_styled
+⋮----
+"""Amount of time in seconds the button 'press' animation lasts."""
+⋮----
+def get_content_width(self, container: Size, viewport: Size) -> int
+⋮----
+# Empty string label
+⋮----
+def __rich_repr__(self) -> rich.repr.Result
+⋮----
+def validate_variant(self, variant: str) -> str
+⋮----
+def watch_variant(self, old_variant: str, variant: str)
+⋮----
+def watch_flat(self, flat: bool) -> None
+⋮----
+def validate_label(self, label: ContentText) -> Content
+⋮----
+"""Parse markup for self.label"""
+⋮----
+def render(self) -> RenderResult
+⋮----
+async def _on_click(self, event: events.Click) -> None
+⋮----
+def press(self) -> Self
+⋮----
+"""Animate the button and send the [Pressed][textual.widgets.Button.Pressed] message.
+
+        Can be used to simulate the button being pressed by a user.
+
+        Returns:
+            The button instance.
+        """
+⋮----
+# Manage the "active" effect:
+⋮----
+# ...and let other components know that we've just been clicked:
+⋮----
+def _start_active_affect(self) -> None
+⋮----
+"""Start a small animation to show the button was clicked."""
+⋮----
+def action_press(self) -> None
+⋮----
+"""Activate a press of the button."""
+⋮----
+"""Utility constructor for creating a success Button variant.
+
+        Args:
+            label: The text that appears within the button.
+            name: The name of the button.
+            id: The ID of the button in the DOM.
+            classes: The CSS classes of the button.
+            disabled: Whether the button is disabled or not.
+            flat: Enable alternative flat look buttons.
+
+        Returns:
+            A [`Button`][textual.widgets.Button] widget of the 'success'
+                [variant][textual.widgets.button.ButtonVariant].
+        """
+⋮----
+"""Utility constructor for creating a warning Button variant.
+
+        Args:
+            label: The text that appears within the button.
+            name: The name of the button.
+            id: The ID of the button in the DOM.
+            classes: The CSS classes of the button.
+            disabled: Whether the button is disabled or not.
+            flat: Enable alternative flat look buttons.
+
+        Returns:
+            A [`Button`][textual.widgets.Button] widget of the 'warning'
+                [variant][textual.widgets.button.ButtonVariant].
+        """
+⋮----
+"""Utility constructor for creating an error Button variant.
+
+        Args:
+            label: The text that appears within the button.
+            name: The name of the button.
+            id: The ID of the button in the DOM.
+            classes: The CSS classes of the button.
+            disabled: Whether the button is disabled or not.
+            flat: Enable alternative flat look buttons.
+
+        Returns:
+            A [`Button`][textual.widgets.Button] widget of the 'error'
+                [variant][textual.widgets.button.ButtonVariant].
+        """
+</file>
+
+</files>

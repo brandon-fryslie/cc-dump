@@ -1,0 +1,153 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/widgets/_switch.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    widgets/
+      _switch.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/widgets/_switch.py">
+class Switch(Widget, can_focus=True)
+⋮----
+"""A switch widget that represents a boolean value.
+
+    Can be toggled by clicking on it or through its [bindings][textual.widgets.Switch.BINDINGS].
+
+    The switch widget also contains [component classes][textual.widgets.Switch.COMPONENT_CLASSES]
+    that enable more customization.
+    """
+⋮----
+BINDINGS: ClassVar[list[BindingType]] = [
+"""
+    | Key(s) | Description |
+    | :- | :- |
+    | enter,space | Toggle the switch state. |
+    """
+⋮----
+COMPONENT_CLASSES: ClassVar[set[str]] = {
+"""
+    | Class | Description |
+    | :- | :- |
+    | `switch--slider` | Targets the slider of the switch. |
+    """
+⋮----
+ALLOW_SELECT = False
+⋮----
+DEFAULT_CSS = """
+⋮----
+value: reactive[bool] = reactive(False, init=False)
+"""The value of the switch; `True` for on and `False` for off."""
+⋮----
+_slider_position = reactive(0.0)
+"""The position of the slider."""
+⋮----
+class Changed(Message)
+⋮----
+"""Posted when the status of the switch changes.
+
+        Can be handled using `on_switch_changed` in a subclass of `Switch`
+        or in a parent widget in the DOM.
+
+        Attributes:
+            value: The value that the switch was changed to.
+            switch: The `Switch` widget that was changed.
+        """
+⋮----
+def __init__(self, switch: Switch, value: bool) -> None
+⋮----
+@property
+        def control(self) -> Switch
+⋮----
+"""Alias for self.switch."""
+⋮----
+"""Initialise the switch.
+
+        Args:
+            value: The initial value of the switch.
+            animate: True if the switch should animate when toggled.
+            name: The name of the switch.
+            id: The ID of the switch in the DOM.
+            classes: The CSS classes of the switch.
+            disabled: Whether the switch is disabled or not.
+            tooltip: Optional tooltip.
+        """
+⋮----
+def watch_value(self, value: bool) -> None
+⋮----
+target_slider_position = 1.0 if value else 0.0
+⋮----
+def watch__slider_position(self, slider_position: float) -> None
+⋮----
+def render(self) -> RenderResult
+⋮----
+style = self.get_component_rich_style("switch--slider")
+⋮----
+def get_content_width(self, container: Size, viewport: Size) -> int
+⋮----
+def get_content_height(self, container: Size, viewport: Size, width: int) -> int
+⋮----
+async def _on_click(self, event: Click) -> None
+⋮----
+"""Toggle the state of the switch."""
+⋮----
+def action_toggle_switch(self) -> None
+⋮----
+def toggle(self) -> Self
+⋮----
+"""Toggle the switch value.
+
+        As a result of the value changing, a `Switch.Changed` message will
+        be posted.
+
+        Returns:
+            The `Switch` instance.
+        """
+</file>
+
+</files>

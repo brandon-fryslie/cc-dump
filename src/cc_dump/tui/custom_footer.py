@@ -4,6 +4,7 @@ from rich.text import Text
 from textual.widgets import Static
 
 import cc_dump.palette
+import cc_dump.tui.rendering
 
 
 class StatusFooter(Static):
@@ -81,7 +82,8 @@ class StatusFooter(Static):
         if follow_active:
             line2.append(" 0", style="bold")
             line2.append(" ")
-            line2.append("FOLLOW", style="bold reverse green")
+            tc = cc_dump.tui.rendering.get_theme_colors()
+            line2.append("FOLLOW", style=tc.follow_active_style)
         else:
             line2.append(" 0", style="dim")
             line2.append(" ")

@@ -1,0 +1,283 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/widgets/_log.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    widgets/
+      _log.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/widgets/_log.py">
+_sub_escape = re.compile("[\u0000-\u0014]").sub
+⋮----
+class Log(ScrollView, can_focus=True)
+⋮----
+"""A widget to log text."""
+⋮----
+ALLOW_SELECT = True
+DEFAULT_CSS = """
+⋮----
+max_lines: var[int | None] = var[Optional[int]](None)
+"""Maximum number of lines to show"""
+⋮----
+auto_scroll: var[bool] = var(True)
+"""Automatically scroll to new lines."""
+⋮----
+"""Create a Log widget.
+
+        Args:
+            highlight: Enable highlighting.
+            max_lines: Maximum number of lines to display.
+            auto_scroll: Scroll to end on new lines.
+            name: The name of the text log.
+            id: The ID of the text log in the DOM.
+            classes: The CSS classes of the text log.
+            disabled: Whether the text log is disabled or not.
+        """
+⋮----
+"""Enable highlighting."""
+⋮----
+"""The Rich Highlighter object to use, if `highlight=True`"""
+⋮----
+@property
+    def allow_select(self) -> bool
+⋮----
+@property
+    def lines(self) -> Sequence[str]
+⋮----
+"""The raw lines in the Log.
+
+        Note that this attribute is read only.
+        Changing the lines will not update the Log's contents.
+
+        """
+⋮----
+def notify_style_update(self) -> None
+⋮----
+"""Called by Textual when styles update."""
+⋮----
+def _update_maximum_width(self, updates: int, size: int) -> None
+⋮----
+"""Update the virtual size width.
+
+        Args:
+            updates: A counter of updates.
+            size: Maximum size of new lines.
+        """
+⋮----
+@property
+    def line_count(self) -> int
+⋮----
+"""Number of lines of content."""
+⋮----
+@classmethod
+    def _process_line(cls, line: str) -> str
+⋮----
+"""Process a line before it is rendered to remove control codes.
+
+        Args:
+            line: A string.
+
+        Returns:
+            New string with no control codes.
+        """
+⋮----
+@work(thread=True)
+    def _update_size(self, updates: int, lines: list[str]) -> None
+⋮----
+"""A thread worker to update the width in the background.
+
+        Args:
+            updates: The update index at the time of invocation.
+            lines: Lines that were added.
+        """
+⋮----
+_process_line = self._process_line
+max_length = max(cell_len(_process_line(line)) for line in lines)
+⋮----
+def _prune_max_lines(self) -> None
+⋮----
+"""Prune lines if there are more than the maximum."""
+⋮----
+remove_lines = len(self._lines) - self.max_lines
+⋮----
+_cache = self._render_line_cache
+# We've removed some lines, which means the y values in the cache are out of sync
+# Calculated a new dict of cache values
+updated_cache = {
+# Clear the cache
+⋮----
+# Update the cache with previously calculated values
+⋮----
+"""Write to the log.
+
+        Args:
+            data: Data to write.
+            scroll_end: Scroll to the end after writing, or `None` to use `self.auto_scroll`.
+
+        Returns:
+            The `Log` instance.
+        """
+is_vertical_scroll_end = self.is_vertical_scroll_end
+⋮----
+auto_scroll = self.auto_scroll if scroll_end is None else scroll_end
+⋮----
+"""Write content on a new line.
+
+        Args:
+            line: String to write to the log.
+            scroll_end: Scroll to the end after writing, or `None` to use `self.auto_scroll`.
+
+        Returns:
+            The `Log` instance.
+        """
+⋮----
+"""Write an iterable of lines.
+
+        Args:
+            lines: An iterable of strings to write.
+            scroll_end: Scroll to the end after writing, or `None` to use `self.auto_scroll`.
+
+        Returns:
+            The `Log` instance.
+        """
+⋮----
+new_lines = []
+⋮----
+start_line = len(self._lines)
+⋮----
+def clear(self) -> Self
+⋮----
+"""Clear the Log.
+
+        Returns:
+            The `Log` instance.
+        """
+⋮----
+def get_selection(self, selection: Selection) -> tuple[str, str] | None
+⋮----
+"""Get the text under the selection.
+
+        Args:
+            selection: Selection information.
+
+        Returns:
+            Tuple of extracted text and ending (typically "\n" or " "), or `None` if no text could be extracted.
+        """
+text = "\n".join(self._lines)
+⋮----
+def selection_updated(self, selection: Selection | None) -> None
+⋮----
+def render_line(self, y: int) -> Strip
+⋮----
+"""Render a line of content.
+
+        Args:
+            y: Y Coordinate of line.
+
+        Returns:
+            A rendered line.
+        """
+⋮----
+strip = self._render_line(scroll_y + y, scroll_x, self.size.width)
+⋮----
+def _render_line(self, y: int, scroll_x: int, width: int) -> Strip
+⋮----
+"""Render a line into a cropped strip.
+
+        Args:
+            y: Y offset of line.
+            scroll_x: Current horizontal scroll.
+            width: Width of the widget.
+
+        Returns:
+            A Strip suitable for rendering.
+        """
+rich_style = self.rich_style
+⋮----
+line = self._render_line_strip(y, rich_style)
+⋮----
+line = line.crop_extend(scroll_x, scroll_x + width, rich_style)
+line = line.apply_offsets(scroll_x, y)
+⋮----
+def _render_line_strip(self, y: int, rich_style: Style) -> Strip
+⋮----
+"""Render a line into a Strip.
+
+        Args:
+            y: Y offset of line.
+            rich_style: Rich style of line.
+
+        Returns:
+            An uncropped Strip.
+        """
+selection = self.text_selection
+⋮----
+_line = self._process_line(self._lines[y])
+⋮----
+line_text = Text(_line, no_wrap=True)
+⋮----
+line_text = self.highlighter(line_text)
+⋮----
+end = len(line_text)
+⋮----
+selection_style = self.screen.get_component_rich_style(
+⋮----
+line = Strip(line_text.render(self.app.console), cell_len(_line))
+⋮----
+def refresh_lines(self, y_start: int, line_count: int = 1) -> None
+⋮----
+"""Refresh one or more lines.
+
+        Args:
+            y_start: First line to refresh.
+            line_count: Total number of lines to refresh.
+        """
+</file>
+
+</files>

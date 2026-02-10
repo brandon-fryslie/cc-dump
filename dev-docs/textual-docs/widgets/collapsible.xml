@@ -1,0 +1,185 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/widgets/_collapsible.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    widgets/
+      _collapsible.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/widgets/_collapsible.py">
+__all__ = ["Collapsible", "CollapsibleTitle"]
+⋮----
+class CollapsibleTitle(Static, can_focus=True)
+⋮----
+"""Title and symbol for the Collapsible."""
+⋮----
+BINDING_GROUP_TITLE = "Collapsible"
+⋮----
+ALLOW_SELECT = False
+DEFAULT_CSS = """
+⋮----
+BINDINGS = [
+"""
+    | Key(s) | Description |
+    | :- | :- |
+    | enter | Toggle the collapsible. |
+    """
+⋮----
+collapsed = reactive(True)
+label: reactive[ContentText] = reactive(Content("Toggle"))
+⋮----
+class Toggle(Message)
+⋮----
+"""Request toggle."""
+⋮----
+async def _on_click(self, event: events.Click) -> None
+⋮----
+"""Inform ancestor we want to toggle."""
+⋮----
+def action_toggle_collapsible(self) -> None
+⋮----
+"""Toggle the state of the parent collapsible."""
+⋮----
+def validate_label(self, label: ContentText) -> Content
+⋮----
+def _update_label(self) -> None
+⋮----
+def _watch_label(self) -> None
+⋮----
+def _watch_collapsed(self, collapsed: bool) -> None
+⋮----
+class Collapsible(Widget)
+⋮----
+"""A collapsible container."""
+⋮----
+ALLOW_MAXIMIZE = True
+collapsed = reactive(True, init=False)
+title = reactive("Toggle")
+⋮----
+class Toggled(Message)
+⋮----
+"""Parent class subclassed by `Collapsible` messages.
+
+        Can be handled with `on(Collapsible.Toggled)` if you want to handle expansions
+        and collapsed in the same way, or you can handle the specific events individually.
+        """
+⋮----
+def __init__(self, collapsible: Collapsible) -> None
+⋮----
+"""Create an instance of the message.
+
+            Args:
+                collapsible: The `Collapsible` widget that was toggled.
+            """
+⋮----
+"""The collapsible that was toggled."""
+⋮----
+@property
+        def control(self) -> Collapsible
+⋮----
+"""An alias for [Toggled.collapsible][textual.widgets.Collapsible.Toggled.collapsible]."""
+⋮----
+class Expanded(Toggled)
+⋮----
+"""Event sent when the `Collapsible` widget is expanded.
+
+        Can be handled using `on_collapsible_expanded` in a subclass of
+        [`Collapsible`][textual.widgets.Collapsible] or in a parent widget in the DOM.
+        """
+⋮----
+class Collapsed(Toggled)
+⋮----
+"""Event sent when the `Collapsible` widget is collapsed.
+
+        Can be handled using `on_collapsible_collapsed` in a subclass of
+        [`Collapsible`][textual.widgets.Collapsible] or in a parent widget in the DOM.
+        """
+⋮----
+class Contents(Container)
+⋮----
+"""Initialize a Collapsible widget.
+
+        Args:
+            *children: Contents that will be collapsed/expanded.
+            title: Title of the collapsed/expanded contents.
+            collapsed: Default status of the contents.
+            collapsed_symbol: Collapsed symbol before the title.
+            expanded_symbol: Expanded symbol before the title.
+            name: The name of the collapsible.
+            id: The ID of the collapsible in the DOM.
+            classes: The CSS classes of the collapsible.
+            disabled: Whether the collapsible is disabled or not.
+        """
+⋮----
+def _on_collapsible_title_toggle(self, event: CollapsibleTitle.Toggle) -> None
+⋮----
+"""Update collapsed state when reactive is changed."""
+⋮----
+def _update_collapsed(self, collapsed: bool) -> None
+⋮----
+"""Update children to match collapsed state."""
+⋮----
+def _on_mount(self, event: events.Mount) -> None
+⋮----
+"""Initialise collapsed state."""
+⋮----
+def compose(self) -> ComposeResult
+⋮----
+def compose_add_child(self, widget: Widget) -> None
+⋮----
+"""When using the context manager compose syntax, we want to attach nodes to the contents.
+
+        Args:
+            widget: A Widget to add.
+        """
+⋮----
+def _watch_title(self, title: str) -> None
+</file>
+
+</files>

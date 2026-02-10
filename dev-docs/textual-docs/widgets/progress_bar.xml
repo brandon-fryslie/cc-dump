@@ -1,0 +1,264 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/widgets/_progress_bar.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    widgets/
+      _progress_bar.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/widgets/_progress_bar.py">
+"""Implements a progress bar widget."""
+⋮----
+UNUSED = UnusedParameter()
+"""Sentinel for method signatures."""
+⋮----
+class Bar(Widget, can_focus=False)
+⋮----
+"""The bar portion of the progress bar."""
+⋮----
+COMPONENT_CLASSES = {"bar--bar", "bar--complete", "bar--indeterminate"}
+"""
+    The bar sub-widget provides the component classes that follow.
+
+    These component classes let you modify the foreground and background color of the
+    bar in its different states.
+
+    | Class | Description |
+    | :- | :- |
+    | `bar--bar` | Style of the bar (may be used to change the color). |
+    | `bar--complete` | Style of the bar when it's complete. |
+    | `bar--indeterminate` | Style of the bar when it's in an indeterminate state. |
+    """
+⋮----
+DEFAULT_CSS = """
+⋮----
+percentage: reactive[float | None] = reactive[Optional[float]](None)
+"""The percentage of progress that has been completed."""
+⋮----
+gradient: reactive[Gradient | None] = reactive(None)
+"""An optional gradient."""
+⋮----
+"""Create a bar for a [`ProgressBar`][textual.widgets.ProgressBar]."""
+⋮----
+def _validate_percentage(self, percentage: float | None) -> float | None
+⋮----
+"""Avoid updating the bar, if the percentage increase is too small to render."""
+width = self.size.width * 2
+⋮----
+def watch_percentage(self, percentage: float | None) -> None
+⋮----
+"""Manage the timer that enables the indeterminate bar animation."""
+⋮----
+def render(self) -> RenderResult
+⋮----
+"""Render the bar with the correct portion filled."""
+⋮----
+bar_style = (
+⋮----
+def render_indeterminate(self) -> RenderResult
+⋮----
+"""Render a frame of the indeterminate progress bar animation."""
+width = self.size.width
+highlighted_bar_width = 0.25 * width
+# Width used to enable the visual effect of the bar going into the corners.
+total_imaginary_width = width + highlighted_bar_width
+start: float
+end: float
+⋮----
+start = 0
+end = width
+⋮----
+speed = 30  # Cells per second.
+# Compute the position of the bar.
+start = (
+⋮----
+# If the bar is to the right of its width, wrap it back from right to left.
+start = 2 * total_imaginary_width - start  # = (tiw - (start - tiw))
+⋮----
+end = start + highlighted_bar_width
+⋮----
+bar_style = self.get_component_rich_style("bar--indeterminate")
+⋮----
+class PercentageStatus(Label)
+⋮----
+"""A label to display the percentage status of the progress bar."""
+⋮----
+percentage: reactive[int | None] = reactive[Optional[int]](None)
+⋮----
+def _validate_percentage(self, percentage: float | None) -> int | None
+⋮----
+class ETAStatus(Label)
+⋮----
+"""A label to display the estimated time until completion of the progress bar."""
+⋮----
+eta: reactive[float | None] = reactive[Optional[float]](None)
+"""Estimated number of seconds till completion, or `None` if no estimate is available."""
+⋮----
+"""Render the ETA display."""
+eta = self.eta
+⋮----
+class ProgressBar(Widget, can_focus=False)
+⋮----
+"""A progress bar widget."""
+⋮----
+progress: reactive[float] = reactive(0.0)
+"""The progress so far, in number of steps."""
+total: reactive[float | None] = reactive[Optional[float]](None)
+"""The total number of steps associated with this progress bar, when known.
+
+    The value `None` will render an indeterminate progress bar.
+    """
+⋮----
+"""The percentage of progress that has been completed.
+
+    The percentage is a value between 0 and 1 and the returned value is only
+    `None` if the total progress of the bar hasn't been set yet.
+
+    Example:
+        ```py
+        progress_bar = ProgressBar()
+        print(progress_bar.percentage)  # None
+        progress_bar.update(total=100)
+        progress_bar.advance(50)
+        print(progress_bar.percentage)  # 0.5
+        ```
+    """
+_display_eta: reactive[int | None] = reactive[Optional[int]](None)
+⋮----
+"""Optional gradient object (will replace CSS styling in bar)."""
+⋮----
+BAR_RENDERABLE: Type[BarRenderable] = BarRenderable
+"""BarRenderable to use for rendering the bar-part of the ProgressBar"""
+⋮----
+"""Create a Progress Bar widget.
+
+        The progress bar uses "steps" as the measurement unit.
+
+        Example:
+            ```py
+            class MyApp(App):
+                def compose(self):
+                    yield ProgressBar(total=100)
+
+                def key_space(self):
+                    self.query_one(ProgressBar).advance(5)
+            ```
+
+        Args:
+            total: The total number of steps in the progress if known.
+            show_bar: Whether to show the bar portion of the progress bar.
+            show_percentage: Whether to show the percentage status of the bar.
+            show_eta: Whether to show the ETA countdown of the progress bar.
+            name: The name of the widget.
+            id: The ID of the widget in the DOM.
+            classes: The CSS classes for the widget.
+            disabled: Whether the widget is disabled or not.
+            clock: An optional clock object (leave as default unless testing).
+            gradient: An optional Gradient object (will replace CSS styles in the bar).
+        """
+⋮----
+def on_mount(self) -> None
+⋮----
+def compose(self) -> ComposeResult
+⋮----
+def _validate_total(self, total: float | None) -> float | None
+⋮----
+"""Ensure the total is not negative."""
+⋮----
+def _compute_percentage(self) -> float | None
+⋮----
+"""Keep the percentage of progress updated automatically.
+
+        This will report a percentage of `1` if the total is zero.
+        """
+⋮----
+def _watch_progress(self, progress: float) -> None
+⋮----
+"""Perform update when progress is modified."""
+⋮----
+def _watch_total(self, total: float) -> None
+⋮----
+"""Update when the total is modified."""
+⋮----
+def advance(self, advance: float = 1) -> None
+⋮----
+"""Advance the progress of the progress bar by the given amount.
+
+        Example:
+            ```py
+            progress_bar.advance(10)  # Advance 10 steps.
+            ```
+
+        Args:
+            advance: Number of steps to advance progress by.
+        """
+⋮----
+"""Update the progress bar with the given options.
+
+        Example:
+            ```py
+            progress_bar.update(
+                total=200,  # Set new total to 200 steps.
+                progress=50,  # Set the progress to 50 (out of 200).
+            )
+            ```
+
+        Args:
+            total: New total number of steps.
+            progress: Set the progress to the given number of steps.
+            advance: Advance the progress by this number of steps.
+        """
+current_time = self._clock.time
+⋮----
+def add_sample() -> None
+⋮----
+"""Add a new sample."""
+</file>
+
+</files>

@@ -1,0 +1,4296 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/css/**/*
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    css/
+      __init__.py
+      _error_tools.py
+      _help_renderables.py
+      _help_text.py
+      _style_properties.py
+      _styles_builder.py
+      constants.py
+      errors.py
+      match.py
+      model.py
+      parse.py
+      query.py
+      scalar_animation.py
+      scalar.py
+      styles.py
+      stylesheet.py
+      tokenize.py
+      tokenizer.py
+      transition.py
+      types.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/css/__init__.py">
+
+</file>
+
+<file path="src/textual/css/_error_tools.py">
+"""Generate a list of words as readable prose.
+
+    >>> friendly_list(["foo", "bar", "baz"])
+    "'foo', 'bar', or 'baz'"
+
+    Args:
+        words: A list of words.
+        joiner: The last joiner word.
+
+    Returns:
+        List as prose.
+    """
+words = [
+</file>
+
+<file path="src/textual/css/_help_renderables.py">
+_highlighter = ReprHighlighter()
+⋮----
+def _markup_and_highlight(text: str) -> Text
+⋮----
+"""Highlight and render markup in a string of text, returning
+    a styled Text object.
+
+    Args:
+        text: The text to highlight and markup.
+
+    Returns:
+        The Text, with highlighting and markup applied.
+    """
+⋮----
+class Example
+⋮----
+"""Renderable for an example, which can appear below bullet points in
+    the help text.
+
+    Attributes:
+        markup: The markup to display for this example
+    """
+⋮----
+def __init__(self, markup: str) -> None
+⋮----
+@rich.repr.auto
+class Bullet
+⋮----
+"""Renderable for a single 'bullet point' containing information and optionally some examples
+        pertaining to that information.
+
+    Attributes:
+        markup: The markup to display
+        examples: An optional list of examples
+            to display below this bullet.
+    """
+⋮----
+def __init__(self, markup: str, examples: Iterable[Example] | None = None) -> None
+⋮----
+@rich.repr.auto
+class HelpText
+⋮----
+"""Renderable for help text - the user is shown this when they
+    encounter a style-related error (e.g. setting a style property to an invalid
+    value).
+
+    Attributes:
+        summary: A succinct summary of the issue.
+        bullets: Bullet points which provide additional
+            context around the issue. These are rendered below the summary.
+    """
+⋮----
+def __str__(self) -> str
+⋮----
+tree = Tree(_markup_and_highlight(f"[b blue]{self.summary}"), guide_style="dim")
+</file>
+
+<file path="src/textual/css/_help_text.py">
+StylingContext = Literal["inline", "css"]
+"""The type of styling the user was using when the error was encountered.
+Used to give help text specific to the context i.e. we give CSS help if the
+user hit an issue with their CSS, and Python help text when the user has an
+issue with inline styles."""
+⋮----
+@dataclass
+class ContextSpecificBullets
+⋮----
+"""
+    Args:
+        inline: Information only relevant to users who are using inline styling.
+        css: Information only relevant to users who are using CSS.
+    """
+⋮----
+inline: Sequence[Bullet]
+css: Sequence[Bullet]
+⋮----
+def get_by_context(self, context: StylingContext) -> list[Bullet]
+⋮----
+"""Get the information associated with the given context
+
+        Args:
+            context: The context to retrieve info for.
+        """
+⋮----
+def _python_name(property_name: str) -> str
+⋮----
+"""Convert a CSS property name to the corresponding Python attribute name
+
+    Args:
+        property_name: The CSS property name
+
+    Returns:
+        The Python attribute name as found on the Styles object
+    """
+⋮----
+def _css_name(property_name: str) -> str
+⋮----
+"""Convert a Python style attribute name to the corresponding CSS property name
+
+    Args:
+        property_name: The Python property name
+
+    Returns:
+        The CSS property name
+    """
+⋮----
+"""Convert a property name to CSS or inline by replacing
+        '-' with '_' or vice-versa
+
+    Args:
+        property_name: The name of the property
+        context: The context the property is being used in.
+
+    Returns:
+        The property name converted to the given context.
+    """
+⋮----
+def _spacing_examples(property_name: str) -> ContextSpecificBullets
+⋮----
+"""Returns examples for spacing properties"""
+⋮----
+"""Help text to show when the user supplies an invalid value for CSS property
+    property.
+
+    Args:
+        property_name: The name of the property.
+        context: The context the spacing property is being used in.
+    Keyword Args:
+        suggested_property_name: A suggested name for the property (e.g. "width" for "wdth").
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+property_name = _contextualize_property_name(property_name, context)
+summary = f"Invalid CSS property {property_name!r}"
+⋮----
+suggested_property_name = _contextualize_property_name(
+⋮----
+"""Help text to show when the user supplies the wrong number of values
+    for a spacing property (e.g. padding or margin).
+
+    Args:
+        property_name: The name of the property.
+        num_values_supplied: The number of values the user supplied (a number other than 1, 2 or 4).
+        context: The context the spacing property is being used in.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+"""Help text to show when the user supplies an invalid value for a spacing
+    property.
+
+    Args:
+        property_name: The name of the property.
+        context: The context the spacing property is being used in.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+"""Help text to show when the user supplies an invalid value for
+    a scalar property.
+
+    Args:
+        property_name: The name of the property.
+        num_values_supplied: The number of values the user supplied (a number other than 1, 2 or 4).
+        context: The context the scalar property is being used in.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+"""Help text to show when the user supplies an invalid value for a string
+    enum property.
+
+    Args:
+        property_name: The name of the property.
+        valid_values: A list of the values that are considered valid.
+        context: The context the property is being used in.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+"""Help text to show when the user supplies an invalid value for a color
+    property. For example, an unparsable color string.
+
+    Args:
+        property_name: The name of the property.
+        context: The context the property is being used in.
+        error: The error that caused this help text to be displayed.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+summary = f"Invalid value for the [i]{property_name}[/] property"
+⋮----
+summary = f"Invalid value ({value!r}) for the [i]{property_name}[/] property"
+suggested_color = (
+⋮----
+def border_property_help_text(property_name: str, context: StylingContext) -> HelpText
+⋮----
+"""Help text to show when the user supplies an invalid value for a border
+    property (such as border, border-right, outline).
+
+    Args:
+        property_name: The name of the property.
+        context: The context the property is being used in.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+def layout_property_help_text(property_name: str, context: StylingContext) -> HelpText
+⋮----
+"""Help text to show when the user supplies an invalid value
+    for a layout property.
+
+    Args:
+        property_name: The name of the property.
+        context: The context the property is being used in.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+def dock_property_help_text(property_name: str, context: StylingContext) -> HelpText
+⋮----
+"""Help text to show when the user supplies an invalid value for dock.
+
+    Args:
+        property_name: The name of the property.
+        context: The context the property is being used in.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+def split_property_help_text(property_name: str, context: StylingContext) -> HelpText
+⋮----
+"""Help text to show when the user supplies an invalid value for split.
+
+    Args:
+        property_name: The name of the property.
+        context: The context the property is being used in.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+"""Help text to show when the user supplies an invalid value for a fractional property.
+
+    Args:
+        property_name: The name of the property.
+        context: The context the property is being used in.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+def offset_property_help_text(context: StylingContext) -> HelpText
+⋮----
+"""Help text to show when the user supplies an invalid value for the offset property.
+
+    Args:
+        context: The context the property is being used in.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+def scrollbar_size_property_help_text(context: StylingContext) -> HelpText
+⋮----
+"""Help text to show when the user supplies an invalid value for the scrollbar-size property.
+
+    Args:
+        context: The context the property is being used in.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+def scrollbar_size_single_axis_help_text(property_name: str) -> HelpText
+⋮----
+"""Help text to show when the user supplies an invalid value for a scrollbar-size-* property.
+
+    Args:
+        property_name: The name of the property.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+def integer_help_text(property_name: str) -> HelpText
+⋮----
+"""Help text to show when the user supplies an invalid integer value.
+
+    Args:
+        property_name: The name of the property.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+def align_help_text() -> HelpText
+⋮----
+"""Help text to show when the user supplies an invalid value for a `align`.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+def keyline_help_text() -> HelpText
+⋮----
+"""Help text to show when the user supplies an invalid value for a `keyline`.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+def text_align_help_text() -> HelpText
+⋮----
+"""Help text to show when the user supplies an invalid value for the text-align property.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+def offset_single_axis_help_text(property_name: str) -> HelpText
+⋮----
+"""Help text to show when the user supplies an invalid value for an offset-* property.
+
+    Args:
+        property_name: The name of the property.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+def position_help_text(property_name: str) -> HelpText
+⋮----
+"""Help text to show when the user supplies the wrong value for position.
+
+    Args:
+        property_name: The name of the property.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+def expand_help_text(property_name: str) -> HelpText
+⋮----
+"""Help text to show when the user supplies the wrong value for expand.
+
+    Args:
+        property_name: The name of the property.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+⋮----
+"""Help text to show when the user supplies an invalid value for a style flags property.
+
+    Args:
+        property_name: The name of the property.
+        context: The context the property is being used in.
+
+    Returns:
+        Renderable for displaying the help text for this property.
+    """
+</file>
+
+<file path="src/textual/css/_style_properties.py">
+"""
+Style properties are descriptors which allow the ``Styles`` object to accept different types when
+setting attributes. This gives the developer more freedom in how to express style information.
+
+Descriptors also play nicely with Mypy, which is aware that attributes can have different types
+when setting and getting.
+"""
+⋮----
+BorderDefinition: TypeAlias = (
+⋮----
+PropertyGetType = TypeVar("PropertyGetType")
+PropertySetType = TypeVar("PropertySetType")
+EnumType = TypeVar("EnumType", covariant=True)
+⋮----
+class GenericProperty(Generic[PropertyGetType, PropertySetType])
+⋮----
+"""Descriptor that abstracts away common machinery for other style descriptors.
+
+    Args:
+        default: The default value (or a factory thereof) of the property.
+        layout: Whether to refresh the node layout on value change.
+        refresh_children: Whether to refresh the node children on value change.
+    """
+⋮----
+def validate_value(self, value: object) -> PropertyGetType
+⋮----
+"""Validate the setter value.
+
+        Args:
+            value: The value being set.
+
+        Returns:
+            The value to be set.
+        """
+# Raise StyleValueError here
+⋮----
+def __set_name__(self, owner: StylesBase, name: str) -> None
+⋮----
+return obj.get_rule(self.name, self.default)  # type: ignore[return-value]
+⋮----
+def __set__(self, obj: StylesBase, value: PropertySetType | None) -> None
+⋮----
+_rich_traceback_omit = True
+⋮----
+new_value = self.validate_value(value)
+⋮----
+class IntegerProperty(GenericProperty[int, int])
+⋮----
+def validate_value(self, value: object) -> int
+⋮----
+class BooleanProperty(GenericProperty[bool, bool])
+⋮----
+"""A property that requires a True or False value."""
+⋮----
+def validate_value(self, value: object) -> bool
+⋮----
+class ScalarProperty
+⋮----
+"""Descriptor for getting and setting scalar properties. Scalars are numeric values with a unit, e.g. "50vh"."""
+⋮----
+"""Get the scalar property.
+
+        Args:
+            obj: The ``Styles`` object.
+            objtype: The ``Styles`` class.
+
+        Returns:
+            The Scalar object or ``None`` if it's not set.
+        """
+return obj.get_rule(self.name)  # type: ignore[return-value]
+⋮----
+"""Set the scalar property.
+
+        Args:
+            obj: The ``Styles`` object.
+            value: The value to set the scalar property to.
+                You can directly pass a float or int value, which will be interpreted with
+                a default unit of Cells. You may also provide a string such as ``"50%"``,
+                as you might do when writing CSS. If a string with no units is supplied,
+                Cells will be used as the unit. Alternatively, you can directly supply
+                a ``Scalar`` object.
+
+        Raises:
+            StyleValueError: If the value is of an invalid type, uses an invalid unit, or
+                cannot be parsed for any other reason.
+        """
+⋮----
+new_value = Scalar(float(value), Unit.CELLS, Unit.WIDTH)
+⋮----
+new_value = value
+⋮----
+new_value = Scalar.parse(value)
+⋮----
+new_value = Scalar(
+⋮----
+class ScalarListProperty
+⋮----
+"""Descriptor for lists of scalars.
+
+    Args:
+        percent_unit: The dimension to which percentage scalars will be relative to.
+        refresh_children: Whether to refresh the node children on value change.
+    """
+⋮----
+def __init__(self, percent_unit: Unit, refresh_children: bool = False) -> None
+⋮----
+parse_values: Iterable[str | float]
+⋮----
+parse_values = value.split()
+⋮----
+parse_values = value
+⋮----
+scalars = []
+⋮----
+class BoxProperty
+⋮----
+"""Descriptor for getting and setting outlines and borders along a single edge.
+    For example "border-right", "outline-bottom", etc.
+    """
+⋮----
+def __init__(self, default_color: Color) -> None
+⋮----
+"""Get the box property.
+
+        Args:
+            obj: The ``Styles`` object.
+            objtype: The ``Styles`` class.
+
+        Returns:
+            A ``tuple[EdgeType, Style]`` containing the string type of the box and
+                its style. Example types are "round", "solid", and "dashed".
+        """
+return obj.get_rule(self.name) or ("", self._default_color)  # type: ignore[return-value]
+⋮----
+"""Set the box property.
+
+        Args:
+            obj: The ``Styles`` object.
+            value: A 2-tuple containing the type of box to use,
+                e.g. "dashed", and the ``Style`` to be used. You can supply the ``Style`` directly, or pass a
+                ``str`` (e.g. ``"blue on #f0f0f0"`` ) or ``Color`` instead.
+
+        Raises:
+            StyleValueError: If the string supplied for the color is not a valid color.
+        """
+⋮----
+_type = ""
+new_value = border
+⋮----
+new_value = (_type, Color.parse(color))
+⋮----
+new_value = (_type, color)
+current_value: tuple[str, Color] = cast(
+has_edge = bool(current_value and current_value[0])
+new_edge = bool(_type)
+⋮----
+@rich.repr.auto
+class Edges(NamedTuple)
+⋮----
+"""Stores edges for border / outline."""
+⋮----
+top: tuple[EdgeType, Color]
+right: tuple[EdgeType, Color]
+bottom: tuple[EdgeType, Color]
+left: tuple[EdgeType, Color]
+⋮----
+def __bool__(self) -> bool
+⋮----
+def __rich_repr__(self) -> rich.repr.Result
+⋮----
+@property
+    def spacing(self) -> Spacing
+⋮----
+"""Get spacing created by borders.
+
+        Returns:
+            Spacing for top, right, bottom, and left.
+        """
+⋮----
+class BorderProperty
+⋮----
+"""Descriptor for getting and setting full borders and outlines.
+
+    Args:
+        layout: True if the layout should be refreshed after setting, False otherwise.
+    """
+⋮----
+def __init__(self, layout: bool) -> None
+⋮----
+"""Get the border.
+
+        Args:
+            obj: The ``Styles`` object.
+            objtype: The ``Styles`` class.
+
+        Returns:
+            An ``Edges`` object describing the type and style of each edge.
+        """
+⋮----
+"""Set the border.
+
+        Args:
+            obj: The ``Styles`` object.
+            border:
+                A ``tuple[EdgeType, str | Color | Style]`` representing the type of box to use and the ``Style`` to apply
+                to the box.
+                Alternatively, you can supply a sequence of these tuples and they will be applied per-edge.
+                If the sequence is of length 1, all edges will be decorated according to the single element.
+                If the sequence is length 2, the first ``tuple`` will be applied to the top and bottom edges.
+                If the sequence is length 4, the tuples will be applied to the edges in the order: top, right, bottom, left.
+
+        Raises:
+            StyleValueError: When the supplied ``tuple`` is not of valid length (1, 2, or 4).
+        """
+⋮----
+border_spacing = Edges(*self._get_properties(obj)).spacing
+⋮----
+def check_refresh() -> None
+⋮----
+"""Check if an update requires a layout"""
+⋮----
+layout = Edges(*self._get_properties(obj)).spacing != border_spacing
+⋮----
+clear_rule = obj.clear_rule
+⋮----
+set_rule = obj.set_rule
+get_rule = obj.get_rule
+⋮----
+_border = normalize_border_value(border)  # type: ignore
+⋮----
+count = len(border)
+⋮----
+_border = normalize_border_value(border[0])  # type: ignore
+⋮----
+normalize_border_value(border[0]),  # type: ignore
+normalize_border_value(border[1]),  # type: ignore
+⋮----
+normalize_border_value(border[2]),  # type: ignore
+normalize_border_value(border[3]),  # type: ignore
+⋮----
+class KeylineProperty
+⋮----
+"""Descriptor for getting and setting keyline information."""
+⋮----
+return obj.get_rule("keyline", ("none", TRANSPARENT))  # type: ignore[return-value]
+⋮----
+def __set__(self, obj: StylesBase, keyline: tuple[str, Color] | None)
+⋮----
+class SpacingProperty
+⋮----
+"""Descriptor for getting and setting spacing properties (e.g. padding and margin)."""
+⋮----
+"""Get the Spacing.
+
+        Args:
+            obj: The ``Styles`` object.
+            objtype: The ``Styles`` class.
+
+        Returns:
+            The Spacing. If unset, returns the null spacing ``(0, 0, 0, 0)``.
+        """
+return obj.get_rule(self.name, NULL_SPACING)  # type: ignore[return-value]
+⋮----
+def __set__(self, obj: StylesBase, spacing: SpacingDimensions | None)
+⋮----
+"""Set the Spacing.
+
+        Args:
+            obj: The ``Styles`` object.
+            style: You can supply the ``Style`` directly, or a
+                string (e.g. ``"blue on #f0f0f0"``).
+
+        Raises:
+            ValueError: When the value is malformed,
+                e.g. a ``tuple`` with a length that is not 1, 2, or 4.
+        """
+⋮----
+unpacked_spacing = Spacing.unpack(spacing)
+⋮----
+class DockProperty
+⋮----
+"""Descriptor for getting and setting the dock property. The dock property
+    allows you to specify which edge you want to fix a Widget to.
+    """
+⋮----
+"""Get the Dock property.
+
+        Args:
+            obj: The ``Styles`` object.
+            objtype: The ``Styles`` class.
+
+        Returns:
+            The edge name as a string. Returns "none" if unset or if "none" has been explicitly set.
+        """
+return obj.get_rule("dock", "none")  # type: ignore[return-value]
+⋮----
+def __set__(self, obj: StylesBase, dock_name: str)
+⋮----
+"""Set the Dock property.
+
+        Args:
+            obj: The ``Styles`` object.
+            dock_name: The name of the dock to attach this widget to.
+        """
+⋮----
+class SplitProperty
+⋮----
+"""Descriptor for getting and setting the split property.
+    The split property allows you to specify which edge you want to split.
+    """
+⋮----
+"""Get the Split property.
+
+        Args:
+            obj: The ``Styles`` object.
+            objtype: The ``Styles`` class.
+
+        Returns:
+            The edge name as a string. Returns "none" if unset or if "none" has been explicitly set.
+        """
+return obj.get_rule("split", "none")  # type: ignore[return-value]
+⋮----
+class LayoutProperty
+⋮----
+"""Descriptor for getting and setting layout."""
+⋮----
+"""
+        Args:
+            obj: The Styles object.
+            objtype: The Styles class.
+
+        Returns:
+            The `Layout` object.
+        """
+⋮----
+def __set__(self, obj: StylesBase, layout: str | Layout | None)
+⋮----
+"""
+        Args:
+            obj: The Styles object.
+            layout: The layout to use. You can supply the name of the layout
+                or a `Layout` object.
+        """
+⋮----
+from textual.layouts.factory import Layout  # Prevents circular import
+⋮----
+layout = layout.name
+⋮----
+layout_object = get_layout(layout)
+⋮----
+class OffsetProperty
+⋮----
+"""Descriptor for getting and setting the offset property.
+    Offset consists of two values, x and y, that a widget's position
+    will be adjusted by before it is rendered.
+    """
+⋮----
+"""Get the offset.
+
+        Args:
+            obj: The ``Styles`` object.
+            objtype: The ``Styles`` class.
+
+        Returns:
+            The ``ScalarOffset`` indicating the adjustment that
+                will be made to widget position prior to it being rendered.
+        """
+return obj.get_rule(self.name, NULL_SCALAR)  # type: ignore[return-value]
+⋮----
+"""Set the offset.
+
+        Args:
+            obj: The ``Styles`` class.
+            offset: A ScalarOffset object, or a 2-tuple of the form ``(x, y)`` indicating
+                the x and y offsets. When the ``tuple`` form is used, x and y can be specified
+                as either ``int`` or ``str``. The string format allows you to also specify
+                any valid scalar unit e.g. ``("0.5vw", "0.5vh")``.
+
+        Raises:
+            ScalarParseError: If any of the string values supplied in the 2-tuple cannot
+                be parsed into a Scalar. For example, if you specify a non-existent unit.
+        """
+⋮----
+scalar_x = (
+scalar_y = (
+⋮----
+_offset = ScalarOffset(scalar_x, scalar_y)
+⋮----
+class StringEnumProperty(Generic[EnumType])
+⋮----
+"""Descriptor for getting and setting string properties and ensuring that the set
+    value belongs in the set of valid values.
+
+    Args:
+        valid_values: The set of valid values that the descriptor can take.
+        default: The default value (or a factory thereof) of the property.
+        layout: Whether to refresh the node layout on value change.
+        refresh_children: Whether to refresh the node children on value change.
+        display: Does this property change display?
+    """
+⋮----
+"""Get the string property, or the default value if it's not set.
+
+        Args:
+            obj: The `Styles` object.
+            objtype: The `Styles` class.
+
+        Returns:
+            The string property value.
+        """
+return obj.get_rule(self.name, self._default)  # type: ignore
+⋮----
+def _before_refresh(self, obj: StylesBase, value: str | None) -> None
+⋮----
+"""Do any housekeeping before asking for a layout refresh after a value change."""
+⋮----
+def __set__(self, obj: StylesBase, value: EnumType | None = None)
+⋮----
+"""Set the string property and ensure it is in the set of allowed values.
+
+        Args:
+            obj: The `Styles` object.
+            value: The string value to set the property to.
+
+        Raises:
+            StyleValueError: If the value is not in the set of valid values.
+        """
+⋮----
+node = obj.node
+⋮----
+class OverflowProperty(StringEnumProperty)
+⋮----
+"""Descriptor for overflow styles that forces widgets to refresh scrollbars."""
+⋮----
+from textual.widget import Widget  # Avoid circular import
+⋮----
+class NameProperty
+⋮----
+"""Descriptor for getting and setting name properties."""
+⋮----
+def __get__(self, obj: StylesBase, objtype: type[StylesBase] | None) -> str
+⋮----
+"""Get the name property.
+
+        Args:
+            obj: The ``Styles`` object.
+            objtype: The ``Styles`` class.
+
+        Returns:
+            The name.
+        """
+return obj.get_rule(self.name, "")  # type: ignore[return-value]
+⋮----
+def __set__(self, obj: StylesBase, name: str | None)
+⋮----
+"""Set the name property.
+
+        Args:
+            obj: The ``Styles`` object.
+            name: The name to set the property to.
+
+        Raises:
+            StyleTypeError: If the value is not a ``str``.
+        """
+⋮----
+class NameListProperty
+⋮----
+return obj.get_rule(self.name, ())  # type: ignore[return-value]
+⋮----
+def __set__(self, obj: StylesBase, names: str | tuple[str] | None = None)
+⋮----
+class ColorProperty
+⋮----
+"""Descriptor for getting and setting color properties."""
+⋮----
+def __init__(self, default_color: Color | str) -> None
+⋮----
+"""Get a ``Color``.
+
+        Args:
+            obj: The ``Styles`` object.
+            objtype: The ``Styles`` class.
+
+        Returns:
+            The Color.
+        """
+return obj.get_rule(self.name, self._default_color)  # type: ignore[return-value]
+⋮----
+def __set__(self, obj: StylesBase, color: Color | str | None) -> None
+⋮----
+"""Set the Color.
+
+        Args:
+            obj: The ``Styles`` object.
+            color: The color to set. Pass a ``Color`` instance directly,
+                or pass a ``str`` which will be parsed into a color (e.g. ``"red""``, ``"rgb(20, 50, 80)"``,
+                ``"#f4e32d"``).
+
+        Raises:
+            ColorParseError: When the color string is invalid.
+        """
+⋮----
+alpha = 1.0
+parsed_color = Color(255, 255, 255)
+⋮----
+alpha = percentage_string_to_float(token)
+⋮----
+parsed_color = Color.parse(token)
+⋮----
+parsed_color = parsed_color.multiply_alpha(alpha)
+⋮----
+class ScrollbarColorProperty(ColorProperty)
+⋮----
+"""A descriptor to set scrollbar color(s)."""
+⋮----
+widget = obj.node
+⋮----
+class StyleFlagsProperty
+⋮----
+"""Descriptor for getting and set style flag properties (e.g. ``bold italic underline``)."""
+⋮----
+"""Get the ``Style``.
+
+        Args:
+            obj: The ``Styles`` object.
+            objtype: The ``Styles`` class.
+
+        Returns:
+            The ``Style`` object.
+        """
+return obj.get_rule(self.name, Style.null())  # type: ignore[return-value]
+⋮----
+def __set__(self, obj: StylesBase, style_flags: Style | str | None) -> None
+⋮----
+"""Set the style using a style flag string.
+
+        Args:
+            obj: The ``Styles`` object.
+            style_flags: The style flags to set as a string. For example,
+                ``"bold italic"``.
+
+        Raises:
+            StyleValueError: If the value is an invalid style flag.
+        """
+⋮----
+words = [word.strip() for word in style_flags.split(" ")]
+valid_word = VALID_STYLE_FLAGS.__contains__
+⋮----
+style = Style.parse(style_flags)
+⋮----
+class TransitionsProperty
+⋮----
+"""Descriptor for getting transitions properties"""
+⋮----
+"""Get a mapping of properties to the transitions applied to them.
+
+        Args:
+            obj: The ``Styles`` object.
+            objtype: The ``Styles`` class.
+
+        Returns:
+            A ``dict`` mapping property names to the ``Transition`` applied to them.
+                e.g. ``{"offset": Transition(...), ...}``. If no transitions have been set, an empty ``dict``
+                is returned.
+        """
+return obj.get_rule("transitions", {})  # type: ignore[return-value]
+⋮----
+class FractionalProperty
+⋮----
+"""Property that can be set either as a float (e.g. 0.1) or a
+    string percentage (e.g. '10%'). Values will be clamped to the range (0, 1).
+    """
+⋮----
+def __init__(self, default: float = 1.0, children: bool = False)
+⋮----
+"""
+        Args:
+            default: Default value if the rule wasn't explicitly set.
+            children: If `True`, then updating this value will also refresh children.
+                Otherwise only this widget will be refreshed.
+        """
+⋮----
+def __get__(self, obj: StylesBase, type: type[StylesBase]) -> float
+⋮----
+"""Get the property value as a float between 0 and 1.
+
+        Args:
+            obj: The ``Styles`` object.
+            objtype: The ``Styles`` class.
+
+        Returns:
+            The value of the property (in the range (0, 1)).
+        """
+⋮----
+def __set__(self, obj: StylesBase, value: float | str | None) -> None
+⋮----
+"""Set the property value, clamping it between 0 and 1.
+
+        Args:
+            obj: The Styles object.
+            value: The value to set as a float between 0 and 1, or
+                as a percentage string such as '10%'.
+        """
+⋮----
+name = self.name
+⋮----
+float_value = float(value)
+⋮----
+float_value = float(Scalar.parse(value).value) / 100
+⋮----
+class AlignProperty
+⋮----
+"""Combines the horizontal and vertical alignment properties into a single property."""
+⋮----
+horizontal = getattr(obj, self.horizontal)
+vertical = getattr(obj, self.vertical)
+⋮----
+class HatchProperty
+⋮----
+"""Property to expose hatch style."""
+⋮----
+return obj.get_rule("hatch")  # type: ignore[return-value]
+⋮----
+hatch = "none"
+⋮----
+character = HATCHES[character]
+⋮----
+color = Color.parse(color)
+hatch = (character, color)
+</file>
+
+<file path="src/textual/css/_styles_builder.py">
+class StylesBuilder
+⋮----
+"""
+    The StylesBuilder object takes tokens parsed from the CSS and converts
+    to the appropriate internal types.
+    """
+⋮----
+def __init__(self) -> None
+⋮----
+def __rich_repr__(self) -> rich.repr.Result
+⋮----
+def __repr__(self) -> str
+⋮----
+def error(self, name: str, token: Token, message: str | HelpText) -> NoReturn
+⋮----
+def add_declaration(self, declaration: Declaration) -> None
+⋮----
+rule_name = declaration.name.replace("-", "_")
+⋮----
+process_method = getattr(self, f"process_{rule_name}", None)
+⋮----
+suggested_property_name = self._get_suggested_property_name_for_rule(
+⋮----
+tokens = declaration.tokens
+⋮----
+important = tokens[-1].name == "important"
+⋮----
+tokens = tokens[:-1]
+⋮----
+# Check for special token(s)
+⋮----
+value = tokens[0].value
+⋮----
+"""Generic code to process a declaration with two enumerations, like overflow: auto auto"""
+⋮----
+results: list[str] = []
+append = results.append
+⋮----
+short_results = results[:]
+⋮----
+results = results[:count]
+⋮----
+"""Process a declaration that expects an enum.
+
+        Args:
+            name: Name of declaration.
+            tokens: Tokens from parser.
+            valid_values: A set of valid values.
+
+        Returns:
+            True if the value is valid or False if it is invalid (also generates an error)
+        """
+⋮----
+token = tokens[0]
+⋮----
+def process_display(self, name: str, tokens: list[Token]) -> None
+⋮----
+value = value.lower()
+⋮----
+def _process_scalar(self, name: str, tokens: list[Token]) -> None
+⋮----
+def scalar_error()
+⋮----
+self.styles._rules[name.replace("-", "_")] = Scalar.parse(  # type: ignore
+⋮----
+def _distribute_importance(self, prefix: str, suffixes: tuple[str, ...]) -> None
+⋮----
+"""Distribute importance amongst all aspects of the given style.
+
+        Args:
+            prefix: The prefix of the style.
+            suffixes: The suffixes to distribute amongst.
+
+        A number of styles can be set with the 'prefix' of the style,
+        providing the values as a series of parameters; or they can be set
+        with specific suffixes. Think `border` vs `border-left`, etc. This
+        method is used to ensure that if the former is set, `!important` is
+        distributed amongst all the suffixes.
+        """
+⋮----
+def process_box_sizing(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_width(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_height(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_min_width(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_min_height(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_max_width(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_max_height(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_overflow(self, name: str, tokens: list[Token]) -> None
+⋮----
+rules = self.styles._rules
+⋮----
+def process_overflow_x(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_overflow_y(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_visibility(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_text_wrap(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_text_overflow(self, name: str, tokens: list[Token]) -> None
+⋮----
+def _process_fractional(self, name: str, tokens: list[Token]) -> None
+⋮----
+error = False
+⋮----
+error = True
+⋮----
+token_name = token.name
+value = token.value
+rule_name = name.replace("-", "_")
+⋮----
+text_opacity = percentage_string_to_float(value)
+⋮----
+text_opacity = clamp(float(value), 0, 1)
+⋮----
+process_opacity = _process_fractional
+process_text_opacity = _process_fractional
+⋮----
+def _process_space(self, name: str, tokens: list[Token]) -> None
+⋮----
+space: list[int] = []
+append = space.append
+⋮----
+self.styles._rules[name] = Spacing.unpack(cast(SpacingDimensions, tuple(space)))  # type: ignore
+⋮----
+def _process_space_partial(self, name: str, tokens: list[Token]) -> None
+⋮----
+"""Process granular margin / padding declarations."""
+⋮----
+_EDGE_SPACING_MAP = {"top": 0, "right": 1, "bottom": 2, "left": 3}
+⋮----
+space = int(value)
+⋮----
+current_spacing = cast(
+⋮----
+spacing_list = list(current_spacing)
+⋮----
+self.styles._rules[style_name] = Spacing(*spacing_list)  # type: ignore
+⋮----
+process_padding = _process_space
+process_margin = _process_space
+⋮----
+process_margin_top = _process_space_partial
+process_margin_right = _process_space_partial
+process_margin_bottom = _process_space_partial
+process_margin_left = _process_space_partial
+⋮----
+process_padding_top = _process_space_partial
+process_padding_right = _process_space_partial
+process_padding_bottom = _process_space_partial
+process_padding_left = _process_space_partial
+⋮----
+def _parse_border(self, name: str, tokens: list[Token]) -> BorderValue
+⋮----
+border_type: EdgeType = "solid"
+border_color = Color(0, 255, 0)
+border_alpha: float | None = None
+⋮----
+def border_value_error()
+⋮----
+border_type = value  # type: ignore
+⋮----
+border_color = Color.parse(value)
+⋮----
+alpha_scalar = Scalar.parse(token.value)
+⋮----
+border_alpha = alpha_scalar.value / 100.0
+⋮----
+border_color = border_color.multiply_alpha(border_alpha)
+⋮----
+def _process_border_edge(self, edge: str, name: str, tokens: list[Token]) -> None
+⋮----
+border = self._parse_border(name, tokens)
+self.styles._rules[f"border_{edge}"] = border  # type: ignore
+⋮----
+def process_border(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_border_top(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_border_right(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_border_bottom(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_border_left(self, name: str, tokens: list[Token]) -> None
+⋮----
+def _process_outline(self, edge: str, name: str, tokens: list[Token]) -> None
+⋮----
+self.styles._rules[f"outline_{edge}"] = border  # type: ignore
+⋮----
+def process_outline(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_outline_top(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_outline_right(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_outline_bottom(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_outline_left(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_keyline(self, name: str, tokens: list[Token]) -> None
+⋮----
+keyline_style = "none"
+keyline_color = Color.parse("green")
+keyline_alpha = 1.0
+⋮----
+keyline_color = Color.parse(token.value)
+⋮----
+keyline_style = token.value
+⋮----
+keyline_alpha = alpha_scalar.value / 100.0
+⋮----
+def process_offset(self, name: str, tokens: list[Token]) -> None
+⋮----
+def offset_error(name: str, token: Token) -> None
+⋮----
+scalar_x = Scalar.parse(token1.value, Unit.WIDTH)
+scalar_y = Scalar.parse(token2.value, Unit.HEIGHT)
+⋮----
+def process_offset_x(self, name: str, tokens: list[Token]) -> None
+⋮----
+x = Scalar.parse(token.value, Unit.WIDTH)
+y = self.styles.offset.y
+⋮----
+def process_offset_y(self, name: str, tokens: list[Token]) -> None
+⋮----
+y = Scalar.parse(token.value, Unit.HEIGHT)
+x = self.styles.offset.x
+⋮----
+def process_position(self, name: str, tokens: list[Token])
+⋮----
+def process_layout(self, name: str, tokens: list[Token]) -> None
+⋮----
+layout_name = value
+⋮----
+def process_color(self, name: str, tokens: list[Token]) -> None
+⋮----
+"""Processes a simple color declaration."""
+name = name.replace("-", "_")
+⋮----
+color: Color | None = None
+alpha: float | None = None
+⋮----
+self.styles._rules[f"auto_{name}"] = False  # type: ignore
+⋮----
+self.styles._rules[f"auto_{name}"] = True  # type: ignore
+⋮----
+alpha = alpha_scalar.value / 100.0
+⋮----
+color = Color.parse(token.value)
+⋮----
+color = (color or Color(255, 255, 255)).multiply_alpha(alpha)
+self.styles._rules[name] = color  # type: ignore
+⋮----
+process_tint = process_color
+process_background = process_color
+process_background_tint = process_color
+process_scrollbar_color = process_color
+process_scrollbar_color_hover = process_color
+process_scrollbar_color_active = process_color
+process_scrollbar_corner_color = process_color
+process_scrollbar_background = process_color
+process_scrollbar_background_hover = process_color
+process_scrollbar_background_active = process_color
+⋮----
+def process_scrollbar_visibility(self, name: str, tokens: list[Token]) -> None
+⋮----
+"""Process scrollbar visibility rules."""
+⋮----
+process_link_color = process_color
+process_link_background = process_color
+process_link_color_hover = process_color
+process_link_background_hover = process_color
+⋮----
+process_border_title_color = process_color
+process_border_title_background = process_color
+process_border_subtitle_color = process_color
+process_border_subtitle_background = process_color
+⋮----
+def process_text_style(self, name: str, tokens: list[Token]) -> None
+⋮----
+style_definition = " ".join(token.value for token in tokens)
+self.styles._rules[name.replace("-", "_")] = style_definition  # type: ignore
+⋮----
+process_link_style = process_text_style
+process_link_style_hover = process_text_style
+⋮----
+process_border_title_style = process_text_style
+process_border_subtitle_style = process_text_style
+⋮----
+def process_text_align(self, name: str, tokens: list[Token]) -> None
+⋮----
+"""Process a text-align declaration"""
+⋮----
+self.styles._rules["text_align"] = tokens[0].value  # type: ignore
+⋮----
+def process_dock(self, name: str, tokens: list[Token]) -> None
+⋮----
+dock_value = tokens[0].value
+⋮----
+def process_split(self, name: str, tokens: list[Token]) -> None
+⋮----
+split_value = tokens[0].value
+⋮----
+def process_layer(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_layers(self, name: str, tokens: list[Token]) -> None
+⋮----
+layers: list[str] = []
+⋮----
+def process_transition(self, name: str, tokens: list[Token]) -> None
+⋮----
+transitions: dict[str, Transition] = {}
+⋮----
+def make_groups() -> Iterable[list[Token]]
+⋮----
+"""Batch tokens into comma-separated groups."""
+group: list[Token] = []
+⋮----
+group = []
+⋮----
+valid_duration_token_names = ("duration", "number")
+⋮----
+css_property = ""
+duration = 1.0
+easing = "linear"
+delay = 0.0
+⋮----
+iter_tokens = iter(tokens)
+token = next(iter_tokens)
+⋮----
+css_property = token.value
+⋮----
+duration = _duration_as_seconds(token.value)
+⋮----
+easing = token.value
+⋮----
+delay = _duration_as_seconds(token.value)
+⋮----
+def process_align(self, name: str, tokens: list[Token]) -> None
+⋮----
+def align_error(name, token)
+⋮----
+token_horizontal = tokens[0]
+token_vertical = tokens[1]
+⋮----
+self.styles._rules[f"{name}_horizontal"] = token_horizontal.value  # type: ignore
+self.styles._rules[f"{name}_vertical"] = token_vertical.value  # type: ignore
+⋮----
+def process_align_horizontal(self, name: str, tokens: list[Token]) -> None
+⋮----
+value = self._process_enum(name, tokens, VALID_ALIGN_HORIZONTAL)
+⋮----
+self.styles._rules[name.replace("-", "_")] = value  # type: ignore
+⋮----
+def process_align_vertical(self, name: str, tokens: list[Token]) -> None
+⋮----
+value = self._process_enum(name, tokens, VALID_ALIGN_VERTICAL)
+⋮----
+process_content_align = process_align
+process_content_align_horizontal = process_align_horizontal
+process_content_align_vertical = process_align_vertical
+⋮----
+process_border_title_align = process_align_horizontal
+process_border_subtitle_align = process_align_horizontal
+⋮----
+def process_scrollbar_gutter(self, name: str, tokens: list[Token]) -> None
+⋮----
+value = self._process_enum(name, tokens, VALID_SCROLLBAR_GUTTER)
+⋮----
+def process_scrollbar_size(self, name: str, tokens: list[Token]) -> None
+⋮----
+def scrollbar_size_error(name: str, token: Token) -> None
+⋮----
+horizontal = int(token1.value)
+vertical = int(token2.value)
+⋮----
+def process_scrollbar_size_vertical(self, name: str, tokens: list[Token]) -> None
+⋮----
+value = int(token.value)
+⋮----
+def process_scrollbar_size_horizontal(self, name: str, tokens: list[Token]) -> None
+⋮----
+def _process_grid_rows_or_columns(self, name: str, tokens: list[Token]) -> None
+⋮----
+scalars: list[Scalar] = []
+percent_unit = Unit.WIDTH if name == "grid-columns" else Unit.HEIGHT
+⋮----
+self.styles._rules[name.replace("-", "_")] = scalars  # type: ignore
+⋮----
+process_grid_rows = _process_grid_rows_or_columns
+process_grid_columns = _process_grid_rows_or_columns
+⋮----
+def _process_integer(self, name: str, tokens: list[Token]) -> None
+⋮----
+process_grid_gutter_horizontal = _process_integer
+process_grid_gutter_vertical = _process_integer
+process_column_span = _process_integer
+process_row_span = _process_integer
+process_grid_size_columns = _process_integer
+process_grid_size_rows = _process_integer
+process_line_pad = _process_integer
+⋮----
+def process_grid_gutter(self, name: str, tokens: list[Token]) -> None
+⋮----
+value = max(0, int(token.value))
+⋮----
+token = tokens[1]
+⋮----
+def process_grid_size(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_overlay(self, name: str, tokens: list[Token]) -> None
+⋮----
+value = self._process_enum(name, tokens, VALID_OVERLAY)
+⋮----
+self.styles._rules[name] = value  # type: ignore
+⋮----
+def process_constrain(self, name: str, tokens: list[Token]) -> None
+⋮----
+value = self._process_enum(name, tokens, VALID_CONSTRAIN)
+⋮----
+self.styles._rules["constrain_x"] = value  # type: ignore
+self.styles._rules["constrain_y"] = value  # type: ignore
+⋮----
+self.styles._rules["constrain_x"] = constrain_x  # type: ignore
+self.styles._rules["constrain_y"] = constrain_y  # type: ignore
+⋮----
+def process_constrain_x(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_constrain_y(self, name: str, tokens: list[Token]) -> None
+⋮----
+def process_hatch(self, name: str, tokens: list[Token]) -> None
+⋮----
+character: str | None = None
+color = TRANSPARENT
+opacity = 1.0
+⋮----
+character = HATCHES[character_token.value]
+⋮----
+character = character_token.value[1:-1]
+⋮----
+color = Color.parse(color_token.value)
+⋮----
+opacity_token = opacity_tokens[0]
+⋮----
+opacity_scalar = opacity = Scalar.parse(opacity_token.value)
+⋮----
+opacity = clamp(opacity_scalar.value / 100.0, 0, 1.0)
+⋮----
+def process_expand(self, name: str, tokens: list[Token])
+⋮----
+def process_pointer(self, name: str, tokens: list[Token]) -> None
+⋮----
+def _get_suggested_property_name_for_rule(self, rule_name: str) -> str | None
+⋮----
+"""
+        Returns a valid CSS property "Python" name, or None if no close matches could be found.
+
+        Args:
+            rule_name: An invalid "Python-ised" CSS property (i.e. "offst_x" rather than "offst-x")
+
+        Returns:
+            The closest valid "Python-ised" CSS property.
+                Returns `None` if no close matches could be found.
+
+        Example: returns "background" for rule_name "bkgrund", "offset_x" for "ofset_x"
+        """
+processable_rules_name = [
+</file>
+
+<file path="src/textual/css/constants.py">
+VALID_VISIBILITY: Final = {"visible", "hidden"}
+VALID_DISPLAY: Final = {"block", "none"}
+VALID_BORDER: Final = {
+VALID_EDGE: Final = {"top", "right", "bottom", "left", "none"}
+VALID_LAYOUT: Final = {"vertical", "horizontal", "grid", "stream"}
+⋮----
+VALID_BOX_SIZING: Final = {"border-box", "content-box"}
+VALID_OVERFLOW: Final = {"scroll", "hidden", "auto"}
+VALID_ALIGN_HORIZONTAL: Final = {"left", "center", "right"}
+VALID_ALIGN_VERTICAL: Final = {"top", "middle", "bottom"}
+VALID_POSITION: Final = {"relative", "absolute"}
+VALID_TEXT_ALIGN: Final = {
+VALID_SCROLLBAR_GUTTER: Final = {"auto", "stable"}
+VALID_STYLE_FLAGS: Final = {
+VALID_PSEUDO_CLASSES: Final = {
+VALID_OVERLAY: Final = {"none", "screen"}
+VALID_CONSTRAIN: Final = {"inflect", "inside", "none"}
+VALID_KEYLINE: Final = {"none", "thin", "heavy", "double"}
+VALID_HATCH: Final = {"left", "right", "cross", "vertical", "horizontal"}
+VALID_TEXT_WRAP: Final = {"wrap", "nowrap"}
+VALID_TEXT_OVERFLOW: Final = {"clip", "fold", "ellipsis"}
+VALID_EXPAND: Final = {"greedy", "optimal"}
+VALID_SCROLLBAR_VISIBILITY: Final = {"visible", "hidden"}
+VALID_POINTER: Final = {
+⋮----
+HATCHES: Final = {
+</file>
+
+<file path="src/textual/css/errors.py">
+class DeclarationError(Exception)
+⋮----
+def __init__(self, name: str, token: Token, message: str | HelpText) -> None
+⋮----
+class StyleTypeError(TypeError)
+⋮----
+class UnresolvedVariableError(TokenError)
+⋮----
+class StyleValueError(ValueError)
+⋮----
+"""Raised when the value of a style property is not valid
+
+    Attributes:
+        help_text: Optional HelpText to be rendered when this
+            error is raised.
+    """
+⋮----
+def __init__(self, *args: object, help_text: HelpText | None = None)
+⋮----
+class StylesheetError(Exception)
+</file>
+
+<file path="src/textual/css/match.py">
+def match(selector_sets: Iterable[SelectorSet], node: DOMNode) -> bool
+⋮----
+"""Check if a given node matches any of the given selector sets.
+
+    Args:
+        selector_sets: Iterable of selector sets.
+        node: DOM node.
+
+    Returns:
+        True if the node matches the selector, otherwise False.
+    """
+⋮----
+def _check_selectors(selectors: list[Selector], css_path_nodes: list[DOMNode]) -> bool
+⋮----
+"""Match a list of selectors against DOM nodes.
+
+    Args:
+        selectors: A list of selectors.
+        css_path_nodes: The DOM nodes to check the selectors against.
+
+    Returns:
+        True if any node in css_path_nodes matches a selector.
+    """
+⋮----
+DESCENDENT = CombinatorType.DESCENDENT
+⋮----
+node = css_path_nodes[-1]
+path_count = len(css_path_nodes)
+selector_count = len(selectors)
+⋮----
+stack: list[tuple[int, int]] = [(0, 0)]
+⋮----
+push = stack.append
+pop = stack.pop
+selector_index = 0
+⋮----
+path_node = css_path_nodes[node_index]
+selector = selectors[selector_index]
+⋮----
+# Find a matching descendent
+⋮----
+# Match the next node
+</file>
+
+<file path="src/textual/css/model.py">
+class SelectorType(Enum)
+⋮----
+"""Type of selector."""
+⋮----
+UNIVERSAL = 1
+"""i.e. * operator"""
+TYPE = 2
+"""A CSS type, e.g  Label"""
+CLASS = 3
+"""CSS class, e.g. .loaded"""
+ID = 4
+"""CSS ID, e.g. #main"""
+NESTED = 5
+"""Placeholder for nesting operator, i.e &"""
+⋮----
+class CombinatorType(Enum)
+⋮----
+"""Type of combinator."""
+⋮----
+SAME = 1
+"""Selector is combined with previous selector"""
+DESCENDENT = 2
+"""Selector is a descendant of the previous selector"""
+CHILD = 3
+"""Selector is an immediate child of the previous selector"""
+⋮----
+def _check_universal(name: str, node: DOMNode) -> bool
+⋮----
+"""Check node matches universal selector.
+
+    Args:
+        name: Selector name.
+        node: A DOM node.
+
+    Returns:
+        `True` if the selector matches.
+    """
+⋮----
+def _check_type(name: str, node: DOMNode) -> bool
+⋮----
+"""Check node matches a type selector.
+
+    Args:
+        name: Selector name.
+        node: A DOM node.
+
+    Returns:
+        `True` if the selector matches.
+    """
+⋮----
+def _check_class(name: str, node: DOMNode) -> bool
+⋮----
+"""Check node matches a class selector.
+
+    Args:
+        name: Selector name.
+        node: A DOM node.
+
+    Returns:
+        `True` if the selector matches.
+    """
+⋮----
+def _check_id(name: str, node: DOMNode) -> bool
+⋮----
+"""Check node matches an ID selector.
+
+    Args:
+        name: Selector name.
+        node: A DOM node.
+
+    Returns:
+        `True` if the selector matches.
+    """
+⋮----
+_CHECKS = {
+⋮----
+@dataclass
+class Selector
+⋮----
+"""Represents a CSS selector.
+
+    Some examples of selectors:
+
+    *
+    Header.title
+    App > Content
+    """
+⋮----
+name: str
+combinator: CombinatorType = CombinatorType.DESCENDENT
+type: SelectorType = SelectorType.TYPE
+pseudo_classes: set[str] = field(default_factory=set)
+specificity: Specificity3 = field(default_factory=lambda: (0, 0, 0))
+advance: int = 1
+⋮----
+def __post_init__(self) -> None
+⋮----
+@property
+    def css(self) -> str
+⋮----
+"""Rebuilds the selector as it would appear in CSS."""
+pseudo_suffix = "".join(f":{name}" for name in sorted(self.pseudo_classes))
+⋮----
+def _add_pseudo_class(self, pseudo_class: str) -> None
+⋮----
+"""Adds a pseudo class and updates specificity.
+
+        Args:
+            pseudo_class: Name of pseudo class.
+        """
+⋮----
+def check(self, node: DOMNode) -> bool
+⋮----
+"""Check if a given node matches the selector.
+
+        Args:
+            node: A DOM node.
+
+        Returns:
+            True if the selector matches, otherwise False.
+        """
+⋮----
+@dataclass
+class Declaration
+⋮----
+"""A single CSS declaration (not yet processed)."""
+⋮----
+token: Token
+⋮----
+tokens: list[Token] = field(default_factory=list)
+⋮----
+@rich.repr.auto(angular=True)
+@dataclass
+class SelectorSet
+⋮----
+"""A set of selectors associated with a rule set."""
+⋮----
+selectors: list[Selector] = field(default_factory=list)
+specificity: Specificity3 = (0, 0, 0)
+⋮----
+SAME = CombinatorType.SAME
+⋮----
+@property
+    def is_simple(self) -> bool
+⋮----
+"""Are all the selectors simple (i.e. only dependent on static DOM state)."""
+simple_types = {SelectorType.ID, SelectorType.TYPE}
+⋮----
+def __rich_repr__(self) -> rich.repr.Result
+⋮----
+selectors = RuleSet._selector_to_css(self.selectors)
+⋮----
+def _total_specificity(self) -> Self
+⋮----
+"""Calculate total specificity of selectors.
+
+        Returns:
+            Self.
+        """
+id_total = class_total = type_total = 0
+⋮----
+@classmethod
+    def from_selectors(cls, selectors: list[list[Selector]]) -> Iterable[SelectorSet]
+⋮----
+@dataclass
+class RuleSet
+⋮----
+selector_set: list[SelectorSet] = field(default_factory=list)
+styles: Styles = field(default_factory=Styles)
+errors: list[tuple[Token, str | HelpText]] = field(default_factory=list)
+⋮----
+is_default_rules: bool = False
+tie_breaker: int = 0
+selector_names: set[str] = field(default_factory=set)
+⋮----
+def __hash__(self)
+⋮----
+@classmethod
+    def _selector_to_css(cls, selectors: list[Selector]) -> str
+⋮----
+tokens: list[str] = []
+⋮----
+@property
+    def selectors(self)
+⋮----
+"""Generate the CSS this RuleSet
+
+        Returns:
+            A string containing CSS code.
+        """
+declarations = "\n".join(f"    {line}" for line in self.styles.css_lines)
+css = f"{self.selectors} {{\n{declarations}\n}}"
+⋮----
+def _post_parse(self) -> None
+⋮----
+"""Called after the RuleSet is parsed."""
+# Build a set of the class names that have been updated
+⋮----
+class_type = SelectorType.CLASS
+id_type = SelectorType.ID
+type_type = SelectorType.TYPE
+universal_type = SelectorType.UNIVERSAL
+⋮----
+add_selector = self.selector_names.add
+add_pseudo_classes = self.pseudo_classes.update
+⋮----
+selector = selector_set.selectors[-1]
+selector_type = selector.type
+</file>
+
+<file path="src/textual/css/parse.py">
+SELECTOR_MAP: dict[str, tuple[SelectorType, Specificity3]] = {
+⋮----
+RE_ID_SELECTOR = re.compile("#" + IDENTIFIER)
+⋮----
+@lru_cache(maxsize=128)
+def is_id_selector(selector: str) -> bool
+⋮----
+"""Is the selector a single ID selector, i.e. "#foo"?
+
+    Args:
+        selector: A CSS selector.
+
+    Returns:
+        `True` if the selector is a simple ID selector, otherwise `False`.
+    """
+⋮----
+"""Add specificity tuples together.
+
+    Args:
+        specificity1: Specificity triple.
+        specificity2: Specificity triple.
+
+    Returns:
+        Combined specificity.
+    """
+⋮----
+@lru_cache(maxsize=1024)
+def parse_selectors(css_selectors: str) -> tuple[SelectorSet, ...]
+⋮----
+tokens = iter(tokenize(css_selectors, ("", "")))
+⋮----
+get_selector = SELECTOR_MAP.get
+combinator: CombinatorType | None = CombinatorType.DESCENDENT
+selectors: list[Selector] = []
+rule_selectors: list[list[Selector]] = []
+⋮----
+token = next(tokens, None)
+⋮----
+token_name = token.name
+⋮----
+combinator = CombinatorType.DESCENDENT
+⋮----
+combinator = None
+⋮----
+combinator = CombinatorType.CHILD
+⋮----
+combinator = CombinatorType.SAME
+⋮----
+selector_set = tuple(SelectorSet.from_selectors(rule_selectors))
+⋮----
+styles_builder = StylesBuilder()
+⋮----
+token = next(tokens)
+⋮----
+declaration = Declaration(token, "")
+errors: list[tuple[Token, str | HelpText]] = []
+nested_rules: list[RuleSet] = []
+⋮----
+recursive_parse: list[RuleSet] = list(
+⋮----
+"""Combine lists of selectors together, processing any nesting.
+
+                Args:
+                    selectors1: List of selectors.
+                    selectors2: Second list of selectors.
+
+                Returns:
+                    Combined selectors.
+                """
+⋮----
+final_selector = selectors1[-1]
+nested_selector = selectors2[0]
+merged_selector = dataclasses.replace(
+⋮----
+nested_rule_set = RuleSet(
+⋮----
+rule_set = RuleSet(
+⋮----
+def parse_declarations(css: str, read_from: CSSLocation) -> Styles
+⋮----
+"""Parse declarations and return a Styles object.
+
+    Args:
+        css: String containing CSS.
+        read_from: The location where the CSS was read from.
+
+    Returns:
+        A styles object.
+    """
+⋮----
+tokens = iter(tokenize_declarations(css, read_from))
+⋮----
+declaration: Declaration | None = None
+⋮----
+def _unresolved(variable_name: str, variables: Iterable[str], token: Token) -> NoReturn
+⋮----
+"""Raise a TokenError regarding an unresolved variable.
+
+    Args:
+        variable_name: A variable name.
+        variables: Possible choices used to generate suggestion.
+        token: The Token.
+
+    Raises:
+        UnresolvedVariableError: Always raises a TokenError.
+    """
+message = f"reference to undefined variable '${variable_name}'"
+suggested_variable = get_suggestion(variable_name, list(variables))
+⋮----
+"""Replace variable references with values by substituting variable reference
+    tokens with the tokens representing their values.
+
+    Args:
+        tokens: Iterator of Tokens which may contain tokens
+            with the name "variable_ref".
+
+    Returns:
+        Yields Tokens such that any variable references (tokens where
+            token.name == "variable_ref") have been replaced with the tokens representing
+            the value. In other words, an Iterable of Tokens similar to the original input,
+            but with variables resolved. Substituted tokens will have their referenced_by
+            attribute populated with information about where the tokens are being substituted to.
+    """
+variables: dict[str, list[Token]] = css_variables.copy() if css_variables else {}
+iter_tokens = iter(tokens)
+⋮----
+token = next(iter_tokens, None)
+⋮----
+variable_name = token.value[1:-1]  # Trim the $ and the :, i.e. "$x:" -> "x"
+variable_tokens = variables.setdefault(variable_name, [])
+⋮----
+# Store the tokens for any variable definitions, and substitute
+# any variable references we encounter with them.
+⋮----
+# For variables referring to other variables
+⋮----
+ref_name = token.value[1:]
+⋮----
+reference_tokens = variables[ref_name]
+⋮----
+ref_location = token.location
+ref_length = len(token.value)
+⋮----
+variable_name = token.value[1:]  # Trim the $, so $x -> x
+⋮----
+variable_tokens = variables[variable_name]
+⋮----
+ref_code = token.code
+⋮----
+"""Parse CSS by tokenizing it, performing variable substitution,
+    and generating rule sets from it.
+
+    Args:
+        scope: CSS type name.
+        css: The input CSS.
+        read_from: The source location of the CSS.
+        variables: Substitution variables to substitute tokens for.
+        is_default_rules: True if the rules we're extracting are
+            default (i.e. in Widget.DEFAULT_CSS) rules. False if they're from user defined CSS.
+    """
+reference_tokens = tokenize_values(variables) if variables is not None else {}
+⋮----
+tokens = iter(substitute_references(tokenize(css, read_from), variable_tokens))
+</file>
+
+<file path="src/textual/css/query.py">
+"""
+This module contains the `DOMQuery` class and related objects.
+
+A DOMQuery is a set of DOM nodes returned by [query][textual.dom.DOMNode.query].
+
+The set of nodes may be further refined with [filter][textual.css.query.DOMQuery.filter] and [exclude][textual.css.query.DOMQuery.exclude].
+Additional methods apply actions to all nodes in the query.
+
+!!! info
+
+    If this sounds like JQuery, a (once) popular JS library, it is no coincidence.
+"""
+⋮----
+class QueryError(Exception)
+⋮----
+"""Base class for a query related error."""
+⋮----
+class InvalidQueryFormat(QueryError)
+⋮----
+"""Query did not parse correctly."""
+⋮----
+class NoMatches(QueryError)
+⋮----
+"""No nodes matched the query."""
+⋮----
+class TooManyMatches(QueryError)
+⋮----
+"""Too many nodes matched the query."""
+⋮----
+class WrongType(QueryError)
+⋮----
+"""Query result was not of the correct type."""
+⋮----
+QueryType = TypeVar("QueryType", bound="Widget")
+"""Type variable used to type generic queries."""
+ExpectType = TypeVar("ExpectType")
+"""Type variable used to further restrict queries."""
+⋮----
+@rich.repr.auto(angular=True)
+class DOMQuery(Generic[QueryType])
+⋮----
+__slots__ = ["_node", "_nodes", "_filters", "_excludes", "_deep"]
+⋮----
+"""Initialize a query object.
+
+        !!! warning
+
+            You won't need to construct this manually, as `DOMQuery` objects are returned by [query][textual.dom.DOMNode.query].
+
+        Args:
+            node: A DOM node.
+            filter: Query to filter children in the node.
+            exclude: Query to exclude children in the node.
+            deep: Query should be deep, i.e. recursive.
+            parent: The parent query, if this is the result of filtering another query.
+
+        Raises:
+            InvalidQueryFormat: If the format of the query is invalid.
+        """
+_rich_traceback_omit = True
+⋮----
+# TODO: More helpful errors
+⋮----
+@property
+    def node(self) -> DOMNode
+⋮----
+"""The node being queried."""
+⋮----
+@property
+    def nodes(self) -> list[QueryType]
+⋮----
+"""Lazily evaluate nodes."""
+⋮----
+initial_nodes = list(
+nodes = [
+⋮----
+def __len__(self) -> int
+⋮----
+def __bool__(self) -> bool
+⋮----
+"""True if non-empty, otherwise False."""
+⋮----
+def __iter__(self) -> Iterator[QueryType]
+⋮----
+def __reversed__(self) -> Iterator[QueryType]
+⋮----
+@overload
+        def __getitem__(self, index: int) -> QueryType: ...
+⋮----
+@overload
+        def __getitem__(self, index: slice) -> list[QueryType]: ...
+⋮----
+def __getitem__(self, index: int | slice) -> QueryType | list[QueryType]
+⋮----
+def __rich_repr__(self) -> rich.repr.Result
+⋮----
+def filter(self, selector: str) -> DOMQuery[QueryType]
+⋮----
+"""Filter this set by the given CSS selector.
+
+        Args:
+            selector: A CSS selector.
+
+        Returns:
+            New DOM Query.
+        """
+⋮----
+def exclude(self, selector: str) -> DOMQuery[QueryType]
+⋮----
+"""Exclude nodes that match a given selector.
+
+        Args:
+            selector: A CSS selector.
+
+        Returns:
+            New DOM query.
+        """
+⋮----
+@overload
+        def first(self) -> QueryType: ...
+⋮----
+@overload
+        def first(self, expect_type: type[ExpectType]) -> ExpectType: ...
+⋮----
+"""Get the *first* matching node.
+
+        Args:
+            expect_type: Require matched node is of this type,
+                or None for any type.
+
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If there are no matching nodes in the query.
+
+        Returns:
+            The matching Widget.
+        """
+⋮----
+first = self.nodes[0]
+⋮----
+@overload
+        def only_one(self) -> QueryType: ...
+⋮----
+@overload
+        def only_one(self, expect_type: type[ExpectType]) -> ExpectType: ...
+⋮----
+"""Get the *only* matching node.
+
+        Args:
+            expect_type: Require matched node is of this type,
+                or None for any type.
+
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If no node matches the query.
+            TooManyMatches: If there is more than one matching node in the query.
+
+        Returns:
+            The matching Widget.
+        """
+⋮----
+# Call on first to get the first item. Here we'll use all of the
+# testing and checking it provides.
+the_one: ExpectType | QueryType = (
+⋮----
+# Now see if we can access a subsequent item in the nodes. There
+# should *not* be anything there, so we *should* get an
+# IndexError. We *could* have just checked the length of the
+# query, but the idea here is to do the check as cheaply as
+# possible. "There can be only one!" -- Kurgan et al.
+_ = self.nodes[1]
+⋮----
+# The IndexError was got, that's a good thing in this case. So
+# we return what we found.
+⋮----
+@overload
+        def last(self) -> QueryType: ...
+⋮----
+@overload
+        def last(self, expect_type: type[ExpectType]) -> ExpectType: ...
+⋮----
+"""Get the *last* matching node.
+
+        Args:
+            expect_type: Require matched node is of this type,
+                or None for any type.
+
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If there are no matching nodes in the query.
+
+        Returns:
+            The matching Widget.
+        """
+⋮----
+last = self.nodes[-1]
+⋮----
+@overload
+        def results(self) -> Iterator[QueryType]: ...
+⋮----
+@overload
+        def results(self, filter_type: type[ExpectType]) -> Iterator[ExpectType]: ...
+⋮----
+"""Get query results, optionally filtered by a given type.
+
+        Args:
+            filter_type: A Widget class to filter results,
+                or None for no filter.
+
+        Yields:
+            Iterator[Widget | ExpectType]: An iterator of Widget instances.
+        """
+⋮----
+def set_class(self, add: bool, *class_names: str) -> DOMQuery[QueryType]
+⋮----
+"""Set the given class name(s) according to a condition.
+
+        Args:
+            add: Add the classes if True, otherwise remove them.
+
+        Returns:
+            Self.
+        """
+⋮----
+def set_classes(self, classes: str | Iterable[str]) -> DOMQuery[QueryType]
+⋮----
+"""Set the classes on nodes to exactly the given set.
+
+        Args:
+            classes: A string of space separated classes, or an iterable of class names.
+
+        Returns:
+            Self.
+        """
+⋮----
+class_names = list(classes)
+⋮----
+def add_class(self, *class_names: str) -> DOMQuery[QueryType]
+⋮----
+"""Add the given class name(s) to nodes."""
+⋮----
+def remove_class(self, *class_names: str) -> DOMQuery[QueryType]
+⋮----
+"""Remove the given class names from the nodes."""
+⋮----
+def toggle_class(self, *class_names: str) -> DOMQuery[QueryType]
+⋮----
+"""Toggle the given class names from matched nodes."""
+⋮----
+def remove(self) -> AwaitRemove
+⋮----
+"""Remove matched nodes from the DOM.
+
+        Returns:
+            An awaitable object that waits for the widgets to be removed.
+        """
+app = active_app.get()
+⋮----
+"""Set styles on matched nodes.
+
+        Args:
+            css: CSS declarations to parser, or None.
+        """
+⋮----
+new_styles = parse_declarations(css, read_from=("set_styles", ""))
+⋮----
+"""Refresh matched nodes.
+
+        Args:
+            repaint: Repaint node(s).
+            layout: Layout node(s).
+            recompose: Recompose node(s).
+
+        Returns:
+            Query for chaining.
+        """
+⋮----
+def focus(self) -> DOMQuery[QueryType]
+⋮----
+"""Focus the first matching node that permits focus.
+
+        Returns:
+            Query for chaining.
+        """
+⋮----
+def blur(self) -> DOMQuery[QueryType]
+⋮----
+"""Blur the first matching node that is focused.
+
+        Returns:
+            Query for chaining.
+        """
+focused = self._node.screen.focused
+⋮----
+nodes: list[Widget] = list(self)
+⋮----
+"""Sets common attributes on matched nodes.
+
+        Args:
+            display: Set `display` attribute on nodes, or `None` for no change.
+            visible: Set `visible` attribute on nodes, or `None` for no change.
+            disabled: Set `disabled` attribute on nodes, or `None` for no change.
+            loading: Set `loading` attribute on nodes, or `None` for no change.
+
+        Returns:
+            Query for chaining.
+        """
+</file>
+
+<file path="src/textual/css/scalar_animation.py">
+class ScalarAnimation(Animation)
+⋮----
+size = widget.outer_size
+viewport = widget.app.size
+⋮----
+distance = self.start.get_distance_to(self.destination)
+⋮----
+factor = min(1.0, (time - self.start_time) / self.duration)
+eased_factor = self.easing(factor)
+⋮----
+value = self.start.blend(self.destination, eased_factor)
+⋮----
+value = self.start + (self.destination - self.start) * eased_factor
+current = self.styles.get_rule(self.attribute)
+⋮----
+async def stop(self, complete: bool = True) -> None
+⋮----
+"""Stop the animation.
+
+        Args:
+            complete: Flag to say if the animation should be taken to completion.
+
+        Note:
+            [`on_complete`][Animation.on_complete] will be called regardless
+            of the value provided for `complete`.
+        """
+⋮----
+def __eq__(self, other: object) -> bool
+</file>
+
+<file path="src/textual/css/scalar.py">
+class ScalarError(Exception)
+⋮----
+"""Base class for exceptions raised by the Scalar class."""
+⋮----
+class ScalarResolveError(ScalarError)
+⋮----
+"""Raised for errors resolving scalars (unlikely to occur in practice)."""
+⋮----
+class ScalarParseError(ScalarError)
+⋮----
+"""Raised when a scalar couldn't be parsed from a string."""
+⋮----
+@unique
+class Unit(Enum)
+⋮----
+"""Enumeration of the various units inherited from CSS."""
+⋮----
+CELLS = 1
+FRACTION = 2
+PERCENT = 3
+WIDTH = 4
+HEIGHT = 5
+VIEW_WIDTH = 6
+VIEW_HEIGHT = 7
+AUTO = 8
+⋮----
+UNIT_SYMBOL = {
+⋮----
+SYMBOL_UNIT = {v: k for k, v in UNIT_SYMBOL.items()}
+⋮----
+_MATCH_SCALAR = re.compile(r"^(-?\d+\.?\d*)(fr|%|w|h|vw|vh)?$").match
+_FRACTION_ONE = Fraction(1)
+⋮----
+"""Resolves explicit cell size, i.e. width: 10
+
+    Args:
+        value: Scalar value.
+        size: Size of widget.
+        viewport: Size of viewport.
+        fraction_unit: Size of fraction, i.e. size of 1fr as a Fraction.
+
+    Returns:
+        Resolved unit.
+    """
+⋮----
+"""Resolves a fraction unit i.e. width: 2fr
+
+    Args:
+        value: Scalar value.
+        size: Size of widget.
+        viewport: Size of viewport.
+        fraction_unit: Size of fraction, i.e. size of 1fr as a Fraction.
+
+    Returns:
+        Resolved unit.
+    """
+⋮----
+"""Resolves width unit i.e. width: 50w.
+
+    Args:
+        value: Scalar value.
+        size: Size of widget.
+        viewport: Size of viewport.
+        fraction_unit: Size of fraction, i.e. size of 1fr as a Fraction.
+
+    Returns:
+        Resolved unit.
+    """
+⋮----
+"""Resolves height unit, i.e. height: 12h.
+
+    Args:
+        value: Scalar value.
+        size: Size of widget.
+        viewport: Size of viewport.
+        fraction_unit: Size of fraction, i.e. size of 1fr as a Fraction.
+
+    Returns:
+        Resolved unit.
+    """
+⋮----
+"""Resolves view width unit, i.e. width: 25vw.
+
+    Args:
+        value: Scalar value.
+        size: Size of widget.
+        viewport: Size of viewport.
+        fraction_unit: Size of fraction, i.e. size of 1fr as a Fraction.
+
+    Returns:
+        Resolved unit.
+    """
+⋮----
+"""Resolves view height unit, i.e. height: 25vh.
+
+    Args:
+        value: Scalar value.
+        size: Size of widget.
+        viewport: Size of viewport.
+        fraction_unit: Size of fraction, i.e. size of 1fr as a Fraction.
+
+    Returns:
+        Resolved unit.
+    """
+⋮----
+RESOLVE_MAP = {
+⋮----
+def get_symbols(units: Iterable[Unit]) -> list[str]
+⋮----
+"""Get symbols for an iterable of units.
+
+    Args:
+        units: A number of units.
+
+    Returns:
+        List of symbols.
+    """
+⋮----
+class Scalar(NamedTuple)
+⋮----
+"""A numeric value and a unit."""
+⋮----
+value: float
+unit: Unit
+percent_unit: Unit
+⋮----
+def __str__(self) -> str
+⋮----
+@property
+    def is_cells(self) -> bool
+⋮----
+"""Check if the Scalar is explicit cells."""
+⋮----
+@property
+    def is_percent(self) -> bool
+⋮----
+"""Check if the Scalar is a percentage unit."""
+⋮----
+@property
+    def is_fraction(self) -> bool
+⋮----
+"""Check if the unit is a fraction."""
+⋮----
+@property
+    def cells(self) -> int | None
+⋮----
+"""Check if the unit is explicit cells."""
+⋮----
+@property
+    def fraction(self) -> int | None
+⋮----
+"""Get the fraction value, or None if not a value."""
+⋮----
+@property
+    def symbol(self) -> str
+⋮----
+"""Get the symbol of this unit."""
+⋮----
+@property
+    def is_auto(self) -> bool
+⋮----
+"""Check if this is an auto unit."""
+⋮----
+@classmethod
+    def from_number(cls, value: float) -> Scalar
+⋮----
+"""Create a scalar with cells unit.
+
+        Args:
+            value: A number of cells.
+
+        Returns:
+            New Scalar.
+        """
+⋮----
+@classmethod
+@lru_cache(maxsize=1024)
+    def parse(cls, token: str, percent_unit: Unit = Unit.WIDTH) -> Scalar
+⋮----
+"""Parse a string into a Scalar
+
+        Args:
+            token: A string containing a scalar, e.g. "3.14fr"
+
+        Raises:
+            ScalarParseError: If the value is not a valid scalar
+
+        Returns:
+            New scalar
+        """
+⋮----
+scalar = cls(1.0, Unit.AUTO, Unit.AUTO)
+⋮----
+match = _MATCH_SCALAR(token)
+⋮----
+scalar = cls(float(value), SYMBOL_UNIT[unit_name or ""], percent_unit)
+⋮----
+"""Resolve scalar with units into a dimensions.
+
+        Args:
+            size: Size of the container.
+            viewport: Size of the viewport (typically terminal size)
+
+        Raises:
+            ScalarResolveError: If the unit is unknown.
+
+        Returns:
+            A size (in cells)
+        """
+⋮----
+unit = percent_unit
+⋮----
+dimension = RESOLVE_MAP[unit](
+⋮----
+"""Get a copy of this Scalar, with values optionally modified
+
+        Args:
+            value: The new value, or None to keep the same value
+            unit: The new unit, or None to keep the same unit
+            percent_unit: The new percent_unit, or None to keep the same percent_unit
+        """
+⋮----
+@rich.repr.auto(angular=True)
+class ScalarOffset(NamedTuple)
+⋮----
+"""An Offset with two scalars, used to animate between to Scalars."""
+⋮----
+x: Scalar
+y: Scalar
+⋮----
+@classmethod
+    def null(cls) -> ScalarOffset
+⋮----
+"""Get a null scalar offset (0, 0)."""
+⋮----
+@classmethod
+    def from_offset(cls, offset: tuple[int, int]) -> ScalarOffset
+⋮----
+"""Create a Scalar offset from a tuple of integers.
+
+        Args:
+            offset: Offset in cells.
+
+        Returns:
+            New offset.
+        """
+⋮----
+def __bool__(self) -> bool
+⋮----
+def __rich_repr__(self) -> rich.repr.Result
+⋮----
+def resolve(self, size: Size, viewport: Size) -> Offset
+⋮----
+"""Resolve the offset into cells.
+
+        Args:
+            size: Size of container.
+            viewport: Size of viewport.
+
+        Returns:
+            Offset in cells.
+        """
+⋮----
+NULL_SCALAR = ScalarOffset(Scalar.from_number(0), Scalar.from_number(0))
+⋮----
+def percentage_string_to_float(string: str) -> float
+⋮----
+"""Convert a string percentage e.g. '20%' to a float e.g. 20.0.
+
+    Args:
+        string: The percentage string to convert.
+    """
+string = string.strip()
+⋮----
+float_percentage = clamp(float(string[:-1]) / 100.0, 0.0, 1.0)
+⋮----
+float_percentage = float(string)
+</file>
+
+<file path="src/textual/css/styles.py">
+class RulesMap(TypedDict, total=False)
+⋮----
+"""A typed dict for CSS rules.
+
+    Any key may be absent, indicating that rule has not been set.
+
+    Does not define composite rules, that is a rule that is made of a combination of other rules.
+    """
+⋮----
+display: Display
+visibility: Visibility
+layout: "Layout"
+⋮----
+auto_color: bool
+color: Color
+background: Color
+text_style: Style
+⋮----
+background_tint: Color
+⋮----
+opacity: float
+text_opacity: float
+⋮----
+padding: Spacing
+margin: Spacing
+offset: ScalarOffset
+position: str
+⋮----
+border_top: tuple[str, Color]
+border_right: tuple[str, Color]
+border_bottom: tuple[str, Color]
+border_left: tuple[str, Color]
+⋮----
+border_title_align: AlignHorizontal
+border_subtitle_align: AlignHorizontal
+⋮----
+outline_top: tuple[str, Color]
+outline_right: tuple[str, Color]
+outline_bottom: tuple[str, Color]
+outline_left: tuple[str, Color]
+⋮----
+keyline: tuple[str, Color]
+⋮----
+box_sizing: BoxSizing
+width: Scalar
+height: Scalar
+min_width: Scalar
+min_height: Scalar
+max_width: Scalar
+max_height: Scalar
+⋮----
+dock: str
+split: str
+⋮----
+overflow_x: Overflow
+overflow_y: Overflow
+⋮----
+layers: tuple[str, ...]
+layer: str
+⋮----
+transitions: dict[str, Transition]
+⋮----
+tint: Color
+⋮----
+scrollbar_color: Color
+scrollbar_color_hover: Color
+scrollbar_color_active: Color
+⋮----
+scrollbar_corner_color: Color
+⋮----
+scrollbar_background: Color
+scrollbar_background_hover: Color
+scrollbar_background_active: Color
+scrollbar_gutter: ScrollbarGutter
+scrollbar_size_vertical: int
+scrollbar_size_horizontal: int
+scrollbar_visibility: ScrollbarVisibility
+⋮----
+align_horizontal: AlignHorizontal
+align_vertical: AlignVertical
+⋮----
+content_align_horizontal: AlignHorizontal
+content_align_vertical: AlignVertical
+⋮----
+grid_size_rows: int
+grid_size_columns: int
+grid_gutter_horizontal: int
+grid_gutter_vertical: int
+grid_rows: tuple[Scalar, ...]
+grid_columns: tuple[Scalar, ...]
+⋮----
+row_span: int
+column_span: int
+⋮----
+text_align: TextAlign
+⋮----
+link_color: Color
+auto_link_color: bool
+link_background: Color
+link_style: Style
+⋮----
+link_color_hover: Color
+auto_link_color_hover: bool
+link_background_hover: Color
+link_style_hover: Style
+⋮----
+auto_border_title_color: bool
+border_title_color: Color
+border_title_background: Color
+border_title_style: Style
+⋮----
+auto_border_subtitle_color: bool
+border_subtitle_color: Color
+border_subtitle_background: Color
+border_subtitle_style: Style
+⋮----
+hatch: tuple[str, Color] | Literal["none"]
+⋮----
+overlay: Overlay
+constrain_x: Constrain
+constrain_y: Constrain
+⋮----
+text_wrap: TextWrap
+text_overflow: TextOverflow
+expand: Expand
+⋮----
+line_pad: int
+⋮----
+pointer: PointerShape
+⋮----
+RULE_NAMES = list(RulesMap.__annotations__.keys())
+RULE_NAMES_SET = frozenset(RULE_NAMES)
+_rule_getter = attrgetter(*RULE_NAMES)
+⋮----
+class StylesBase
+⋮----
+"""A common base class for Styles and RenderStyles"""
+⋮----
+ANIMATABLE = {
+⋮----
+node: DOMNode | None = None
+⋮----
+display = StringEnumProperty(VALID_DISPLAY, "block", layout=True, display=True)
+"""Set the display of the widget, defining how it's rendered.
+
+    Valid values are "block" or "none".
+    
+    "none" will hide and allow other widgets to fill the space that this widget would occupy.
+    
+    Set to None to clear any value that was set at runtime.
+
+    Raises:
+        StyleValueError: If an invalid display is specified.
+    """
+⋮----
+visibility = StringEnumProperty(VALID_VISIBILITY, "visible", layout=True)
+"""Set the visibility of the widget.
+    
+    Valid values are "visible" or "hidden".
+
+    "hidden" will hide the widget, but reserve the space for this widget.
+    If you want to hide the widget and allow another widget to fill the space,
+    set the display attribute to "none" instead.
+    
+    Set to None to clear any value that was set at runtime.
+
+    Raises:
+        StyleValueError: If an invalid visibility is specified.
+    """
+⋮----
+layout = LayoutProperty()
+"""Set the layout of the widget, defining how its children are laid out.
+    
+    Valid values are "grid", "stream", "horizontal", or "vertical" or None to clear any layout
+    that was set at runtime.
+
+    Raises:
+        MissingLayout: If an invalid layout is specified.
+    """
+⋮----
+auto_color = BooleanProperty(default=False)
+"""Enable automatic picking of best contrasting color."""
+color = ColorProperty(Color(255, 255, 255))
+"""Set the foreground (text) color of the widget.
+    Supports `Color` objects but also strings e.g. "red" or "#ff0000".
+    You can also specify an opacity after a color e.g. "blue 10%"
+    """
+background = ColorProperty(Color(0, 0, 0, 0))
+"""Set the background color of the widget.
+    Supports `Color` objects but also strings e.g. "red" or "#ff0000"
+    You can also specify an opacity after a color e.g. "blue 10%"
+    """
+background_tint = ColorProperty(Color(0, 0, 0, 0))
+"""Set a color to tint (blend) with the background.
+    Supports `Color` objects but also strings e.g. "red" or "#ff0000"
+    You can also specify an opacity after a color e.g. "blue 10%"   
+    """
+text_style = StyleFlagsProperty()
+"""Set the text style of the widget using Rich StyleFlags.
+    e.g. `"bold underline"` or `"b u strikethrough"`.
+    """
+opacity = FractionalProperty(children=True)
+"""Set the opacity of the widget, defining how it blends with the parent."""
+text_opacity = FractionalProperty()
+"""Set the opacity of the content within the widget against the widget's background."""
+padding = SpacingProperty()
+"""Set the padding (spacing between border and content) of the widget."""
+margin = SpacingProperty()
+"""Set the margin (spacing outside the border) of the widget."""
+offset = OffsetProperty()
+"""Set the offset of the widget relative to where it would have been otherwise."""
+position = StringEnumProperty(VALID_POSITION, "relative")
+"""If `relative` offset is applied to widgets current position, if `absolute` it is applied to (0, 0)."""
+⋮----
+border = BorderProperty(layout=True)
+"""Set the border of the widget e.g. ("round", "green") or "none"."""
+⋮----
+border_top = BoxProperty(Color(0, 255, 0))
+"""Set the top border of the widget e.g. ("round", "green") or "none"."""
+border_right = BoxProperty(Color(0, 255, 0))
+"""Set the right border of the widget e.g. ("round", "green") or "none"."""
+border_bottom = BoxProperty(Color(0, 255, 0))
+"""Set the bottom border of the widget e.g. ("round", "green") or "none"."""
+border_left = BoxProperty(Color(0, 255, 0))
+"""Set the left border of the widget e.g. ("round", "green") or "none"."""
+⋮----
+border_title_align = StringEnumProperty(VALID_ALIGN_HORIZONTAL, "left")
+"""The alignment of the border title text."""
+border_subtitle_align = StringEnumProperty(VALID_ALIGN_HORIZONTAL, "right")
+"""The alignment of the border subtitle text."""
+⋮----
+outline = BorderProperty(layout=False)
+"""Set the outline of the widget e.g. ("round", "green") or "none".
+    The outline is drawn *on top* of the widget, rather than around it like border.
+    """
+outline_top = BoxProperty(Color(0, 255, 0))
+"""Set the top outline of the widget e.g. ("round", "green") or "none"."""
+outline_right = BoxProperty(Color(0, 255, 0))
+"""Set the right outline of the widget e.g. ("round", "green") or "none"."""
+outline_bottom = BoxProperty(Color(0, 255, 0))
+"""Set the bottom outline of the widget e.g. ("round", "green") or "none"."""
+outline_left = BoxProperty(Color(0, 255, 0))
+"""Set the left outline of the widget e.g. ("round", "green") or "none"."""
+⋮----
+keyline = KeylineProperty()
+"""Keyline parameters."""
+⋮----
+box_sizing = StringEnumProperty(VALID_BOX_SIZING, "border-box", layout=True)
+"""Box sizing method ("border-box" or "conetnt-box")"""
+width = ScalarProperty(percent_unit=Unit.WIDTH)
+"""Set the width of the widget."""
+height = ScalarProperty(percent_unit=Unit.HEIGHT)
+"""Set the height of the widget."""
+min_width = ScalarProperty(percent_unit=Unit.WIDTH, allow_auto=False)
+"""Set the minimum width of the widget."""
+min_height = ScalarProperty(percent_unit=Unit.HEIGHT, allow_auto=False)
+"""Set the minimum height of the widget."""
+max_width = ScalarProperty(percent_unit=Unit.WIDTH, allow_auto=False)
+"""Set the maximum width of the widget."""
+max_height = ScalarProperty(percent_unit=Unit.HEIGHT, allow_auto=False)
+"""Set the maximum height of the widget."""
+dock = DockProperty()
+"""Set which edge of the parent to dock this widget to e.g. "top", "left", "right", "bottom", "none".
+    """
+split = SplitProperty()
+⋮----
+overflow_x = OverflowProperty(VALID_OVERFLOW, "hidden")
+"""Control what happens when the content extends horizontally beyond the widget's width.
+
+    Valid values are "scroll", "hidden", or "auto".
+    """
+⋮----
+overflow_y = OverflowProperty(VALID_OVERFLOW, "hidden")
+"""Control what happens when the content extends vertically beyond the widget's height.
+
+    Valid values are "scroll", "hidden", or "auto".
+    """
+⋮----
+layer = NameProperty()
+layers = NameListProperty()
+transitions = TransitionsProperty()
+⋮----
+tint = ColorProperty("transparent")
+"""Set the tint of the widget. This allows you apply an opaque color above the widget.
+
+    You can specify an opacity after a color e.g. "blue 10%"
+    """
+scrollbar_color = ScrollbarColorProperty("ansi_bright_magenta")
+"""Set the color of the handle of the scrollbar."""
+scrollbar_color_hover = ScrollbarColorProperty("ansi_yellow")
+"""Set the color of the handle of the scrollbar when hovered."""
+scrollbar_color_active = ScrollbarColorProperty("ansi_bright_yellow")
+"""Set the color of the handle of the scrollbar when active (being dragged)."""
+scrollbar_corner_color = ScrollbarColorProperty("#666666")
+"""Set the color of the space between the horizontal and vertical scrollbars."""
+scrollbar_background = ScrollbarColorProperty("#555555")
+"""Set the background color of the scrollbar (the track that the handle sits on)."""
+scrollbar_background_hover = ScrollbarColorProperty("#444444")
+"""Set the background color of the scrollbar when hovered."""
+scrollbar_background_active = ScrollbarColorProperty("black")
+"""Set the background color of the scrollbar when active (being dragged)."""
+⋮----
+scrollbar_gutter = StringEnumProperty(
+"""Set to "stable" to reserve space for the scrollbar even when it's not visible.
+    This can prevent content from shifting when a scrollbar appears.
+    """
+⋮----
+scrollbar_size_vertical = IntegerProperty(default=2, layout=True)
+"""Set the width of the vertical scrollbar (measured in cells)."""
+scrollbar_size_horizontal = IntegerProperty(default=1, layout=True)
+"""Set the height of the horizontal scrollbar (measured in cells)."""
+scrollbar_visibility = StringEnumProperty(
+"""Sets the visibility of the scrollbar."""
+⋮----
+align_horizontal = StringEnumProperty(
+align_vertical = StringEnumProperty(
+align = AlignProperty()
+⋮----
+content_align_horizontal = StringEnumProperty(VALID_ALIGN_HORIZONTAL, "left")
+content_align_vertical = StringEnumProperty(VALID_ALIGN_VERTICAL, "top")
+content_align = AlignProperty()
+⋮----
+grid_rows = ScalarListProperty(percent_unit=Unit.HEIGHT, refresh_children=True)
+grid_columns = ScalarListProperty(percent_unit=Unit.WIDTH, refresh_children=True)
+⋮----
+grid_size_columns = IntegerProperty(default=1, layout=True, refresh_children=True)
+grid_size_rows = IntegerProperty(default=0, layout=True, refresh_children=True)
+grid_gutter_horizontal = IntegerProperty(
+grid_gutter_vertical = IntegerProperty(
+⋮----
+row_span = IntegerProperty(default=1, layout=True)
+column_span = IntegerProperty(default=1, layout=True)
+⋮----
+text_align: StringEnumProperty[TextAlign] = StringEnumProperty(
+⋮----
+link_color = ColorProperty("transparent")
+auto_link_color = BooleanProperty(False)
+link_background = ColorProperty("transparent")
+link_style = StyleFlagsProperty()
+⋮----
+link_color_hover = ColorProperty("transparent")
+auto_link_color_hover = BooleanProperty(False)
+link_background_hover = ColorProperty("transparent")
+link_style_hover = StyleFlagsProperty()
+⋮----
+auto_border_title_color = BooleanProperty(default=False)
+border_title_color = ColorProperty(Color(255, 255, 255, 0))
+border_title_background = ColorProperty(Color(0, 0, 0, 0))
+border_title_style = StyleFlagsProperty()
+⋮----
+auto_border_subtitle_color = BooleanProperty(default=False)
+border_subtitle_color = ColorProperty(Color(255, 255, 255, 0))
+border_subtitle_background = ColorProperty(Color(0, 0, 0, 0))
+border_subtitle_style = StyleFlagsProperty()
+⋮----
+hatch = HatchProperty()
+"""Add a hatched background effect e.g. ("right", "yellow") or "none" to use no hatch.
+    """
+⋮----
+overlay = StringEnumProperty(
+constrain_x: StringEnumProperty[Constrain] = StringEnumProperty(
+constrain_y: StringEnumProperty[Constrain] = StringEnumProperty(
+text_wrap: StringEnumProperty[TextWrap] = StringEnumProperty(
+text_overflow: StringEnumProperty[TextOverflow] = StringEnumProperty(
+expand: StringEnumProperty[Expand] = StringEnumProperty(VALID_EXPAND, "greedy")
+line_pad = IntegerProperty(default=0, layout=True)
+"""Padding added to left and right of lines."""
+⋮----
+pointer: StringEnumProperty[PointerShape] = StringEnumProperty(
+"""Set the pointer (cursor) shape when the mouse is over this widget.
+    
+    Valid values include "default", "pointer", "text", "crosshair", "help", "wait",
+    "move", "grab", "grabbing", and various resize cursors.
+    
+    Requires terminal support for Kitty pointer shapes protocol.
+    """
+⋮----
+# Check we are animating a Scalar or Scalar offset
+⋮----
+# If destination is a number, we can convert that to a scalar
+⋮----
+value = Scalar(value, Unit.CELLS, Unit.CELLS)
+⋮----
+# We can only animate to Scalar
+⋮----
+def __eq__(self, styles: object) -> bool
+⋮----
+"""Check that Styles contains the same rules."""
+⋮----
+def __getitem__(self, key: str) -> object
+⋮----
+def get(self, key: str, default: object | None = None) -> object
+⋮----
+def __len__(self) -> int
+⋮----
+def __iter__(self) -> Iterator[str]
+⋮----
+def __contains__(self, key: object) -> bool
+⋮----
+def keys(self) -> Iterable[str]
+⋮----
+def values(self) -> Iterable[object]
+⋮----
+def items(self) -> Iterable[tuple[str, object]]
+⋮----
+@property
+    def gutter(self) -> Spacing
+⋮----
+"""Get space around widget.
+
+        Returns:
+            Space around widget content.
+        """
+⋮----
+@property
+    def auto_dimensions(self) -> bool
+⋮----
+"""Check if width or height are set to 'auto'."""
+has_rule = self.has_rule
+return (has_rule("width") and self.width.is_auto) or (  # type: ignore
+has_rule("height") and self.height.is_auto  # type: ignore
+⋮----
+@property
+    def is_relative_width(self, _relative_units={Unit.FRACTION, Unit.PERCENT}) -> bool
+⋮----
+"""Does the node have a relative width?"""
+width = self.width
+⋮----
+@property
+    def is_relative_height(self, _relative_units={Unit.FRACTION, Unit.PERCENT}) -> bool
+⋮----
+height = self.height
+⋮----
+@property
+    def is_auto_width(self, _auto=Unit.AUTO) -> bool
+⋮----
+"""Does the node have automatic width?"""
+⋮----
+@property
+    def is_auto_height(self, _auto=Unit.AUTO) -> bool
+⋮----
+"""Does the node have automatic height?"""
+⋮----
+"""Does the node have a dynamic (not fixed) height?"""
+⋮----
+@property
+    def is_docked(self) -> bool
+⋮----
+"""Is the node docked?"""
+⋮----
+@property
+    def is_split(self) -> bool
+⋮----
+"""Is the node split?"""
+⋮----
+def has_rule(self, rule_name: str) -> bool
+⋮----
+"""Check if a rule is set on this Styles object.
+
+        Args:
+            rule_name: Rule name.
+
+        Returns:
+            ``True`` if the rules is present, otherwise ``False``.
+        """
+⋮----
+def clear_rule(self, rule_name: str) -> bool
+⋮----
+"""Removes the rule from the Styles object, as if it had never been set.
+
+        Args:
+            rule_name: Rule name.
+
+        Returns:
+            ``True`` if a rule was cleared, or ``False`` if the rule is already not set.
+        """
+⋮----
+def get_rules(self) -> RulesMap
+⋮----
+"""Get the rules in a mapping.
+
+        Returns:
+            A TypedDict of the rules.
+        """
+⋮----
+def set_rule(self, rule_name: str, value: object | None) -> bool
+⋮----
+"""Set a rule.
+
+        Args:
+            rule_name: Rule name.
+            value: New rule value.
+
+        Returns:
+            ``True`` if the rule changed, otherwise ``False``.
+        """
+⋮----
+def get_rule(self, rule_name: str, default: object = None) -> object
+⋮----
+"""Get an individual rule.
+
+        Args:
+            rule_name: Name of rule.
+            default: Default if rule does not exists.
+
+        Returns:
+            Rule value or default.
+        """
+⋮----
+"""Mark the styles as requiring a refresh.
+
+        Args:
+            layout: Also require a layout.
+            children: Also refresh children.
+            parent: Also refresh the parent.
+            repaint: Repaint the widgets.
+        """
+⋮----
+def reset(self) -> None
+⋮----
+"""Reset the rules to initial state."""
+⋮----
+def merge(self, other: StylesBase) -> None
+⋮----
+"""Merge values from another Styles.
+
+        Args:
+            other: A Styles object.
+        """
+⋮----
+def merge_rules(self, rules: RulesMap) -> None
+⋮----
+"""Merge rules into Styles.
+
+        Args:
+            rules: A mapping of rules.
+        """
+⋮----
+def get_render_rules(self) -> RulesMap
+⋮----
+"""Get rules map with defaults."""
+# Get a dictionary of rules, going through the properties
+rules = dict(zip(RULE_NAMES, _rule_getter(self)))
+⋮----
+@classmethod
+    def is_animatable(cls, rule: str) -> bool
+⋮----
+"""Check if a given rule may be animated.
+
+        Args:
+            rule: Name of the rule.
+
+        Returns:
+            ``True`` if the rule may be animated, otherwise ``False``.
+        """
+⋮----
+"""Parse CSS and return a Styles object.
+
+        Args:
+            css: Textual CSS.
+            read_from: Location where the CSS was read from.
+            node: Node to associate with the Styles.
+
+        Returns:
+            A Styles instance containing result of parsing CSS.
+        """
+⋮----
+styles = parse_declarations(css, read_from)
+⋮----
+def _get_transition(self, key: str) -> Transition | None
+⋮----
+"""Get a transition.
+
+        Args:
+            key: Transition key.
+
+        Returns:
+            Transition object or None it no transition exists.
+        """
+⋮----
+def _align_width(self, width: int, parent_width: int) -> int
+⋮----
+"""Align the width dimension.
+
+        Args:
+            width: Width of the content.
+            parent_width: Width of the parent container.
+
+        Returns:
+            An offset to add to the X coordinate.
+        """
+offset_x = 0
+align_horizontal = self.align_horizontal
+⋮----
+offset_x = (parent_width - width) // 2
+⋮----
+offset_x = parent_width - width
+⋮----
+def _align_height(self, height: int, parent_height: int) -> int
+⋮----
+"""Align the height dimensions
+
+        Args:
+            height: Height of the content.
+            parent_height: Height of the parent container.
+
+        Returns:
+            An offset to add to the Y coordinate.
+        """
+offset_y = 0
+align_vertical = self.align_vertical
+⋮----
+offset_y = (parent_height - height) // 2
+⋮----
+offset_y = parent_height - height
+⋮----
+def _align_size(self, child: tuple[int, int], parent: tuple[int, int]) -> Offset
+⋮----
+"""Align a size according to alignment rules.
+
+        Args:
+            child: The size of the child (width, height)
+            parent: The size of the parent (width, height)
+
+        Returns:
+            Offset required to align the child.
+        """
+⋮----
+@property
+    def partial_rich_style(self) -> Style
+⋮----
+"""Get the style properties associated with this node only (not including parents in the DOM).
+
+        Returns:
+            Rich Style object.
+        """
+style = Style(
+⋮----
+@rich.repr.auto
+@dataclass
+class Styles(StylesBase)
+⋮----
+_rules: RulesMap = field(default_factory=RulesMap)
+_updates: int = 0
+⋮----
+important: set[str] = field(default_factory=set)
+⋮----
+def __post_init__(self) -> None
+⋮----
+self.get_rule: Callable[[str, object], object] = self._rules.get  # type: ignore[assignment]
+self.has_rule: Callable[[str], bool] = self._rules.__contains__  # type: ignore[assignment]
+⋮----
+def copy(self) -> Styles
+⋮----
+"""Get a copy of this Styles object."""
+⋮----
+"""Removes the rule from the Styles object, as if it had never been set.
+
+        Args:
+            rule_name: Rule name.
+
+        Returns:
+            ``True`` if a rule was cleared, or ``False`` if it was already not set.
+        """
+changed = self._rules.pop(rule_name, None) is not None  # type: ignore
+⋮----
+def set_rule(self, rule: str, value: object | None) -> bool
+⋮----
+"""Set a rule.
+
+        Args:
+            rule: Rule name.
+            value: New rule value.
+
+        Returns:
+            ``True`` if the rule changed, otherwise ``False``.
+        """
+⋮----
+changed = self._rules.pop(rule, None) is not None  # type: ignore
+⋮----
+current = self._rules.get(rule)
+self._rules[rule] = value  # type: ignore
+changed = current != value
+⋮----
+node = self.node
+⋮----
+self._rules.clear()  # type: ignore
+⋮----
+"""Extract rules from Styles object, and apply !important css specificity as
+        well as higher specificity of user CSS vs widget CSS.
+
+        Args:
+            specificity: A node specificity.
+            is_default_rules: True if the rules we're extracting are
+                default (i.e. in Widget.DEFAULT_CSS) rules. False if they're from user defined CSS.
+
+        Returns:
+            A list containing a tuple of <RULE NAME>, <SPECIFICITY> <RULE VALUE>.
+        """
+is_important = self.important.__contains__
+default_rules = 0 if is_default_rules else 1
+rules: list[tuple[str, Specificity6, Any]] = [
+⋮----
+def __rich_repr__(self) -> rich.repr.Result
+⋮----
+"""Get pairs of strings containing <RULE NAME>, <RULE VALUE> for border css declarations.
+
+        Args:
+            rules: A rules map.
+            name: Name of rules (border or outline)
+
+        Returns:
+            An iterable of CSS declarations.
+        """
+⋮----
+has_rule = rules.__contains__
+get_rule = rules.__getitem__
+⋮----
+has_top = has_rule(f"{name}_top")
+has_right = has_rule(f"{name}_right")
+has_bottom = has_rule(f"{name}_bottom")
+has_left = has_rule(f"{name}_left")
+⋮----
+# No border related rules
+⋮----
+# All rules are set
+# See if we can set them with a single border: declaration
+top = get_rule(f"{name}_top")
+right = get_rule(f"{name}_right")
+bottom = get_rule(f"{name}_bottom")
+left = get_rule(f"{name}_left")
+⋮----
+border_type, border_color = rules[f"{name}_top"]  # type: ignore
+⋮----
+# Check for edges
+⋮----
+border_type, border_color = rules[f"{name}_right"]  # type: ignore
+⋮----
+border_type, border_color = rules[f"{name}_bottom"]  # type: ignore
+⋮----
+border_type, border_color = rules[f"{name}_left"]  # type: ignore
+⋮----
+@property
+    def css_lines(self) -> list[str]
+⋮----
+lines: list[str] = []
+append = lines.append
+⋮----
+def append_declaration(name: str, value: str) -> None
+⋮----
+rules = self.get_rules()
+get_rule = rules.get
+⋮----
+@property
+    def css(self) -> str
+⋮----
+@rich.repr.auto
+class RenderStyles(StylesBase)
+⋮----
+"""Presents a combined view of two Styles object: a base Styles and inline Styles."""
+⋮----
+def __init__(self, node: DOMNode, base: Styles, inline_styles: Styles) -> None
+⋮----
+def __eq__(self, other: object) -> bool
+⋮----
+@property
+    def _cache_key(self) -> int
+⋮----
+"""A cache key, that changes when any style is changed.
+
+        Returns:
+            An opaque integer.
+        """
+⋮----
+@property
+    def base(self) -> Styles
+⋮----
+"""Quick access to base (css) style."""
+⋮----
+@property
+    def inline(self) -> Styles
+⋮----
+"""Quick access to the inline styles."""
+⋮----
+@property
+    def rich_style(self) -> Style
+⋮----
+"""Get a Rich style for this Styles object."""
+⋮----
+"""Get space around widget (padding + border)
+
+        Returns:
+            Space around widget content.
+        """
+# This is (surprisingly) a bit of a bottleneck
+⋮----
+gutter = self.padding + self.border.spacing
+⋮----
+"""Animate an attribute.
+
+        Args:
+            attribute: Name of the attribute to animate.
+            value: The value to animate to.
+            final_value: The final value of the animation. Defaults to `value` if not set.
+            duration: The duration (in seconds) of the animation.
+            speed: The speed of the animation.
+            delay: A delay (in seconds) before the animation starts.
+            easing: An easing method.
+            on_complete: A callable to invoke when the animation is finished.
+            level: Minimum level required for the animation to take place (inclusive).
+        """
+⋮----
+"""Check if a rule has been set."""
+⋮----
+def has_any_rules(self, *rule_names: str) -> bool
+⋮----
+"""Check if any of the supplied rules have been set.
+
+        Args:
+            rule_names: Number of rules.
+
+        Returns:
+            `True` if any of the supplied rules have been set, `False` if none have.
+        """
+inline_has_rule = self._inline_styles.has_rule
+base_has_rule = self._base_styles.has_rule
+⋮----
+"""Clear a rule (from inline)."""
+⋮----
+"""Get rules as a dictionary"""
+rules = {**self._base_styles._rules, **self._inline_styles._rules}
+⋮----
+"""Get the CSS for the combined styles."""
+styles = Styles()
+⋮----
+combined_css = styles.css
+</file>
+
+<file path="src/textual/css/stylesheet.py">
+_DEFAULT_STYLES = Styles()
+⋮----
+class StylesheetParseError(StylesheetError)
+⋮----
+"""Raised when the stylesheet could not be parsed."""
+⋮----
+def __init__(self, errors: StylesheetErrors) -> None
+⋮----
+def __rich__(self) -> RenderableType
+⋮----
+class StylesheetErrors
+⋮----
+"""A renderable for stylesheet errors."""
+⋮----
+def __init__(self, rules: list[RuleSet]) -> None
+⋮----
+@classmethod
+    def _get_snippet(cls, code: str, line_no: int) -> RenderableType
+⋮----
+syntax = Syntax(
+⋮----
+error_count = 0
+errors = list(
+⋮----
+link_path = str(Path(display_path).absolute())
+filename = Path(link_path).name
+⋮----
+link_path = ""
+filename = "<unknown>"
+# If we have a widget/variable from where the CSS was read, then line/column
+# numbers are relative to the inline CSS and we'll display them next to the
+# widget/variable.
+# Otherwise, they're absolute positions in a TCSS file and we can show them
+# next to the file path.
+⋮----
+path_string = link_path or filename
+widget_string = f" in {widget_var}:{line_no}:{col_no}"
+⋮----
+path_string = f"{link_path or filename}:{line_no}:{col_no}"
+widget_string = ""
+⋮----
+title = Text.assemble(
+⋮----
+class CssSource(NamedTuple)
+⋮----
+"""Contains the CSS content and whether or not the CSS comes from user defined stylesheets
+    vs widget-level stylesheets.
+
+    Args:
+        content: The CSS as a string.
+        is_defaults: True if the CSS is default (i.e. that defined at the widget level).
+            False if it's user CSS (which will override the defaults).
+        tie_breaker: Specificity tie breaker.
+        scope: Scope of CSS.
+    """
+⋮----
+content: str
+is_defaults: bool
+tie_breaker: int = 0
+scope: str = ""
+⋮----
+@rich.repr.auto(angular=True)
+class Stylesheet
+⋮----
+"""A Stylesheet generated from Textual CSS."""
+⋮----
+def __init__(self, *, variables: dict[str, str] | None = None) -> None
+⋮----
+def __rich_repr__(self) -> rich.repr.Result
+⋮----
+@property
+    def _variable_tokens(self) -> dict[str, list[Token]]
+⋮----
+@property
+    def rules(self) -> list[RuleSet]
+⋮----
+"""List of rule sets.
+
+        Returns:
+            List of rules sets for this stylesheet.
+        """
+⋮----
+@property
+    def rules_map(self) -> dict[str, list[RuleSet]]
+⋮----
+"""Structure that maps a selector on to a list of rules.
+
+        Returns:
+            Mapping of selector to rule sets.
+        """
+⋮----
+rules_map: dict[str, list[RuleSet]] = defaultdict(list)
+⋮----
+@property
+    def css(self) -> str
+⋮----
+"""The equivalent TCSS for this stylesheet.
+
+        Note that this may not produce the same content as the file(s) used to generate the stylesheet.
+        """
+⋮----
+def copy(self) -> Stylesheet
+⋮----
+"""Create a copy of this stylesheet.
+
+        Returns:
+            New stylesheet.
+        """
+stylesheet = Stylesheet(variables=self._variables.copy())
+⋮----
+def set_variables(self, variables: dict[str, str]) -> None
+⋮----
+"""Set CSS variables.
+
+        Args:
+            variables: A mapping of name to variable.
+        """
+⋮----
+def parse_style(self, style_text: str | Style) -> Style
+⋮----
+"""Parse a (visual) Style.
+
+        Args:
+            style_text: Visual style, such as "bold white 90% on $primary"
+
+        Returns:
+            New Style instance.
+        """
+⋮----
+style = parse_style(style_text)
+⋮----
+"""Parse CSS and return rules.
+
+        Args:
+            css: String containing Textual CSS.
+            read_from: Original CSS location.
+            is_default_rules: True if the rules we're extracting are
+                default (i.e. in Widget.DEFAULT_CSS) rules. False if they're from user defined CSS.
+            scope: Scope of rules, or empty string for global scope.
+
+        Raises:
+            StylesheetError: If the CSS is invalid.
+
+        Returns:
+            List of RuleSets.
+        """
+cache_key = (css, read_from, is_default_rules, tie_breaker, scope)
+⋮----
+rules = list(
+⋮----
+def read(self, filename: str | PurePath) -> None
+⋮----
+"""Read Textual CSS file.
+
+        Args:
+            filename: Filename of CSS.
+
+        Raises:
+            StylesheetError: If the CSS could not be read.
+            StylesheetParseError: If the CSS is invalid.
+        """
+filename = os.path.expanduser(filename)
+⋮----
+css = css_file.read()
+path = os.path.abspath(filename)
+⋮----
+def read_all(self, paths: Sequence[PurePath]) -> None
+⋮----
+"""Read multiple CSS files, in order.
+
+        Args:
+            paths: The paths of the CSS files to read, in order.
+
+        Raises:
+            StylesheetError: If the CSS could not be read.
+            StylesheetParseError: If the CSS is invalid.
+        """
+⋮----
+def has_source(self, path: str, class_var: str = "") -> bool
+⋮----
+"""Check if the stylesheet has this CSS source already.
+
+        Args:
+            path: The file path of the source in question.
+            class_var: The widget class variable we might be reading the CSS from.
+
+        Returns:
+            Whether the stylesheet is aware of this CSS source or not.
+        """
+⋮----
+"""Parse CSS from a string.
+
+        Args:
+            css: String with CSS source.
+            read_from: The original source location of the CSS.
+            path: The path of the source if a file, or some other identifier.
+            is_default_css: True if the CSS is defined in the Widget, False if the CSS is defined
+                in a user stylesheet.
+            tie_breaker: Integer representing the priority of this source.
+            scope: CSS type name to limit scope or empty string for no scope.
+
+        Raises:
+            StylesheetError: If the CSS could not be read.
+            StylesheetParseError: If the CSS is invalid.
+        """
+⋮----
+read_from = ("", str(hash(css)))
+⋮----
+# Location already in source and CSS is identical.
+⋮----
+def parse(self) -> None
+⋮----
+"""Parse the source in the stylesheet.
+
+        Raises:
+            StylesheetParseError: If there are any CSS related errors.
+        """
+rules: list[RuleSet] = []
+add_rules = rules.extend
+⋮----
+css_rules = self._parse_rules(
+⋮----
+error_renderable = StylesheetErrors(css_rules)
+⋮----
+def reparse(self) -> None
+⋮----
+"""Re-parse source, applying new variables.
+
+        Raises:
+            StylesheetError: If the CSS could not be read.
+            StylesheetParseError: If the CSS is invalid.
+        """
+# Do this in a fresh Stylesheet so if there are errors we don't break self.
+stylesheet = Stylesheet(variables=self._variables)
+⋮----
+# If we don't update self's invalid CSS, we might end up reparsing this CSS
+# before Textual quits application mode.
+# See https://github.com/Textualize/textual/issues/3581.
+⋮----
+"""Check a rule set, return specificity of applicable rules.
+
+        Args:
+            rule_set: A rule set.
+            css_path_nodes: A list of the nodes from the App to the node being checked.
+
+        Yields:
+            Specificity of any matching selectors.
+        """
+⋮----
+# pseudo classes which iterate over multiple nodes
+# These shouldn't be used in a cache key
+_EXCLUDE_PSEUDO_CLASSES_FROM_CACHE: Final[set[str]] = {
+⋮----
+"""Apply the stylesheet to a DOM node.
+
+        Args:
+            node: The `DOMNode` to apply the stylesheet to.
+                Applies the styles defined in this `Stylesheet` to the node.
+                If the same rule is defined multiple times for the node (e.g. multiple
+                classes modifying the same CSS property), then only the most specific
+                rule will be applied.
+            animate: Animate changed rules.
+            cache: An optional cache when applying a group of nodes.
+        """
+# Dictionary of rule attribute names e.g. "text_background" to list of tuples.
+# The tuples contain the rule specificity, and the value for that rule.
+# We can use this to determine, for a given rule, whether we should apply it
+# or not by examining the specificity. If we have two rules for the
+# same attribute, then we can choose the most specific rule and use that.
+rule_attributes: defaultdict[str, list[tuple[Specificity6, object]]]
+rule_attributes = defaultdict(list)
+⋮----
+rules_map = self.rules_map
+⋮----
+# Discard rules which are not applicable early
+limit_rules = {
+rules = list(filter(limit_rules.__contains__, reversed(self.rules)))
+all_pseudo_classes = set().union(*[rule.pseudo_classes for rule in rules])
+⋮----
+cache_key: tuple | None = None
+⋮----
+cache_key = (
+cached_result: RulesMap | None = cache.get(cache_key)
+⋮----
+_check_rule = self._check_rule
+css_path_nodes = node.css_path_nodes
+⋮----
+# Rules that may be set to the special value `initial`
+initial: set[str] = set()
+# Rules in DEFAULT_CSS set to the special value `initial`
+initial_defaults: set[str] = set()
+⋮----
+is_default_rules = rule.is_default_rules
+tie_breaker = rule.tie_breaker
+⋮----
+# For each rule declared for this node, keep only the most specific one
+get_first_item = itemgetter(0)
+node_rules: RulesMap = cast(
+⋮----
+# Set initial values
+⋮----
+# Rules with a value of None should be set to the default value
+if node_rules[initial_rule_name] is None:  # type: ignore[literal-required]
+# Exclude non default values
+# rule[0] is the specificity, rule[0][0] is 0 for default rules
+default_rules = [
+⋮----
+# There is a default value
+new_value = max(default_rules, key=get_first_item)[1]
+node_rules[initial_rule_name] = new_value  # type: ignore[literal-required]
+⋮----
+# No default value
+⋮----
+# Rules in DEFAULT_CSS set to initial
+⋮----
+rule_value = max(default_rules, key=get_first_item)[1]
+⋮----
+rule_value = getattr(_DEFAULT_STYLES, initial_rule_name)
+node_rules[initial_rule_name] = rule_value  # type: ignore[literal-required]
+⋮----
+def _process_component_classes(self, node: DOMNode) -> None
+⋮----
+"""Process component classes for the given node.
+
+        Args:
+            node: A DOM Node.
+        """
+component_classes = node._get_component_classes()
+⋮----
+# Create virtual nodes that exist to extract styles
+refresh_node = False
+old_component_styles = node._component_styles.copy()
+⋮----
+virtual_node = DOMNode(classes=component)
+⋮----
+# If the styles have changed we want to refresh the node
+refresh_node = True
+⋮----
+"""Replace style rules on a node, animating as required.
+
+        Args:
+            node: A DOM node.
+            rules: Mapping of rules.
+            animate: Enable animation.
+        """
+⋮----
+# Alias styles and base styles
+styles = node.styles
+base_styles = styles.base
+⋮----
+# Styles currently used on new rules
+modified_rule_keys = base_styles._rules.keys() | rules.keys()
+⋮----
+new_styles = Styles(node, rules)
+⋮----
+# Nothing to animate, return early
+⋮----
+current_render_rules = styles.get_render_rules()
+is_animatable = styles.is_animatable
+get_current_render_rule = current_render_rules.get
+new_render_rules = new_styles.get_render_rules()
+get_new_render_rule = new_render_rules.get
+animator = node.app.animator
+base = node.styles.base
+⋮----
+# Get old and new render rules
+old_render_value = get_current_render_rule(key)
+new_render_value = get_new_render_rule(key)
+# Get new rule value (may be None)
+new_value = rules.get(key)
+⋮----
+# Check if this can / should be animated. It doesn't suffice to check
+# if the current and target values are different because a previous
+# animation may have been scheduled but may have not started yet.
+⋮----
+transition = new_styles._get_transition(key)
+⋮----
+# Default is to set value (if new_value is None, rule will be removed)
+⋮----
+# Not animated, so we apply the rules directly
+get_rule = rules.get
+⋮----
+def update(self, root: DOMNode, animate: bool = False) -> None
+⋮----
+"""Update styles on node and its children.
+
+        Args:
+            root: Root note to update.
+            animate: Enable CSS animation.
+        """
+⋮----
+def update_nodes(self, nodes: Iterable[DOMNode], animate: bool = False) -> None
+⋮----
+"""Update styles for nodes.
+
+        Args:
+            nodes: Nodes to update.
+            animate: Enable CSS animation.
+        """
+cache: dict[tuple, RulesMap] = {}
+apply = self.apply
+⋮----
+show_vertical_scrollbar = (
+show_horizontal_scrollbar = (
+</file>
+
+<file path="src/textual/css/tokenize.py">
+PERCENT = r"-?\d+\.?\d*%"
+DECIMAL = r"-?\d+\.?\d*"
+COMMA = r"\s*,\s*"
+OPEN_BRACE = r"\(\s*"
+CLOSE_BRACE = r"\s*\)"
+⋮----
+HEX_COLOR = r"\#[0-9a-fA-F]{8}|\#[0-9a-fA-F]{6}|\#[0-9a-fA-F]{4}|\#[0-9a-fA-F]{3}"
+RGB_COLOR = rf"rgb{OPEN_BRACE}{DECIMAL}{COMMA}{DECIMAL}{COMMA}{DECIMAL}{CLOSE_BRACE}|rgba{OPEN_BRACE}{DECIMAL}{COMMA}{DECIMAL}{COMMA}{DECIMAL}{COMMA}{DECIMAL}{CLOSE_BRACE}"
+HSL_COLOR = rf"hsl{OPEN_BRACE}{DECIMAL}{COMMA}{PERCENT}{COMMA}{PERCENT}{CLOSE_BRACE}|hsla{OPEN_BRACE}{DECIMAL}{COMMA}{PERCENT}{COMMA}{PERCENT}{COMMA}{DECIMAL}{CLOSE_BRACE}"
+⋮----
+COMMENT_LINE = r"\# .*$"
+COMMENT_START = r"\/\*"
+SCALAR = rf"{DECIMAL}(?:fr|%|w|h|vw|vh)"
+DURATION = r"\d+\.?\d*(?:ms|s)"
+NUMBER = r"\-?\d+\.?\d*"
+COLOR = rf"{HEX_COLOR}|{RGB_COLOR}|{HSL_COLOR}"
+KEY_VALUE = r"[a-zA-Z_-][a-zA-Z0-9_-]*=[0-9a-zA-Z_\-\/]+"
+TOKEN = "[a-zA-Z_][a-zA-Z0-9_-]*"
+STRING = r"\".*?\""
+VARIABLE_REF = r"\$[a-zA-Z0-9_\-]+"
+⋮----
+IDENTIFIER = r"[a-zA-Z_\-][a-zA-Z0-9_\-]*"
+SELECTOR_TYPE_NAME = r"[A-Z_][a-zA-Z0-9_]*"
+"""Selectors representing Widget type names should start with upper case or '_'.
+
+The fact that a selector starts with an upper case letter or '_' is relevant in the
+context of nested CSS to help determine whether xxx:yyy is a declaration + value or a
+selector + pseudo-class."""
+DECLARATION_NAME = r"[a-z][a-zA-Z0-9_\-]*"
+"""Declaration of TCSS rules start with lowercase.
+
+The fact that a declaration starts with a lower case letter is relevant in the context
+of nested CSS to help determine whether xxx:yyy is a declaration + value or a selector
++ pseudo-class.
+"""
+⋮----
+# Values permitted in variable and rule declarations.
+DECLARATION_VALUES = {
+⋮----
+# The tokenizers "expectation" while at the root/highest level of scope
+# in the CSS file. At this level we might expect to see selectors, comments,
+# variable definitions etc.
+expect_root_scope = Expect(
+⋮----
+expect_root_nested = Expect(
+⋮----
+# After a variable declaration e.g. "$warning-text: TOKENS;"
+#              for tokenizing variable value ------^~~~~~~^
+expect_variable_name_continue = Expect(
+⋮----
+expect_comment_end = Expect(
+⋮----
+# After we come across a selector in CSS e.g. ".my-class", we may
+# find other selectors, pseudo-classes... e.g. ".my-class :hover"
+expect_selector_continue = Expect(
+⋮----
+# A rule declaration e.g. "text: red;"
+#                          ^---^
+expect_declaration = Expect(
+⋮----
+#
+⋮----
+expect_declaration_solo = Expect(
+⋮----
+# The value(s)/content from a rule declaration e.g. "text: red;"
+#                                                         ^---^
+expect_declaration_content = Expect(
+⋮----
+expect_declaration_content_solo = Expect(
+⋮----
+class TokenizerState
+⋮----
+EXPECT: ClassVar[Expect] = expect_root_scope
+STATE_MAP: ClassVar[dict[str, Expect]] = {}
+STATE_PUSH: ClassVar[dict[str, Expect]] = {}
+STATE_POP: ClassVar[dict[str, str]] = {}
+⋮----
+def __init__(self) -> None
+⋮----
+def expect(self, expect: Expect) -> None
+⋮----
+def __call__(self, code: str, read_from: CSSLocation) -> Iterable[Token]
+⋮----
+tokenizer = Tokenizer(code, read_from=read_from)
+get_token = tokenizer.get_token
+get_state = self.STATE_MAP.get
+state_stack: list[Expect] = []
+⋮----
+expect = self._expect
+token = get_token(expect)
+name = token.name
+⋮----
+token = token._replace(name="end_tag")
+⋮----
+class TCSSTokenizerState
+⋮----
+"""State machine for the tokenizer.
+
+    Attributes:
+        EXPECT: The initial expectation of the tokenizer. Since we start tokenizing
+            at the root scope, we might expect to see either a variable or selector, for example.
+        STATE_MAP: Maps token names to Expects, defines the sets of valid tokens
+            that we'd expect to see next, given the current token. For example, if
+            we've just processed a variable declaration name, we next expect to see
+            the value of that variable.
+    """
+⋮----
+EXPECT = expect_root_scope
+STATE_MAP = {
+⋮----
+expect = self.EXPECT
+⋮----
+nest_level = 0
+⋮----
+expect = expect_declaration if nest_level else expect_root_scope
+⋮----
+expect = get_state(name, expect)
+⋮----
+class DeclarationTokenizerState(TCSSTokenizerState)
+⋮----
+EXPECT = expect_declaration_solo
+⋮----
+class ValueTokenizerState(TCSSTokenizerState)
+⋮----
+EXPECT = expect_declaration_content_solo
+⋮----
+class StyleTokenizerState(TCSSTokenizerState)
+⋮----
+EXPECT = (
+⋮----
+tokenize = TCSSTokenizerState()
+tokenize_declarations = DeclarationTokenizerState()
+tokenize_value = ValueTokenizerState()
+tokenize_style = StyleTokenizerState()
+⋮----
+def tokenize_values(values: dict[str, str]) -> dict[str, list[Token]]
+⋮----
+"""Tokenizes the values in a dict of strings.
+
+    Args:
+        values: A mapping of CSS variable name on to a value, to be
+            added to the CSS context.
+
+    Returns:
+        A mapping of name on to a list of tokens,
+    """
+value_tokens = {
+⋮----
+text = "[@click=app.notify(['foo', 500])] Click me! [/] :-)"
+⋮----
+# text = "[@click=hello]Click"
+⋮----
+c = Console(markup=False)
+</file>
+
+<file path="src/textual/css/tokenizer.py">
+class TokenError(Exception)
+⋮----
+"""Error raised when the CSS cannot be tokenized (syntax error)."""
+⋮----
+"""
+        Args:
+            read_from: The location where the CSS was read from.
+            code: The code being parsed.
+            start: Line and column number of the error (1-indexed).
+            message: A message associated with the error.
+            end: End location of token (1-indexed), or None if not known.
+        """
+⋮----
+def _get_snippet(self) -> Panel
+⋮----
+"""Get a short snippet of code around a given line number.
+
+        Returns:
+            A renderable.
+        """
+⋮----
+line_no = self.start[0]
+# TODO: Highlight column number
+syntax = Syntax(
+⋮----
+def __rich__(self) -> RenderableType
+⋮----
+highlighter = ReprHighlighter()
+errors: list[RenderableType] = []
+⋮----
+message = str(self)
+⋮----
+css_location = f" {path}, {widget_variable}:{line_no}:{col_no}"
+⋮----
+css_location = f" {path}:{line_no}:{col_no}"
+⋮----
+final_message = "\n".join(
+⋮----
+class UnexpectedEnd(TokenError)
+⋮----
+"""Indicates that the text being tokenized ended prematurely."""
+⋮----
+@rich.repr.auto
+class Expect
+⋮----
+"""Object that describes the format of tokens."""
+⋮----
+def __init__(self, description: str, **tokens: str) -> None
+⋮----
+"""Create Expect object.
+
+        Args:
+            description: Description of this class of tokens, used in errors.
+        """
+⋮----
+def expect_eof(self, eof: bool = True) -> Expect
+⋮----
+"""Expect an end of file."""
+⋮----
+def expect_semicolon(self, semicolon: bool = True) -> Expect
+⋮----
+"""Tokenizer expects text to be terminated with a semi-colon."""
+⋮----
+def extract_text(self, extract: bool = True) -> Expect
+⋮----
+def __rich_repr__(self) -> rich.repr.Result
+⋮----
+class ReferencedBy(NamedTuple)
+⋮----
+name: str
+location: tuple[int, int]
+length: int
+code: str
+⋮----
+@rich.repr.auto(angular=True)
+class Token(NamedTuple)
+⋮----
+value: str
+read_from: CSSLocation
+⋮----
+"""Token starting location, 0-indexed."""
+referenced_by: ReferencedBy | None = None
+⋮----
+@property
+    def start(self) -> tuple[int, int]
+⋮----
+"""Start line and column (1-indexed)."""
+⋮----
+@property
+    def end(self) -> tuple[int, int]
+⋮----
+"""End line and column (1-indexed)."""
+⋮----
+def with_reference(self, by: ReferencedBy | None) -> "Token"
+⋮----
+"""Return a copy of the Token, with reference information attached.
+        This is used for variable substitution, where a variable reference
+        can refer to tokens which were defined elsewhere. With the additional
+        ReferencedBy data attached, we can track where the token we are referring
+        to is used.
+        """
+⋮----
+def __str__(self) -> str
+⋮----
+class Tokenizer
+⋮----
+"""Tokenizes Textual CSS."""
+⋮----
+def __init__(self, text: str, read_from: CSSLocation = ("", "")) -> None
+⋮----
+"""Initialize the tokenizer.
+
+        Args:
+            text: String containing CSS.
+            read_from: Information regarding where the CSS was read from.
+        """
+⋮----
+def get_token(self, expect: Expect) -> Token
+⋮----
+"""Get the next token.
+
+        Args:
+            expect: Expect object which describes which tokens may be read.
+
+        Raises:
+            UnexpectedEnd: If there is an unexpected end of file.
+            TokenError: If there is an error with the token.
+
+        Returns:
+            A new Token.
+        """
+⋮----
+line_no = self.line_no
+col_no = self.col_no
+⋮----
+line = self.lines[line_no]
+preceding_text: str = ""
+⋮----
+match = expect.search(line, col_no)
+⋮----
+preceding_text = line[self.col_no :]
+⋮----
+col_no = match.start()
+preceding_text = line[self.col_no : col_no]
+⋮----
+token = Token(
+⋮----
+match = expect.match(line, col_no)
+⋮----
+error_line = line[col_no:]
+error_message = (
+⋮----
+# For MyPy's benefit
+⋮----
+pseudo_class = token.value.strip(":")
+suggestion = get_suggestion(pseudo_class, list(VALID_PSEUDO_CLASSES))
+all_valid = f"must be one of {friendly_list(VALID_PSEUDO_CLASSES)}"
+⋮----
+col_no = 0
+⋮----
+def skip_to(self, expect: Expect) -> Token
+⋮----
+"""Skip tokens.
+
+        Args:
+            expect: Expect object describing the expected token.
+
+        Raises:
+            UnexpectedEndOfText: If end of file is reached.
+
+        Returns:
+            A new token.
+        """
+</file>
+
+<file path="src/textual/css/transition.py">
+class Transition(NamedTuple)
+⋮----
+duration: float = 1.0
+easing: str = "linear"
+delay: float = 0.0
+⋮----
+def __str__(self) -> str
+</file>
+
+<file path="src/textual/css/types.py">
+DockEdge = Literal["none", "top", "right", "bottom", "left"]
+EdgeType = Literal[
+Visibility = Literal["visible", "hidden", "initial", "inherit"]
+Display = Literal["block", "none"]
+AlignHorizontal = Literal["left", "center", "right"]
+AlignVertical = Literal["top", "middle", "bottom"]
+ScrollbarGutter = Literal["auto", "stable"]
+BoxSizing = Literal["border-box", "content-box"]
+Overflow = Literal["scroll", "hidden", "auto"]
+EdgeStyle = Tuple[EdgeType, Color]
+TextAlign = Literal["left", "start", "center", "right", "end", "justify"]
+Constrain = Literal["none", "inflect", "inside"]
+Overlay = Literal["none", "screen"]
+Position = Literal["relative", "absolute"]
+PointerShape = Literal[
+⋮----
+TextWrap = Literal["wrap", "nowrap"]
+TextOverflow = Literal["clip", "fold", "ellipsis"]
+Expand = Literal["greedy", "expand"]
+ScrollbarVisibility = Literal["visible", "hidden"]
+⋮----
+Specificity3 = Tuple[int, int, int]
+Specificity6 = Tuple[int, int, int, int, int, int]
+⋮----
+CSSLocation = Tuple[str, str]
+"""Represents the definition location of a piece of CSS code.
+
+The first element of the tuple is the file path from where the CSS was read.
+If the CSS was read from a Python source file, the second element contains the class
+variable from where the CSS was read (e.g., "Widget.DEFAULT_CSS"), otherwise it's an
+empty string.
+"""
+</file>
+
+</files>

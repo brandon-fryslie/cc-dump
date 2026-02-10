@@ -1,0 +1,110 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/widgets/_static.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    widgets/
+      _static.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/widgets/_static.py">
+class Static(Widget, inherit_bindings=False)
+⋮----
+"""A widget to display simple static content, or use as a base class for more complex widgets.
+
+    Args:
+        content: A Content object, Rich renderable, or string containing console markup.
+        expand: Expand content if required to fill container.
+        shrink: Shrink content if required to fill container.
+        markup: True if markup should be parsed and rendered.
+        name: Name of widget.
+        id: ID of Widget.
+        classes: Space separated list of class names.
+        disabled: Whether the static is disabled or not.
+    """
+⋮----
+DEFAULT_CSS = """
+⋮----
+@property
+    def visual(self) -> Visual
+⋮----
+"""The visual to be displayed.
+
+        Note that the visual is what is ultimately rendered in the widget, but may not be the
+        same object set with the `update` method  or `content` property. For instance, if you
+        update with a string, then the visual will be a [Content][textual.content.Content] instance.
+
+        """
+⋮----
+@property
+    def content(self) -> VisualType
+⋮----
+"""The original content set in the constructor."""
+⋮----
+@content.setter
+    def content(self, content: VisualType) -> None
+⋮----
+def render(self) -> RenderResult
+⋮----
+"""Get a rich renderable for the widget's content.
+
+        Returns:
+            A rich renderable.
+        """
+⋮----
+def update(self, content: VisualType = "", *, layout: bool = True) -> None
+⋮----
+"""Update the widget's content area with a string, a Visual (such as [Content][textual.content.Content]), or a [Rich renderable](https://rich.readthedocs.io/en/latest/protocol.html).
+
+        Args:
+            content: New content.
+            layout: Also perform a layout operation (set to `False` if you are certain the size won't change).
+        """
+</file>
+
+</files>

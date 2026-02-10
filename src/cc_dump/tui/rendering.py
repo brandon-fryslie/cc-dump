@@ -12,12 +12,13 @@ Two-tier dispatch:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Callable
 
 from rich.text import Text
 from rich.markdown import Markdown
 from rich.console import ConsoleRenderable
-from rich.theme import Theme
+from rich.theme import Theme as RichTheme
 
 from collections import Counter
 
@@ -52,32 +53,165 @@ from cc_dump.formatting import (
 import cc_dump.palette
 
 
-# ─── Markdown Theme ───────────────────────────────────────────────────────────
+# ─── Theme Colors ────────────────────────────────────────────────────────────
+# [LAW:one-source-of-truth] All theme-derived colors live in ThemeColors.
+# set_theme() is the sole entry point for rebuilding.
 
-# [LAW:one-source-of-truth] All markdown text styling defined here.
-MARKDOWN_THEME = Theme({
-    # Inline code: warm tone on subtle dark background (not bold cyan on black)
-    "markdown.code": "color(223) on color(236)",
-    # Code blocks background (overridden by Syntax, but used as fallback)
-    "markdown.code_block": "on color(236)",
-    # Headings: blue tones matching the TUI palette
-    "markdown.h1": "bold underline color(117)",
-    "markdown.h2": "bold color(117)",
-    "markdown.h3": "bold color(152)",
-    "markdown.h4": "italic color(152)",
-    "markdown.h5": "italic color(249)",
-    "markdown.h6": "dim italic",
-    # Links
-    "markdown.link": "underline color(117)",
-    "markdown.link_url": "dim underline color(75)",
-    # Block quotes
-    "markdown.block_quote": "color(249) italic",
-    # Table
-    "markdown.table.border": "color(240)",
-    "markdown.table.header": "bold color(117)",
-    # Horizontal rules
-    "markdown.hr": "color(240)",
-})
+
+@dataclass(frozen=True)
+class ThemeColors:
+    """All colors the rendering pipeline needs, derived from a Textual Theme."""
+
+    # Semantic colors from theme
+    primary: str
+    secondary: str
+    accent: str
+    warning: str
+    error: str
+    success: str
+    surface: str
+    foreground: str
+    background: str
+    dark: bool
+
+    # Role colors (derived from theme)
+    user: str  # theme.primary
+    assistant: str  # theme.secondary
+    system: str  # theme.accent
+
+    # Functional aliases
+    info: str  # theme.primary
+
+    # Code rendering
+    code_theme: str  # "github-dark" or "friendly"
+
+    # Search
+    search_all_bg: str  # surface
+    search_current_style: str  # accent-based
+
+    # Footer
+    follow_active_style: str
+
+    # Search bar styles
+    search_prompt_style: str
+    search_active_style: str
+    search_error_style: str
+    search_keys_style: str
+
+    # Markdown theme dict (for Rich console.push_theme)
+    markdown_theme_dict: dict
+
+
+def build_theme_colors(textual_theme) -> ThemeColors:
+    """Map a Textual Theme to ThemeColors.
+
+    Handles None fields on Theme objects with sensible derivations.
+    """
+    dark = textual_theme.dark
+
+    primary = textual_theme.primary or "#0178D4"
+    secondary = textual_theme.secondary or primary
+    accent = textual_theme.accent or primary
+    warning = textual_theme.warning or "#ffa62b"
+    error = textual_theme.error or "#ba3c5b"
+    success = textual_theme.success or "#4EBF71"
+    foreground = textual_theme.foreground or ("#e0e0e0" if dark else "#1e1e1e")
+    background = textual_theme.background or ("#1e1e1e" if dark else "#e0e0e0")
+    surface = textual_theme.surface or ("#2b2b2b" if dark else "#d0d0d0")
+
+    code_theme = "github-dark" if dark else "friendly"
+
+    # Search highlight: current match uses accent with inverted fg
+    search_current_fg = "#000000" if dark else "#ffffff"
+    search_current_style = f"bold {search_current_fg} on {accent}"
+
+    # Markdown theme: adapt to dark/light mode
+    # [LAW:one-source-of-truth] markdown styling defined here
+    if dark:
+        md_code_style = f"{foreground} on {surface}"
+        md_h_dim = "dim italic"
+    else:
+        md_code_style = f"{foreground} on {surface}"
+        md_h_dim = "dim italic"
+
+    markdown_theme_dict = {
+        "markdown.code": md_code_style,
+        "markdown.code_block": f"on {surface}",
+        "markdown.h1": f"bold underline {primary}",
+        "markdown.h2": f"bold {primary}",
+        "markdown.h3": f"bold {secondary}",
+        "markdown.h4": f"italic {secondary}",
+        "markdown.h5": f"italic {foreground}",
+        "markdown.h6": md_h_dim,
+        "markdown.link": f"underline {primary}",
+        "markdown.link_url": f"dim underline {primary}",
+        "markdown.block_quote": f"italic {foreground}",
+        "markdown.table.border": "dim",
+        "markdown.table.header": f"bold {primary}",
+        "markdown.hr": "dim",
+    }
+
+    return ThemeColors(
+        primary=primary,
+        secondary=secondary,
+        accent=accent,
+        warning=warning,
+        error=error,
+        success=success,
+        surface=surface,
+        foreground=foreground,
+        background=background,
+        dark=dark,
+        user=primary,
+        assistant=secondary,
+        system=accent,
+        info=primary,
+        code_theme=code_theme,
+        search_all_bg=surface,
+        search_current_style=search_current_style,
+        follow_active_style=f"bold reverse {success}",
+        search_prompt_style=f"bold {primary}",
+        search_active_style=f"bold {success}",
+        search_error_style=f"bold {error}",
+        search_keys_style=f"bold {warning}",
+        markdown_theme_dict=markdown_theme_dict,
+    )
+
+
+# Module-level theme state — starts as None, set by set_theme().
+_theme_colors: ThemeColors | None = None
+
+
+def get_theme_colors() -> ThemeColors:
+    """Get the current ThemeColors. Raises RuntimeError if set_theme() not called."""
+    if _theme_colors is None:
+        raise RuntimeError(
+            "Theme not initialized. Call set_theme() before rendering."
+        )
+    return _theme_colors
+
+
+def set_theme(textual_theme) -> None:
+    """Rebuild all theme-derived module state from a Textual Theme.
+
+    Called by app on_mount, watch_theme, and after hot-reload.
+    // [LAW:single-enforcer] Sole entry point for theme changes.
+    """
+    global _theme_colors, ROLE_STYLES, TAG_STYLES, MSG_COLORS
+
+    _theme_colors = build_theme_colors(textual_theme)
+    tc = _theme_colors
+
+    # Rebuild module-level style vars
+    ROLE_STYLES = {
+        "user": f"bold {tc.user}",
+        "assistant": f"bold {tc.assistant}",
+        "system": f"bold {tc.system}",
+    }
+
+    p = cc_dump.palette.PALETTE
+    TAG_STYLES = [p.fg_on_bg_for_mode(i, tc.dark) for i in range(min(p.count, 12))]
+    MSG_COLORS = [p.msg_color_for_mode(i, tc.dark) for i in range(6)]
 
 
 # ─── Visibility model constants ───────────────────────────────────────────────
@@ -174,27 +308,18 @@ def _resolve_visibility(
 
 # ─── Style helpers ─────────────────────────────────────────────────────────────
 
-
-def _build_role_styles() -> dict[str, str]:
-    p = cc_dump.palette.PALETTE
-    return {
-        "user": f"bold {p.user}",
-        "assistant": f"bold {p.assistant}",
-        "system": f"bold {p.system}",
-    }
-
-
-def _build_tag_styles() -> list[tuple[str, str]]:
-    p = cc_dump.palette.PALETTE
-    return [p.fg_on_bg(i) for i in range(min(p.count, 12))]
-
-
-def _build_msg_colors() -> list[str]:
-    p = cc_dump.palette.PALETTE
-    return [p.msg_color(i) for i in range(6)]
+# Initial values — rebuilt by set_theme()
+ROLE_STYLES: dict[str, str] = {}
+TAG_STYLES: list[tuple[str, str]] = []
+MSG_COLORS: list[str] = []
 
 
 def _build_filter_indicators() -> dict[str, tuple[str, str]]:
+    """Filter indicators use the fixed indicator palette (excluded from theme).
+
+    // [LAW:one-source-of-truth] Filter indicator colors are intentionally
+    // independent of the Textual theme per user request.
+    """
     p = cc_dump.palette.PALETTE
     return {
         "headers": ("\u258c", p.filter_color("headers")),
@@ -207,9 +332,6 @@ def _build_filter_indicators() -> dict[str, tuple[str, str]]:
     }
 
 
-ROLE_STYLES = _build_role_styles()
-TAG_STYLES = _build_tag_styles()
-MSG_COLORS = _build_msg_colors()
 FILTER_INDICATORS = _build_filter_indicators()
 
 
@@ -251,20 +373,14 @@ def _render_separator(block: SeparatorBlock) -> Text | None:
     return Text(char * 70, style="dim")
 
 
-# [LAW:dataflow-not-control-flow] Header type dispatch
-def _build_header_spec():
-    p = cc_dump.palette.PALETTE
-    return {
-        "request": (lambda b: b.label, f"bold {p.info}"),
-        "response": (lambda b: "RESPONSE", f"bold {p.success}"),
-    }
-
-
-_HEADER_SPECS = _build_header_spec()
-
-
 def _render_header(block: HeaderBlock) -> Text | None:
-    label_fn, style = _HEADER_SPECS.get(
+    tc = get_theme_colors()
+    # [LAW:dataflow-not-control-flow] Header type dispatch via dict
+    specs = {
+        "request": (lambda b: b.label, f"bold {tc.info}"),
+        "response": (lambda b: "RESPONSE", f"bold {tc.success}"),
+    }
+    label_fn, style = specs.get(
         block.header_type, (lambda b: "UNKNOWN", "bold")
     )
     t = Text()
@@ -274,16 +390,16 @@ def _render_header(block: HeaderBlock) -> Text | None:
 
 
 def _render_http_headers(block: HttpHeadersBlock) -> Text | None:
-    p = cc_dump.palette.PALETTE
+    tc = get_theme_colors()
     t = Text()
     if block.header_type == "response":
-        t.append("  HTTP {} ".format(block.status_code), style=f"bold {p.info}")
+        t.append("  HTTP {} ".format(block.status_code), style=f"bold {tc.info}")
     else:
-        t.append("  HTTP Headers ", style=f"bold {p.info}")
+        t.append("  HTTP Headers ", style=f"bold {tc.info}")
 
     for key in sorted(block.headers.keys()):
         value = block.headers[key]
-        t.append("\n    {}: ".format(key), style=f"dim {p.info}")
+        t.append("\n    {}: ".format(key), style=f"dim {tc.info}")
         t.append(value, style="dim")
 
     return t
@@ -310,7 +426,8 @@ def _render_metadata(block: MetadataBlock) -> Text | None:
 
 
 def _render_system_label(block: SystemLabelBlock) -> Text | None:
-    return Text("SYSTEM:", style=f"bold {cc_dump.palette.PALETTE.system}")
+    tc = get_theme_colors()
+    return Text("SYSTEM:", style=f"bold {tc.system}")
 
 
 def _render_tracked_new(block: TrackedContentBlock, tag_style: str) -> Text:
@@ -377,7 +494,8 @@ def _render_text_content(block: TextContentBlock) -> ConsoleRenderable | None:
         return None
     # Render as Markdown for USER and ASSISTANT categories
     if block.category in _MARKDOWN_CATEGORIES:
-        return Markdown(block.text, code_theme="github-dark")
+        tc = get_theme_colors()
+        return Markdown(block.text, code_theme=tc.code_theme)
     return _indent_text(block.text, block.indent)
 
 
@@ -438,8 +556,9 @@ def _render_stream_info(block: StreamInfoBlock) -> Text | None:
 
 
 def _render_stream_tool_use(block: StreamToolUseBlock) -> Text | None:
+    tc = get_theme_colors()
     t = Text("\n  ")
-    t.append("[tool_use]", style=f"bold {cc_dump.palette.PALETTE.info}")
+    t.append("[tool_use]", style=f"bold {tc.info}")
     t.append(" " + block.name)
     return t
 
@@ -447,7 +566,8 @@ def _render_stream_tool_use(block: StreamToolUseBlock) -> Text | None:
 def _render_text_delta(block: TextDeltaBlock) -> ConsoleRenderable | None:
     # TextDeltaBlock is always ASSISTANT category during streaming
     if block.category in _MARKDOWN_CATEGORIES:
-        return Markdown(block.text, code_theme="github-dark")
+        tc = get_theme_colors()
+        return Markdown(block.text, code_theme=tc.code_theme)
     return Text(block.text)
 
 
@@ -457,16 +577,18 @@ def _render_stop_reason(block: StopReasonBlock) -> Text | None:
 
 
 def _render_error(block: ErrorBlock) -> Text | None:
+    tc = get_theme_colors()
     return Text(
         "\n  [HTTP {} {}]".format(block.code, block.reason),
-        style=f"bold {cc_dump.palette.PALETTE.error}",
+        style=f"bold {tc.error}",
     )
 
 
 def _render_proxy_error(block: ProxyErrorBlock) -> Text | None:
+    tc = get_theme_colors()
     return Text(
         "\n  [PROXY ERROR: {}]".format(block.error),
-        style=f"bold {cc_dump.palette.PALETTE.error}",
+        style=f"bold {tc.error}",
     )
 
 
@@ -476,6 +598,7 @@ def _render_newline(block: NewlineBlock) -> Text | None:
 
 def _render_turn_budget(block: TurnBudgetBlock) -> Text | None:
     """Render TurnBudget as a compact multi-line summary."""
+    tc = get_theme_colors()
     b = block.budget
     total = b.total_est
 
@@ -483,21 +606,20 @@ def _render_turn_budget(block: TurnBudgetBlock) -> Text | None:
     conv_tok = b.conversation_tokens_est
     tool_tok = b.tool_use_tokens_est + b.tool_result_tokens_est
 
-    p = cc_dump.palette.PALETTE
     t = Text("  ")
     t.append("Context: ", style="bold")
     t.append("{} tok".format(_fmt_tokens(total)))
     t.append(
         " | sys: {} ({})".format(_fmt_tokens(sys_tok), _pct(sys_tok, total)),
-        style=f"dim {p.info}",
+        style=f"dim {tc.info}",
     )
     t.append(
         " | tools: {} ({})".format(_fmt_tokens(tool_tok), _pct(tool_tok, total)),
-        style=f"dim {p.warning}",
+        style=f"dim {tc.warning}",
     )
     t.append(
         " | conv: {} ({})".format(_fmt_tokens(conv_tok), _pct(conv_tok, total)),
-        style=f"dim {p.success}",
+        style=f"dim {tc.success}",
     )
 
     # Tool result breakdown by name
@@ -529,12 +651,12 @@ def _render_turn_budget(block: TurnBudgetBlock) -> Text | None:
                     b.actual_input_tokens + b.actual_cache_read_tokens,
                 ),
             ),
-            style=f"dim {p.info}",
+            style=f"dim {tc.info}",
         )
         if b.actual_cache_creation_tokens > 0:
             t.append(
                 " | {} created".format(_fmt_tokens(b.actual_cache_creation_tokens)),
-                style=f"dim {p.warning}",
+                style=f"dim {tc.warning}",
             )
         t.append(" | {} fresh".format(_fmt_tokens(b.actual_input_tokens)), style="dim")
 
@@ -1021,11 +1143,13 @@ def _apply_search_highlights(text: Text, search_ctx, turn_index: int, block_inde
     """
     from rich.style import Style
 
+    tc = get_theme_colors()
+
     # Dim highlight on ALL matches in this block
     try:
         text.highlight_regex(
             search_ctx.pattern,
-            Style(bgcolor="color(239)"),
+            Style(bgcolor=tc.search_all_bg),
         )
     except Exception:
         return  # Regex may fail on rendered text, silently skip
@@ -1047,7 +1171,7 @@ def _apply_search_highlights(text: Text, search_ctx, turn_index: int, block_inde
                 # (rendered text has indicators, indentation), we highlight the first
                 # occurrence that overlaps.
                 text.stylize(
-                    Style(bold=True, bgcolor="yellow", color="black"),
+                    Style.parse(tc.search_current_style),
                     m.start(),
                     m.end(),
                 )
@@ -1073,26 +1197,20 @@ def combine_rendered_texts(texts: list[Text]) -> Text:
 # ─── Rendering helpers ─────────────────────────────────────────────────────────
 
 
-# [LAW:dataflow-not-control-flow] Diff kind dispatch
-def _build_diff_spec():
-    p = cc_dump.palette.PALETTE
-    return {
-        "hunk": ("", "dim"),
-        "add": ("+ ", p.success),
-        "del": ("- ", p.error),
-    }
-
-
-_DIFF_SPECS = _build_diff_spec()
-
-
 def _render_diff(diff_lines: list, indent: str) -> Text:
     """Render diff lines with color-coded additions/deletions."""
+    tc = get_theme_colors()
+    # [LAW:dataflow-not-control-flow] Diff kind dispatch
+    specs = {
+        "hunk": ("", "dim"),
+        "add": ("+ ", tc.success),
+        "del": ("- ", tc.error),
+    }
     t = Text()
     for i, (kind, text) in enumerate(diff_lines):
         if i > 0:
             t.append("\n")
-        prefix, style = _DIFF_SPECS.get(kind, ("", ""))
+        prefix, style = specs.get(kind, ("", ""))
         t.append(indent + prefix + text, style=style)
     return t
 

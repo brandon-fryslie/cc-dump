@@ -269,6 +269,30 @@ class Palette:
         """
         return self._fg_colors[(12 + index) % self._count]
 
+    def fg_on_bg_for_mode(self, index: int, dark: bool = True) -> tuple[str, str]:
+        """(fg, bg) pair with mode-aware lightness.
+
+        Dark mode: fg L=0.70, bg L=0.25 (current defaults).
+        Light mode: fg L=0.35, bg L=0.88 (darker text, lighter background).
+        """
+        hue = self._hues[index % self._count]
+        if dark:
+            fg = _hsl_to_hex(hue, 0.75, 0.70)
+            bg = _hsl_to_hex(hue, 0.60, 0.25)
+        else:
+            fg = _hsl_to_hex(hue, 0.75, 0.35)
+            bg = _hsl_to_hex(hue, 0.45, 0.88)
+        return fg, bg
+
+    def msg_color_for_mode(self, index: int, dark: bool = True) -> str:
+        """Message color with mode-aware lightness.
+
+        Dark mode: L=0.70. Light mode: L=0.40.
+        """
+        hue = self._hues[(12 + index) % self._count]
+        lightness = 0.70 if dark else 0.40
+        return _hsl_to_hex(hue, 0.75, lightness)
+
 
 def _get_seed_hue() -> float:
     """Get seed hue from environment or default."""

@@ -1,0 +1,560 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/textual/widgets/_tabbed_content.py
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Content has been compressed - code blocks are separated by ⋮---- delimiter
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  textual/
+    widgets/
+      _tabbed_content.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/textual/widgets/_tabbed_content.py">
+__all__ = [
+⋮----
+class ContentTab(Tab)
+⋮----
+"""A Tab with an associated content id."""
+⋮----
+_PREFIX: Final[str] = "--content-tab-"
+"""The prefix given to the tab IDs."""
+⋮----
+@classmethod
+    def add_prefix(cls, content_id: str) -> str
+⋮----
+"""Add the prefix to the given ID.
+
+        Args:
+            content_id: The ID to add the prefix to.
+
+        Returns:
+            The ID with the prefix added.
+        """
+⋮----
+@classmethod
+    def sans_prefix(cls, content_id: str) -> str
+⋮----
+"""Remove the prefix from the given ID.
+
+        Args:
+            content_id: The ID to remove the prefix from.
+
+        Returns:
+            The ID with the prefix removed.
+        """
+⋮----
+"""Initialize a ContentTab.
+
+        Args:
+            label: The label to be displayed within the tab.
+            content_id: The id of the content associated with the tab.
+            disabled: Is the tab disabled?
+        """
+⋮----
+class ContentTabs(Tabs)
+⋮----
+"""A Tabs which is associated with a TabbedContent."""
+⋮----
+"""Initialize a ContentTabs.
+
+        Args:
+            *tabs: The child tabs.
+            active: ID of the tab which should be active on start.
+            tabbed_content: The associated TabbedContent instance.
+        """
+⋮----
+def get_content_tab(self, tab_id: str) -> ContentTab
+⋮----
+"""Get the `ContentTab` associated with the given `TabPane` ID.
+
+        Args:
+            tab_id: The ID of the tab to get.
+
+        Returns:
+            The tab associated with that ID.
+        """
+⋮----
+def disable(self, tab_id: str) -> Tab
+⋮----
+"""Disable the indicated tab.
+
+        Args:
+            tab_id: The ID of the [`Tab`][textual.widgets.Tab] to disable.
+
+        Returns:
+            The [`Tab`][textual.widgets.Tab] that was targeted.
+
+        Raises:
+            TabError: If there are any issues with the request.
+        """
+⋮----
+def enable(self, tab_id: str) -> Tab
+⋮----
+"""Enable the indicated tab.
+
+        Args:
+            tab_id: The ID of the [`Tab`][textual.widgets.Tab] to enable.
+
+        Returns:
+            The [`Tab`][textual.widgets.Tab] that was targeted.
+
+        Raises:
+            TabError: If there are any issues with the request.
+        """
+⋮----
+def hide(self, tab_id: str) -> Tab
+⋮----
+"""Hide the indicated tab.
+
+        Args:
+            tab_id: The ID of the [`Tab`][textual.widgets.Tab] to hide.
+
+        Returns:
+            The [`Tab`][textual.widgets.Tab] that was targeted.
+
+        Raises:
+            TabError: If there are any issues with the request.
+        """
+⋮----
+def show(self, tab_id: str) -> Tab
+⋮----
+"""Show the indicated tab.
+
+        Args:
+            tab_id: The ID of the [`Tab`][textual.widgets.Tab] to show.
+
+        Returns:
+            The [`Tab`][textual.widgets.Tab] that was targeted.
+
+        Raises:
+            TabError: If there are any issues with the request.
+        """
+⋮----
+class TabPane(Widget)
+⋮----
+"""A container for switchable content, with additional title.
+
+    This widget is intended to be used with [TabbedContent][textual.widgets.TabbedContent].
+    """
+⋮----
+DEFAULT_CSS = """
+⋮----
+@dataclass
+    class TabPaneMessage(Message)
+⋮----
+"""Base class for `TabPane` messages."""
+⋮----
+tab_pane: TabPane
+"""The `TabPane` that is he object of this message."""
+⋮----
+@property
+        def control(self) -> TabPane
+⋮----
+"""The tab pane that is the object of this message.
+
+            This is an alias for the attribute `tab_pane` and is used by the
+            [`on`][textual.on] decorator.
+            """
+⋮----
+@dataclass
+    class Disabled(TabPaneMessage)
+⋮----
+"""Sent when a tab pane is disabled via its reactive `disabled`."""
+⋮----
+@dataclass
+    class Enabled(TabPaneMessage)
+⋮----
+"""Sent when a tab pane is enabled via its reactive `disabled`."""
+⋮----
+@dataclass
+    class Focused(TabPaneMessage)
+⋮----
+"""Sent when a child widget is focused."""
+⋮----
+"""Initialize a TabPane.
+
+        Args:
+            title: Title of the TabPane (will be displayed in a tab label).
+            *children: Widget to go inside the TabPane.
+            name: Optional name for the TabPane.
+            id: Optional ID for the TabPane.
+            classes: Optional initial classes for the widget.
+            disabled: Whether the TabPane is disabled or not.
+        """
+⋮----
+def _watch_disabled(self, disabled: bool) -> None
+⋮----
+"""Notify the parent `TabbedContent` that a tab pane was enabled/disabled."""
+⋮----
+def _on_descendant_focus(self, event: events.DescendantFocus)
+⋮----
+"""Tell TabbedContent parent something is focused in this pane."""
+⋮----
+class TabbedContent(Widget)
+⋮----
+"""A container with associated tabs to toggle content visibility."""
+⋮----
+ALLOW_MAXIMIZE = True
+⋮----
+active: reactive[str] = reactive("", init=False)
+"""The ID of the active tab, or empty string if none are active."""
+⋮----
+class TabActivated(Message)
+⋮----
+"""Posted when the active tab changes."""
+⋮----
+ALLOW_SELECTOR_MATCH = {"pane"}
+"""Additional message attributes that can be used with the [`on` decorator][textual.on]."""
+⋮----
+def __init__(self, tabbed_content: TabbedContent, tab: ContentTab) -> None
+⋮----
+"""Initialize message.
+
+            Args:
+                tabbed_content: The TabbedContent widget.
+                tab: The Tab widget that was selected (contains the tab label).
+            """
+⋮----
+"""The `TabbedContent` widget that contains the tab activated."""
+⋮----
+"""The `Tab` widget that was selected (contains the tab label)."""
+⋮----
+"""The `TabPane` widget that was activated by selecting the tab."""
+⋮----
+@property
+        def control(self) -> TabbedContent
+⋮----
+"""The `TabbedContent` widget that contains the tab activated.
+
+            This is an alias for [`TabActivated.tabbed_content`][textual.widgets.TabbedContent.TabActivated.tabbed_content]
+            and is used by the [`on`][textual.on] decorator.
+            """
+⋮----
+def __rich_repr__(self) -> Result
+⋮----
+class Cleared(Message)
+⋮----
+"""Posted when no tab pane is active.
+
+        This can happen if all tab panes are removed or if the currently active tab
+        pane is unset.
+        """
+⋮----
+def __init__(self, tabbed_content: TabbedContent) -> None
+⋮----
+"""Initialize message.
+
+            Args:
+                tabbed_content: The TabbedContent widget.
+            """
+⋮----
+"""The `TabbedContent` widget that was cleared of all tab panes.
+
+            This is an alias for [`Cleared.tabbed_content`][textual.widgets.TabbedContent.Cleared.tabbed_content]
+            and is used by the [`on`][textual.on] decorator.
+            """
+⋮----
+"""Initialize a TabbedContent widgets.
+
+        Args:
+            *titles: Positional argument will be used as title.
+            initial: The id of the initial tab, or empty string to select the first tab.
+            name: The name of the tabbed content.
+            id: The ID of the tabbed content in the DOM.
+            classes: The CSS classes of the tabbed content.
+            disabled: Whether the tabbed content is disabled or not.
+        """
+⋮----
+@property
+    def active_pane(self) -> TabPane | None
+⋮----
+"""The currently active pane, or `None` if no pane is active."""
+active = self.active
+⋮----
+@staticmethod
+    def _set_id(content: TabPane, new_id: int) -> TabPane
+⋮----
+"""Set an id on the content, if not already present.
+
+        Args:
+            content: a TabPane.
+            new_id: Numeric ID to make the pane ID from.
+
+        Returns:
+            The same TabPane.
+        """
+⋮----
+def _generate_tab_id(self) -> int
+⋮----
+"""Auto generate a new tab id.
+
+        Returns:
+            An auto-incrementing integer.
+        """
+⋮----
+def compose(self) -> ComposeResult
+⋮----
+"""Compose the tabbed content."""
+⋮----
+# Wrap content in a `TabPane` if required.
+pane_content = [
+# Get a tab for each pane
+tabs = [
+⋮----
+# Yield the tabs, and ensure they're linked to this TabbedContent.
+# It's important to associate the Tabs with the TabbedContent, so that this
+# TabbedContent can determine whether a message received from a Tabs instance
+# has been sent from this Tabs, or from a Tabs that may exist as a descendant
+# deeper in the DOM.
+⋮----
+# Yield the content switcher and panes
+⋮----
+"""Add a new pane to the tabbed content.
+
+        Args:
+            pane: The pane to add.
+            before: Optional pane or pane ID to add the pane before.
+            after: Optional pane or pane ID to add the pane after.
+
+        Returns:
+            An optionally awaitable object that waits for the pane to be added.
+
+        Raises:
+            Tabs.TabError: If there is a problem with the addition request.
+
+        Note:
+            Only one of `before` or `after` can be provided. If both are
+            provided an exception is raised.
+        """
+⋮----
+before = before.id
+⋮----
+after = after.id
+tabs = self.get_child_by_type(ContentTabs)
+pane = self._set_id(pane, self._generate_tab_id())
+⋮----
+def remove_pane(self, pane_id: str) -> AwaitComplete
+⋮----
+"""Remove a given pane from the tabbed content.
+
+        Args:
+            pane_id: The ID of the pane to remove.
+
+        Returns:
+            An optionally awaitable object that waits for the pane to be removed
+                and the Cleared message to be posted.
+        """
+removal_awaitables: list[Awaitable] = [
+⋮----
+# It's possible that the content itself may have gone away via
+# other means; so allow that to be a no-op.
+⋮----
+def clear_panes(self) -> AwaitComplete
+⋮----
+"""Remove all the panes in the tabbed content.
+
+        Returns:
+            An optionally awaitable object which waits for all panes to be removed
+                and the Cleared message to be posted.
+        """
+await_clear = gather(
+⋮----
+async def _clear_content() -> None
+⋮----
+def compose_add_child(self, widget: Widget) -> None
+⋮----
+"""When using the context manager compose syntax, we want to attach nodes to the switcher.
+
+        Args:
+            widget: A Widget to add.
+        """
+⋮----
+def _on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None
+⋮----
+"""User clicked a tab."""
+⋮----
+# The message is relevant, so consume it and update state accordingly.
+⋮----
+switcher = self.get_child_by_type(ContentSwitcher)
+⋮----
+# We prevent TabbedContent.TabActivated because it is also
+# posted from the watcher for active, we're also about to
+# post it below too, which is valid as here we're reacting
+# to what the Tabs are doing. This ensures we don't get
+# doubled-up messages.
+⋮----
+def _on_tab_pane_focused(self, event: TabPane.Focused) -> None
+⋮----
+"""One of the panes contains a widget that was programmatically focused."""
+⋮----
+def _on_tabs_cleared(self, event: Tabs.Cleared) -> None
+⋮----
+"""Called when there are no active tabs. The tabs may have been cleared,
+        or they may all be hidden."""
+⋮----
+def _is_associated_tabs(self, tabs: Tabs) -> bool
+⋮----
+"""Determine whether a tab is associated with this TabbedContent or not.
+
+        A tab is "associated" with a `TabbedContent`, if it's one of the tabs that can
+        be used to control it. These have a special type: `ContentTab`, and are linked
+        back to this `TabbedContent` instance via a `tabbed_content` attribute.
+
+        Args:
+            tabs: The Tabs instance to check.
+
+        Returns:
+            True if the tab is associated with this `TabbedContent`.
+        """
+⋮----
+def _watch_active(self, active: str) -> None
+⋮----
+"""Switch tabs when the active attributes changes."""
+⋮----
+@property
+    def tab_count(self) -> int
+⋮----
+"""Total number of tabs."""
+⋮----
+def get_tab(self, pane_id: str | TabPane) -> Tab
+⋮----
+"""Get the `Tab` associated with the given ID or `TabPane`.
+
+        Args:
+            pane_id: The ID of the pane, or the pane itself.
+
+        Returns:
+            The Tab associated with the ID.
+
+        Raises:
+            ValueError: Raised if no ID was available.
+        """
+⋮----
+def get_pane(self, pane_id: str | ContentTab) -> TabPane
+⋮----
+"""Get the `TabPane` associated with the given ID or tab.
+
+        Args:
+            pane_id: The ID of the pane to get, or the Tab it is associated with.
+
+        Returns:
+            The `TabPane` associated with the ID or the given tab.
+
+        Raises:
+            ValueError: Raised if no ID was available.
+        """
+target_id: str | None = None
+⋮----
+target_id = (
+⋮----
+target_id = pane_id
+⋮----
+pane = self.get_child_by_type(ContentSwitcher).get_child_by_id(target_id)
+⋮----
+def _on_tabs_tab_disabled(self, event: Tabs.TabDisabled) -> None
+⋮----
+"""Disable the corresponding tab pane."""
+⋮----
+tab_id = event.tab.id or ""
+⋮----
+def _on_tab_pane_disabled(self, event: TabPane.Disabled) -> None
+⋮----
+"""Disable the corresponding tab."""
+⋮----
+def _on_tabs_tab_enabled(self, event: Tabs.TabEnabled) -> None
+⋮----
+"""Enable the corresponding tab pane."""
+⋮----
+def _on_tab_pane_enabled(self, event: TabPane.Enabled) -> None
+⋮----
+"""Enable the corresponding tab."""
+⋮----
+def disable_tab(self, tab_id: str) -> None
+⋮----
+"""Disables the tab with the given ID.
+
+        Args:
+            tab_id: The ID of the [`TabPane`][textual.widgets.TabPane] to disable.
+
+        Raises:
+            Tabs.TabError: If there are any issues with the request.
+        """
+⋮----
+def enable_tab(self, tab_id: str) -> None
+⋮----
+"""Enables the tab with the given ID.
+
+        Args:
+            tab_id: The ID of the [`TabPane`][textual.widgets.TabPane] to enable.
+
+        Raises:
+            Tabs.TabError: If there are any issues with the request.
+        """
+⋮----
+def hide_tab(self, tab_id: str) -> None
+⋮----
+"""Hides the tab with the given ID.
+
+        Args:
+            tab_id: The ID of the [`TabPane`][textual.widgets.TabPane] to hide.
+
+        Raises:
+            Tabs.TabError: If there are any issues with the request.
+        """
+⋮----
+def show_tab(self, tab_id: str) -> None
+⋮----
+"""Shows the tab with the given ID.
+
+        Args:
+            tab_id: The ID of the [`TabPane`][textual.widgets.TabPane] to show.
+
+        Raises:
+            Tabs.TabError: If there are any issues with the request.
+        """
+</file>
+
+</files>
