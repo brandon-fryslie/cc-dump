@@ -1108,37 +1108,103 @@ class StatsPanel(Static):
             db_path: Path to SQLite database
             session_id: Session identifier
             current_turn: Optional dict with in-progress turn data to merge for real-time display
+                         Expected keys: input_tokens, output_tokens, cache_read_tokens,
+                         cache_creation_tokens, model
         """
         if not db_path or not session_id:
-            # No database - show only in-memory fields
-            self._refresh_display(0, 0, 0, 0)
+            # No database - show only in-memory fields with defaults
+            self._refresh_display(
+                turn_count=self.request_count,
+                context_total=0,
+                context_window=200_000,
+                cache_pct=0.0,
+                output_total=0,
+                cost_estimate=0.0,
+                model_str="unknown",
+            )
             return
 
-        stats = cc_dump.db_queries.get_session_stats(db_path, session_id, current_turn)
+        # Query session cumulative stats
+        session_stats = cc_dump.db_queries.get_session_stats(db_path, session_id, current_turn)
+
+        # Query latest turn stats (for context window usage)
+        latest_turn = cc_dump.db_queries.get_latest_turn_stats(db_path, session_id)
+
+        # If we have a current_turn (streaming), merge it for latest turn values
+        if current_turn:
+            # During streaming, current_turn represents the latest (incomplete) turn
+            latest_input = current_turn.get("input_tokens", 0)
+            latest_cache_read = current_turn.get("cache_read_tokens", 0)
+            latest_cache_creation = current_turn.get("cache_creation_tokens", 0)
+            latest_model = current_turn.get("model", "unknown")
+        elif latest_turn:
+            # Use completed latest turn from DB
+            latest_input = latest_turn["input_tokens"]
+            latest_cache_read = latest_turn["cache_read_tokens"]
+            latest_cache_creation = latest_turn["cache_creation_tokens"]
+            latest_model = latest_turn["model"] or "unknown"
+        else:
+            # No turns yet
+            latest_input = 0
+            latest_cache_read = 0
+            latest_cache_creation = 0
+            latest_model = "unknown"
+
+        # Compute derived values
+        context_total = latest_input + latest_cache_read + latest_cache_creation
+        context_window = cc_dump.analysis.get_context_window(latest_model)
+
+        # Cache hit percentage for latest turn
+        total_input_latest = latest_input + latest_cache_read
+        cache_pct = (100.0 * latest_cache_read / total_input_latest) if total_input_latest > 0 else 0.0
+
+        # Cumulative output across session
+        output_total = session_stats["output_tokens"]
+
+        # Cost estimate using session cumulative stats
+        # For cost, we need a representative model - use latest turn's model
+        cost_estimate = cc_dump.analysis.compute_session_cost(
+            session_stats["input_tokens"],
+            session_stats["output_tokens"],
+            session_stats["cache_read_tokens"],
+            session_stats["cache_creation_tokens"],
+            latest_model,
+        )
+
+        # Model display name
+        model_display = cc_dump.analysis.format_model_ultra_short(latest_model)
+
         self._refresh_display(
-            stats["input_tokens"],
-            stats["output_tokens"],
-            stats["cache_read_tokens"],
-            stats["cache_creation_tokens"],
+            turn_count=self.request_count,
+            context_total=context_total,
+            context_window=context_window,
+            cache_pct=cache_pct,
+            output_total=output_total,
+            cost_estimate=cost_estimate,
+            model_str=model_display,
         )
 
     def _refresh_display(
         self,
-        input_tokens: int,
-        output_tokens: int,
-        cache_read_tokens: int,
-        cache_creation_tokens: int,
+        turn_count: int,
+        context_total: int,
+        context_window: int,
+        cache_pct: float,
+        output_total: int,
+        cost_estimate: float,
+        model_str: str,
     ):
         """Rebuild the display text."""
-        text = cc_dump.tui.panel_renderers.render_stats_panel(
-            self.request_count,
-            input_tokens,
-            output_tokens,
-            cache_read_tokens,
-            cache_creation_tokens,
-            self.models_seen,
+        rich_text = cc_dump.tui.panel_renderers.render_stats_panel(
+            turn_count,
+            context_total,
+            context_window,
+            cache_pct,
+            output_total,
+            cost_estimate,
+            model_str,
         )
-        self.update(text)
+        self.update(rich_text)
 
     def get_state(self) -> dict:
         """Extract state for transfer to a new instance."""
@@ -1151,8 +1217,9 @@ class StatsPanel(Static):
         """Restore state from a previous instance."""
         self.request_count = state.get("request_count", 0)
         self.models_seen = state.get("models_seen", set())
-        # Trigger display refresh (will need DB query to get token counts)
-        self._refresh_display(0, 0, 0, 0)
+        # Note: Display refresh will happen when refresh_from_db() is called
+        # after the widget is mounted in the app. Don't call _refresh_display()
+        # here as it requires an app context for Rich Text rendering.
 
 
 class ToolEconomicsPanel(Static):

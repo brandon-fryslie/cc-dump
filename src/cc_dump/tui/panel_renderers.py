@@ -5,6 +5,7 @@ so it can be hot-reloaded without affecting the live widget instances.
 """
 
 import cc_dump.analysis
+from rich.text import Text
 
 
 def _fmt_tokens(n: int) -> str:
@@ -15,28 +16,75 @@ def _fmt_tokens(n: int) -> str:
 
 
 def render_stats_panel(
-    request_count: int,
-    input_tokens: int,
-    output_tokens: int,
-    cache_read_tokens: int,
-    cache_creation_tokens: int,
-    models_seen: set,
-) -> str:
-    """Render the stats panel display text."""
-    parts = []
-    parts.append("Requests: {}".format(request_count))
-    parts.append("In: {:,}".format(input_tokens))
-    parts.append("Out: {:,}".format(output_tokens))
-    if cache_read_tokens > 0:
-        total_input = input_tokens + cache_read_tokens
-        hit_pct = (100 * cache_read_tokens / total_input) if total_input > 0 else 0
-        parts.append("Cache: {:,} ({:.0f}%)".format(cache_read_tokens, hit_pct))
-    if cache_creation_tokens > 0:
-        parts.append("Cache Create: {:,}".format(cache_creation_tokens))
-    models = ", ".join(sorted(models_seen)) if models_seen else "-"
-    parts.append("Models: {}".format(models))
+    turn_count: int,
+    context_total: int,
+    context_window: int,
+    cache_pct: float,
+    output_total: int,
+    cost_estimate: float,
+    model_display: str,
+) -> Text:
+    """Render the stats panel display text with color-coded context usage.
 
-    return " | ".join(parts)
+    Args:
+        turn_count: Number of API round-trips (requests)
+        context_total: Total input tokens in latest turn (input + cache_read + cache_creation)
+        context_window: Model context window size (e.g., 200_000)
+        cache_pct: Cache hit percentage (0-100)
+        output_total: Cumulative output tokens across session
+        cost_estimate: Estimated session cost in USD
+        model_display: Model display name (e.g., "sonnet")
+
+    Returns:
+        Rich Text object with color-coded context percentage
+    """
+    # Build the display text with separators
+    parts = []
+
+    # Turn count
+    parts.append("Turn {}".format(turn_count))
+
+    # Context usage with percentage (will be colored)
+    context_pct = (100.0 * context_total / context_window) if context_window > 0 else 0.0
+    ctx_str = "Ctx: {} / {} ({:.0f}%)".format(
+        _fmt_tokens(context_total),
+        _fmt_tokens(context_window),
+        context_pct
+    )
+
+    # Cache hit rate
+    parts.append("Cache: {:.0f}%".format(cache_pct))
+
+    # Cumulative output
+    parts.append("Out: {}".format(_fmt_tokens(output_total)))
+
+    # Cost estimate
+    if cost_estimate >= 0.01:
+        parts.append("~${:.2f}".format(cost_estimate))
+    else:
+        parts.append("~$<0.01")
+
+    # Model
+    parts.append(model_display)
+
+    # [LAW:dataflow-not-control-flow] Color selection driven by data, not control flow
+    # Traffic-light colors for context percentage
+    if context_pct < 60.0:
+        ctx_color = "green"
+    elif context_pct < 80.0:
+        ctx_color = "yellow"
+    else:
+        ctx_color = "red"
+
+    # Build Rich Text with colored context section
+    result = Text()
+    result.append(parts[0])  # Turn N
+    result.append(" | ")
+    result.append(ctx_str, style=ctx_color)  # Colored context usage
+    result.append(" | ")
+    result.append(" | ".join(parts[1:]))  # Rest of the fields
+
+    return result
 
 
 def _format_economics_row_input(row) -> str:

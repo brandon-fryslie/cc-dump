@@ -273,6 +273,59 @@ def get_tool_economics(
     return result
 
 
+def get_latest_turn_stats(db_path: str, session_id: str) -> dict | None:
+    """Query the most recent turn's token counts and model.
+
+    Args:
+        db_path: Path to SQLite database
+        session_id: Session identifier
+
+    Returns:
+        Dict with keys:
+            - sequence_num: Turn number (1-indexed)
+            - input_tokens: Fresh input tokens
+            - output_tokens: Output tokens
+            - cache_read_tokens: Cache read tokens
+            - cache_creation_tokens: Cache creation tokens
+            - model: Model identifier string
+        Returns None if no turns exist for the session.
+    """
+    uri = f"file:{db_path}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    try:
+        cursor = conn.execute(
+            """
+            SELECT
+                sequence_num,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_creation_tokens,
+                model
+            FROM turns
+            WHERE session_id = ?
+            ORDER BY sequence_num DESC
+            LIMIT 1
+        """,
+            (session_id,),
+        )
+
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        return {
+            "sequence_num": row[0],
+            "input_tokens": row[1],
+            "output_tokens": row[2],
+            "cache_read_tokens": row[3],
+            "cache_creation_tokens": row[4],
+            "model": row[5],
+        }
+    finally:
+        conn.close()
+
+
 def get_turn_timeline(db_path: str, session_id: str) -> list[dict]:
     """Query turn timeline data for a session.
 
