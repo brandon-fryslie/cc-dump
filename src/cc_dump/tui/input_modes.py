@@ -83,10 +83,6 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         "left_square_bracket": "prev_theme",
         "]": "next_theme",
         "right_square_bracket": "next_theme",
-
-        # Search: / handled specially in on_key to transition modes
-        # Quit
-        "q": "quit",
     },
 
     InputMode.SEARCH_NAV: {
@@ -120,7 +116,6 @@ FOOTER_KEYS: dict[InputMode, list[tuple[str, str]]] = {
         ("0", "follow"),
         ("[]", "theme"),
         ("/", "search"),
-        ("q", "quit"),
     ],
     InputMode.SEARCH_EDIT: [
         ("enter", "search"),

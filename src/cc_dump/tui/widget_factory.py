@@ -97,7 +97,8 @@ class TurnData:
         """
         from cc_dump.formatting import Level
 
-        snapshot = {k: filters.get(k, Level.FULL) for k in self.relevant_filter_keys}
+        # Create snapshot using tuple default to match filters dict structure
+        snapshot = {k: filters.get(k, (Level.FULL, True)) for k in self.relevant_filter_keys}
         # Force re-render when search context changes
         if not force and search_ctx is None and snapshot == self._last_filter_snapshot:
             return False
@@ -344,8 +345,9 @@ class ConversationView(ScrollView):
         td.compute_relevant_keys()
         from cc_dump.formatting import Level
 
+        # Use tuple default to match filters dict structure
         td._last_filter_snapshot = {
-            k: filters.get(k, Level.FULL) for k in td.relevant_filter_keys
+            k: filters.get(k, (Level.FULL, True)) for k in td.relevant_filter_keys
         }
         self._turns.append(td)
         self._recalculate_offsets()
@@ -699,8 +701,9 @@ class ConversationView(ScrollView):
                 # Off-viewport turn: defer re-render, mark pending
                 from cc_dump.formatting import Level
 
+                # Use tuple default to match filters dict structure
                 snapshot = {
-                    k: filters.get(k, Level.FULL) for k in td.relevant_filter_keys
+                    k: filters.get(k, (Level.FULL, True)) for k in td.relevant_filter_keys
                 }
                 if snapshot != td._last_filter_snapshot:
                     td._pending_filter_snapshot = snapshot

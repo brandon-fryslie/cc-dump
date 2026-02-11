@@ -27,64 +27,70 @@ async def test_default_visibility_levels():
 
 
 async def test_toggle_headers_off_on():
-    """Press '1' toggles headers: EXISTENCE -> remembered detail -> EXISTENCE."""
+    """Press '1' toggles headers visibility: hidden -> visible -> hidden."""
     async with run_app() as (pilot, app):
+        # Headers start hidden (visible=False, full=False -> EXISTENCE)
         assert get_vis_level(app, "headers") == Level.EXISTENCE
 
-        # Toggle on: should go to remembered detail (default=SUMMARY)
+        # Toggle visible: should show at SUMMARY (visible=True, full=False)
         await press_and_settle(pilot, "1")
         assert get_vis_level(app, "headers") == Level.SUMMARY
 
-        # Toggle off: back to EXISTENCE
+        # Toggle hidden: back to EXISTENCE (visible=False, full=False)
         await press_and_settle(pilot, "1")
         assert get_vis_level(app, "headers") == Level.EXISTENCE
 
 
 async def test_toggle_user_off_on():
-    """Press '2' toggles user: FULL -> EXISTENCE -> remembered (FULL)."""
+    """Press '2' toggles user visibility: visible -> hidden -> visible."""
     async with run_app() as (pilot, app):
+        # User starts visible at FULL (visible=True, full=True)
         assert get_vis_level(app, "user") == Level.FULL
 
-        # Toggle off
+        # Toggle hidden (visible=False, full=True -> EXISTENCE)
         await press_and_settle(pilot, "2")
         assert get_vis_level(app, "user") == Level.EXISTENCE
 
-        # Toggle on: restored to FULL
+        # Toggle visible: restored to FULL (visible=True, full=True)
         await press_and_settle(pilot, "2")
         assert get_vis_level(app, "user") == Level.FULL
 
 
 async def test_detail_toggle_shifts_summary_full():
-    """Shift+1 (!) cycles detail between SUMMARY and FULL for headers."""
+    """Shift+1 (!) toggles detail between SUMMARY and FULL. Need to show headers first."""
     async with run_app() as (pilot, app):
-        # Headers start at EXISTENCE. Shift+1 should show at opposite of remembered.
-        # Default remembered detail for headers is SUMMARY (2).
-        # So pressing ! should show at FULL (opposite of SUMMARY).
-        await press_and_settle(pilot, "!")
-        level = get_vis_level(app, "headers")
-        assert level == Level.FULL
+        # Headers start hidden. Show them first with '1'
+        await press_and_settle(pilot, "1")
+        assert get_vis_level(app, "headers") == Level.SUMMARY  # visible=True, full=False
 
-        # Press ! again: should cycle to SUMMARY
+        # Press !: toggle to FULL (visible=True, full=True)
+        await press_and_settle(pilot, "!")
+        assert get_vis_level(app, "headers") == Level.FULL
+
+        # Press ! again: toggle to SUMMARY (visible=True, full=False)
         await press_and_settle(pilot, "!")
         assert get_vis_level(app, "headers") == Level.SUMMARY
 
-        # Press ! again: should cycle to FULL
+        # Press ! again: toggle to FULL (visible=True, full=True)
         await press_and_settle(pilot, "!")
         assert get_vis_level(app, "headers") == Level.FULL
 
 
 async def test_toggle_remembers_detail_level():
-    """Toggle off preserves detail level; toggle back restores it."""
+    """Visibility toggle preserves detail level independently."""
     async with run_app() as (pilot, app):
-        # Tools start at SUMMARY. Use detail toggle to set to FULL.
-        await press_and_settle(pilot, "$")  # shift+4 = $ for tools detail
-        assert get_vis_level(app, "tools") == Level.FULL
+        # Tools start at SUMMARY (visible=True, full=False)
+        assert get_vis_level(app, "tools") == Level.SUMMARY
 
-        # Toggle off with '4'
+        # Toggle detail to FULL with '$' (shift+4)
+        await press_and_settle(pilot, "$")
+        assert get_vis_level(app, "tools") == Level.FULL  # visible=True, full=True
+
+        # Hide with '4' (visible=False, full=True)
         await press_and_settle(pilot, "4")
         assert get_vis_level(app, "tools") == Level.EXISTENCE
 
-        # Toggle back on — should remember FULL
+        # Show again with '4' — detail state preserved (visible=True, full=True)
         await press_and_settle(pilot, "4")
         assert get_vis_level(app, "tools") == Level.FULL
 

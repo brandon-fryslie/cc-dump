@@ -46,13 +46,13 @@ class TestNormalModeKeyDispatch:
     async def test_filter_toggle_1_changes_headers(self, app_and_pilot):
         """Pressing '1' toggles headers visibility."""
         pilot, app = app_and_pilot
-        initial = app.vis_headers
+        initial = app._is_visible["headers"]
 
         await pilot.press("1")
         await pilot.pause()
 
         # Should have toggled
-        assert app.vis_headers != initial
+        assert app._is_visible["headers"] != initial
 
     async def test_theme_next_changes_theme(self, app_and_pilot):
         """Pressing ']' cycles to next theme."""
@@ -133,12 +133,12 @@ class TestSearchModeGating:
         await pilot.pause()
 
         # Try to toggle filter
-        initial_headers = app.vis_headers
+        initial_headers = app._is_visible["headers"]
         await pilot.press("1")
         await pilot.pause()
 
         # Filter should NOT have changed
-        assert app.vis_headers == initial_headers
+        assert app._is_visible["headers"] == initial_headers
 
     async def test_theme_blocked_during_search_nav(self, app_and_pilot):
         """During SEARCH_NAV, pressing ']' does NOT change theme."""

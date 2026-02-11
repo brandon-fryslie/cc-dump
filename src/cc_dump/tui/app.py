@@ -1,6 +1,10 @@
 """Main TUI application using Textual."""
 
+import os
+import platform
 import queue
+import subprocess
+import tempfile
 import threading
 from typing import Optional
 
@@ -34,12 +38,18 @@ _CATEGORY_CONFIG = [
     ("7", "metadata", "metadata", 1, 2),
 ]
 
-# Build lookup dicts from config
-_VIS_ATTR = {name: f"vis_{name}" for _, name, _, _, _ in _CATEGORY_CONFIG}
-_DEFAULT_DETAIL = {name: detail for _, name, _, _, detail in _CATEGORY_CONFIG}
+# Lookup dicts from config removed - using reactive dicts instead
 
 # Mapping for shift+number detail toggle keys
-_SHIFTED_NUMBERS = {"1": "!", "2": "@", "3": "#", "4": "$", "5": "%", "6": "^", "7": "&"}
+_SHIFTED_NUMBERS = {
+    "1": "!",
+    "2": "@",
+    "3": "#",
+    "4": "$",
+    "5": "%",
+    "6": "^",
+    "7": "&",
+}
 
 
 class CcDumpApp(App):
@@ -50,14 +60,12 @@ class CcDumpApp(App):
     # Pure mode system: all key dispatch through on_key using MODE_KEYMAP.
     # No Textual BINDINGS - we always prevent_default to block binding resolution.
 
-    # Category visibility levels (3-state cycle: EXISTENCE → SUMMARY → FULL → EXISTENCE)
-    vis_headers = reactive(1)  # Level.EXISTENCE
-    vis_user = reactive(3)  # Level.FULL
-    vis_assistant = reactive(3)  # Level.FULL
-    vis_tools = reactive(2)  # Level.SUMMARY
-    vis_system = reactive(2)  # Level.SUMMARY
-    vis_metadata = reactive(1)  # Level.EXISTENCE
-    vis_budget = reactive(1)  # Level.EXISTENCE
+    # [LAW:one-source-of-truth] Three orthogonal reactive dicts for visibility state
+    # Each toggled by exactly one action. No cross-contamination.
+    _is_visible = reactive({})   # True = visible, False = hidden (EXISTENCE)
+    _is_full = reactive({})      # True = FULL level, False = SUMMARY level
+    _is_expanded = reactive({})  # True = expanded, False = collapsed
+
     # Panel visibility (bool toggles)
     show_economics = reactive(False)
     show_timeline = reactive(False)
@@ -99,17 +107,19 @@ class CcDumpApp(App):
             "current_turn_usage": {},  # Token counts for incomplete turn
         }
 
-        # Remember detail level when toggling visibility
-        self._remembered_detail = dict(_DEFAULT_DETAIL)
-
-        # [LAW:one-source-of-truth] Category-level expansion state
-        # Sole authority for whether a category is expanded/collapsed.
-        # Per-block `block.expanded` is strictly per-block override (click-to-expand).
-        self._category_expanded = {
-            name: cc_dump.tui.rendering.DEFAULT_EXPANDED[
-                cc_dump.formatting.Level(default_level)
-            ]
+        # [LAW:one-source-of-truth] Three orthogonal booleans per category.
+        # Each action toggles EXACTLY ONE dict. No cross-contamination.
+        self._is_visible = {
+            name: (default_level != 1)
             for _, name, _, default_level, _ in _CATEGORY_CONFIG
+        }
+        self._is_full = {
+            name: (default_detail == 3)
+            for _, name, _, _, default_detail in _CATEGORY_CONFIG
+        }
+        self._is_expanded = {
+            name: (default_detail == 3)
+            for _, name, _, _, default_detail in _CATEGORY_CONFIG
         }
 
         # Search state
@@ -143,16 +153,39 @@ class CcDumpApp(App):
         """Add category filter and panel commands to command palette."""
         yield from super().get_system_commands(screen)
         for _key, name, _desc, _, _ in _CATEGORY_CONFIG:
-            yield SystemCommand(f"Toggle {name}", f"Show/hide {name}", lambda n=name: self.action_toggle_vis(n))
-            yield SystemCommand(f"Cycle {name} detail", "SUMMARY <-> FULL", lambda n=name: self.action_toggle_detail(n))
-        yield SystemCommand("Toggle cost panel", "Economics panel", self.action_toggle_economics)
-        yield SystemCommand("Toggle timeline", "Timeline panel", self.action_toggle_timeline)
+            yield SystemCommand(
+                f"Toggle {name}",
+                f"Show/hide {name}",
+                lambda n=name: self.action_toggle_vis(n),
+            )
+            yield SystemCommand(
+                f"Cycle {name} detail",
+                "SUMMARY <-> FULL",
+                lambda n=name: self.action_toggle_detail(n),
+            )
+        yield SystemCommand(
+            "Toggle cost panel", "Economics panel", self.action_toggle_economics
+        )
+        yield SystemCommand(
+            "Toggle timeline", "Timeline panel", self.action_toggle_timeline
+        )
         yield SystemCommand("Toggle logs", "Debug logs", self.action_toggle_logs)
         yield SystemCommand("Go to top", "Scroll to start", self.action_go_top)
         yield SystemCommand("Go to bottom", "Scroll to end", self.action_go_bottom)
-        yield SystemCommand("Toggle follow mode", "Auto-scroll", self.action_toggle_follow)
-        yield SystemCommand("Next theme", "Cycle to next theme (])", self.action_next_theme)
-        yield SystemCommand("Previous theme", "Cycle to previous theme ([)", self.action_prev_theme)
+        yield SystemCommand(
+            "Toggle follow mode", "Auto-scroll", self.action_toggle_follow
+        )
+        yield SystemCommand(
+            "Next theme", "Cycle to next theme (])", self.action_next_theme
+        )
+        yield SystemCommand(
+            "Previous theme", "Cycle to previous theme ([)", self.action_prev_theme
+        )
+        yield SystemCommand(
+            "Dump conversation",
+            "Export conversation to text file",
+            self.action_dump_conversation,
+        )
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -299,8 +332,8 @@ class CcDumpApp(App):
                     req_body, self._state, request_headers=req_headers
                 )
 
-                # Add request turn
-                conv.add_turn(request_blocks)
+                # Add request turn with current filters
+                conv.add_turn(request_blocks, self.active_filters)
 
                 # Format response blocks
                 response_blocks = []
@@ -318,8 +351,8 @@ class CcDumpApp(App):
                     cc_dump.formatting.format_complete_response(complete_message)
                 )
 
-                # Add response turn
-                conv.add_turn(response_blocks)
+                # Add response turn with current filters
+                conv.add_turn(response_blocks, self.active_filters)
 
                 # Update stats
                 if stats:
@@ -584,11 +617,20 @@ class CcDumpApp(App):
         // [LAW:one-source-of-truth] Same tuples flow to rendering AND footer.
         // [LAW:dataflow-not-control-flow] Uniform shape for all consumers.
         """
+        import cc_dump.tui.rendering
         Level = cc_dump.formatting.Level
-        return {
-            name: (Level(getattr(self, f"vis_{name}")), self._category_expanded[name])
-            for _, name, _, _, _ in _CATEGORY_CONFIG
-        }
+        result = {}
+        for _, name, _, _, _ in _CATEGORY_CONFIG:
+            if not self._is_visible[name]:
+                level = Level.EXISTENCE
+            elif self._is_full[name]:
+                level = Level.FULL
+            else:
+                level = Level.SUMMARY
+            # Use level-specific default expanded state
+            expanded = cc_dump.tui.rendering.DEFAULT_EXPANDED[level]
+            result[name] = (level, expanded)
+        return result
 
     # Action handlers — category visibility and detail
 
@@ -605,45 +647,28 @@ class CcDumpApp(App):
                     block.expanded = None  # reset to level default
 
     def action_toggle_vis(self, category: str):
-        """Toggle hidden (1) ↔ visible (remembered detail level)."""
-        attr = _VIS_ATTR[category]
-        current = getattr(self, attr)
-        if current > 1:
-            self._remembered_detail[category] = current
-            setattr(self, attr, 1)
-        else:
-            setattr(self, attr, self._remembered_detail[category])
+        """Toggle hidden ↔ visible. ONLY changes _is_visible."""
+        # Create new dict to trigger reactive watcher
+        new_dict = dict(self._is_visible)
+        new_dict[category] = not new_dict[category]
+        self._is_visible = new_dict
         self._clear_overrides(category)
 
     def action_toggle_detail(self, category: str):
-        """Toggle SUMMARY (2) ↔ FULL (3). If hidden, show at opposite of remembered."""
-        attr = _VIS_ATTR[category]
-        current = getattr(self, attr)
-        if current <= 1:
-            # Hidden → show at OPPOSITE of remembered (toggle while showing)
-            remembered = self._remembered_detail[category]
-            new_level = 2 if remembered == 3 else 3
-            setattr(self, attr, new_level)
-            self._remembered_detail[category] = new_level
-        elif current == 2:
-            setattr(self, attr, 3)
-            self._remembered_detail[category] = 3
-        else:
-            setattr(self, attr, 2)
-            self._remembered_detail[category] = 2
+        """Toggle SUMMARY ↔ FULL. ONLY changes _is_full. Never hides blocks."""
+        # Create new dict to trigger reactive watcher
+        new_dict = dict(self._is_full)
+        new_dict[category] = not new_dict[category]
+        self._is_full = new_dict
         self._clear_overrides(category)
 
     def action_toggle_expand(self, category: str):
-        """Toggle category expansion state.
-
-        // [LAW:one-source-of-truth] Reads/writes _category_expanded directly.
-        """
-        self._category_expanded[category] = not self._category_expanded[category]
-        self._clear_overrides(category)  # reset per-block overrides
-        conv = self._get_conv()
-        if conv is not None:
-            conv.rerender(self.active_filters)
-        self._update_footer_state()
+        """Toggle collapsed ↔ expanded. ONLY changes _is_expanded. Never hides blocks."""
+        # Create new dict to trigger reactive watcher
+        new_dict = dict(self._is_expanded)
+        new_dict[category] = not new_dict[category]
+        self._is_expanded = new_dict
+        self._clear_overrides(category)
 
     def action_toggle_economics(self):
         self.show_economics = not self.show_economics
@@ -772,33 +797,18 @@ class CcDumpApp(App):
                 conv.rerender(self.active_filters)
             self._update_footer_state()
 
-    def _watch_vis_category(self, category: str, new_level: int):
-        """Reset expansion to level default when level changes."""
-        self._category_expanded[category] = cc_dump.tui.rendering.DEFAULT_EXPANDED[
-            cc_dump.formatting.Level(new_level)
-        ]
+    def _on_vis_state_changed(self):
+        """Common handler for any visibility state change."""
         self._rerender_if_mounted()
 
-    def watch_vis_headers(self, value):
-        self._watch_vis_category("headers", value)
+    def watch__is_visible(self, value):
+        self._on_vis_state_changed()
 
-    def watch_vis_user(self, value):
-        self._watch_vis_category("user", value)
+    def watch__is_full(self, value):
+        self._on_vis_state_changed()
 
-    def watch_vis_assistant(self, value):
-        self._watch_vis_category("assistant", value)
-
-    def watch_vis_tools(self, value):
-        self._watch_vis_category("tools", value)
-
-    def watch_vis_system(self, value):
-        self._watch_vis_category("system", value)
-
-    def watch_vis_budget(self, value):
-        self._watch_vis_category("budget", value)
-
-    def watch_vis_metadata(self, value):
-        self._watch_vis_category("metadata", value)
+    def watch__is_expanded(self, value):
+        self._on_vis_state_changed()
 
     def watch_show_economics(self, value):
         self._update_footer_state()
@@ -843,6 +853,164 @@ class CcDumpApp(App):
     def action_prev_theme(self) -> None:
         """Cycle to the previous theme alphabetically."""
         self._cycle_theme(-1)
+
+    def action_dump_conversation(self) -> None:
+        """Dump entire conversation to a temp file and optionally open in $VISUAL."""
+        conv = self._get_conv()
+        if conv is None or not conv._turns:
+            self._log("WARNING", "No conversation data to dump")
+            self.notify("No conversation to dump", severity="warning")
+            return
+
+        # [LAW:dataflow-not-control-flow] Always create file; vary behavior based on platform/env
+        try:
+            # Create temp file with .txt extension
+            fd, tmp_path = tempfile.mkstemp(suffix=".txt", prefix="cc-dump-")
+
+            # Write conversation data
+            with os.fdopen(fd, "w") as f:
+                f.write("=" * 80 + "\n")
+                f.write("CC-DUMP CONVERSATION EXPORT\n")
+                f.write("=" * 80 + "\n\n")
+
+                for turn_idx, turn_data in enumerate(conv._turns):
+                    f.write(f"\n{'─' * 80}\n")
+                    f.write(f"TURN {turn_idx + 1}\n")
+                    f.write(f"{'─' * 80}\n\n")
+
+                    for block_idx, block in enumerate(turn_data.blocks):
+                        self._write_block_text(f, block, block_idx)
+                        f.write("\n")
+
+            self._log("INFO", f"Conversation dumped to: {tmp_path}")
+            self.notify(f"Exported to: {tmp_path}")
+
+            # On macOS with $VISUAL, open the file
+            if platform.system() == "Darwin" and os.environ.get("VISUAL"):
+                editor = os.environ["VISUAL"]
+                self._log("INFO", f"Opening in $VISUAL ({editor})...")
+                self.notify(f"Opening in {editor}...")
+
+                try:
+                    # Run editor with 20s timeout
+                    result = subprocess.run(
+                        [editor, tmp_path], timeout=20, capture_output=True, text=True
+                    )
+                    if result.returncode == 0:
+                        self._log("INFO", "Editor opened successfully")
+                    else:
+                        self._log(
+                            "WARNING", f"Editor exited with code {result.returncode}"
+                        )
+                except subprocess.TimeoutExpired:
+                    self._log(
+                        "WARNING",
+                        "Editor timeout after 20s (still running in background)",
+                    )
+                    self.notify("Editor timeout (still open)", severity="warning")
+                except Exception as e:
+                    self._log("ERROR", f"Failed to open editor: {e}")
+                    self.notify(f"Editor error: {e}", severity="error")
+
+        except Exception as e:
+            self._log("ERROR", f"Failed to dump conversation: {e}")
+            self.notify(f"Dump failed: {e}", severity="error")
+
+    def _write_block_text(self, f, block, block_idx: int) -> None:
+        """Write a single block as text to file."""
+        block_type = type(block).__name__
+        f.write(f"  [{block_idx}] {block_type}\n")
+        f.write(f"  {'-' * 76}\n")
+
+        # Handle different block types
+        if isinstance(block, cc_dump.formatting.HeaderBlock):
+            f.write(f"  {block.label}\n")
+            if block.timestamp:
+                f.write(f"  Timestamp: {block.timestamp}\n")
+
+        elif isinstance(block, cc_dump.formatting.MetadataBlock):
+            if block.model:
+                f.write(f"  Model: {block.model}\n")
+            if block.max_tokens:
+                f.write(f"  Max tokens: {block.max_tokens}\n")
+            f.write(f"  Stream: {block.stream}\n")
+            if block.tool_count:
+                f.write(f"  Tool count: {block.tool_count}\n")
+
+        elif isinstance(block, cc_dump.formatting.TextContentBlock):
+            if block.text:
+                f.write(f"  {block.text}\n")
+
+        elif isinstance(block, cc_dump.formatting.ToolUseBlock):
+            f.write(f"  Tool: {block.tool_name}\n")
+            f.write(f"  ID: {block.tool_use_id}\n")
+            if block.tool_input:
+                f.write("  Input:\n")
+                import json
+
+                f.write(f"    {json.dumps(block.tool_input, indent=2)}\n")
+
+        elif isinstance(block, cc_dump.formatting.ToolResultBlock):
+            f.write(f"  Tool: {block.tool_name}\n")
+            f.write(f"  ID: {block.tool_use_id}\n")
+            if block.is_error:
+                f.write(f"  ERROR: {block.content}\n")
+            else:
+                f.write(f"  Result:\n    {block.content}\n")
+
+        elif isinstance(block, cc_dump.formatting.TextDeltaBlock):
+            if block.text:
+                f.write(f"  {block.text}\n")
+
+        elif isinstance(block, cc_dump.formatting.TrackedContentBlock):
+            f.write(f"  Status: {block.status}\n")
+            if block.tag_id:
+                f.write(f"  Tag ID: {block.tag_id}\n")
+            if block.content:
+                f.write(f"  Content: {block.content}\n")
+            if block.old_content:
+                f.write(f"  Old: {block.old_content}\n")
+            if block.new_content:
+                f.write(f"  New: {block.new_content}\n")
+
+        elif isinstance(block, cc_dump.formatting.RoleBlock):
+            f.write(f"  Role: {block.role}\n")
+            if block.timestamp:
+                f.write(f"  Timestamp: {block.timestamp}\n")
+
+        elif isinstance(block, cc_dump.formatting.SystemLabelBlock):
+            f.write("  SYSTEM:\n")
+
+        elif isinstance(block, cc_dump.formatting.StopReasonBlock):
+            f.write(f"  Stop reason: {block.stop_reason}\n")
+            if hasattr(block, "stop_sequence") and block.stop_sequence:
+                f.write(f"  Stop sequence: {block.stop_sequence}\n")
+
+        elif isinstance(block, cc_dump.formatting.ErrorBlock):
+            f.write(f"  ERROR: {block.error_type}\n")
+            if block.message:
+                f.write(f"  Message: {block.message}\n")
+
+        elif isinstance(block, cc_dump.formatting.TurnBudgetBlock):
+            f.write(f"  Input tokens: {block.budget.input_tokens}\n")
+            f.write(f"  Output tokens: {block.budget.output_tokens}\n")
+            if block.budget.cache_creation_input_tokens:
+                f.write(
+                    f"  Cache creation: {block.budget.cache_creation_input_tokens}\n"
+                )
+            if block.budget.cache_read_input_tokens:
+                f.write(f"  Cache read: {block.budget.cache_read_input_tokens}\n")
+
+        elif isinstance(block, cc_dump.formatting.HttpHeadersBlock):
+            f.write(f"  {block.header_type.upper()} Headers\n")
+            if block.status_code:
+                f.write(f"  Status: {block.status_code}\n")
+            for key, value in block.headers.items():
+                f.write(f"  {key}: {value}\n")
+
+        else:
+            # Unhandled block type
+            f.write(f"  (unhandled block type)\n")
 
     def _apply_markdown_theme(self) -> None:
         """Push/replace markdown Rich theme on the console.
@@ -997,7 +1165,11 @@ class CcDumpApp(App):
             return
 
         # Printable character
-        if event.character and len(event.character) == 1 and event.character.isprintable():
+        if (
+            event.character
+            and len(event.character) == 1
+            and event.character.isprintable()
+        ):
             state.query = (
                 state.query[: state.cursor_pos]
                 + event.character
@@ -1058,7 +1230,11 @@ class CcDumpApp(App):
         state.raised_categories = set()
         # Save current filter state for restore on cancel
         state.saved_filters = {
-            name: getattr(self, f"vis_{name}")
+            name: (
+                self._is_visible[name],
+                self._is_full[name],
+                self._is_expanded[name],
+            )
             for _, name, _, _, _ in _CATEGORY_CONFIG
         }
         # Save current scroll position
@@ -1077,9 +1253,17 @@ class CcDumpApp(App):
         # Clear block expansion overrides we set
         self._clear_search_expand()
 
-        # Restore saved filter levels
-        for name, level in state.saved_filters.items():
-            setattr(self, f"vis_{name}", level)
+        # Restore saved filter levels (all three dicts) - create new dicts to trigger watchers
+        new_visible = {}
+        new_full = {}
+        new_expanded = {}
+        for name, (is_visible, is_full, is_expanded) in state.saved_filters.items():
+            new_visible[name] = is_visible
+            new_full[name] = is_full
+            new_expanded[name] = is_expanded
+        self._is_visible = new_visible
+        self._is_full = new_full
+        self._is_expanded = new_expanded
 
         # Reset state
         state.phase = SearchPhase.INACTIVE
@@ -1143,9 +1327,7 @@ class CcDumpApp(App):
         state = self._search_state
         if state.debounce_timer is not None:
             state.debounce_timer.stop()
-        state.debounce_timer = self.set_timer(
-            0.15, self._run_incremental_search
-        )
+        state.debounce_timer = self.set_timer(0.15, self._run_incremental_search)
 
     def _run_incremental_search(self) -> None:
         """Execute incremental search during editing."""
@@ -1216,11 +1398,20 @@ class CcDumpApp(App):
         # Raise category visibility to FULL if needed
         cat = cc_dump.tui.rendering.get_category(block)
         if cat is not None:
-            attr = f"vis_{cat.value}"
-            current_level = getattr(self, attr, 3)
-            if current_level < 3:
-                setattr(self, attr, 3)
-                state.raised_categories.add(cat.value)
+            cat_name = cat.value
+            # Check if currently at FULL level (visible=True, full=True)
+            current_is_full = self._is_visible[cat_name] and self._is_full[cat_name]
+            if not current_is_full:
+                # Raise to FULL - create new dicts to trigger watchers
+                new_visible = dict(self._is_visible)
+                new_visible[cat_name] = True
+                self._is_visible = new_visible
+
+                new_full = dict(self._is_full)
+                new_full[cat_name] = True
+                self._is_full = new_full
+
+                state.raised_categories.add(cat_name)
 
         # Expand the specific block
         block.expanded = True
