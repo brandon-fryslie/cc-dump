@@ -29,6 +29,7 @@ from tests.harness.content import (
     widget_text,
 )
 from tests.harness.messages import MessageCapture
+from tests.harness.builders import make_replay_entry, make_replay_data
 
 __all__ = [
     "run_app",
@@ -50,4 +51,6 @@ __all__ = [
     "all_turns_text",
     "widget_text",
     "MessageCapture",
+    "make_replay_entry",
+    "make_replay_data",
 ]

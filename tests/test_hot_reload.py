@@ -12,6 +12,8 @@ import pytest
 
 from tests.conftest import modify_file, settle
 
+pytestmark = pytest.mark.pty
+
 
 class TestHotReloadBasics:
     """Test basic hot-reload functionality."""

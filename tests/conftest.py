@@ -243,13 +243,48 @@ def class_proc_with_port():
 
 @pytest.fixture
 def temp_db():
-    """Create a temporary database file for testing."""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.db', delete=False) as f:
-        db_path = f.name
+    """Create a temporary database with initialized schema for testing."""
+    from cc_dump.schema import init_db
 
-    yield db_path
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "test.db")
+        conn = init_db(db_path)
+        conn.close()
+        yield db_path
 
+
+@pytest.fixture
+def fresh_state():
+    """Fresh state dict for content tracking."""
+    return {
+        "positions": {},
+        "known_hashes": {},
+        "next_id": 0,
+        "next_color": 0,
+        "request_counter": 0,
+    }
+
+
+def _send_request(port, content="Test", extra_json=None, extra_headers=None):
+    """Send a test request to cc-dump proxy. Swallows connection errors."""
+    import requests
+
+    body = {
+        "model": "claude-3-5-sonnet-20241022",
+        "max_tokens": 50,
+        "messages": [{"role": "user", "content": content}],
+    }
+    if extra_json:
+        body.update(extra_json)
+    headers = {"anthropic-version": "2023-06-01"}
+    if extra_headers:
+        headers.update(extra_headers)
     try:
-        os.unlink(db_path)
-    except FileNotFoundError:
+        requests.post(
+            f"http://127.0.0.1:{port}/v1/messages",
+            json=body,
+            timeout=2,
+            headers=headers,
+        )
+    except requests.exceptions.RequestException:
         pass

@@ -44,113 +44,136 @@ from cc_dump.analysis import TurnBudget
 # ─── Text extraction ─────────────────────────────────────────────────────────
 
 
+SEARCHABLE_TEXT_CASES = [
+    pytest.param(
+        HeaderBlock(label="REQUEST #1", timestamp="1:23:45 PM"),
+        ["REQUEST #1", "1:23:45 PM"],
+        id="header",
+    ),
+    pytest.param(
+        HttpHeadersBlock(headers={"content-type": "application/json"}),
+        ["content-type", "application/json"],
+        id="http_headers",
+    ),
+    pytest.param(
+        MetadataBlock(model="claude-sonnet-4-5-20250929", max_tokens="8192"),
+        ["claude-sonnet-4-5-20250929", "8192"],
+        id="metadata",
+    ),
+    pytest.param(
+        SystemLabelBlock(),
+        ["SYSTEM:"],
+        id="system_label",
+    ),
+    pytest.param(
+        TrackedContentBlock(status="new", content="hello world"),
+        ["hello world"],
+        id="tracked_content_new",
+    ),
+    pytest.param(
+        TrackedContentBlock(status="changed", new_content="new stuff", old_content="old"),
+        ["new stuff"],
+        id="tracked_content_changed",
+    ),
+    pytest.param(
+        TrackedContentBlock(status="ref"),
+        [],
+        id="tracked_content_ref",
+    ),
+    pytest.param(
+        RoleBlock(role="assistant"),
+        ["assistant"],
+        id="role",
+    ),
+    pytest.param(
+        TextContentBlock(text="Hello, how can I help?"),
+        ["Hello, how can I help?"],
+        id="text_content",
+    ),
+    pytest.param(
+        ToolUseBlock(name="Read", detail="/path/to/file.py"),
+        ["Read", "/path/to/file.py"],
+        id="tool_use",
+    ),
+    pytest.param(
+        ToolResultBlock(tool_name="Bash", detail="ls -la"),
+        ["Bash", "ls -la"],
+        id="tool_result",
+    ),
+    pytest.param(
+        ToolUseSummaryBlock(tool_counts={"Read": 3, "Bash": 2}, total=5),
+        ["Read", "Bash"],
+        id="tool_use_summary",
+    ),
+    pytest.param(
+        ImageBlock(media_type="image/png"),
+        ["image/png"],
+        id="image",
+    ),
+    pytest.param(
+        StreamInfoBlock(model="claude-sonnet-4-5-20250929"),
+        ["claude-sonnet-4-5-20250929"],
+        id="stream_info",
+    ),
+    pytest.param(
+        StreamToolUseBlock(name="Read"),
+        ["Read"],
+        id="stream_tool_use",
+    ),
+    pytest.param(
+        TextDeltaBlock(text="streaming text"),
+        ["streaming text"],
+        id="text_delta",
+    ),
+    pytest.param(
+        StopReasonBlock(reason="end_turn"),
+        ["end_turn"],
+        id="stop_reason",
+    ),
+    pytest.param(
+        ErrorBlock(code=429, reason="rate_limited"),
+        ["429", "rate_limited"],
+        id="error",
+    ),
+    pytest.param(
+        ProxyErrorBlock(error="connection refused"),
+        ["connection refused"],
+        id="proxy_error",
+    ),
+    pytest.param(
+        NewlineBlock(),
+        [],
+        id="newline",
+    ),
+    pytest.param(
+        SeparatorBlock(),
+        [],
+        id="separator",
+    ),
+    pytest.param(
+        TurnBudgetBlock(budget=TurnBudget(total_est=50000)),
+        ["50000"],
+        id="turn_budget",
+    ),
+    pytest.param(
+        UnknownTypeBlock(block_type="thinking"),
+        ["thinking"],
+        id="unknown_type",
+    ),
+]
+
+
 class TestGetSearchableText:
     """Test text extraction from all block types."""
 
-    def test_header_block(self):
-        block = HeaderBlock(label="REQUEST #1", timestamp="1:23:45 PM")
-        assert "REQUEST #1" in get_searchable_text(block)
-        assert "1:23:45 PM" in get_searchable_text(block)
-
-    def test_http_headers_block(self):
-        block = HttpHeadersBlock(headers={"content-type": "application/json"})
+    @pytest.mark.parametrize("block,expected", SEARCHABLE_TEXT_CASES)
+    def test_get_searchable_text(self, block, expected):
+        """Test searchable text extraction from various block types."""
         text = get_searchable_text(block)
-        assert "content-type" in text
-        assert "application/json" in text
-
-    def test_metadata_block(self):
-        block = MetadataBlock(model="claude-sonnet-4-5-20250929", max_tokens="8192")
-        text = get_searchable_text(block)
-        assert "claude-sonnet-4-5-20250929" in text
-        assert "8192" in text
-
-    def test_system_label_block(self):
-        assert get_searchable_text(SystemLabelBlock()) == "SYSTEM:"
-
-    def test_tracked_content_new(self):
-        block = TrackedContentBlock(status="new", content="hello world")
-        assert get_searchable_text(block) == "hello world"
-
-    def test_tracked_content_changed(self):
-        block = TrackedContentBlock(
-            status="changed", new_content="new stuff", old_content="old"
-        )
-        assert get_searchable_text(block) == "new stuff"
-
-    def test_tracked_content_ref(self):
-        block = TrackedContentBlock(status="ref")
-        assert get_searchable_text(block) == ""
-
-    def test_role_block(self):
-        block = RoleBlock(role="assistant")
-        assert get_searchable_text(block) == "assistant"
-
-    def test_text_content_block(self):
-        block = TextContentBlock(text="Hello, how can I help?")
-        assert get_searchable_text(block) == "Hello, how can I help?"
-
-    def test_tool_use_block(self):
-        block = ToolUseBlock(name="Read", detail="/path/to/file.py")
-        text = get_searchable_text(block)
-        assert "Read" in text
-        assert "/path/to/file.py" in text
-
-    def test_tool_result_block(self):
-        block = ToolResultBlock(tool_name="Bash", detail="ls -la")
-        text = get_searchable_text(block)
-        assert "Bash" in text
-        assert "ls -la" in text
-
-    def test_tool_use_summary_block(self):
-        block = ToolUseSummaryBlock(tool_counts={"Read": 3, "Bash": 2}, total=5)
-        text = get_searchable_text(block)
-        assert "Read" in text
-        assert "Bash" in text
-
-    def test_image_block(self):
-        block = ImageBlock(media_type="image/png")
-        assert "image/png" in get_searchable_text(block)
-
-    def test_stream_info_block(self):
-        block = StreamInfoBlock(model="claude-sonnet-4-5-20250929")
-        assert "claude-sonnet-4-5-20250929" in get_searchable_text(block)
-
-    def test_stream_tool_use_block(self):
-        block = StreamToolUseBlock(name="Read")
-        assert get_searchable_text(block) == "Read"
-
-    def test_text_delta_block(self):
-        block = TextDeltaBlock(text="streaming text")
-        assert get_searchable_text(block) == "streaming text"
-
-    def test_stop_reason_block(self):
-        block = StopReasonBlock(reason="end_turn")
-        assert "end_turn" in get_searchable_text(block)
-
-    def test_error_block(self):
-        block = ErrorBlock(code=429, reason="rate_limited")
-        text = get_searchable_text(block)
-        assert "429" in text
-        assert "rate_limited" in text
-
-    def test_proxy_error_block(self):
-        block = ProxyErrorBlock(error="connection refused")
-        assert "connection refused" in get_searchable_text(block)
-
-    def test_newline_block(self):
-        assert get_searchable_text(NewlineBlock()) == ""
-
-    def test_separator_block(self):
-        assert get_searchable_text(SeparatorBlock()) == ""
-
-    def test_turn_budget_block(self):
-        budget = TurnBudget(total_est=50000)
-        block = TurnBudgetBlock(budget=budget)
-        assert "50000" in get_searchable_text(block)
-
-    def test_unknown_type_block(self):
-        block = UnknownTypeBlock(block_type="thinking")
-        assert get_searchable_text(block) == "thinking"
+        for sub in expected:
+            assert sub in text, f"Expected '{sub}' in searchable text, got: {text}"
+        if not expected:
+            assert text == "", f"Expected empty string, got: {text}"
 
 
 # ─── Pattern compilation ─────────────────────────────────────────────────────

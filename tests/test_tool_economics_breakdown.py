@@ -12,16 +12,6 @@ from cc_dump.schema import init_db
 from cc_dump.tui.panel_renderers import render_economics_panel
 
 
-@pytest.fixture
-def temp_db():
-    """Create a temporary database for testing."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = str(Path(tmpdir) / "test.db")
-        conn = init_db(db_path)
-        conn.close()
-        yield db_path
-
-
 def setup_mixed_model_data(db_path: str) -> str:
     """Insert test data with multiple models and return session_id."""
     session_id = "test_session_mixed"

@@ -22,7 +22,7 @@ def main():
         default="127.0.0.1",
         help="Bind address (default: 127.0.0.1)",
     )
-    parser.add_argument("--port", type=int, default=3344)
+    parser.add_argument("--port", type=int, default=0, help="Bind port (default: 0, OS-assigned)")
     parser.add_argument(
         "--target",
         type=str,
@@ -107,18 +107,21 @@ def main():
 
     server = http.server.HTTPServer((args.host, args.port), ProxyHandler)
 
+    # Get the actual port assigned by the OS (important when args.port=0)
+    actual_port = server.server_address[1]
+
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
 
     print("🚀 cc-dump proxy started")
-    print(f"   Listening on: http://{args.host}:{args.port}")
+    print(f"   Listening on: http://{args.host}:{actual_port}")
     if ProxyHandler.target_host:
         print(f"   Reverse proxy mode: {ProxyHandler.target_host}")
-        print(f"   Usage: ANTHROPIC_BASE_URL=http://{args.host}:{args.port} claude")
+        print(f"   Usage: ANTHROPIC_BASE_URL=http://{args.host}:{actual_port} claude")
     else:
         print("   Forward proxy mode (dynamic targets)")
         print(
-            f"   Usage: HTTP_PROXY=http://{args.host}:{args.port} ANTHROPIC_BASE_URL=http://api.minimax.com claude"
+            f"   Usage: HTTP_PROXY=http://{args.host}:{actual_port} ANTHROPIC_BASE_URL=http://api.minimax.com claude"
         )
 
     # State dict for content tracking (used by formatting layer)
@@ -190,7 +193,7 @@ def main():
         db_path=db_path,
         session_id=session_id,
         host=args.host,
-        port=args.port,
+        port=actual_port,
         target=ProxyHandler.target_host,
         replay_data=replay_data,
     )

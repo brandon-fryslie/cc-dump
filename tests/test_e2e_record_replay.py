@@ -147,18 +147,6 @@ TOOL_USE_EVENTS = [
 ]
 
 
-@pytest.fixture
-def state():
-    """Fresh content tracking state."""
-    return {
-        "positions": {},
-        "known_hashes": {},
-        "next_id": 0,
-        "next_color": 0,
-        "request_counter": 0,
-    }
-
-
 def format_events(events: list[tuple], state: dict) -> list:
     """Process events through formatting pipeline and return all blocks.
 
@@ -287,12 +275,12 @@ def compare_blocks(live_blocks: list, replay_blocks: list) -> None:
             f"Block {i}: content mismatch:\nLive: {live_block!r}\nReplay: {replay_block!r}"
 
 
-def test_record_replay_text_response(tmp_path, state):
+def test_record_replay_text_response(tmp_path, fresh_state):
     """Record and replay text response produces semantically identical FormattedBlocks."""
     har_path = tmp_path / "test.har"
 
     # 1. Process events through live pipeline
-    live_blocks = format_events(SAMPLE_EVENTS, copy.deepcopy(state))
+    live_blocks = format_events(SAMPLE_EVENTS, copy.deepcopy(fresh_state))
 
     # 2. Record events to HAR
     recorder = HARRecordingSubscriber(str(har_path), "test-session")
@@ -308,18 +296,18 @@ def test_record_replay_text_response(tmp_path, state):
     replayed_events = convert_to_events(req_headers, req_body, resp_status, resp_headers, complete_message)
 
     # 4. Process replayed events through same pipeline
-    replayed_blocks = format_events(replayed_events, copy.deepcopy(state))
+    replayed_blocks = format_events(replayed_events, copy.deepcopy(fresh_state))
 
     # 5. Compare blocks (semantic equality)
     compare_blocks(live_blocks, replayed_blocks)
 
 
-def test_record_replay_tool_use(tmp_path, state):
+def test_record_replay_tool_use(tmp_path, fresh_state):
     """Record and replay tool use produces semantically identical FormattedBlocks."""
     har_path = tmp_path / "test_tools.har"
 
     # 1. Process events through live pipeline
-    live_blocks = format_events(TOOL_USE_EVENTS, copy.deepcopy(state))
+    live_blocks = format_events(TOOL_USE_EVENTS, copy.deepcopy(fresh_state))
 
     # 2. Record events to HAR
     recorder = HARRecordingSubscriber(str(har_path), "test-session")
@@ -335,7 +323,7 @@ def test_record_replay_tool_use(tmp_path, state):
     replayed_events = convert_to_events(req_headers, req_body, resp_status, resp_headers, complete_message)
 
     # 4. Process replayed events through same pipeline
-    replayed_blocks = format_events(replayed_events, copy.deepcopy(state))
+    replayed_blocks = format_events(replayed_events, copy.deepcopy(fresh_state))
 
     # 5. Compare blocks (semantic equality)
     compare_blocks(live_blocks, replayed_blocks)
@@ -429,7 +417,7 @@ def test_record_replay_content_tracking_state(tmp_path):
     assert state_live["next_color"] == state_replay["next_color"]
 
 
-def test_multiple_turns_in_single_har(tmp_path, state):
+def test_multiple_turns_in_single_har(tmp_path, fresh_state):
     """Multiple conversation turns in single HAR file replay correctly."""
     har_path = tmp_path / "test_multi.har"
 
@@ -437,7 +425,7 @@ def test_multiple_turns_in_single_har(tmp_path, state):
     all_events = SAMPLE_EVENTS + TOOL_USE_EVENTS
 
     # 1. Process live
-    live_blocks = format_events(all_events, copy.deepcopy(state))
+    live_blocks = format_events(all_events, copy.deepcopy(fresh_state))
 
     # 2. Record
     recorder = HARRecordingSubscriber(str(har_path), "test-session")
@@ -450,7 +438,7 @@ def test_multiple_turns_in_single_har(tmp_path, state):
     assert len(pairs) == 2  # Two complete request/response pairs
 
     replayed_blocks = []
-    replay_state = copy.deepcopy(state)
+    replay_state = copy.deepcopy(fresh_state)
     for req_headers, req_body, resp_status, resp_headers, complete_message in pairs:
         replayed_events = convert_to_events(req_headers, req_body, resp_status, resp_headers, complete_message)
         replayed_blocks.extend(format_events(replayed_events, replay_state))

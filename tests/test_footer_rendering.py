@@ -4,6 +4,8 @@ import pytest
 
 from tests.conftest import settle, wait_for_content
 
+pytestmark = pytest.mark.pty
+
 
 def _get_footer_content(proc):
     """Wait for and return content with footer visible."""

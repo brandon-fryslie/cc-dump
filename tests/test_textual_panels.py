@@ -1,11 +1,15 @@
 """Panel toggle tests using Textual in-process harness."""
 
+import pytest
+
 from tests.harness import (
     run_app,
     press_and_settle,
     is_panel_visible,
     is_follow_mode,
 )
+
+pytestmark = pytest.mark.textual
 
 
 async def test_economics_panel_toggle():

@@ -1,5 +1,7 @@
 """Visibility toggle tests using Textual in-process harness."""
 
+import pytest
+
 from cc_dump.formatting import Level
 from tests.harness import (
     run_app,
@@ -7,6 +9,8 @@ from tests.harness import (
     get_vis_level,
     get_all_levels,
 )
+
+pytestmark = pytest.mark.textual
 
 
 async def test_default_visibility_levels():
@@ -85,9 +89,9 @@ async def test_toggle_remembers_detail_level():
         assert get_vis_level(app, "tools") == Level.FULL
 
 
-async def test_all_category_toggles():
-    """Each number key toggles its category."""
-    key_category = [
+@pytest.mark.parametrize(
+    "key,category",
+    [
         ("1", "headers"),
         ("2", "user"),
         ("3", "assistant"),
@@ -95,15 +99,17 @@ async def test_all_category_toggles():
         ("5", "system"),
         ("6", "budget"),
         ("7", "metadata"),
-    ]
+    ],
+)
+async def test_category_toggle(key, category):
+    """Each number key toggles its category and restores on second press."""
     async with run_app() as (pilot, app):
-        for key, cat in key_category:
-            initial = get_vis_level(app, cat)
-            await press_and_settle(pilot, key)
-            toggled = get_vis_level(app, cat)
-            # Should have changed
-            assert toggled != initial, f"{cat}: {initial} should change after pressing {key}"
-            # Toggle back
-            await press_and_settle(pilot, key)
-            restored = get_vis_level(app, cat)
-            assert restored == initial, f"{cat}: should restore to {initial}, got {restored}"
+        initial = get_vis_level(app, category)
+        await press_and_settle(pilot, key)
+        toggled = get_vis_level(app, category)
+        # Should have changed
+        assert toggled != initial, f"{category}: {initial} should change after pressing {key}"
+        # Toggle back
+        await press_and_settle(pilot, key)
+        restored = get_vis_level(app, category)
+        assert restored == initial, f"{category}: should restore to {initial}, got {restored}"

@@ -35,21 +35,6 @@ from cc_dump.formatting import (
 )
 
 
-# ─── Fixtures ─────────────────────────────────────────────────────────────────
-
-
-@pytest.fixture
-def fresh_state():
-    """Fresh state dict for content tracking."""
-    return {
-        "positions": {},
-        "known_hashes": {},
-        "next_id": 0,
-        "next_color": 0,
-        "request_counter": 0,
-    }
-
-
 # ─── format_request Tests ─────────────────────────────────────────────────────
 
 
@@ -639,8 +624,24 @@ def test_content_tracking_preserves_color_across_refs(fresh_state):
 # ─── Tool Detail Tests ────────────────────────────────────────────────────────
 
 
+TOOL_DETAIL_EXACT_CASES = [
+    pytest.param("Read", {}, "", id="read_no_path"),
+    pytest.param("Read", {"file_path": "/a/b.ts"}, "/a/b.ts", id="read_very_short"),
+    pytest.param("Skill", {"skill": "commit"}, "commit", id="skill_name"),
+    pytest.param("Skill", {}, "", id="skill_no_name"),
+    pytest.param("Bash", {"command": "git status"}, "git status", id="bash_command"),
+    pytest.param("Bash", {}, "", id="bash_no_command"),
+    pytest.param("WebSearch", {"query": "test"}, "", id="unknown_tool"),
+]
+
+
 class TestToolDetail:
     """Tests for _tool_detail helper function."""
+
+    @pytest.mark.parametrize("tool_name,input_dict,expected", TOOL_DETAIL_EXACT_CASES)
+    def test_tool_detail_exact(self, tool_name, input_dict, expected):
+        """Test exact-match tool detail extraction."""
+        assert _tool_detail(tool_name, input_dict) == expected
 
     def test_read_with_long_file_path(self):
         """Read tool extracts and ellipses long file path."""
@@ -654,27 +655,6 @@ class TestToolDetail:
         assert result == "/Users/foo/bar/baz/file.ts"
         assert not result.startswith("...")
 
-    def test_read_no_path(self):
-        """Read tool with no file_path returns empty string."""
-        assert _tool_detail("Read", {}) == ""
-
-    def test_read_very_short_path(self):
-        """Read tool with very short path returns it unchanged."""
-        result = _tool_detail("Read", {"file_path": "/a/b.ts"})
-        assert result == "/a/b.ts"
-
-    def test_skill_name(self):
-        """Skill tool extracts skill name."""
-        assert _tool_detail("Skill", {"skill": "commit"}) == "commit"
-
-    def test_skill_no_name(self):
-        """Skill tool with no skill field returns empty string."""
-        assert _tool_detail("Skill", {}) == ""
-
-    def test_bash_command(self):
-        """Bash tool extracts command."""
-        assert _tool_detail("Bash", {"command": "git status"}) == "git status"
-
     def test_bash_multiline(self):
         """Bash tool extracts only first line of multiline command."""
         result = _tool_detail("Bash", {"command": "line1\nline2"})
@@ -686,14 +666,6 @@ class TestToolDetail:
         result = _tool_detail("Bash", {"command": long_cmd})
         assert len(result) <= 60
         assert result.endswith("...")
-
-    def test_bash_no_command(self):
-        """Bash tool with no command returns empty string."""
-        assert _tool_detail("Bash", {}) == ""
-
-    def test_unknown_tool(self):
-        """Unknown tool returns empty string."""
-        assert _tool_detail("WebSearch", {"query": "test"}) == ""
 
     def test_mcp_read_tool(self):
         """MCP Read tool also extracts file path."""

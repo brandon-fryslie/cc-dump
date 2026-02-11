@@ -18,7 +18,9 @@ Point Claude Code at cc-dump, which forwards to the real API:
 
 ```bash
 cc-dump [--port PORT] [--target URL]
-ANTHROPIC_BASE_URL=http://127.0.0.1:3344 claude
+# cc-dump will print the assigned port (OS-assigned by default)
+# Example output: "Listening on: http://127.0.0.1:12345"
+ANTHROPIC_BASE_URL=http://127.0.0.1:12345 claude  # use the port from cc-dump output
 ```
 
 ### Forward Proxy Mode
@@ -26,8 +28,10 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:3344 claude
 For dynamic targets (e.g., non-Anthropic APIs):
 
 ```bash
-cc-dump --port 3344 --target ""
-HTTP_PROXY=http://127.0.0.1:3344 ANTHROPIC_BASE_URL=http://api.minimax.com claude
+cc-dump --target ""
+# cc-dump will print the assigned port
+# Example output: "Listening on: http://127.0.0.1:12345"
+HTTP_PROXY=http://127.0.0.1:12345 ANTHROPIC_BASE_URL=http://api.minimax.com claude
 ```
 
 In forward proxy mode, requests are sent as plain HTTP to cc-dump, inspected, then upgraded to HTTPS for the upstream API. Set `ANTHROPIC_BASE_URL` to an HTTP URL (not HTTPS) to avoid TLS tunneling.
@@ -67,7 +71,7 @@ cc-dump --record /path/to/output.har
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--port PORT` | 3344 | Listen port |
+| `--port PORT` | 0 (OS-assigned) | Listen port (0 = OS assigns an available port) |
 | `--target URL` | `https://api.anthropic.com` | Upstream API URL (empty string for forward proxy mode) |
 | `--replay PATH` | - | Replay a HAR file (`latest` for most recent) |
 | `--continue` | - | Continue from most recent recording (replay + live) |

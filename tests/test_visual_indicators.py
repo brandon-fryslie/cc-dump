@@ -10,27 +10,9 @@ import time
 import pytest
 import requests
 
-from tests.conftest import settle, wait_for_content
+from tests.conftest import settle, wait_for_content, _send_request
 
-
-def _send_request(port, content="Test", extra_json=None):
-    """Send a test request to cc-dump proxy. Swallows connection errors."""
-    body = {
-        "model": "claude-3-5-sonnet-20241022",
-        "max_tokens": 50,
-        "messages": [{"role": "user", "content": content}],
-    }
-    if extra_json:
-        body.update(extra_json)
-    try:
-        requests.post(
-            f"http://127.0.0.1:{port}/v1/messages",
-            json=body,
-            timeout=2,
-            headers={"anthropic-version": "2023-06-01"},
-        )
-    except requests.exceptions.RequestException:
-        pass
+pytestmark = pytest.mark.pty
 
 
 class TestFilterIndicatorRendering:

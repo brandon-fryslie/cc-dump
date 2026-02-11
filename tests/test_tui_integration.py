@@ -21,30 +21,9 @@ from pathlib import Path
 import pytest
 import requests
 
-from tests.conftest import settle, wait_for_content
+from tests.conftest import settle, wait_for_content, _send_request
 
-
-def _send_request(port, content="Test", extra_json=None, extra_headers=None):
-    """Send a test request to cc-dump proxy. Swallows connection errors."""
-    body = {
-        "model": "claude-3-5-sonnet-20241022",
-        "max_tokens": 50,
-        "messages": [{"role": "user", "content": content}],
-    }
-    if extra_json:
-        body.update(extra_json)
-    headers = {"anthropic-version": "2023-06-01"}
-    if extra_headers:
-        headers.update(extra_headers)
-    try:
-        requests.post(
-            f"http://127.0.0.1:{port}/v1/messages",
-            json=body,
-            timeout=2,
-            headers=headers,
-        )
-    except requests.exceptions.RequestException:
-        pass
+pytestmark = pytest.mark.pty
 
 
 class TestTUIStartupShutdown:
@@ -83,88 +62,11 @@ class TestTUIStartupShutdown:
         assert "started" in content.lower() or "listening" in content.lower()
 
 
-class TestFilterToggles:
-    """Test all filter toggle keybindings — shared process."""
-
-    def test_toggle_headers_filter(self, class_proc):
-        proc = class_proc
-        proc.send("1", press_enter=False)
-        settle(proc)
-        proc.send("1", press_enter=False)
-        settle(proc)
-        assert proc.is_alive()
-
-    def test_toggle_tools_filter(self, class_proc):
-        proc = class_proc
-        proc.send("4", press_enter=False)
-        settle(proc)
-        proc.send("4", press_enter=False)
-        settle(proc)
-        assert proc.is_alive()
-
-    def test_toggle_system_filter(self, class_proc):
-        proc = class_proc
-        proc.send("5", press_enter=False)
-        settle(proc)
-        proc.send("5", press_enter=False)
-        settle(proc)
-        assert proc.is_alive()
-
-    def test_toggle_budget_filter(self, class_proc):
-        proc = class_proc
-        proc.send("6", press_enter=False)
-        settle(proc)
-        proc.send("6", press_enter=False)
-        settle(proc)
-        assert proc.is_alive()
-
-    def test_toggle_metadata_filter(self, class_proc):
-        proc = class_proc
-        proc.send("7", press_enter=False)
-        settle(proc)
-        proc.send("7", press_enter=False)
-        settle(proc)
-        assert proc.is_alive()
-
-    def test_multiple_filter_toggles_in_sequence(self, class_proc):
-        proc = class_proc
-        for key in ["1", "4", "5", "6", "7"]:
-            proc.send(key, press_enter=False)
-            settle(proc)
-        for key in ["1", "4", "5", "6", "7"]:
-            proc.send(key, press_enter=False)
-            settle(proc)
-        assert proc.is_alive()
-
-
-class TestPanelToggles:
-    """Test panel visibility toggles — shared process."""
-
-    def test_toggle_stats_panel(self, class_proc):
-        proc = class_proc
-        proc.send("3", press_enter=False)
-        settle(proc)
-        proc.send("3", press_enter=False)
-        settle(proc)
-        assert proc.is_alive()
-
-    def test_toggle_economics_panel(self, class_proc):
-        proc = class_proc
-        proc.send("8", press_enter=False)
-        settle(proc, 0.1)
-        proc.send("8", press_enter=False)
-        settle(proc)
-        assert proc.is_alive()
-
-    def test_toggle_timeline_panel(self, class_proc):
-        proc = class_proc
-        proc.send("9", press_enter=False)
-        settle(proc, 0.1)
-        proc.send("9", press_enter=False)
-        settle(proc)
-        assert proc.is_alive()
+class TestLogsPanel:
+    """Test logs panel with actual content verification."""
 
     def test_toggle_logs_panel(self, class_proc):
+        """Test logs panel toggle shows log content."""
         proc = class_proc
         proc.send("\x0c", press_enter=False)
 
@@ -209,35 +111,6 @@ class TestRequestHandling:
         assert proc.is_alive()
 
 
-class TestDatabaseIntegration:
-    """Test database persistence and querying — shared process."""
-
-    def test_tui_creates_database_when_enabled(self, start_cc_dump):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "test.db"
-            session_id = "test-session-123"
-            pytest.skip("Requires fixture enhancement to pass db_path")
-
-    def test_stats_panel_queries_database(self, start_cc_dump):
-        pytest.skip("Requires database-enabled test setup")
-
-    def test_economics_panel_queries_database(self, class_proc):
-        proc = class_proc
-        proc.send("8", press_enter=False)
-        settle(proc, 0.1)
-        assert proc.is_alive()
-        proc.send("8", press_enter=False)
-        settle(proc)
-
-    def test_timeline_panel_queries_database(self, class_proc):
-        proc = class_proc
-        proc.send("9", press_enter=False)
-        settle(proc, 0.1)
-        assert proc.is_alive()
-        proc.send("9", press_enter=False)
-        settle(proc)
-
-
 class TestVisualIndicators:
     """Test visual indicators for active filters."""
 
@@ -277,17 +150,6 @@ class TestContentFiltering:
         # Clean up
         proc.send("1", press_enter=False)
         settle(proc)
-
-    def test_tools_filter_controls_tool_visibility(self, class_proc_with_port):
-        proc, port = class_proc_with_port
-
-        proc.send("4", press_enter=False)
-        settle(proc)
-        assert proc.is_alive()
-
-        proc.send("4", press_enter=False)
-        settle(proc)
-        assert proc.is_alive()
 
     def test_metadata_filter_controls_model_info(self, class_proc_with_port):
         proc, port = class_proc_with_port
@@ -374,17 +236,6 @@ class TestRenderingStability:
         content = proc.get_content()
         assert len(content) > 0
 
-    def test_tui_rerender_on_filter_change(self, class_proc_with_port):
-        proc, port = class_proc_with_port
-
-        proc.send("6", press_enter=False)
-        settle(proc, 0.1)
-        assert proc.is_alive()
-
-        proc.send("6", press_enter=False)
-        settle(proc, 0.1)
-        assert proc.is_alive()
-
     def test_tui_handles_large_content(self, class_proc_with_port):
         proc, port = class_proc_with_port
 
@@ -448,37 +299,6 @@ class TestConversationView:
         _send_request(port, content="Test", extra_json={"stream": True})
         wait_for_content(proc, timeout=2)
         assert proc.is_alive()
-
-
-class TestNoDatabase:
-    """Test TUI functionality when database is disabled (--no-db) — shared process."""
-
-    def test_tui_starts_without_database(self, class_proc):
-        proc = class_proc
-        assert proc.is_alive()
-        content = proc.get_content()
-        assert len(content) > 0
-
-    def test_stats_panel_works_without_database(self, class_proc):
-        proc = class_proc
-        content = proc.get_content()
-        assert len(content) > 0
-
-    def test_economics_panel_empty_without_database(self, class_proc):
-        proc = class_proc
-        proc.send("8", press_enter=False)
-        settle(proc, 0.1)
-        assert proc.is_alive()
-        proc.send("8", press_enter=False)
-        settle(proc)
-
-    def test_timeline_panel_empty_without_database(self, class_proc):
-        proc = class_proc
-        proc.send("9", press_enter=False)
-        settle(proc, 0.1)
-        assert proc.is_alive()
-        proc.send("9", press_enter=False)
-        settle(proc)
 
 
 class TestIntegrationScenarios:

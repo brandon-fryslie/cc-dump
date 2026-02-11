@@ -43,7 +43,8 @@ just install                      # uv tool install -e .
 just reinstall                    # after structural changes
 
 # Run with Claude Code (reverse proxy mode)
-# ANTHROPIC_BASE_URL=http://127.0.0.1:3344 claude
+# cc-dump prints the assigned port on startup (OS-assigned by default)
+# ANTHROPIC_BASE_URL=http://127.0.0.1:<PORT> claude
 ```
 
 ## Architecture

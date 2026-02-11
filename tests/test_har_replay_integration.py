@@ -7,7 +7,7 @@ from cc_dump.har_replayer import load_har, convert_to_events
 from cc_dump.formatting import format_request, format_response_event
 
 
-def test_replay_events_through_formatting(tmp_path):
+def test_replay_events_through_formatting(tmp_path, fresh_state):
     """Verify that replayed events can be processed by formatting.py."""
     # Create a HAR file with a simple conversation
     har_path = tmp_path / "test.har"
@@ -56,21 +56,13 @@ def test_replay_events_through_formatting(tmp_path):
     events = convert_to_events(*pairs[0])
 
     # Process events through formatting pipeline
-    state = {
-        "positions": {},
-        "known_hashes": {},
-        "next_id": 0,
-        "next_color": 0,
-        "request_counter": 0,
-    }
-
     all_blocks = []
 
     for event in events:
         kind = event[0]
 
         if kind == "request":
-            blocks = format_request(event[1], state)
+            blocks = format_request(event[1], fresh_state)
             all_blocks.extend(blocks)
         elif kind == "response_event":
             event_type, event_data = event[1], event[2]
@@ -81,15 +73,15 @@ def test_replay_events_through_formatting(tmp_path):
     assert len(all_blocks) > 0
 
     # Verify request was formatted
-    assert state["request_counter"] == 1
+    assert fresh_state["request_counter"] == 1
 
     # Verify content tracking worked (system prompt should be tracked)
-    assert len(state["positions"]) > 0
-    assert len(state["known_hashes"]) > 0
-    assert state["next_id"] > 0
+    assert len(fresh_state["positions"]) > 0
+    assert len(fresh_state["known_hashes"]) > 0
+    assert fresh_state["next_id"] > 0
 
 
-def test_replay_with_tool_use(tmp_path):
+def test_replay_with_tool_use(tmp_path, fresh_state):
     """Verify tool use messages are replayed correctly."""
     har_path = tmp_path / "test.har"
     har = {
@@ -152,21 +144,13 @@ def test_replay_with_tool_use(tmp_path):
     events = convert_to_events(*pairs[0])
 
     # Process events
-    state = {
-        "positions": {},
-        "known_hashes": {},
-        "next_id": 0,
-        "next_color": 0,
-        "request_counter": 0,
-    }
-
     all_blocks = []
 
     for event in events:
         kind = event[0]
 
         if kind == "request":
-            blocks = format_request(event[1], state)
+            blocks = format_request(event[1], fresh_state)
             all_blocks.extend(blocks)
         elif kind == "response_event":
             event_type, event_data = event[1], event[2]
@@ -181,7 +165,7 @@ def test_replay_with_tool_use(tmp_path):
     assert tool_blocks[0].name == "read_file"
 
 
-def test_replay_multiple_turns(tmp_path):
+def test_replay_multiple_turns(tmp_path, fresh_state):
     """Verify multiple turns are replayed in order."""
     har_path = tmp_path / "test.har"
     har = {
@@ -259,27 +243,19 @@ def test_replay_multiple_turns(tmp_path):
     pairs = load_har(str(har_path))
     assert len(pairs) == 2
 
-    state = {
-        "positions": {},
-        "known_hashes": {},
-        "next_id": 0,
-        "next_color": 0,
-        "request_counter": 0,
-    }
-
     # Process all events
     for pair in pairs:
         events = convert_to_events(*pair)
         for event in events:
             kind = event[0]
             if kind == "request":
-                format_request(event[1], state)
+                format_request(event[1], fresh_state)
 
     # Verify both requests were processed
-    assert state["request_counter"] == 2
+    assert fresh_state["request_counter"] == 2
 
 
-def test_replay_system_prompt_tracking(tmp_path):
+def test_replay_system_prompt_tracking(tmp_path, fresh_state):
     """Verify system prompt tracking works with replayed events."""
     har_path = tmp_path / "test.har"
 
@@ -359,25 +335,17 @@ def test_replay_system_prompt_tracking(tmp_path):
     # Load and process
     pairs = load_har(str(har_path))
 
-    state = {
-        "positions": {},
-        "known_hashes": {},
-        "next_id": 0,
-        "next_color": 0,
-        "request_counter": 0,
-    }
-
     # Process both requests
     for pair in pairs:
         events = convert_to_events(*pair)
         for event in events:
             if event[0] == "request":
-                format_request(event[1], state)
+                format_request(event[1], fresh_state)
 
     # Verify both system prompts were tracked
-    assert "system:0" in state["positions"]
-    assert state["next_id"] == 2  # Two different system prompts
+    assert "system:0" in fresh_state["positions"]
+    assert fresh_state["next_id"] == 2  # Two different system prompts
 
     # Verify different hashes
-    pos = state["positions"]["system:0"]
+    pos = fresh_state["positions"]["system:0"]
     assert "sp-1" in pos["id"] or "sp-2" in pos["id"]

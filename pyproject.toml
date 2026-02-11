@@ -50,3 +50,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "pty: tests requiring PTY subprocess (slow)",
+    "textual: in-process Textual harness tests (fast)",
+]

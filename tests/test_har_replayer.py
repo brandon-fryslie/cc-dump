@@ -140,39 +140,34 @@ def test_load_har_multiple_entries(tmp_path):
     assert pairs[1][4]["id"] == "msg_2"
 
 
-def test_load_har_invalid_structure_missing_log(tmp_path):
-    """Invalid HAR: missing 'log' key."""
+@pytest.mark.parametrize(
+    "har_dict,error_match",
+    [
+        pytest.param(
+            {"invalid": "structure"},
+            "missing 'log' key",
+            id="missing_log",
+        ),
+        pytest.param(
+            {"log": {"version": "1.2"}},
+            "missing 'log.entries' key",
+            id="missing_entries",
+        ),
+        pytest.param(
+            {"log": {"entries": "not a list"}},
+            "log.entries must be a list",
+            id="entries_not_list",
+        ),
+    ],
+)
+def test_load_har_invalid_structure(tmp_path, har_dict, error_match):
+    """Test various invalid HAR structure errors."""
     har_path = tmp_path / "test.har"
-    har = {"invalid": "structure"}
 
     with open(har_path, "w") as f:
-        json.dump(har, f)
+        json.dump(har_dict, f)
 
-    with pytest.raises(ValueError, match="missing 'log' key"):
-        load_har(str(har_path))
-
-
-def test_load_har_invalid_structure_missing_entries(tmp_path):
-    """Invalid HAR: missing 'entries' key."""
-    har_path = tmp_path / "test.har"
-    har = {"log": {"version": "1.2"}}
-
-    with open(har_path, "w") as f:
-        json.dump(har, f)
-
-    with pytest.raises(ValueError, match="missing 'log.entries' key"):
-        load_har(str(har_path))
-
-
-def test_load_har_invalid_entries_not_list(tmp_path):
-    """Invalid HAR: entries is not a list."""
-    har_path = tmp_path / "test.har"
-    har = {"log": {"entries": "not a list"}}
-
-    with open(har_path, "w") as f:
-        json.dump(har, f)
-
-    with pytest.raises(ValueError, match="log.entries must be a list"):
+    with pytest.raises(ValueError, match=error_match):
         load_har(str(har_path))
 
 
