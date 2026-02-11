@@ -236,7 +236,7 @@ TRUNCATION_LIMITS: dict[VisState, int | None] = {
 }
 
 # Categories that should render as Markdown instead of plain text
-_MARKDOWN_CATEGORIES = {Category.USER, Category.ASSISTANT}
+_MARKDOWN_CATEGORIES = {Category.USER, Category.ASSISTANT, Category.SYSTEM}
 
 
 # ─── Category resolution ──────────────────────────────────────────────────────
@@ -429,14 +429,17 @@ def _render_system_label(block: SystemLabelBlock) -> Text | None:
     return Text("SYSTEM:", style=f"bold {tc.system}")
 
 
-def _render_tracked_new(block: TrackedContentBlock, tag_style: str) -> Text:
+def _render_tracked_new(block: TrackedContentBlock, tag_style: str) -> ConsoleRenderable:
     """Render a TrackedContentBlock with status='new'."""
     content_len = len(block.content)
-    t = Text(block.indent + "  ")
-    t.append(" {} ".format(block.tag_id), style=tag_style)
-    t.append(" NEW ({} chars):\n".format(content_len))
-    t.append(_indent_text(block.content, block.indent + "    "))
-    return t
+    header = Text(block.indent + "  ")
+    header.append(" {} ".format(block.tag_id), style=tag_style)
+    header.append(" NEW ({} chars):".format(content_len))
+
+    # Render content as Markdown
+    content_md = _render_text_as_markdown(block.content)
+
+    return Group(header, content_md)
 
 
 def _render_tracked_ref(block: TrackedContentBlock, tag_style: str) -> Text:
@@ -467,7 +470,7 @@ _TRACKED_STATUS_RENDERERS = {
 }
 
 
-def _render_tracked_content(block: TrackedContentBlock) -> Text | None:
+def _render_tracked_content(block: TrackedContentBlock) -> ConsoleRenderable | None:
     """Render a TrackedContentBlock with tag colors — full content."""
     fg, bg = TAG_STYLES[block.color_idx % len(TAG_STYLES)]
     tag_style = "bold {} on {}".format(fg, bg)
@@ -497,31 +500,33 @@ def _get_or_segment(block):
     return block._segment_result
 
 
-def _render_segmented_block(block) -> ConsoleRenderable:
-    """Render a text block using SubBlock segmentation.
+def _render_text_as_markdown(text: str) -> ConsoleRenderable:
+    """Render text string as Markdown using SubBlock segmentation.
 
     // [LAW:dataflow-not-control-flow] Dispatch via SubBlockKind match.
+
+    Extracted from _render_segmented_block to enable reuse for TrackedContentBlock.
     """
     from cc_dump.segmentation import (
+        segment,
         SubBlockKind,
         wrap_tags_in_backticks,
         wrap_tags_outside_fences,
     )
 
     tc = get_theme_colors()
-    seg = _get_or_segment(block)
-    raw = block.text
+    seg = segment(text)
 
     # Single SubBlock of kind MD: fast path — just Markdown with tag wrapping
     if (
         len(seg.sub_blocks) == 1
         and seg.sub_blocks[0].kind == SubBlockKind.MD
     ):
-        return Markdown(wrap_tags_in_backticks(raw), code_theme=tc.code_theme)
+        return Markdown(wrap_tags_in_backticks(text), code_theme=tc.code_theme)
 
     parts: list[ConsoleRenderable] = []
     for sb in seg.sub_blocks:
-        text_slice = raw[sb.span.start : sb.span.end]
+        text_slice = text[sb.span.start : sb.span.end]
 
         if sb.kind == SubBlockKind.MD:
             wrapped = wrap_tags_in_backticks(text_slice)
@@ -529,26 +534,26 @@ def _render_segmented_block(block) -> ConsoleRenderable:
                 parts.append(Markdown(wrapped, code_theme=tc.code_theme))
 
         elif sb.kind == SubBlockKind.MD_FENCE:
-            inner = raw[sb.meta.inner_span.start : sb.meta.inner_span.end]
+            inner = text[sb.meta.inner_span.start : sb.meta.inner_span.end]
             wrapped = wrap_tags_in_backticks(inner)
             if wrapped.strip():
                 parts.append(Markdown(wrapped, code_theme=tc.code_theme))
 
         elif sb.kind == SubBlockKind.CODE_FENCE:
-            inner = raw[sb.meta.inner_span.start : sb.meta.inner_span.end]
+            inner = text[sb.meta.inner_span.start : sb.meta.inner_span.end]
             parts.append(
                 Syntax(inner, sb.meta.info or "", theme=tc.code_theme)
             )
 
         elif sb.kind == SubBlockKind.XML_BLOCK:
             m = sb.meta
-            start_tag = raw[
+            start_tag = text[
                 m.start_tag_span.start : m.start_tag_span.end
             ].rstrip("\n")
-            end_tag = raw[
+            end_tag = text[
                 m.end_tag_span.start : m.end_tag_span.end
             ].rstrip("\n")
-            inner = raw[m.inner_span.start : m.inner_span.end]
+            inner = text[m.inner_span.start : m.inner_span.end]
             xml_parts: list[ConsoleRenderable] = [
                 Text(start_tag, style="bold dim")
             ]
@@ -563,10 +568,20 @@ def _render_segmented_block(block) -> ConsoleRenderable:
             parts.append(Group(*xml_parts))
 
     if not parts:
-        return Markdown(wrap_tags_in_backticks(raw), code_theme=tc.code_theme)
+        return Markdown(wrap_tags_in_backticks(text), code_theme=tc.code_theme)
     if len(parts) == 1:
         return parts[0]
     return Group(*parts)
+
+
+def _render_segmented_block(block) -> ConsoleRenderable:
+    """Render a text block using SubBlock segmentation.
+
+    // [LAW:dataflow-not-control-flow] Dispatch via SubBlockKind match.
+    """
+    # Use cached segmentation on the block object for efficiency
+    seg = _get_or_segment(block)
+    return _render_text_as_markdown(block.text)
 
 
 def _render_text_content(block: TextContentBlock) -> ConsoleRenderable | None:
@@ -804,8 +819,8 @@ def _render_turn_budget_oneliner(block: TurnBudgetBlock) -> Text | None:
 
 # ─── Registries ────────────────────────────────────────────────────────────────
 
-# Full content renderers. Signature: (block) -> Text | None
-BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], Text | None]] = {
+# Full content renderers. Signature: (block) -> ConsoleRenderable | None
+BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], ConsoleRenderable | None]] = {
     "SeparatorBlock": _render_separator,
     "HeaderBlock": _render_header,
     "HttpHeadersBlock": _render_http_headers,
@@ -833,7 +848,7 @@ BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], Text | None]] = {
 # Keyed by (type_name, visible, full, expanded).
 # // [LAW:dataflow-not-control-flow] Registries replace conditional dispatch.
 BLOCK_STATE_RENDERERS: dict[
-    tuple[str, bool, bool, bool], Callable[[FormattedBlock], Text | None]
+    tuple[str, bool, bool, bool], Callable[[FormattedBlock], ConsoleRenderable | None]
 ] = {
     # TrackedContentBlock: title-only at summary level
     ("TrackedContentBlock", True, False, False): _render_tracked_content_title,
