@@ -35,8 +35,10 @@ from cc_dump.formatting import (
     ErrorBlock,
     ProxyErrorBlock,
     NewlineBlock,
-    Level,
     Category,
+    VisState,
+    HIDDEN,
+    ALWAYS_VISIBLE,
 )
 from cc_dump.tui.rendering import BLOCK_RENDERERS, BLOCK_CATEGORY, render_turn_to_strips
 from cc_dump.tui.widget_factory import TurnData, ConversationView
@@ -112,7 +114,7 @@ class TestRenderTurnToStrips:
     def test_filtered_out_blocks_return_fewer_strips(self):
         """Blocks at EXISTENCE level are fully hidden (0 lines)."""
         console = Console()
-        filters = {"headers": Level.EXISTENCE}  # Fully hidden
+        filters = {"headers": HIDDEN}  # Fully hidden
         blocks = [
             SeparatorBlock(style="light"),
             HeaderBlock(header_type="request", label="REQUEST 1", timestamp="12:00:00"),
@@ -158,7 +160,7 @@ class TestRenderTurnToStrips:
     def test_mixed_filtered_and_visible_blocks(self):
         """Mix of filtered and visible blocks should only render visible ones."""
         console = Console()
-        filters = {"headers": Level.EXISTENCE, "tools": Level.FULL}
+        filters = {"headers": HIDDEN, "tools": ALWAYS_VISIBLE}
         blocks = [
             HeaderBlock(header_type="request", label="REQUEST 1", timestamp="12:00:00"),  # hidden at EXISTENCE
             TextContentBlock(text="User message", indent=""),  # visible
@@ -201,7 +203,7 @@ class TestTurnDataReRender:
             TextContentBlock(text="Hello", indent=""),
         ]
         console = Console()
-        filters1 = {"headers": Level.EXISTENCE, "tools": Level.EXISTENCE}
+        filters1 = {"headers": HIDDEN, "tools": HIDDEN}
 
         td = TurnData(
             turn_index=0,
@@ -213,7 +215,7 @@ class TestTurnDataReRender:
         td.re_render(filters1, console, 80)
 
         # Change a filter that doesn't affect this turn
-        filters2 = {"headers": Level.FULL, "tools": Level.EXISTENCE}  # headers changed, but no header blocks
+        filters2 = {"headers": ALWAYS_VISIBLE, "tools": HIDDEN}  # headers changed, but no header blocks
         result = td.re_render(filters2, console, 80)
 
         # Should skip re-render (return False)
@@ -226,7 +228,7 @@ class TestTurnDataReRender:
             ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
         ]
         console = Console()
-        filters1 = {"tools": Level.EXISTENCE}
+        filters1 = {"tools": HIDDEN}
 
         td = TurnData(
             turn_index=0,
@@ -238,7 +240,7 @@ class TestTurnDataReRender:
         td.re_render(filters1, console, 80)
 
         # Change a filter that affects this turn
-        filters2 = {"tools": Level.FULL}  # tools changed, and we have ToolUseBlock
+        filters2 = {"tools": ALWAYS_VISIBLE}  # tools changed, and we have ToolUseBlock
         result = td.re_render(filters2, console, 80)
 
         # Should execute re-render (return True)
@@ -250,7 +252,7 @@ class TestTurnDataReRender:
             ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
         ]
         console = Console()
-        filters1 = {"tools": Level.EXISTENCE}
+        filters1 = {"tools": HIDDEN}
 
         td = TurnData(
             turn_index=0,
@@ -264,7 +266,7 @@ class TestTurnDataReRender:
         assert len(td.strips) == 0
 
         # Enable tools filter
-        filters2 = {"tools": Level.FULL}
+        filters2 = {"tools": ALWAYS_VISIBLE}
         td.re_render(filters2, console, 80)
 
         # Should now have strips for the individual tool block
@@ -431,7 +433,7 @@ class TestScrollPreservation:
             )
             td._widest_strip = max((s.cell_length for s in strips), default=0)
             td.compute_relevant_keys()
-            td._last_filter_snapshot = {k: filters.get(k, Level.FULL) for k in td.relevant_filter_keys}
+            td._last_filter_snapshot = {k: filters.get(k, ALWAYS_VISIBLE) for k in td.relevant_filter_keys}
             conv._turns.append(td)
 
         conv._recalculate_offsets()
@@ -466,7 +468,7 @@ class TestScrollPreservation:
             ],
             [TextContentBlock(text="Turn 2 text", indent="")],
         ]
-        filters = {"tools": Level.FULL}
+        filters = {"tools": ALWAYS_VISIBLE}
         conv = self._make_conv(console, turns_blocks, filters)
         conv._follow_mode = False
 
@@ -475,7 +477,8 @@ class TestScrollPreservation:
         scroll_y = turn1.line_offset + 1  # 1 line into turn 1
 
         with self._patch_scroll(conv, scroll_y=scroll_y):
-            conv.rerender({"tools": Level.EXISTENCE})
+            conv._scroll_anchor = conv._compute_anchor_from_scroll()
+            conv.rerender({"tools": HIDDEN})
 
         # scroll_to should be called with turn 1's new offset + clamped offset_within
         turn1_after = conv._turns[1]
@@ -485,6 +488,12 @@ class TestScrollPreservation:
 
     def test_no_cross_toggle_state(self):
         """Toggle A then B: B should not jump to A's pre-toggle position."""
+        from cc_dump.tui.rendering import set_theme
+        from textual.theme import BUILTIN_THEMES
+
+        # Initialize theme for SystemLabelBlock rendering
+        set_theme(BUILTIN_THEMES["textual-dark"])
+
         console = Console()
         turns_blocks = [
             [TextContentBlock(text="Turn 0", indent="")],
@@ -498,20 +507,22 @@ class TestScrollPreservation:
             ],
             [TextContentBlock(text="Turn 3", indent="")],
         ]
-        filters = {"system": Level.FULL, "tools": Level.FULL}
+        filters = {"system": ALWAYS_VISIBLE, "tools": ALWAYS_VISIBLE}
         conv = self._make_conv(console, turns_blocks, filters)
         conv._follow_mode = False
 
         # Step 1: Scroll to turn 1 (system block area), hide system
         turn1 = conv._turns[1]
         with self._patch_scroll(conv, scroll_y=turn1.line_offset):
-            conv.rerender({"system": Level.EXISTENCE, "tools": Level.FULL})
+            conv._scroll_anchor = conv._compute_anchor_from_scroll()
+            conv.rerender({"system": HIDDEN, "tools": ALWAYS_VISIBLE})
 
         # Step 2: Scroll to turn 2, then toggle tools
         turn2 = conv._turns[2]
         with self._patch_scroll(conv, scroll_y=turn2.line_offset):
             conv.scroll_to.reset_mock()
-            conv.rerender({"system": Level.EXISTENCE, "tools": Level.EXISTENCE})
+            conv._scroll_anchor = conv._compute_anchor_from_scroll()
+            conv.rerender({"system": HIDDEN, "tools": HIDDEN})
 
         # scroll_to should restore to turn 2's area, NOT turn 1
         assert conv.scroll_to.called
@@ -528,12 +539,12 @@ class TestScrollPreservation:
             [TextContentBlock(text="Turn 0", indent=""),
              ToolUseBlock(name="test", input_size=10, msg_color_idx=0)],
         ]
-        filters = {"tools": Level.FULL}
+        filters = {"tools": ALWAYS_VISIBLE}
         conv = self._make_conv(console, turns_blocks, filters)
         conv._follow_mode = True
 
         with self._patch_scroll(conv, scroll_y=0):
-            conv.rerender({"tools": Level.EXISTENCE})
+            conv.rerender({"tools": HIDDEN})
 
         conv.scroll_to.assert_not_called()
 
@@ -549,7 +560,7 @@ class TestScrollPreservation:
                 ToolUseBlock(name="tool3", input_size=30, msg_color_idx=2),
             ],
         ]
-        filters = {"tools": Level.FULL}
+        filters = {"tools": ALWAYS_VISIBLE}
         conv = self._make_conv(console, turns_blocks, filters)
         conv._follow_mode = False
 
@@ -560,7 +571,8 @@ class TestScrollPreservation:
         scroll_y = turn.line_offset + deep_offset
 
         with self._patch_scroll(conv, scroll_y=scroll_y):
-            conv.rerender({"tools": Level.EXISTENCE})
+            conv._scroll_anchor = conv._compute_anchor_from_scroll()
+            conv.rerender({"tools": HIDDEN})
 
         # Turn should have fewer lines now
         turn_after = conv._turns[0]
@@ -583,6 +595,7 @@ class TestScrollPreservation:
         # Scroll to turn 1
         turn1 = conv._turns[1]
         with self._patch_scroll(conv, scroll_y=turn1.line_offset):
+            conv._scroll_anchor = conv._compute_anchor_from_scroll()
             conv._deferred_offset_recalc(0)
 
         # Should restore to turn 1
@@ -592,6 +605,12 @@ class TestScrollPreservation:
 
     def test_anchor_turn_shrinks_but_visible(self):
         """When anchor turn shrinks but remains visible, scroll adjusts."""
+        from cc_dump.tui.rendering import set_theme
+        from textual.theme import BUILTIN_THEMES
+
+        # Initialize theme for SystemLabelBlock rendering
+        set_theme(BUILTIN_THEMES["textual-dark"])
+
         console = Console()
         # Turn 0: always visible text
         # Turn 1: system blocks (will be hidden at EXISTENCE level)
@@ -602,14 +621,15 @@ class TestScrollPreservation:
              TrackedContentBlock(status="new", tag_id="sys", color_idx=0, content="System only")],
             [TextContentBlock(text="Turn 2 visible", indent="")],
         ]
-        filters = {"system": Level.FULL}
+        filters = {"system": ALWAYS_VISIBLE}
         conv = self._make_conv(console, turns_blocks, filters)
         conv._follow_mode = False
 
         # Scroll to turn 1 (system content)
         turn1 = conv._turns[1]
         with self._patch_scroll(conv, scroll_y=turn1.line_offset):
-            conv.rerender({"system": Level.EXISTENCE})
+            conv._scroll_anchor = conv._compute_anchor_from_scroll()
+            conv.rerender({"system": HIDDEN})
 
         # Turn 1 is now fully hidden at EXISTENCE level (0 lines)
         assert conv._turns[1].line_count == 0
@@ -641,7 +661,7 @@ class TestWidestStripCache:
         td = TurnData(turn_index=0, blocks=blocks, strips=[])
         td.compute_relevant_keys()
         # System blocks at EXISTENCE with default expanded=False are fully hidden (0 lines)
-        td.re_render({"system": Level.EXISTENCE}, console, 80, force=True)
+        td.re_render({"system": HIDDEN}, console, 80, force=True)
         # Should have no strips (fully hidden)
         assert len(td.strips) == 0
         assert td._widest_strip == 0
@@ -831,7 +851,7 @@ class TestViewportOnlyRerender:
                 _widest_strip=max((s.cell_length for s in strips), default=0),
             )
             td.compute_relevant_keys()
-            td._last_filter_snapshot = {k: filters.get(k, Level.FULL) for k in td.relevant_filter_keys}
+            td._last_filter_snapshot = {k: filters.get(k, ALWAYS_VISIBLE) for k in td.relevant_filter_keys}
             conv._turns.append(td)
         conv._recalculate_offsets()
         conv._last_filters = dict(filters)
@@ -856,14 +876,14 @@ class TestViewportOnlyRerender:
     def test_off_viewport_turns_get_pending_snapshot(self):
         """Off-viewport turns should get _pending_filter_snapshot set, not re-rendered."""
         console = Console()
-        filters_initial = {"tools": Level.FULL}
+        filters_initial = {"tools": ALWAYS_VISIBLE}
         # 200 turns × ~2 lines = ~400 total lines.  With viewport=10 + buffer=20,
         # only turns covering lines 0..30 are in-range — the rest are off-viewport.
         conv = self._make_conv_with_turns(console, 200, filters_initial)
 
         with self._patch_scroll(conv, scroll_y=0, height=10):
             conv._follow_mode = False
-            conv.rerender({"tools": Level.EXISTENCE})
+            conv.rerender({"tools": HIDDEN})
 
         # Compute viewport range to know which turns were deferred
         with self._patch_scroll(conv, scroll_y=0, height=10):
@@ -875,7 +895,7 @@ class TestViewportOnlyRerender:
                 if td._pending_filter_snapshot is not None:
                     has_pending = True
                     assert "tools" in td._pending_filter_snapshot
-                    assert td._pending_filter_snapshot["tools"] == Level.EXISTENCE
+                    assert td._pending_filter_snapshot["tools"] == HIDDEN
 
         assert has_pending, (
             f"No off-viewport turns got _pending_filter_snapshot "
@@ -885,13 +905,13 @@ class TestViewportOnlyRerender:
     def test_viewport_turns_get_re_rendered(self):
         """Viewport turns should be re-rendered, not deferred."""
         console = Console()
-        filters_initial = {"tools": Level.FULL}
+        filters_initial = {"tools": ALWAYS_VISIBLE}
         conv = self._make_conv_with_turns(console, 50, filters_initial)
 
         with self._patch_scroll(conv, scroll_y=0, height=10):
             vp_start, vp_end = conv._viewport_turn_range()
             conv._follow_mode = False
-            conv.rerender({"tools": Level.EXISTENCE})
+            conv.rerender({"tools": HIDDEN})
 
         # Viewport turns should have no pending snapshot
         for idx in range(vp_start, min(vp_end, len(conv._turns))):
@@ -913,10 +933,10 @@ class TestViewportOnlyRerender:
             strips=[],
         )
         td.compute_relevant_keys()
-        td._pending_filter_snapshot = {"tools": Level.EXISTENCE}
+        td._pending_filter_snapshot = {"tools": HIDDEN}
 
         # re_render should clear pending
-        td.re_render({"tools": Level.FULL}, console, 80, force=True)
+        td.re_render({"tools": ALWAYS_VISIBLE}, console, 80, force=True)
         assert td._pending_filter_snapshot is None
 
 
@@ -947,7 +967,7 @@ class TestLazyRerenderInRenderLine:
             TextContentBlock(text="Hello world", indent=""),
             ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
         ]
-        filters = {"tools": Level.FULL}
+        filters = {"tools": ALWAYS_VISIBLE}
 
         # Build a turn manually
         strips, block_strip_map = render_turn_to_strips(blocks, filters, console, width=80)
@@ -959,16 +979,16 @@ class TestLazyRerenderInRenderLine:
             _widest_strip=max((s.cell_length for s in strips), default=0),
         )
         td.compute_relevant_keys()
-        td._last_filter_snapshot = {"tools": Level.FULL}
+        td._last_filter_snapshot = {"tools": ALWAYS_VISIBLE}
 
         conv = ConversationView()
         conv._turns.append(td)
-        conv._last_filters = {"tools": Level.EXISTENCE}
+        conv._last_filters = {"tools": HIDDEN}
         conv._last_width = 80
         conv._recalculate_offsets()
 
         # Simulate pending filter (tools toggled off while off-viewport)
-        td._pending_filter_snapshot = {"tools": Level.EXISTENCE}
+        td._pending_filter_snapshot = {"tools": HIDDEN}
 
         strips_before = list(td.strips)
 

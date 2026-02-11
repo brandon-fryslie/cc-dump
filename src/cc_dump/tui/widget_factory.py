@@ -62,6 +62,7 @@ class TurnData:
         None  # deferred filters for lazy off-viewport re-render
     )
 
+
     @property
     def line_count(self) -> int:
         return len(self.strips)
@@ -95,10 +96,8 @@ class TurnData:
             block_cache: Optional LRUCache for caching rendered strips per block.
             search_ctx: Optional SearchContext for highlighting matches.
         """
-        from cc_dump.formatting import Level
-
-        # Create snapshot using tuple default to match filters dict structure
-        snapshot = {k: filters.get(k, (Level.FULL, True)) for k in self.relevant_filter_keys}
+        # Create snapshot using ALWAYS_VISIBLE default to match filters dict structure
+        snapshot = {k: filters.get(k, cc_dump.formatting.ALWAYS_VISIBLE) for k in self.relevant_filter_keys}
         # Force re-render when search context changes
         if not force and search_ctx is None and snapshot == self._last_filter_snapshot:
             return False
@@ -119,6 +118,15 @@ class TurnData:
     def strip_offset_for_block(self, block_index: int) -> int | None:
         """Return the first strip line for a given block index, or None if filtered out."""
         return self.block_strip_map.get(block_index)
+
+
+@dataclass
+class ScrollAnchor:
+    """Block-level scroll anchor for stable scroll position across vis_state changes."""
+
+    turn_index: int      # index into _turns
+    block_index: int     # original block index (key in block_strip_map)
+    line_in_block: int   # line offset within block's rendered strips
 
 
 class ConversationView(ScrollView):
@@ -158,6 +166,7 @@ class ConversationView(ScrollView):
         self._follow_mode: bool = True
         self._pending_restore: dict | None = None
         self._scrolling_programmatically: bool = False
+        self._scroll_anchor: ScrollAnchor | None = None
 
     def render_line(self, y: int) -> Strip:
         """Line API: render a single line at virtual position y."""
@@ -282,13 +291,12 @@ class ConversationView(ScrollView):
     def _deferred_offset_recalc(self, from_turn_index: int):
         """Recalculate offsets after a lazy re-render, then refresh display.
 
-        Captures and restores turn-level anchor to prevent viewport drift
+        Resolves stored block-level anchor to prevent viewport drift
         when off-viewport turns lazily re-render and shift line offsets.
         """
-        anchor = self._find_viewport_anchor() if not self._follow_mode else None
         self._recalculate_offsets_from(from_turn_index)
-        if anchor is not None:
-            self._restore_anchor(anchor)
+        if not self._follow_mode:
+            self._resolve_anchor()
         self.refresh()
 
     def _recalculate_offsets(self):
@@ -343,11 +351,10 @@ class ConversationView(ScrollView):
         )
         td._widest_strip = _compute_widest(strips)
         td.compute_relevant_keys()
-        from cc_dump.formatting import Level
 
-        # Use tuple default to match filters dict structure
+        # Use ALWAYS_VISIBLE default to match filters dict structure
         td._last_filter_snapshot = {
-            k: filters.get(k, (Level.FULL, True)) for k in td.relevant_filter_keys
+            k: filters.get(k, cc_dump.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
         }
         self._turns.append(td)
         self._recalculate_offsets()
@@ -611,10 +618,8 @@ class ConversationView(ScrollView):
 
         # Compute relevant filter keys
         td.compute_relevant_keys()
-        from cc_dump.formatting import Level
-
         td._last_filter_snapshot = {
-            k: self._last_filters.get(k, Level.FULL) for k in td.relevant_filter_keys
+            k: self._last_filters.get(k, cc_dump.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
         }
 
         # Recalculate offsets
@@ -624,38 +629,11 @@ class ConversationView(ScrollView):
 
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _find_viewport_anchor(self) -> tuple[int, int] | None:
-        """Find turn at top of viewport and offset within it (turn-level anchor for filter toggles)."""
-        if not self._turns:
-            return None
-        scroll_y = int(self.scroll_offset.y)
-        turn = self._find_turn_for_line(scroll_y)
-        if turn is None:
-            return None
-        offset_within = scroll_y - turn.line_offset
-        return (turn.turn_index, offset_within)
-
-    def _restore_anchor(self, anchor: tuple[int, int]):
-        """Restore scroll position to anchor turn after re-render (turn-level anchor for filter toggles)."""
-        turn_index, offset_within = anchor
-        if turn_index < len(self._turns):
-            turn = self._turns[turn_index]
-            if turn.line_count > 0:
-                target_y = turn.line_offset + min(offset_within, turn.line_count - 1)
-                self.scroll_to(y=target_y, animate=False)
-                return
-        # Anchor turn invisible — find nearest visible
-        for delta in range(1, len(self._turns)):
-            for idx in [turn_index + delta, turn_index - delta]:
-                if 0 <= idx < len(self._turns) and self._turns[idx].line_count > 0:
-                    self.scroll_to(y=self._turns[idx].line_offset, animate=False)
-                    return
-
     def rerender(self, filters: dict, search_ctx=None):
         """Re-render affected turns in place. Preserves scroll position.
 
-        Single strategy: capture turn-level anchor before re-render,
-        restore after. Stateless — no state persists between calls.
+        Uses stored block-level anchor (set on user scroll) to maintain
+        stable scroll position across vis_state changes.
 
         Args:
             filters: Current filter state (category name -> Level)
@@ -666,9 +644,6 @@ class ConversationView(ScrollView):
         if self._pending_restore is not None:
             self._rebuild_from_state(filters)
             return
-
-        # Capture turn-level anchor BEFORE re-render (skip if follow mode)
-        anchor = self._find_viewport_anchor() if not self._follow_mode else None
 
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
@@ -699,11 +674,9 @@ class ConversationView(ScrollView):
                         first_changed = idx
             else:
                 # Off-viewport turn: defer re-render, mark pending
-                from cc_dump.formatting import Level
-
-                # Use tuple default to match filters dict structure
+                # Use ALWAYS_VISIBLE default to match filters dict structure
                 snapshot = {
-                    k: filters.get(k, (Level.FULL, True)) for k in td.relevant_filter_keys
+                    k: filters.get(k, cc_dump.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
                 }
                 if snapshot != td._last_filter_snapshot:
                     td._pending_filter_snapshot = snapshot
@@ -711,9 +684,9 @@ class ConversationView(ScrollView):
         if first_changed is not None:
             self._recalculate_offsets_from(first_changed)
 
-        # Single restore: turn-level anchor only
-        if anchor is not None:
-            self._restore_anchor(anchor)
+        # Resolve stored block-level anchor to restore scroll position
+        if not self._follow_mode:
+            self._resolve_anchor()
 
     def _rebuild_from_state(self, filters: dict):
         """Rebuild from restored state."""
@@ -765,6 +738,8 @@ class ConversationView(ScrollView):
         super().watch_scroll_y(old_value, new_value)
         if self._scrolling_programmatically:
             return
+        # Compute anchor on user scroll (block-level anchor for vis_state changes)
+        self._scroll_anchor = self._compute_anchor_from_scroll()
         if self.is_vertical_scroll_end:
             self._follow_mode = True
         else:
@@ -825,6 +800,146 @@ class ConversationView(ScrollView):
         """Check if a block was truncated (set by render_turn_to_strips)."""
         return getattr(block, "_expandable", False)
 
+    def _block_strip_count(self, turn: TurnData, block_index: int) -> int:
+        """Return the number of strips occupied by a block.
+
+        Computes distance to next block start or turn end.
+        """
+        block_start = turn.block_strip_map.get(block_index)
+        if block_start is None:
+            return 0
+
+        # Find next block start
+        next_start = len(turn.strips)  # default to turn end
+        for idx, start in turn.block_strip_map.items():
+            if start > block_start and start < next_start:
+                next_start = start
+
+        return next_start - block_start
+
+    def _nearest_visible_block_offset(self, turn: TurnData, target_block_index: int) -> int:
+        """Find nearest visible block to target_block_index, prefer earlier blocks.
+
+        Returns strip offset (line within turn) of the nearest visible block.
+        If no blocks visible, returns 0.
+        """
+        if not turn.block_strip_map:
+            return 0
+
+        # Find nearest earlier block
+        best_idx = None
+        best_offset = -1
+        for idx, offset in turn.block_strip_map.items():
+            if idx <= target_block_index and offset > best_offset:
+                best_idx = idx
+                best_offset = offset
+
+        if best_idx is not None:
+            return best_offset
+
+        # No earlier block, use first visible block
+        return min(turn.block_strip_map.values())
+
+    def _compute_anchor_from_scroll(self) -> ScrollAnchor | None:
+        """Compute block-level anchor from current scroll_y.
+
+        Returns ScrollAnchor(turn_index, block_index, line_in_block).
+        Returns None if no turns or scroll position invalid.
+        """
+        if not self._turns:
+            return None
+
+        scroll_y = int(self.scroll_offset.y)
+        turn = self._find_turn_for_line(scroll_y)
+        if turn is None:
+            return None
+
+        local_y = scroll_y - turn.line_offset
+
+        # Find which block contains local_y
+        block_idx = self._block_index_at_line(turn, scroll_y)
+        if block_idx is None:
+            # No block mapped to this line, anchor to turn start
+            return ScrollAnchor(turn.turn_index, 0, 0)
+
+        # Compute line offset within the block
+        block_start = turn.block_strip_map[block_idx]
+        line_in_block = local_y - block_start
+
+        return ScrollAnchor(turn.turn_index, block_idx, line_in_block)
+
+    def _resolve_anchor(self):
+        """Resolve stored anchor to scroll_y after content changes.
+
+        Scrolls to the position that matches the stored anchor.
+        Uses _scrolling_programmatically guard to prevent anchor corruption.
+        """
+        if self._scroll_anchor is None:
+            return
+
+        anchor = self._scroll_anchor
+
+        # Find anchor turn (or nearest visible)
+        if anchor.turn_index >= len(self._turns):
+            # Anchor turn no longer exists, scroll to last turn
+            if self._turns:
+                last_turn = self._turns[-1]
+                if last_turn.line_count > 0:
+                    self._scrolling_programmatically = True
+                    self.scroll_to(y=last_turn.line_offset, animate=False)
+                    self._scrolling_programmatically = False
+            return
+
+        turn = self._turns[anchor.turn_index]
+
+        # If turn is hidden (0 lines), find nearest visible turn
+        if turn.line_count == 0:
+            # Walk forward/backward to find nearest visible
+            for delta in range(1, len(self._turns)):
+                for idx in [anchor.turn_index + delta, anchor.turn_index - delta]:
+                    if 0 <= idx < len(self._turns) and self._turns[idx].line_count > 0:
+                        turn = self._turns[idx]
+                        target_y = turn.line_offset
+                        self._scrolling_programmatically = True
+                        self.scroll_to(y=target_y, animate=False)
+                        self._scrolling_programmatically = False
+                        return
+            # No visible turns
+            return
+
+        # Find anchor block (or nearest visible)
+        block_start = turn.block_strip_map.get(anchor.block_index)
+        actual_block_idx = anchor.block_index
+
+        if block_start is None:
+            # Block is hidden, find nearest visible block
+            block_start = self._nearest_visible_block_offset(turn, anchor.block_index)
+            # Find which block this offset corresponds to
+            for idx, offset in turn.block_strip_map.items():
+                if offset == block_start:
+                    actual_block_idx = idx
+                    break
+
+        # Compute block size and clamp line_in_block
+        block_size = self._block_strip_count(turn, actual_block_idx)
+        if block_size == 0:
+            # Block has no strips, use block_start directly
+            clamped_line = 0
+        else:
+            # When anchor block was hidden, clamp to end of nearest visible block
+            if actual_block_idx != anchor.block_index:
+                # Use last line of the found block
+                clamped_line = block_size - 1
+            else:
+                # Use original anchor position, clamped to block size
+                clamped_line = min(anchor.line_in_block, block_size - 1)
+
+        target_y = turn.line_offset + block_start + clamped_line
+
+        self._scrolling_programmatically = True
+        self.scroll_to(y=target_y, animate=False)
+        self._scrolling_programmatically = False
+
     def on_click(self, event) -> None:
         """Toggle expand on truncated blocks."""
         # event.y is viewport-relative; add scroll offset for content-space
@@ -842,28 +957,20 @@ class ConversationView(ScrollView):
 
     def _toggle_block_expand(self, turn: TurnData, block_idx: int):
         """Toggle expand state for a single block and re-render its turn."""
-        from cc_dump.formatting import Level
-
         block = turn.blocks[block_idx]
 
         # [LAW:dataflow-not-control-flow] Coalesce None to default, then toggle
         cat = cc_dump.tui.rendering.get_category(block)
-        filter_value = self._last_filters.get(cat.value, Level.FULL) if cat else Level.FULL
-        # _last_filters stores (Level, bool) tuples or bare Level values
-        if isinstance(filter_value, tuple):
-            level, category_expanded = filter_value
-        else:
-            level = filter_value
-            category_expanded = cc_dump.tui.rendering.DEFAULT_EXPANDED[level]
+        vis = self._last_filters.get(cat.value, cc_dump.formatting.ALWAYS_VISIBLE) if cat else cc_dump.formatting.ALWAYS_VISIBLE
 
         # Coalesce: treat None as default
-        current = block.expanded if block.expanded is not None else category_expanded
+        current = block.expanded if block.expanded is not None else vis.expanded
 
         # Toggle
         new_value = not current
 
         # Store override (None if matches default)
-        block.expanded = None if new_value == category_expanded else new_value
+        block.expanded = None if new_value == vis.expanded else new_value
 
         # Re-render just this turn
         if not turn.is_streaming:
@@ -877,6 +984,9 @@ class ConversationView(ScrollView):
                 block_cache=self._block_strip_cache,
             )
             self._recalculate_offsets()
+            # Resolve anchor to maintain scroll position after expand/collapse
+            if not self._follow_mode:
+                self._resolve_anchor()
 
     # ─── State management ────────────────────────────────────────────────────
 
@@ -1169,18 +1279,19 @@ class FilterStatusBar(Static):
         super().__init__("Active: (initializing...)")
 
     def update_filters(self, filters: dict):
-        """Update the status bar to show active filters with level indicators.
+        """Update the status bar to show active filters with visibility indicators.
 
         Args:
-            filters: Dict with filter states (category name -> Level int)
+            filters: Dict with filter states (category name -> VisState)
         """
-        from cc_dump.formatting import Level
-
-        _LEVEL_ICONS = {
-            Level.EXISTENCE: "\u00b7",
-            Level.SUMMARY: "\u25d0",
-            Level.FULL: "\u25cf",
-        }
+        # Icon shows high-level visibility status (not expanded state)
+        def get_icon(vis):
+            if not vis.visible:
+                return "\u00b7"  # · Hidden
+            elif not vis.full:
+                return "\u25d0"  # ◐ Summary
+            else:
+                return "\u25cf"  # ● Full
 
         p = cc_dump.palette.PALETTE
         categories = [
@@ -1195,15 +1306,13 @@ class FilterStatusBar(Static):
 
         text = Text()
         for i, (key, name, cat_name) in enumerate(categories):
-            level = filters.get(cat_name, Level.FULL)
-            if not isinstance(level, Level):
-                level = Level(level)
+            vis = filters.get(cat_name, cc_dump.formatting.ALWAYS_VISIBLE)
             color = p.filter_color(cat_name)
-            icon = _LEVEL_ICONS.get(level, "\u25cf")
+            icon = get_icon(vis)
             if i > 0:
                 text.append(" ", style="dim")
             text.append(icon, style=f"bold {color}")
-            text.append(f"{name}", style=color if level > Level.EXISTENCE else "dim")
+            text.append(f"{name}", style=color if vis.visible else "dim")
 
         self.update(text)
 

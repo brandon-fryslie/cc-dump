@@ -12,6 +12,8 @@ from tests.harness.interactions import (
     resize_and_settle,
 )
 from tests.harness.assertions import (
+    get_vis_state,
+    get_all_vis_states,
     get_vis_level,
     get_all_levels,
     get_category_expanded,
@@ -37,6 +39,8 @@ __all__ = [
     "press_sequence",
     "click_and_settle",
     "resize_and_settle",
+    "get_vis_state",
+    "get_all_vis_states",
     "get_vis_level",
     "get_all_levels",
     "get_category_expanded",

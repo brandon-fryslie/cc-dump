@@ -17,6 +17,7 @@ _RELOAD_ORDER = [
     "cc_dump.colors",  # depends on: palette
     "cc_dump.analysis",  # no deps within project
     "cc_dump.formatting",  # depends on: colors, analysis
+    "cc_dump.segmentation",  # depends on: nothing (pure parser, before rendering)
     "cc_dump.tui.search",  # depends on: palette
     "cc_dump.tui.rendering",  # depends on: formatting, colors
     "cc_dump.tui.custom_footer",  # depends on: palette, rendering

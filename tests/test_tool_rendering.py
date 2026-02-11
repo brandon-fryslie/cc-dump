@@ -4,7 +4,7 @@ import pytest
 
 from cc_dump.formatting import (
     ToolUseBlock, ToolResultBlock, ToolUseSummaryBlock, TextContentBlock,
-    RoleBlock, NewlineBlock, Level,
+    RoleBlock, NewlineBlock, VisState, HIDDEN, ALWAYS_VISIBLE,
 )
 from cc_dump.tui.rendering import (
     _render_tool_use, _render_tool_result, _render_tool_use_summary,
@@ -209,7 +209,7 @@ class TestRenderBlocksToolSummary:
             ToolUseBlock(name="Bash", input_size=150, msg_color_idx=2),
             TextContentBlock(text="world"),
         ]
-        result = render_blocks(blocks, {"tools": Level.EXISTENCE})
+        result = render_blocks(blocks, {"tools": HIDDEN})
 
         # At EXISTENCE level, tools are fully hidden (0 lines)
         # Should have: text, text = 2 items (tools hidden)
@@ -225,7 +225,7 @@ class TestRenderBlocksToolSummary:
             ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
             ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
         ]
-        result = render_blocks(blocks, {"tools": Level.FULL})
+        result = render_blocks(blocks, {"tools": ALWAYS_VISIBLE})
 
         assert len(result) == 2
         assert result[0][0] == 0
@@ -236,7 +236,7 @@ class TestRenderBlocksToolSummary:
         blocks = [
             ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
         ]
-        result = render_blocks(blocks, {"tools": Level.EXISTENCE})
+        result = render_blocks(blocks, {"tools": HIDDEN})
 
         # At EXISTENCE level, tools are fully hidden
         assert len(result) == 0
@@ -246,7 +246,7 @@ class TestRenderBlocksToolSummary:
         blocks = [
             ToolResultBlock(size=500, tool_name="Read", msg_color_idx=0),
         ]
-        result = render_blocks(blocks, {"tools": Level.EXISTENCE})
+        result = render_blocks(blocks, {"tools": HIDDEN})
 
         # Orphaned ToolResultBlock (no preceding ToolUseBlock) is dropped by
         # collapse_tool_runs, so no "used 0 tools" summary appears
@@ -449,7 +449,7 @@ class TestRenderTurnToStripsToolSummary:
             NewlineBlock(),
         ]
         console = Console(width=80, force_terminal=True)
-        filters = {"tools": Level.EXISTENCE, "system": Level.FULL, "headers": Level.EXISTENCE, "metadata": Level.EXISTENCE, "budget": Level.EXISTENCE}
+        filters = {"tools": HIDDEN, "system": ALWAYS_VISIBLE, "headers": HIDDEN, "metadata": HIDDEN, "budget": HIDDEN}
 
         strips, block_strip_map = render_turn_to_strips(
             blocks, filters, console, width=80,
@@ -472,7 +472,7 @@ class TestRenderTurnToStripsToolSummary:
             ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
         ]
         console = Console(width=80, force_terminal=True)
-        filters = {"tools": Level.FULL, "system": Level.FULL, "headers": Level.EXISTENCE, "metadata": Level.EXISTENCE, "budget": Level.EXISTENCE}
+        filters = {"tools": ALWAYS_VISIBLE, "system": ALWAYS_VISIBLE, "headers": HIDDEN, "metadata": HIDDEN, "budget": HIDDEN}
 
         strips, block_strip_map = render_turn_to_strips(
             blocks, filters, console, width=80,

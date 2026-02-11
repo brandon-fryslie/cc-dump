@@ -17,7 +17,8 @@ from typing import Callable
 
 from rich.text import Text
 from rich.markdown import Markdown
-from rich.console import ConsoleRenderable
+from rich.console import ConsoleRenderable, Group
+from rich.syntax import Syntax
 from rich.theme import Theme as RichTheme
 
 from collections import Counter
@@ -46,8 +47,10 @@ from cc_dump.formatting import (
     NewlineBlock,
     TurnBudgetBlock,
     make_diff_lines,
-    Level,
     Category,
+    VisState,
+    HIDDEN,
+    ALWAYS_VISIBLE,
 )
 
 import cc_dump.palette
@@ -216,20 +219,20 @@ def set_theme(textual_theme) -> None:
 
 # ─── Visibility model constants ───────────────────────────────────────────────
 
-# [LAW:one-source-of-truth] These are the sole authority for truncation behavior.
-TRUNCATION_LIMITS: dict[tuple[Level, bool], int | None] = {
-    (Level.EXISTENCE, False): 0,  # hidden
-    (Level.EXISTENCE, True): 1,  # title line only
-    (Level.SUMMARY, False): 3,  # collapsed summary
-    (Level.SUMMARY, True): 12,  # expanded summary
-    (Level.FULL, False): 5,  # collapsed full
-    (Level.FULL, True): None,  # unlimited
-}
-
-DEFAULT_EXPANDED: dict[Level, bool] = {
-    Level.EXISTENCE: False,  # fully hidden (0 lines)
-    Level.SUMMARY: False,  # show collapsed summaries
-    Level.FULL: True,  # show everything
+# [LAW:one-source-of-truth] [LAW:dataflow-not-control-flow]
+# VisState is THE representation. Single lookup per question.
+TRUNCATION_LIMITS: dict[VisState, int | None] = {
+    # Hidden states (visible=False) — all produce 0 lines
+    VisState(False, False, False): 0,
+    VisState(False, False, True):  0,
+    VisState(False, True, False):  0,
+    VisState(False, True, True):   0,
+    # Summary level (visible=True, full=False)
+    VisState(True, False, False):  3,    # summary collapsed
+    VisState(True, False, True):   12,   # summary expanded
+    # Full level (visible=True, full=True)
+    VisState(True, True, False):   5,    # full collapsed
+    VisState(True, True, True):    None, # full expanded (unlimited)
 }
 
 # Categories that should render as Markdown instead of plain text
@@ -280,30 +283,25 @@ def get_category(block: FormattedBlock) -> Category | None:
 
 def _resolve_visibility(
     block: FormattedBlock, filters: dict
-) -> tuple[Level, bool]:
-    """Determine (level, expanded) for a block given current filter state.
+) -> VisState:
+    """Determine VisState for a block given current filter state.
 
-    Filters contain (Level, category_expanded) tuples.
+    // [LAW:one-source-of-truth] Returns THE visibility representation.
+    // [LAW:dataflow-not-control-flow] Value coalescing, not branching.
+
+    Filters contain VisState values keyed by category name.
     Per-block `block.expanded` overrides category-level expansion.
-    Returns (Level.FULL, True) for blocks with no category (always visible).
+    Returns ALWAYS_VISIBLE for blocks with no category.
     """
     cat = get_category(block)
     if cat is None:
-        return (Level.FULL, True)  # always fully visible
+        return ALWAYS_VISIBLE  # always fully visible
 
-    filter_value = filters.get(cat.value, (Level.FULL, True))
-    # Handle both (Level, expanded) tuples and bare Level values
-    if isinstance(filter_value, tuple):
-        level, category_expanded = filter_value
-    else:
-        level = filter_value
-        category_expanded = DEFAULT_EXPANDED[level]
+    vis = filters.get(cat.value, ALWAYS_VISIBLE)
+    # Per-block override: None → use category default, else use block value
+    expanded = block.expanded if block.expanded is not None else vis.expanded
 
-    # Per-block override takes precedence over category expansion
-    # [LAW:one-source-of-truth] category_expanded is the default; block.expanded is override
-    expanded = block.expanded if block.expanded is not None else category_expanded
-
-    return (level, expanded)
+    return VisState(vis.visible, vis.full, expanded)
 
 
 # ─── Style helpers ─────────────────────────────────────────────────────────────
@@ -311,7 +309,8 @@ def _resolve_visibility(
 # Initial values — rebuilt by set_theme()
 ROLE_STYLES: dict[str, str] = {}
 TAG_STYLES: list[tuple[str, str]] = []
-MSG_COLORS: list[str] = []
+# Default MSG_COLORS to avoid division by zero in tests that don't call set_theme()
+MSG_COLORS: list[str] = ["cyan", "magenta", "yellow", "blue", "green", "red"]
 
 
 def _build_filter_indicators() -> dict[str, tuple[str, str]]:
@@ -489,13 +488,93 @@ def _render_role(block: RoleBlock) -> Text | None:
     return t
 
 
+def _get_or_segment(block):
+    """Lazy segmentation, cached on the block object."""
+    if not hasattr(block, "_segment_result"):
+        from cc_dump.segmentation import segment
+
+        block._segment_result = segment(block.text)
+    return block._segment_result
+
+
+def _render_segmented_block(block) -> ConsoleRenderable:
+    """Render a text block using SubBlock segmentation.
+
+    // [LAW:dataflow-not-control-flow] Dispatch via SubBlockKind match.
+    """
+    from cc_dump.segmentation import (
+        SubBlockKind,
+        wrap_tags_in_backticks,
+        wrap_tags_outside_fences,
+    )
+
+    tc = get_theme_colors()
+    seg = _get_or_segment(block)
+    raw = block.text
+
+    # Single SubBlock of kind MD: fast path — just Markdown with tag wrapping
+    if (
+        len(seg.sub_blocks) == 1
+        and seg.sub_blocks[0].kind == SubBlockKind.MD
+    ):
+        return Markdown(wrap_tags_in_backticks(raw), code_theme=tc.code_theme)
+
+    parts: list[ConsoleRenderable] = []
+    for sb in seg.sub_blocks:
+        text_slice = raw[sb.span.start : sb.span.end]
+
+        if sb.kind == SubBlockKind.MD:
+            wrapped = wrap_tags_in_backticks(text_slice)
+            if wrapped.strip():
+                parts.append(Markdown(wrapped, code_theme=tc.code_theme))
+
+        elif sb.kind == SubBlockKind.MD_FENCE:
+            inner = raw[sb.meta.inner_span.start : sb.meta.inner_span.end]
+            wrapped = wrap_tags_in_backticks(inner)
+            if wrapped.strip():
+                parts.append(Markdown(wrapped, code_theme=tc.code_theme))
+
+        elif sb.kind == SubBlockKind.CODE_FENCE:
+            inner = raw[sb.meta.inner_span.start : sb.meta.inner_span.end]
+            parts.append(
+                Syntax(inner, sb.meta.info or "", theme=tc.code_theme)
+            )
+
+        elif sb.kind == SubBlockKind.XML_BLOCK:
+            m = sb.meta
+            start_tag = raw[
+                m.start_tag_span.start : m.start_tag_span.end
+            ].rstrip("\n")
+            end_tag = raw[
+                m.end_tag_span.start : m.end_tag_span.end
+            ].rstrip("\n")
+            inner = raw[m.inner_span.start : m.inner_span.end]
+            xml_parts: list[ConsoleRenderable] = [
+                Text(start_tag, style="bold dim")
+            ]
+            if inner.strip():
+                xml_parts.append(
+                    Markdown(
+                        wrap_tags_outside_fences(inner),
+                        code_theme=tc.code_theme,
+                    )
+                )
+            xml_parts.append(Text(end_tag, style="bold dim"))
+            parts.append(Group(*xml_parts))
+
+    if not parts:
+        return Markdown(wrap_tags_in_backticks(raw), code_theme=tc.code_theme)
+    if len(parts) == 1:
+        return parts[0]
+    return Group(*parts)
+
+
 def _render_text_content(block: TextContentBlock) -> ConsoleRenderable | None:
     if not block.text:
         return None
-    # Render as Markdown for USER and ASSISTANT categories
+    # Render as segmented Markdown for USER and ASSISTANT categories
     if block.category in _MARKDOWN_CATEGORIES:
-        tc = get_theme_colors()
-        return Markdown(block.text, code_theme=tc.code_theme)
+        return _render_segmented_block(block)
     return _indent_text(block.text, block.indent)
 
 
@@ -566,8 +645,7 @@ def _render_stream_tool_use(block: StreamToolUseBlock) -> Text | None:
 def _render_text_delta(block: TextDeltaBlock) -> ConsoleRenderable | None:
     # TextDeltaBlock is always ASSISTANT category during streaming
     if block.category in _MARKDOWN_CATEGORIES:
-        tc = get_theme_colors()
-        return Markdown(block.text, code_theme=tc.code_theme)
+        return _render_segmented_block(block)
     return Text(block.text)
 
 
@@ -751,14 +829,41 @@ BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], Text | None]] = {
     "NewlineBlock": _render_newline,
 }
 
-# State-specific renderers. Keyed by (type_name, Level, expanded).
-# When present, output is used as-is (no truncation).
+# State-specific renderers (override full renderers for specific vis_states)
+# Keyed by (type_name, visible, full, expanded).
+# // [LAW:dataflow-not-control-flow] Registries replace conditional dispatch.
 BLOCK_STATE_RENDERERS: dict[
-    tuple[str, Level, bool], Callable[[FormattedBlock], Text | None]
+    tuple[str, bool, bool, bool], Callable[[FormattedBlock], Text | None]
 ] = {
-    ("TrackedContentBlock", Level.EXISTENCE, True): _render_tracked_content_title,
-    ("TurnBudgetBlock", Level.EXISTENCE, True): _render_turn_budget_oneliner,
+    # TrackedContentBlock: title-only at summary level
+    ("TrackedContentBlock", True, False, False): _render_tracked_content_title,
+    ("TrackedContentBlock", True, False, True):  _render_tracked_content_title,
+    # TurnBudgetBlock: oneliner at summary level
+    ("TurnBudgetBlock", True, False, False): _render_turn_budget_oneliner,
+    ("TurnBudgetBlock", True, False, True):  _render_turn_budget_oneliner,
 }
+
+
+def _build_renderer_registry() -> dict[tuple[str, bool, bool, bool], Callable]:
+    """Build unified renderer registry. Every (type, vis_state) has one renderer.
+
+    // [LAW:dataflow-not-control-flow] Single lookup replaces conditional dispatch.
+    """
+    registry: dict[tuple[str, bool, bool, bool], Callable] = {}
+    visible_states = [
+        (True, False, False), (True, False, True),
+        (True, True, False), (True, True, True),
+    ]
+    # Populate all visible states with the full renderer
+    for type_name, fn in BLOCK_RENDERERS.items():
+        for vis in visible_states:
+            registry[(type_name, *vis)] = fn
+    # State-specific overrides replace full renderers for specific states
+    registry.update(BLOCK_STATE_RENDERERS)
+    return registry
+
+
+RENDERERS = _build_renderer_registry()
 
 
 # ─── Tool pre-pass ─────────────────────────────────────────────────────────────
@@ -820,11 +925,12 @@ def collapse_tool_runs(
 def _prepare_blocks(
     blocks: list, filters: dict
 ) -> list[tuple[int, FormattedBlock]]:
-    """Pre-pass: apply tool summarization based on tools level."""
-    tools_filter = filters.get("tools", (Level.FULL, True))
-    tools_level = tools_filter[0] if isinstance(tools_filter, tuple) else tools_filter
-    # At SUMMARY or EXISTENCE, collapse tool runs
-    tools_on = tools_level >= Level.FULL
+    """Pre-pass: apply tool summarization based on tools level.
+
+    // [LAW:dataflow-not-control-flow] tools_on is a value, not a branch.
+    """
+    tools_filter = filters.get("tools", ALWAYS_VISIBLE)
+    tools_on = tools_filter.full  # individual tools at FULL level
     return collapse_tool_runs(blocks, tools_on)
 
 
@@ -924,7 +1030,7 @@ def render_blocks(
 ) -> list[tuple[int, Text]]:
     """Render a list of FormattedBlock to indexed Rich Text objects, applying filters.
 
-    When tools level <= SUMMARY, consecutive ToolUse/ResultBlocks are collapsed
+    When tools level is not FULL, consecutive ToolUse/ResultBlocks are collapsed
     into a single summary line like '[used 3 tools: Bash 2x, Read 1x]'.
 
     Returns:
@@ -934,21 +1040,17 @@ def render_blocks(
 
     rendered: list[tuple[int, Text]] = []
     for orig_idx, block in prepared:
-        level, expanded = _resolve_visibility(block, filters)
-        max_lines = TRUNCATION_LIMITS[(level, expanded)]
+        vis = _resolve_visibility(block, filters)
+        max_lines = TRUNCATION_LIMITS[vis]
 
         if max_lines == 0:
             continue  # hidden
 
         type_name = type(block).__name__
 
-        # Dispatch: state-specific renderer first, then full renderer
-        state_renderer = BLOCK_STATE_RENDERERS.get((type_name, level, expanded))
-        if state_renderer:
-            text = state_renderer(block)
-        else:
-            full_renderer = BLOCK_RENDERERS.get(type_name)
-            text = full_renderer(block) if full_renderer else None
+        # Single unified renderer lookup
+        renderer = RENDERERS.get((type_name, vis.visible, vis.full, vis.expanded))
+        text = renderer(block) if renderer else None
 
         if text is not None:
             # Add category indicator
@@ -1005,11 +1107,13 @@ def render_turn_to_strips(
     prepared = _prepare_blocks(blocks, filters)
 
     for orig_idx, block in prepared:
-        level, expanded = _resolve_visibility(block, filters)
-        max_lines = TRUNCATION_LIMITS[(level, expanded)]
+        vis = _resolve_visibility(block, filters)
+        max_lines = TRUNCATION_LIMITS[vis]
 
+        # Hidden blocks produce 0 lines — skip early
+        # // [LAW:dataflow-not-control-flow] 0 is the value; skipping is the operation for 0
         if max_lines == 0:
-            continue  # hidden
+            continue
 
         type_name = type(block).__name__
 
@@ -1021,27 +1125,22 @@ def render_turn_to_strips(
             block_has_matches = bool(block_matches)
             search_hash = search_ctx.pattern_str if block_has_matches else None
 
-        # Dispatch: state-specific renderer first, then full + truncation
-        state_renderer = BLOCK_STATE_RENDERERS.get((type_name, level, expanded))
-        if state_renderer:
-            text = state_renderer(block)
-            should_truncate = False  # state renderer controls output exactly
-        else:
-            full_renderer = BLOCK_RENDERERS.get(type_name)
-            if full_renderer:
-                # For Markdown blocks with search matches, render as plain Text
-                # so highlight_regex works correctly
-                if block_has_matches and isinstance(full_renderer(block), Markdown):
-                    # Re-render as plain Text for search highlighting
-                    plain_text = ""
-                    if hasattr(block, "text"):
-                        plain_text = block.text
-                    text = Text(plain_text)
-                else:
-                    text = full_renderer(block)
+        # Single unified renderer lookup
+        # // [LAW:dataflow-not-control-flow] One lookup replaces conditional dispatch
+        renderer = RENDERERS.get((type_name, vis.visible, vis.full, vis.expanded))
+        if renderer:
+            # For Markdown blocks with search matches, render as plain Text
+            # so highlight_regex works correctly
+            if block_has_matches and isinstance(renderer(block), Markdown):
+                # Re-render as plain Text for search highlighting
+                plain_text = ""
+                if hasattr(block, "text"):
+                    plain_text = block.text
+                text = Text(plain_text)
             else:
-                text = None
-            should_truncate = True
+                text = renderer(block)
+        else:
+            text = None
 
         if text is None:
             continue
@@ -1060,13 +1159,11 @@ def render_turn_to_strips(
 
         block_strip_map[orig_idx] = len(all_strips)
 
-        # Cache key: block identity + width + state info + search state
+        # Cache key: simpler with VisState
         cache_key = (
             id(block),
             width,
-            level,
-            expanded,
-            bool(state_renderer),
+            vis,
             search_hash,
         )
 
@@ -1094,20 +1191,19 @@ def render_turn_to_strips(
                 block_strips, indicator_name, width
             )
 
-        # Track expandability for click handler
-        # [LAW:single-enforcer] Always check against collapsed limit, not current state
-        collapsed_limit = TRUNCATION_LIMITS[(level, False)]
+        # Track expandability: always check against collapsed limit for this detail level
+        # // [LAW:single-enforcer] _expandable enables click-to-expand interaction
+        collapsed_limit = TRUNCATION_LIMITS[VisState(True, vis.full, False)]
         block._expandable = (
-            should_truncate
-            and collapsed_limit is not None
+            collapsed_limit is not None
             and collapsed_limit > 0
             and len(block_strips) > collapsed_limit
         )
 
-        # Apply generic truncation (only for full-renderer fallback, not streaming)
+        # Truncation: ALWAYS applies when max_lines < strip count (not streaming)
+        # // [LAW:dataflow-not-control-flow] No should_truncate flag, just max_lines value
         if (
             not is_streaming
-            and should_truncate
             and max_lines is not None
             and len(block_strips) > max_lines
         ):

@@ -45,6 +45,12 @@ def main():
         "--no-record", action="store_true", help="Disable HAR recording"
     )
     parser.add_argument(
+        "--session",
+        type=str,
+        default="unnamed-session",
+        help="Session name for organizing recordings (default: unnamed-session)",
+    )
+    parser.add_argument(
         "--replay",
         type=str,
         default=None,
@@ -154,6 +160,8 @@ def main():
         print("   Database: disabled (--no-db)")
 
     # HAR recording subscriber (direct subscriber, inline writes)
+    # [LAW:one-source-of-truth] Session name from CLI or default
+    session_name = args.session
     har_recorder = None
     if not args.no_record:
         # Generate session_id if not already created for database
@@ -162,10 +170,12 @@ def main():
 
         import cc_dump.har_recorder
 
+        # [LAW:one-source-of-truth] Recordings organized by session name
         record_dir = os.path.expanduser("~/.local/share/cc-dump/recordings")
-        os.makedirs(record_dir, exist_ok=True)
+        session_dir = os.path.join(record_dir, session_name)
+        os.makedirs(session_dir, exist_ok=True)
         record_path = args.record or os.path.join(
-            record_dir, f"recording-{session_id}.har"
+            session_dir, f"recording-{session_id}.har"
         )
         har_recorder = cc_dump.har_recorder.HARRecordingSubscriber(
             record_path, session_id
@@ -192,6 +202,7 @@ def main():
         router,
         db_path=db_path,
         session_id=session_id,
+        session_name=session_name,
         host=args.host,
         port=actual_port,
         target=ProxyHandler.target_host,

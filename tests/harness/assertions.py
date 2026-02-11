@@ -4,24 +4,34 @@ Pure functions that return values — tests compose with assert.
 No internal assertions.
 """
 
-from cc_dump.formatting import Level
+from cc_dump.formatting import VisState
 from cc_dump.tui.app import CcDumpApp
 
 
-def get_vis_level(app: CcDumpApp, category: str) -> Level:
-    """Read the visibility level derived from the three reactive dicts."""
-    if not app._is_visible[category]:
-        return Level.EXISTENCE
-    elif app._is_full[category]:
-        return Level.FULL
-    else:
-        return Level.SUMMARY
+def get_vis_state(app: CcDumpApp, category: str) -> VisState:
+    """Read the visibility state from the three reactive dicts."""
+    return VisState(
+        visible=app._is_visible[category],
+        full=app._is_full[category],
+        expanded=app._is_expanded[category],
+    )
 
 
-def get_all_levels(app: CcDumpApp) -> dict[str, Level]:
-    """Read all 7 category visibility levels."""
-    categories = ["headers", "user", "assistant", "tools", "system", "budget", "metadata"]
-    return {cat: get_vis_level(app, cat) for cat in categories}
+def get_all_vis_states(app: CcDumpApp, categories=None) -> dict[str, VisState]:
+    """Read all category visibility states."""
+    categories = categories or ["headers", "user", "assistant", "tools", "system", "budget", "metadata"]
+    return {cat: get_vis_state(app, cat) for cat in categories}
+
+
+# Backward compatibility aliases (deprecated)
+def get_vis_level(app: CcDumpApp, category: str):
+    """DEPRECATED: Use get_vis_state instead."""
+    return get_vis_state(app, category)
+
+
+def get_all_levels(app: CcDumpApp):
+    """DEPRECATED: Use get_all_vis_states instead."""
+    return get_all_vis_states(app)
 
 
 def get_category_expanded(app: CcDumpApp, category: str) -> bool:

@@ -5,6 +5,7 @@ from textual.widgets import Static
 
 import cc_dump.palette
 import cc_dump.tui.rendering
+from cc_dump.formatting import VisState, HIDDEN
 
 
 class StatusFooter(Static):
@@ -12,17 +13,22 @@ class StatusFooter(Static):
 
     // [LAW:dataflow-not-control-flow] Render pipeline is fixed; data determines style.
     // [LAW:single-enforcer] update_display() is the sole render entry.
-    // [LAW:one-source-of-truth] Icons from _LEVEL_EXPANDED_ICONS, colors from palette.
+    // [LAW:one-source-of-truth] Icons from _VIS_ICONS, colors from palette.
     """
 
-    # Icon encodes level AND expansion state
-    _LEVEL_EXPANDED_ICONS = {
-        (1, False): "\u00b7",  # ·  Existence
-        (1, True): "\u00b7",  # ·  Existence (same — no expansion at existence)
-        (2, False): "\u25b7",  # ▷  Summary Collapsed
-        (2, True): "\u25bd",  # ▽  Summary Expanded
-        (3, False): "\u25b6",  # ▶  Full Collapsed
-        (3, True): "\u25bc",  # ▼  Full Expanded
+    # Icon encodes visibility state (5 states)
+    _VIS_ICONS: dict[VisState, str] = {
+        # Hidden states
+        VisState(False, False, False): "\u00b7",  # ·  Hidden
+        VisState(False, False, True):  "\u00b7",  # ·  Hidden
+        VisState(False, True, False):  "\u00b7",  # ·  Hidden
+        VisState(False, True, True):   "\u00b7",  # ·  Hidden
+        # Summary level
+        VisState(True, False, False):  "\u25b7",  # ▷  Summary Collapsed
+        VisState(True, False, True):   "\u25bd",  # ▽  Summary Expanded
+        # Full level
+        VisState(True, True, False):   "\u25b6",  # ▶  Full Collapsed
+        VisState(True, True, True):    "\u25bc",  # ▼  Full Expanded
     }
 
     _CATEGORY_ITEMS = [
@@ -47,20 +53,22 @@ class StatusFooter(Static):
         self.update(self._render_footer(state))
 
     def _render_footer(self, state: dict) -> Text:
-        """Build 2-line Rich Text — categories on line 1, actions on line 2."""
+        """Build 2-line Rich Text — categories on line 1, actions on line 2.
+
+        // [LAW:dataflow-not-control-flow] State values determine rendering, no branching.
+        """
         p = cc_dump.palette.PALETTE
 
         # Line 1: categories with icon+color
         line1 = Text()
         for key, name in self._CATEGORY_ITEMS:
-            value = state.get(name, (1, False))
-            level, expanded = value if isinstance(value, tuple) else (1, False)
-            icon = self._LEVEL_EXPANDED_ICONS.get((level, expanded), "\u00b7")
+            vis = state.get(name, HIDDEN)
+            icon = self._VIS_ICONS[vis]
             color = p.filter_color(name)
-            style = f"bold {color}" if level > 1 else "dim"
+            style = f"bold {color}" if vis.visible else "dim"
             if line1.plain:
                 line1.append("  ")
-            line1.append(f" {key} ", style="bold" if level > 1 else "dim")
+            line1.append(f" {key} ", style="bold" if vis.visible else "dim")
             line1.append(icon, style=style)
             line1.append(name, style=style)
 

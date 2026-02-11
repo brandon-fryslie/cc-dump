@@ -10,6 +10,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, IntEnum
+from typing import NamedTuple
 
 from cc_dump.analysis import TurnBudget, compute_turn_budget, tool_result_breakdown
 from cc_dump.colors import TAG_COLORS
@@ -18,12 +19,20 @@ from cc_dump.colors import TAG_COLORS
 # ─── Visibility model ─────────────────────────────────────────────────────────
 
 
-class Level(IntEnum):
-    """Visibility level — keyboard cycles per category."""
+class VisState(NamedTuple):
+    """Visibility state for a block — three orthogonal boolean axes.
 
-    EXISTENCE = 1  # Minimal: block exists (title only)
-    SUMMARY = 2  # Mid-level: meaningful summary
-    FULL = 3  # Complete: all content
+    // [LAW:one-source-of-truth] THE representation of visibility.
+    // [LAW:dataflow-not-control-flow] Values, not control flow branching.
+    """
+    visible: bool  # False = hidden, True = shown
+    full: bool     # False = summary level, True = full level
+    expanded: bool # False = collapsed, True = expanded
+
+
+# Visibility state constants
+HIDDEN = VisState(visible=False, full=False, expanded=False)
+ALWAYS_VISIBLE = VisState(visible=True, full=True, expanded=True)
 
 
 class Category(Enum):

@@ -33,6 +33,7 @@ def list_recordings(recordings_dir: Optional[str] = None) -> list[dict]:
                 "path": "/path/to/recording-xyz.har",
                 "filename": "recording-xyz.har",
                 "session_id": "xyz",
+                "session_name": "my-session",  # NEW: session subdirectory name
                 "created": "2026-02-03T14:30:00",
                 "entry_count": 42,
                 "size_bytes": 102400,
@@ -50,8 +51,22 @@ def list_recordings(recordings_dir: Optional[str] = None) -> list[dict]:
     if not recordings_path.exists():
         return recordings
 
-    # Find all .har files in the directory
-    for path in sorted(recordings_path.glob("*.har")):
+    # [LAW:dataflow-not-control-flow] Search both session subdirectories and flat structure
+    # Collect all .har files from:
+    # 1. Session subdirectories (recordings/*/recording-*.har)
+    # 2. Flat directory (recordings/recording-*.har) - backwards compatibility
+    har_files = []
+
+    # Session subdirectories
+    for session_dir in recordings_path.iterdir():
+        if session_dir.is_dir():
+            har_files.extend((path, session_dir.name) for path in session_dir.glob("*.har"))
+
+    # Flat directory (backwards compatibility)
+    har_files.extend((path, None) for path in recordings_path.glob("*.har"))
+
+    # Process all found .har files
+    for path, session_name in sorted(har_files, key=lambda x: x[0]):
         try:
             # Extract session_id from filename (recording-<session_id>.har)
             session_id = None
@@ -79,6 +94,7 @@ def list_recordings(recordings_dir: Optional[str] = None) -> list[dict]:
                     "path": str(path),
                     "filename": path.name,
                     "session_id": session_id,
+                    "session_name": session_name,  # None for flat structure files
                     "created": created,
                     "entry_count": entry_count,
                     "size_bytes": path.stat().st_size,
@@ -146,8 +162,8 @@ def print_recordings_list(recordings: list[dict]) -> None:
     print(f"Found {len(recordings)} recording(s):\n")
 
     # Print table header
-    print(f"{'CREATED':<22} {'ENTRIES':<10} {'SIZE':<12} {'FILE':<50}")
-    print("-" * 94)
+    print(f"{'SESSION':<20} {'CREATED':<22} {'ENTRIES':<10} {'SIZE':<12} {'FILE':<50}")
+    print("-" * 114)
 
     # Print each recording
     for rec in recordings:
@@ -162,7 +178,8 @@ def print_recordings_list(recordings: list[dict]) -> None:
 
         size_str = format_size(rec["size_bytes"])
         filename = rec["filename"]
+        session_name = rec.get("session_name") or "(flat)"
 
-        print(f"{created:<22} {rec['entry_count']:<10} {size_str:<12} {filename:<50}")
+        print(f"{session_name:<20} {created:<22} {rec['entry_count']:<10} {size_str:<12} {filename:<50}")
 
     print()

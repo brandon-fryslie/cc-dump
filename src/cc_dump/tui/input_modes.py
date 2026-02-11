@@ -62,14 +62,23 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         "&": "toggle_detail('metadata')",
         "ampersand": "toggle_detail('metadata')",
 
-        # Expand toggles (ctrl+shift+number)
-        "ctrl+shift+1": "toggle_expand('headers')",
-        "ctrl+shift+2": "toggle_expand('user')",
-        "ctrl+shift+3": "toggle_expand('assistant')",
-        "ctrl+shift+4": "toggle_expand('tools')",
-        "ctrl+shift+5": "toggle_expand('system')",
-        "ctrl+shift+6": "toggle_expand('budget')",
-        "ctrl+shift+7": "toggle_expand('metadata')",
+        # Detail toggles (shifted letters - same as shifted numbers)
+        "Q": "toggle_detail('headers')",
+        "W": "toggle_detail('user')",
+        "E": "toggle_detail('assistant')",
+        "R": "toggle_detail('tools')",
+        "T": "toggle_detail('system')",
+        "Y": "toggle_detail('budget')",
+        "U": "toggle_detail('metadata')",
+
+        # Expand toggles (q-u for categories 1-7)
+        "q": "toggle_expand('headers')",
+        "w": "toggle_expand('user')",
+        "e": "toggle_expand('assistant')",
+        "r": "toggle_expand('tools')",
+        "t": "toggle_expand('system')",
+        "y": "toggle_expand('budget')",
+        "u": "toggle_expand('metadata')",
 
         # Panels
         "8": "toggle_economics",
@@ -111,6 +120,8 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
 FOOTER_KEYS: dict[InputMode, list[tuple[str, str]]] = {
     InputMode.NORMAL: [
         ("1-7", "filters"),
+        ("qwertyu", "expand"),
+        ("QWERTYU", "detail"),
         ("8", "cost"),
         ("9", "timeline"),
         ("0", "follow"),
