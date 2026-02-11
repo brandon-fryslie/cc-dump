@@ -25,31 +25,23 @@ import cc_dump.tui.event_handlers
 import cc_dump.tui.search
 import cc_dump.tui.input_modes
 
+# Convenience aliases for VisState (accessed via module name below)
+# Note: Can't use 'from' imports in stable modules due to hot-reload
+
 
 # [LAW:one-source-of-truth] [LAW:one-type-per-behavior]
-# (key, category, description, default_level, default_detail)
+# (key, category, description, default_visstate)
 _CATEGORY_CONFIG = [
-    ("1", "headers", "headers", 1, 2),
-    ("2", "user", "user", 3, 3),
-    ("3", "assistant", "assistant", 3, 3),
-    ("4", "tools", "tools", 2, 2),
-    ("5", "system", "system", 2, 2),
-    ("6", "budget", "budget", 1, 2),
-    ("7", "metadata", "metadata", 1, 2),
+    ("1", "headers", "headers", cc_dump.formatting.VisState(False, False, False)),  # hidden
+    ("2", "user", "user", cc_dump.formatting.VisState(True, True, True)),           # full-expanded
+    ("3", "assistant", "assistant", cc_dump.formatting.VisState(True, True, True)), # full-expanded
+    ("4", "tools", "tools", cc_dump.formatting.VisState(True, False, False)),       # summary-collapsed
+    ("5", "system", "system", cc_dump.formatting.VisState(True, False, False)),     # summary-collapsed
+    ("6", "budget", "budget", cc_dump.formatting.VisState(False, False, False)),    # hidden
+    ("7", "metadata", "metadata", cc_dump.formatting.VisState(False, False, False)),# hidden
 ]
 
 # Lookup dicts from config removed - using reactive dicts instead
-
-# Mapping for shift+number detail toggle keys
-_SHIFTED_NUMBERS = {
-    "1": "!",
-    "2": "@",
-    "3": "#",
-    "4": "$",
-    "5": "%",
-    "6": "^",
-    "7": "&",
-}
 
 
 class CcDumpApp(App):
@@ -78,6 +70,7 @@ class CcDumpApp(App):
         router,
         db_path: Optional[str] = None,
         session_id: Optional[str] = None,
+        session_name: str = "unnamed-session",
         host: str = "127.0.0.1",
         port: int = 3344,
         target: Optional[str] = None,
@@ -89,12 +82,18 @@ class CcDumpApp(App):
         self._router = router
         self._db_path = db_path
         self._session_id = session_id
+        self._session_name = session_name
         self._host = host
         self._port = port
         self._target = target
         self._replay_data = replay_data
         self._closing = False
         self._replacing_widgets = False
+
+        # Set sub_title with session name using theme-aware color
+        # [LAW:one-source-of-truth] Use palette.info for session label
+        import cc_dump.palette
+        self.sub_title = f"[{cc_dump.palette.PALETTE.info}]session: {session_name}[/]"
 
         # Gate for drain worker: block until replay is complete
         self._replay_complete = threading.Event()
@@ -110,16 +109,16 @@ class CcDumpApp(App):
         # [LAW:one-source-of-truth] Three orthogonal booleans per category.
         # Each action toggles EXACTLY ONE dict. No cross-contamination.
         self._is_visible = {
-            name: (default_level != 1)
-            for _, name, _, default_level, _ in _CATEGORY_CONFIG
+            name: default.visible
+            for _, name, _, default in _CATEGORY_CONFIG
         }
         self._is_full = {
-            name: (default_detail == 3)
-            for _, name, _, _, default_detail in _CATEGORY_CONFIG
+            name: default.full
+            for _, name, _, default in _CATEGORY_CONFIG
         }
         self._is_expanded = {
-            name: (default_detail == 3)
-            for _, name, _, _, default_detail in _CATEGORY_CONFIG
+            name: default.expanded
+            for _, name, _, default in _CATEGORY_CONFIG
         }
 
         # Search state
@@ -152,7 +151,7 @@ class CcDumpApp(App):
     def get_system_commands(self, screen):
         """Add category filter and panel commands to command palette."""
         yield from super().get_system_commands(screen)
-        for _key, name, _desc, _, _ in _CATEGORY_CONFIG:
+        for _key, name, _desc, _ in _CATEGORY_CONFIG:
             yield SystemCommand(
                 f"Toggle {name}",
                 f"Show/hide {name}",
@@ -612,25 +611,15 @@ class CcDumpApp(App):
 
     @property
     def active_filters(self):
-        """Current filter state: category name -> (Level, expanded).
+        """Current filter state: category name -> VisState.
 
-        // [LAW:one-source-of-truth] Same tuples flow to rendering AND footer.
-        // [LAW:dataflow-not-control-flow] Uniform shape for all consumers.
+        // [LAW:one-source-of-truth] Pure data assembly. No Level, no DEFAULT_EXPANDED.
+        // [LAW:dataflow-not-control-flow] VisState values flow to rendering AND footer.
         """
-        import cc_dump.tui.rendering
-        Level = cc_dump.formatting.Level
-        result = {}
-        for _, name, _, _, _ in _CATEGORY_CONFIG:
-            if not self._is_visible[name]:
-                level = Level.EXISTENCE
-            elif self._is_full[name]:
-                level = Level.FULL
-            else:
-                level = Level.SUMMARY
-            # Use level-specific default expanded state
-            expanded = cc_dump.tui.rendering.DEFAULT_EXPANDED[level]
-            result[name] = (level, expanded)
-        return result
+        return {
+            name: cc_dump.formatting.VisState(self._is_visible[name], self._is_full[name], self._is_expanded[name])
+            for _, name, _, _ in _CATEGORY_CONFIG
+        }
 
     # Action handlers — category visibility and detail
 
@@ -655,19 +644,29 @@ class CcDumpApp(App):
         self._clear_overrides(category)
 
     def action_toggle_detail(self, category: str):
-        """Toggle SUMMARY ↔ FULL. ONLY changes _is_full. Never hides blocks."""
-        # Create new dict to trigger reactive watcher
-        new_dict = dict(self._is_full)
-        new_dict[category] = not new_dict[category]
-        self._is_full = new_dict
+        """Toggle SUMMARY ↔ FULL. Sets visibility=True and toggles _is_full."""
+        # Create new dicts to trigger reactive watchers
+        new_visible = dict(self._is_visible)
+        new_visible[category] = True
+        self._is_visible = new_visible
+
+        new_full = dict(self._is_full)
+        new_full[category] = not new_full[category]
+        self._is_full = new_full
+
         self._clear_overrides(category)
 
     def action_toggle_expand(self, category: str):
-        """Toggle collapsed ↔ expanded. ONLY changes _is_expanded. Never hides blocks."""
-        # Create new dict to trigger reactive watcher
-        new_dict = dict(self._is_expanded)
-        new_dict[category] = not new_dict[category]
-        self._is_expanded = new_dict
+        """Toggle collapsed ↔ expanded. Sets visibility=True and toggles _is_expanded."""
+        # Create new dicts to trigger reactive watchers
+        new_visible = dict(self._is_visible)
+        new_visible[category] = True
+        self._is_visible = new_visible
+
+        new_expanded = dict(self._is_expanded)
+        new_expanded[category] = not new_expanded[category]
+        self._is_expanded = new_expanded
+
         self._clear_overrides(category)
 
     def action_toggle_economics(self):
@@ -917,7 +916,11 @@ class CcDumpApp(App):
             self.notify(f"Dump failed: {e}", severity="error")
 
     def _write_block_text(self, f, block, block_idx: int) -> None:
-        """Write a single block as text to file."""
+        """Write a single block as text to file.
+
+        // [LAW:one-type-per-behavior] Every block type has explicit handler
+        // No generic fallback - unhandled types should raise, not silently lose data
+        """
         block_type = type(block).__name__
         f.write(f"  [{block_idx}] {block_type}\n")
         f.write(f"  {'-' * 76}\n")
@@ -928,6 +931,13 @@ class CcDumpApp(App):
             if block.timestamp:
                 f.write(f"  Timestamp: {block.timestamp}\n")
 
+        elif isinstance(block, cc_dump.formatting.HttpHeadersBlock):
+            f.write(f"  {block.header_type.upper()} Headers\n")
+            if block.status_code:
+                f.write(f"  Status: {block.status_code}\n")
+            for key, value in block.headers.items():
+                f.write(f"  {key}: {value}\n")
+
         elif isinstance(block, cc_dump.formatting.MetadataBlock):
             if block.model:
                 f.write(f"  Model: {block.model}\n")
@@ -937,30 +947,8 @@ class CcDumpApp(App):
             if block.tool_count:
                 f.write(f"  Tool count: {block.tool_count}\n")
 
-        elif isinstance(block, cc_dump.formatting.TextContentBlock):
-            if block.text:
-                f.write(f"  {block.text}\n")
-
-        elif isinstance(block, cc_dump.formatting.ToolUseBlock):
-            f.write(f"  Tool: {block.tool_name}\n")
-            f.write(f"  ID: {block.tool_use_id}\n")
-            if block.tool_input:
-                f.write("  Input:\n")
-                import json
-
-                f.write(f"    {json.dumps(block.tool_input, indent=2)}\n")
-
-        elif isinstance(block, cc_dump.formatting.ToolResultBlock):
-            f.write(f"  Tool: {block.tool_name}\n")
-            f.write(f"  ID: {block.tool_use_id}\n")
-            if block.is_error:
-                f.write(f"  ERROR: {block.content}\n")
-            else:
-                f.write(f"  Result:\n    {block.content}\n")
-
-        elif isinstance(block, cc_dump.formatting.TextDeltaBlock):
-            if block.text:
-                f.write(f"  {block.text}\n")
+        elif isinstance(block, cc_dump.formatting.SystemLabelBlock):
+            f.write("  SYSTEM:\n")
 
         elif isinstance(block, cc_dump.formatting.TrackedContentBlock):
             f.write(f"  Status: {block.status}\n")
@@ -978,39 +966,87 @@ class CcDumpApp(App):
             if block.timestamp:
                 f.write(f"  Timestamp: {block.timestamp}\n")
 
-        elif isinstance(block, cc_dump.formatting.SystemLabelBlock):
-            f.write("  SYSTEM:\n")
+        elif isinstance(block, cc_dump.formatting.TextContentBlock):
+            if block.text:
+                f.write(f"  {block.text}\n")
+
+        elif isinstance(block, cc_dump.formatting.ToolUseBlock):
+            f.write(f"  Tool: {block.name}\n")
+            f.write(f"  ID: {block.tool_use_id}\n")
+            if block.detail:
+                f.write(f"  Detail: {block.detail}\n")
+            if block.input_size:
+                f.write(f"  Input size: {block.input_size} bytes\n")
+
+        elif isinstance(block, cc_dump.formatting.ToolResultBlock):
+            f.write(f"  Tool: {block.tool_name}\n")
+            f.write(f"  ID: {block.tool_use_id}\n")
+            if block.detail:
+                f.write(f"  Detail: {block.detail}\n")
+            if block.is_error:
+                f.write(f"  ERROR (size: {block.size} bytes)\n")
+            else:
+                f.write(f"  Result size: {block.size} bytes\n")
+
+        elif isinstance(block, cc_dump.formatting.ToolUseSummaryBlock):
+            f.write("  Tool counts:\n")
+            for tool_name, count in block.tool_counts.items():
+                f.write(f"    {tool_name}: {count}\n")
+            f.write(f"  Total: {block.total}\n")
+
+        elif isinstance(block, cc_dump.formatting.ImageBlock):
+            f.write(f"  Media type: {block.media_type}\n")
+
+        elif isinstance(block, cc_dump.formatting.UnknownTypeBlock):
+            f.write(f"  Unknown block type: {block.block_type}\n")
+
+        elif isinstance(block, cc_dump.formatting.StreamInfoBlock):
+            f.write(f"  Model: {block.model}\n")
+
+        elif isinstance(block, cc_dump.formatting.StreamToolUseBlock):
+            f.write(f"  Tool: {block.name}\n")
+
+        elif isinstance(block, cc_dump.formatting.TextDeltaBlock):
+            if block.text:
+                f.write(f"  {block.text}\n")
 
         elif isinstance(block, cc_dump.formatting.StopReasonBlock):
-            f.write(f"  Stop reason: {block.stop_reason}\n")
-            if hasattr(block, "stop_sequence") and block.stop_sequence:
-                f.write(f"  Stop sequence: {block.stop_sequence}\n")
+            f.write(f"  Stop reason: {block.reason}\n")
 
         elif isinstance(block, cc_dump.formatting.ErrorBlock):
-            f.write(f"  ERROR: {block.error_type}\n")
-            if block.message:
-                f.write(f"  Message: {block.message}\n")
+            f.write(f"  Error: {block.code}\n")
+            if block.reason:
+                f.write(f"  Reason: {block.reason}\n")
+
+        elif isinstance(block, cc_dump.formatting.ProxyErrorBlock):
+            f.write(f"  Error: {block.error}\n")
 
         elif isinstance(block, cc_dump.formatting.TurnBudgetBlock):
-            f.write(f"  Input tokens: {block.budget.input_tokens}\n")
-            f.write(f"  Output tokens: {block.budget.output_tokens}\n")
-            if block.budget.cache_creation_input_tokens:
+            # Estimated tokens
+            if block.budget.total_est:
+                f.write(f"  total_est: {block.budget.total_est}\n")
+            # Actual tokens (if available)
+            if block.budget.actual_input_tokens:
+                f.write(f"  Input tokens: {block.budget.actual_input_tokens}\n")
+            if block.budget.actual_output_tokens:
+                f.write(f"  Output tokens: {block.budget.actual_output_tokens}\n")
+            if block.budget.actual_cache_creation_tokens:
                 f.write(
-                    f"  Cache creation: {block.budget.cache_creation_input_tokens}\n"
+                    f"  Cache creation: {block.budget.actual_cache_creation_tokens}\n"
                 )
-            if block.budget.cache_read_input_tokens:
-                f.write(f"  Cache read: {block.budget.cache_read_input_tokens}\n")
+            if block.budget.actual_cache_read_tokens:
+                f.write(f"  Cache read: {block.budget.actual_cache_read_tokens}\n")
 
-        elif isinstance(block, cc_dump.formatting.HttpHeadersBlock):
-            f.write(f"  {block.header_type.upper()} Headers\n")
-            if block.status_code:
-                f.write(f"  Status: {block.status_code}\n")
-            for key, value in block.headers.items():
-                f.write(f"  {key}: {value}\n")
+        elif isinstance(block, cc_dump.formatting.SeparatorBlock):
+            f.write(f"  (separator: {block.style})\n")
+
+        elif isinstance(block, cc_dump.formatting.NewlineBlock):
+            f.write("  (newline)\n")
 
         else:
-            # Unhandled block type
-            f.write(f"  (unhandled block type)\n")
+            # Unhandled block type - should never happen if we keep this updated
+            f.write(f"  (unhandled block type: {block_type})\n")
+            self._log("WARNING", f"Unhandled block type in dump: {block_type}")
 
     def _apply_markdown_theme(self) -> None:
         """Push/replace markdown Rich theme on the console.
@@ -1235,7 +1271,7 @@ class CcDumpApp(App):
                 self._is_full[name],
                 self._is_expanded[name],
             )
-            for _, name, _, _, _ in _CATEGORY_CONFIG
+            for _, name, _, _ in _CATEGORY_CONFIG
         }
         # Save current scroll position
         conv = self._get_conv()
