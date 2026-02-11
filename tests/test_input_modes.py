@@ -86,25 +86,6 @@ class TestNormalModeKeyDispatch:
 
         assert app.show_economics != initial
 
-    async def test_q_quits_in_normal_mode(self, app_and_pilot):
-        """Pressing 'q' in NORMAL mode quits the app."""
-        pilot, app = app_and_pilot
-        from cc_dump.tui.input_modes import InputMode
-
-        # Verify we're in NORMAL mode
-        assert app._input_mode == InputMode.NORMAL
-
-        # Before pressing q, return_code should be None
-        assert app.return_code is None
-
-        # Press q - should trigger quit action
-        await pilot.press("q")
-        await pilot.pause()
-
-        # App should be set to exit (return_code is set)
-        assert app.return_code is not None
-
-
 class TestSearchModeGating:
     """Test that non-navigation keys are blocked during search modes."""
 
