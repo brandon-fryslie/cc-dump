@@ -5,7 +5,6 @@ import threading
 from typing import Optional
 
 from textual.app import App, ComposeResult, SystemCommand
-from textual.binding import Binding
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widgets import Header
@@ -20,6 +19,7 @@ import cc_dump.tui.rendering
 import cc_dump.tui.widget_factory
 import cc_dump.tui.event_handlers
 import cc_dump.tui.search
+import cc_dump.tui.input_modes
 
 
 # [LAW:one-source-of-truth] [LAW:one-type-per-behavior]
@@ -47,37 +47,8 @@ class CcDumpApp(App):
 
     CSS_PATH = "styles.css"
 
-    # Generate BINDINGS from config
-    BINDINGS = []
-    for key, name, desc, _, _ in _CATEGORY_CONFIG:
-        BINDINGS.append(Binding(key, f"toggle_vis('{name}')", desc, show=True))
-        # Use shifted number for detail toggle
-        detail_key = _SHIFTED_NUMBERS.get(key, key.upper())
-        BINDINGS.append(Binding(detail_key, f"toggle_detail('{name}')", show=False))
-        BINDINGS.append(
-            Binding(f"ctrl+shift+{key}", f"toggle_expand('{name}')", show=False)
-        )
-    # Non-category bindings
-    BINDINGS.extend(
-        [
-            Binding("8", "toggle_economics", "cost", show=True),
-            Binding("9", "toggle_timeline", "timeline", show=True),
-            Binding("0", "toggle_follow", "follow", show=True),
-            Binding("*", "toggle_economics_breakdown", show=False),
-            Binding("ctrl+l", "toggle_logs", show=False),
-            # Vim navigation bindings
-            Binding("g", "go_top", show=False),
-            Binding("G", "go_bottom", show=False),
-            Binding("j", "scroll_down_line", show=False),
-            Binding("k", "scroll_up_line", show=False),
-            Binding("h", "scroll_left_col", show=False),
-            Binding("l", "scroll_right_col", show=False),
-            Binding("ctrl+f", "page_down", show=False),
-            Binding("ctrl+b", "page_up", show=False),
-            Binding("ctrl+d", "half_page_down", show=False),
-            Binding("ctrl+u", "half_page_up", show=False),
-        ]
-    )
+    # Pure mode system: all key dispatch through on_key using MODE_KEYMAP.
+    # No Textual BINDINGS - we always prevent_default to block binding resolution.
 
     # Category visibility levels (3-state cycle: EXISTENCE → SUMMARY → FULL → EXISTENCE)
     vis_headers = reactive(1)  # Level.EXISTENCE
@@ -152,6 +123,22 @@ class CcDumpApp(App):
         self._timeline_id = "timeline-panel"
         self._logs_id = "logs-panel"
 
+    @property
+    def _input_mode(self):
+        """Current input mode derived from search state.
+
+        // [LAW:one-source-of-truth] InputMode is derived, not parallel state.
+        """
+        InputMode = cc_dump.tui.input_modes.InputMode
+        SearchPhase = cc_dump.tui.search.SearchPhase
+        phase = self._search_state.phase
+
+        if phase == SearchPhase.EDITING:
+            return InputMode.SEARCH_EDIT
+        if phase == SearchPhase.NAVIGATING:
+            return InputMode.SEARCH_NAV
+        return InputMode.NORMAL
+
     def get_system_commands(self, screen):
         """Add category filter and panel commands to command palette."""
         yield from super().get_system_commands(screen)
@@ -164,6 +151,8 @@ class CcDumpApp(App):
         yield SystemCommand("Go to top", "Scroll to start", self.action_go_top)
         yield SystemCommand("Go to bottom", "Scroll to end", self.action_go_bottom)
         yield SystemCommand("Toggle follow mode", "Auto-scroll", self.action_toggle_follow)
+        yield SystemCommand("Next theme", "Cycle to next theme (])", self.action_next_theme)
+        yield SystemCommand("Previous theme", "Cycle to previous theme ([)", self.action_prev_theme)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -833,11 +822,44 @@ class CcDumpApp(App):
             conv._line_cache.clear()
             conv.rerender(self.active_filters)
 
+    def _cycle_theme(self, direction: int) -> None:
+        """Cycle to the next (+1) or previous (-1) theme.
+
+        // [LAW:dataflow-not-control-flow] Always computes sorted list and
+        // sets self.theme; watch_theme() handles all downstream effects.
+        // [LAW:one-type-per-behavior] One method for both directions.
+        """
+        names = sorted(self.available_themes.keys())
+        current_index = names.index(self.theme)
+        new_index = (current_index + direction) % len(names)
+        new_name = names[new_index]
+        self.theme = new_name
+        self.notify(f"Theme: {new_name}")
+
+    def action_next_theme(self) -> None:
+        """Cycle to the next theme alphabetically."""
+        self._cycle_theme(1)
+
+    def action_prev_theme(self) -> None:
+        """Cycle to the previous theme alphabetically."""
+        self._cycle_theme(-1)
+
     def _apply_markdown_theme(self) -> None:
         """Push/replace markdown Rich theme on the console.
 
         Pops the old theme (if any) and pushes a fresh one from ThemeColors.
+        Skips ANSI themes which use color names Rich can't parse.
         """
+        # Skip markdown theme for ANSI-based Textual themes (Rich can't parse ansi_default etc.)
+        if "ansi" in self.theme.lower():
+            if hasattr(self, "_markdown_theme_pushed") and self._markdown_theme_pushed:
+                try:
+                    self.console.pop_theme()
+                except Exception:
+                    pass
+                self._markdown_theme_pushed = False
+            return
+
         tc = cc_dump.tui.rendering.get_theme_colors()
         from rich.theme import Theme as RichTheme
 
@@ -852,31 +874,44 @@ class CcDumpApp(App):
 
     # ─── Search ────────────────────────────────────────────────────────────
 
-    def on_key(self, event) -> None:
-        """Handle keyboard input for search phases.
+    async def on_key(self, event) -> None:
+        """Mode-based key dispatcher.
 
-        All search keys are handled here (not in static BINDINGS) because
-        behavior depends on the current search phase.
+        // [LAW:single-enforcer] on_key dispatches mode-mapped keys.
+        // Keys not in our keymap pass through to Textual's binding resolution.
         """
-        SearchPhase = cc_dump.tui.search.SearchPhase
-        phase = self._search_state.phase
+        mode = self._input_mode
+        MODE_KEYMAP = cc_dump.tui.input_modes.MODE_KEYMAP
+        InputMode = cc_dump.tui.input_modes.InputMode
 
-        if phase == SearchPhase.INACTIVE:
+        # Mode-specific special key handling
+        if mode == InputMode.NORMAL:
             if event.character == "/":
                 event.prevent_default()
-                event.stop()
                 self._start_search()
-            return
+                return
 
-        if phase == SearchPhase.EDITING:
+        elif mode == InputMode.SEARCH_EDIT:
+            # Text input mode: consume all keys
             event.prevent_default()
-            event.stop()
             self._handle_search_editing_key(event)
             return
 
-        if phase == SearchPhase.NAVIGATING:
-            self._handle_search_navigating_key(event)
+        elif mode == InputMode.SEARCH_NAV:
+            if self._handle_search_nav_special_keys(event):
+                event.prevent_default()
+                return
+
+        # Generic keymap dispatch
+        keymap = MODE_KEYMAP.get(mode, {})
+        action_name = keymap.get(event.key)
+
+        if action_name:
+            event.prevent_default()
+            await self.run_action(action_name)
             return
+
+        # Unmapped key — let Textual handle it (tab, ctrl+c, etc.)
 
     def _handle_search_editing_key(self, event) -> None:
         """Handle keystrokes while editing the search query."""
@@ -974,48 +1009,41 @@ class CcDumpApp(App):
                 self._schedule_incremental_search()
             return
 
-    def _handle_search_navigating_key(self, event) -> None:
-        """Handle keystrokes while navigating search results."""
+    def _handle_search_nav_special_keys(self, event) -> bool:
+        """Handle search-specific keys in NAVIGATING mode.
+
+        Returns True if key was handled, False if it should fall through to keymap.
+        """
         SearchPhase = cc_dump.tui.search.SearchPhase
         key = event.key
 
         # Navigate next/prev
         if key == "n" or key == "enter":
-            event.prevent_default()
-            event.stop()
             self._navigate_next()
-            return
+            return True
 
         if key == "N":
-            event.prevent_default()
-            event.stop()
             self._navigate_prev()
-            return
+            return True
 
         # Re-edit query
         if event.character == "/":
-            event.prevent_default()
-            event.stop()
             self._search_state.phase = SearchPhase.EDITING
             self._search_state.cursor_pos = len(self._search_state.query)
             self._update_search_bar()
-            return
+            return True
 
         # Exit search - keep current position
         if key == "escape":
-            event.prevent_default()
-            event.stop()
             self._exit_search_keep_position()
-            return
+            return True
 
         # Exit search - restore original position
         if key == "q":
-            event.prevent_default()
-            event.stop()
             self._exit_search_restore_position()
-            return
+            return True
 
-        # All other keys pass through for normal scrolling/commands
+        return False
 
     def _start_search(self) -> None:
         """Transition: INACTIVE → EDITING. Save filter state and scroll position."""
