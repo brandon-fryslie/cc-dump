@@ -1263,7 +1263,6 @@ class CcDumpApp(App):
         state.matches = []
         state.current_index = 0
         state.expanded_blocks = []
-        state.raised_categories = set()
         # Save current filter state for restore on cancel
         state.saved_filters = {
             name: (
@@ -1307,7 +1306,6 @@ class CcDumpApp(App):
         state.matches = []
         state.current_index = 0
         state.expanded_blocks = []
-        state.raised_categories = set()
 
         # Cancel debounce timer
         if state.debounce_timer is not None:
@@ -1322,8 +1320,13 @@ class CcDumpApp(App):
 
     def _exit_search_keep_position(self) -> None:
         """Exit search and stay at current scroll position (Esc)."""
+        # Compute fresh anchor from current scroll position BEFORE clearing search
+        # (while search-expanded blocks are still visible)
+        conv = self._get_conv()
+        if conv is not None:
+            conv._scroll_anchor = conv._compute_anchor_from_scroll()
         self._exit_search_common()
-        # Don't restore scroll — stay where we are
+        # Don't restore scroll — anchor will be resolved during re-render
 
     def _exit_search_restore_position(self) -> None:
         """Exit search and restore original scroll position (q)."""
@@ -1410,7 +1413,7 @@ class CcDumpApp(App):
         self._navigate_to_current()
 
     def _navigate_to_current(self) -> None:
-        """Navigate to the current match: raise category, expand block, scroll."""
+        """Navigate to the current match: expand block with _force_vis, scroll."""
         state = self._search_state
         if not state.matches:
             return
@@ -1431,26 +1434,9 @@ class CcDumpApp(App):
             return
         block = td.blocks[match.block_index]
 
-        # Raise category visibility to FULL if needed
-        cat = cc_dump.tui.rendering.get_category(block)
-        if cat is not None:
-            cat_name = cat.value
-            # Check if currently at FULL level (visible=True, full=True)
-            current_is_full = self._is_visible[cat_name] and self._is_full[cat_name]
-            if not current_is_full:
-                # Raise to FULL - create new dicts to trigger watchers
-                new_visible = dict(self._is_visible)
-                new_visible[cat_name] = True
-                self._is_visible = new_visible
-
-                new_full = dict(self._is_full)
-                new_full[cat_name] = True
-                self._is_full = new_full
-
-                state.raised_categories.add(cat_name)
-
-        # Expand the specific block
-        block.expanded = True
+        # Force this block to be visible at FULL level (bypasses category filters)
+        # // [LAW:single-enforcer] _force_vis is the runtime visibility override
+        block._force_vis = cc_dump.formatting.ALWAYS_VISIBLE
         state.expanded_blocks.append((match.turn_index, match.block_index))
 
         # Re-render with search context and scroll
@@ -1459,7 +1445,7 @@ class CcDumpApp(App):
         self._update_search_bar()
 
     def _clear_search_expand(self) -> None:
-        """Reset block.expanded on blocks we expanded during search."""
+        """Reset _force_vis and expanded on blocks we expanded during search."""
         conv = self._get_conv()
         if conv is None:
             return
@@ -1468,7 +1454,9 @@ class CcDumpApp(App):
             if turn_idx < len(conv._turns):
                 td = conv._turns[turn_idx]
                 if block_idx < len(td.blocks):
-                    td.blocks[block_idx].expanded = None
+                    block = td.blocks[block_idx]
+                    block._force_vis = None
+                    block.expanded = None  # defensive reset
         state.expanded_blocks.clear()
 
     def _search_rerender(self) -> None:

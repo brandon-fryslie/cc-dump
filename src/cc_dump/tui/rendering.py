@@ -231,7 +231,7 @@ TRUNCATION_LIMITS: dict[VisState, int | None] = {
     VisState(True, False, False):  3,    # summary collapsed
     VisState(True, False, True):   12,   # summary expanded
     # Full level (visible=True, full=True)
-    VisState(True, True, False):   5,    # full collapsed
+    VisState(True, True, False):   10,   # full collapsed
     VisState(True, True, True):    None, # full expanded (unlimited)
 }
 
@@ -290,9 +290,15 @@ def _resolve_visibility(
     // [LAW:dataflow-not-control-flow] Value coalescing, not branching.
 
     Filters contain VisState values keyed by category name.
+    Runtime `_force_vis` attribute overrides all filters (search mode).
     Per-block `block.expanded` overrides category-level expansion.
     Returns ALWAYS_VISIBLE for blocks with no category.
     """
+    # Check for runtime override (search mode)
+    force_vis = getattr(block, '_force_vis', None)
+    if force_vis is not None:
+        return force_vis
+
     cat = get_category(block)
     if cat is None:
         return ALWAYS_VISIBLE  # always fully visible
@@ -617,6 +623,10 @@ def _render_tool_result(block: ToolResultBlock) -> Text | None:
     if block.detail:
         t.append(" {}".format(block.detail), style="dim")
     t.append(" ({} bytes)".format(block.size))
+    # [LAW:dataflow-not-control-flow] Append content unconditionally
+    if block.content:
+        t.append("\n")
+        t.append(block.content, style="dim")
     return t
 
 
@@ -904,6 +914,12 @@ def collapse_tool_runs(
 
     def flush():
         if not pending:
+            return
+        # Check if any pending block has _force_vis override (search mode)
+        # If so, emit individual blocks instead of collapsing
+        if any(getattr(b, '_force_vis', None) is not None for _, b in pending):
+            result.extend(pending)
+            pending.clear()
             return
         first_idx = pending[0][0]
         # Count only ToolUseBlocks for the summary counts

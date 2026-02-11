@@ -80,7 +80,6 @@ class SearchState:
     expanded_blocks: list[tuple[int, int]] = field(
         default_factory=list
     )  # (turn_index, block_index) pairs we expanded
-    raised_categories: set = field(default_factory=set)  # category names we raised
     debounce_timer: object | None = None  # Timer handle
     saved_scroll_y: float | None = None  # Scroll position before search started
 

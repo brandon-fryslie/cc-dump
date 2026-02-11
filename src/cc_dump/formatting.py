@@ -167,6 +167,7 @@ class ToolResultBlock(FormattedBlock):
     tool_use_id: str = ""  # Tool use ID for correlation
     tool_name: str = ""  # Tool name for summary display
     detail: str = ""  # Tool-specific detail (copied from corresponding ToolUseBlock)
+    content: str = ""  # Actual result text for full-level rendering
 
 
 @dataclass
@@ -470,12 +471,19 @@ def _format_tool_use_content(cblock, ctx: _ContentContext) -> list:
 def _format_tool_result_content(cblock, ctx: _ContentContext) -> list:
     """Format a tool_result content block."""
     content_val = cblock.get("content", "")
+    # [LAW:dataflow-not-control-flow] Extract content text unconditionally
     if isinstance(content_val, list):
         size = sum(len(json.dumps(p)) for p in content_val)
+        # Extract text parts from list
+        content_text = "".join(
+            p.get("text", "") for p in content_val if p.get("type") == "text"
+        )
     elif isinstance(content_val, str):
         size = len(content_val)
+        content_text = content_val
     else:
         size = len(json.dumps(content_val))
+        content_text = json.dumps(content_val)
     is_error = cblock.get("is_error", False)
     tool_use_id = cblock.get("tool_use_id", "")
     # Look up correlated name, color, and detail
@@ -493,6 +501,7 @@ def _format_tool_result_content(cblock, ctx: _ContentContext) -> list:
             tool_use_id=tool_use_id,
             tool_name=tool_name,
             detail=detail,
+            content=content_text,
         )
     ]
 
