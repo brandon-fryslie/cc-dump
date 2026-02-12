@@ -15,8 +15,8 @@ from textual.theme import BUILTIN_THEMES
 
 
 def test_gutter_width_constant():
-    """GUTTER_WIDTH should be defined and equal to 4."""
-    assert GUTTER_WIDTH == 4
+    """GUTTER_WIDTH should be defined and equal to 3."""
+    assert GUTTER_WIDTH == 3
 
 
 def test_gutter_on_all_lines_multiline_block():
@@ -51,10 +51,10 @@ def test_gutter_on_all_lines_multiline_block():
     # Check each strip starts with gutter segments
     for i, strip in enumerate(strips):
         segments = list(strip)
-        # First segment should be the indicator (▌ )
+        # First segment should be the indicator (▌)
         assert len(segments) >= 2, f"Strip {i} should have at least indicator + arrow/space segments"
-        # First segment text should be "▌ " (indicator)
-        assert segments[0].text == "▌ ", f"Strip {i} first segment should be indicator"
+        # First segment text should be "▌" (indicator, no trailing space)
+        assert segments[0].text == "▌", f"Strip {i} first segment should be indicator"
         # Second segment should be arrow (▶ or ▼) or continuation space
         if i == 0:
             # First line has arrow or space
@@ -102,7 +102,7 @@ def test_gutter_on_truncated_blocks():
         is_collapse_indicator = any("···" in seg.text for seg in segments)
         if not is_collapse_indicator:
             # Regular content line should have indicator + arrow/space
-            assert segments[0].text == "▌ ", f"Strip {i} first segment should be indicator"
+            assert segments[0].text == "▌", f"Strip {i} first segment should be indicator"
 
 
 def test_blocks_without_category_no_gutter():
@@ -125,9 +125,9 @@ def test_blocks_without_category_no_gutter():
     # NewlineBlock should produce exactly 1 strip with empty text
     assert len(strips) == 1
     segments = list(strips[0])
-    # Should NOT start with "▌ " indicator
+    # Should NOT start with "▌" indicator
     if segments:
-        assert segments[0].text != "▌ ", "NewlineBlock should not have category indicator"
+        assert segments[0].text != "▌", "NewlineBlock should not have category indicator"
 
 
 def test_content_renders_at_reduced_width():
@@ -153,8 +153,8 @@ def test_content_renders_at_reduced_width():
         width=50,
     )
 
-    # Content should wrap at (50 - 4) = 46 chars per line
-    # With 100 chars, we expect ceil(100 / 46) = 3 lines
+    # Content should wrap at (50 - 3) = 47 chars per line
+    # With 100 chars, we expect ceil(100 / 47) = 3 lines
     # But Rich does softwrap so it might be slightly different
     # The key test is that it wraps MORE than it would at width=50 (without gutter)
     assert len(strips_50) >= 2, "Content should wrap with gutter"

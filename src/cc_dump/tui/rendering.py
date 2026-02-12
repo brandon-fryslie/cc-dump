@@ -344,7 +344,7 @@ def _add_filter_indicator(text: ConsoleRenderable, filter_name: str) -> ConsoleR
     """Add a colored indicator to show which filter controls this content.
 
     Only works for Text objects. Non-Text renderables (like Markdown) are returned unchanged.
-    Use _prepend_indicator_to_strips() for those cases.
+    For strip-based rendering, use _add_gutter_to_strips() instead.
     """
     # Guard: only Text objects can be modified this way
     if not isinstance(text, Text):
@@ -355,7 +355,7 @@ def _add_filter_indicator(text: ConsoleRenderable, filter_name: str) -> ConsoleR
 
     symbol, color = FILTER_INDICATORS[filter_name]
     indicator = Text()
-    indicator.append(symbol + " ", style=f"bold {color}")
+    indicator.append(symbol, style=f"bold {color}")
     indicator.append(text)
     return indicator
 
@@ -860,9 +860,9 @@ BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], ConsoleRenderable | None]]
 BLOCK_STATE_RENDERERS: dict[
     tuple[str, bool, bool, bool], Callable[[FormattedBlock], ConsoleRenderable | None]
 ] = {
-    # TrackedContentBlock: title-only at summary level
+    # TrackedContentBlock: title-only at summary level collapsed, content at expanded
     ("TrackedContentBlock", True, False, False): _render_tracked_content_title,
-    ("TrackedContentBlock", True, False, True):  _render_tracked_content_title,
+    ("TrackedContentBlock", True, False, True):  _render_tracked_content,
     # TurnBudgetBlock: oneliner at summary level
     ("TurnBudgetBlock", True, False, False): _render_turn_budget_oneliner,
     ("TurnBudgetBlock", True, False, True):  _render_turn_budget_oneliner,
@@ -983,7 +983,7 @@ def _make_collapse_indicator(hidden_lines: int, content_width: int):
 
 # ─── Gutter constants ──────────────────────────────────────────────────────────
 # [LAW:one-source-of-truth] Single constant controls gutter sizing for all blocks
-GUTTER_WIDTH = 4  # "▌ ▶ " or "▌   " — tweak this one value to resize all gutters
+GUTTER_WIDTH = 3  # "▌▶ " or "▌  " — tweak this one value to resize all gutters
 
 _ARROW_COLLAPSED = "\u25b6"  # ▶
 _ARROW_EXPANDED = "\u25bc"  # ▼
@@ -1014,7 +1014,7 @@ def _add_gutter_to_strips(
     from textual.strip import Strip
 
     symbol, color = FILTER_INDICATORS[indicator_name]
-    indicator_seg = Segment(symbol + " ", Style(bold=True, color=color))
+    indicator_seg = Segment(symbol, Style(bold=True, color=color))
 
     # First strip: indicator + arrow (if expandable) or space
     if is_expandable:
@@ -1216,11 +1216,18 @@ def render_turn_to_strips(
 
         # Track expandability: always check against collapsed limit for this detail level
         # // [LAW:single-enforcer] _expandable enables click-to-expand interaction
+        # // [LAW:dataflow-not-control-flow] Check if renderers differ, not if expansion "would happen"
         collapsed_limit = TRUNCATION_LIMITS[VisState(True, vis.full, False)]
+        collapsed_key = (type_name, vis.visible, vis.full, False)
+        expanded_key = (type_name, vis.visible, vis.full, True)
+        has_different_expanded = RENDERERS.get(collapsed_key) is not RENDERERS.get(expanded_key)
         block._expandable = (
-            collapsed_limit is not None
-            and collapsed_limit > 0
-            and len(block_strips) > collapsed_limit
+            has_different_expanded
+            or (
+                collapsed_limit is not None
+                and collapsed_limit > 0
+                and len(block_strips) > collapsed_limit
+            )
         )
 
         # Truncation: ALWAYS applies when max_lines < strip count (not streaming)

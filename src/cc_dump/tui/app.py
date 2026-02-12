@@ -353,12 +353,17 @@ class CcDumpApp(App):
                 # Add response turn with current filters
                 conv.add_turn(response_blocks, self.active_filters)
 
-                # Update stats
+                # Update stats (in-memory request counter)
                 if stats:
                     stats.update_stats(requests=self._state["request_counter"])
 
             except Exception as e:
                 self._log("ERROR", f"Error processing replay pair: {e}")
+
+        # Refresh stats panel from database after all replay data is processed
+        # [LAW:one-source-of-truth] Database is authoritative for token counts
+        if stats and self._db_path and self._session_id:
+            stats.refresh_from_db(self._db_path, self._session_id)
 
         self._log(
             "INFO",
