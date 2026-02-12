@@ -968,8 +968,8 @@ def _prepare_blocks(
 # ─── Truncation and collapse indicator ─────────────────────────────────────────
 
 
-def _make_collapse_indicator(hidden_lines: int, width: int):
-    """Create a dim '... N more lines' strip."""
+def _make_collapse_indicator(hidden_lines: int, content_width: int):
+    """Create a dim '... N more lines' strip at content width (gutter added separately)."""
     from rich.segment import Segment
     from rich.style import Style
     from textual.strip import Strip
@@ -977,22 +977,38 @@ def _make_collapse_indicator(hidden_lines: int, width: int):
     text = "    \u00b7\u00b7\u00b7 {} more lines".format(hidden_lines)
     seg = Segment(text, style=Style(dim=True))
     strip = Strip([seg])
-    strip.adjust_cell_length(width)
+    strip.adjust_cell_length(content_width)
     return strip
 
+
+# ─── Gutter constants ──────────────────────────────────────────────────────────
+# [LAW:one-source-of-truth] Single constant controls gutter sizing for all blocks
+GUTTER_WIDTH = 4  # "▌ ▶ " or "▌   " — tweak this one value to resize all gutters
 
 _ARROW_COLLAPSED = "\u25b6"  # ▶
 _ARROW_EXPANDED = "\u25bc"  # ▼
 
 
-def _prepend_indicator_to_strips(block_strips, indicator_name: str, width: int):
-    """Prepend a category indicator segment to the first strip.
+def _add_gutter_to_strips(
+    block_strips,
+    indicator_name: str,
+    is_expandable: bool,
+    is_expanded: bool,
+    width: int
+):
+    """Add gutter column (indicator + arrow/space) to ALL strips.
 
-    Used for Markdown and other non-Text renderables where we can't prepend
-    to the Text object directly.
+    Strip 0: [indicator, arrow/space] + content
+    Strip 1+: [indicator, continuation_space] + content
+
+    Content is assumed to be rendered at (width - GUTTER_WIDTH).
+    This function prepends the gutter and adjusts final width.
+
+    // [LAW:one-source-of-truth] GUTTER_WIDTH constant defines all gutter sizing.
     """
     if not block_strips or indicator_name not in FILTER_INDICATORS:
         return block_strips
+
     from rich.segment import Segment
     from rich.style import Style
     from textual.strip import Strip
@@ -1000,43 +1016,29 @@ def _prepend_indicator_to_strips(block_strips, indicator_name: str, width: int):
     symbol, color = FILTER_INDICATORS[indicator_name]
     indicator_seg = Segment(symbol + " ", Style(bold=True, color=color))
 
-    first = block_strips[0]
-    segments = list(first)
-    new_segments = [indicator_seg] + segments
-
-    new_strip = Strip(new_segments)
-    new_strip.adjust_cell_length(width)
-    return [new_strip] + list(block_strips[1:])
-
-
-def _add_arrow_or_space_to_strips(
-    block_strips, is_expandable, is_expanded, category_color, width
-):
-    """Add arrow (if expandable) or space (if not) after indicator for alignment."""
-    if not block_strips:
-        return block_strips
-    from rich.segment import Segment
-    from rich.style import Style
-    from textual.strip import Strip
-
+    # First strip: indicator + arrow (if expandable) or space
     if is_expandable:
         arrow = _ARROW_EXPANDED if is_expanded else _ARROW_COLLAPSED
-        insert_seg = Segment(arrow + " ", Style(color=category_color, bold=True))
+        arrow_seg = Segment(arrow + " ", Style(color=color, bold=True))
     else:
-        insert_seg = Segment("  ", Style())  # two spaces for alignment
+        arrow_seg = Segment("  ", Style())  # two spaces for alignment
 
-    first = block_strips[0]
-    segments = list(first)
+    # Continuation strips: indicator + spaces
+    continuation_seg = Segment("  ", Style())
 
-    # Insert after first segment (the indicator ▌)
-    if len(segments) > 0:
-        new_segments = [segments[0], insert_seg] + segments[1:]
-    else:
-        new_segments = [insert_seg]
+    result_strips = []
+    for i, strip in enumerate(block_strips):
+        segments = list(strip)
+        if i == 0:
+            new_segments = [indicator_seg, arrow_seg] + segments
+        else:
+            new_segments = [indicator_seg, continuation_seg] + segments
 
-    new_strip = Strip(new_segments)
-    new_strip.adjust_cell_length(width)
-    return [new_strip] + list(block_strips[1:])
+        new_strip = Strip(new_segments)
+        new_strip.adjust_cell_length(width)
+        result_strips.append(new_strip)
+
+    return result_strips
 
 
 # ─── Core rendering ───────────────────────────────────────────────────────────
@@ -1127,10 +1129,9 @@ def render_turn_to_strips(
     from rich.style import Style
     from textual.strip import Strip
 
-    render_options = console.options
+    base_render_options = console.options
     if not wrap:
-        render_options = render_options.update(overflow="ignore", no_wrap=True)
-    render_options = render_options.update_width(width)
+        base_render_options = base_render_options.update(overflow="ignore", no_wrap=True)
 
     all_strips: list[Strip] = []
     block_strip_map: dict[int, int] = {}
@@ -1156,6 +1157,11 @@ def render_turn_to_strips(
             block_has_matches = bool(block_matches)
             search_hash = search_ctx.pattern_str if block_has_matches else None
 
+        # Compute gutter and render width BEFORE rendering
+        indicator_name = _category_indicator_name(block)
+        render_width = max(1, width - GUTTER_WIDTH) if indicator_name else width
+        block_render_options = base_render_options.update_width(render_width)
+
         # Single unified renderer lookup
         # // [LAW:dataflow-not-control-flow] One lookup replaces conditional dispatch
         renderer = RENDERERS.get((type_name, vis.visible, vis.full, vis.expanded))
@@ -1176,24 +1182,16 @@ def render_turn_to_strips(
         if text is None:
             continue
 
-        # Apply search highlights before indicator (only on Text objects)
+        # Apply search highlights (only on Text objects)
         if block_has_matches and isinstance(text, Text):
             _apply_search_highlights(text, search_ctx, turn_index, orig_idx)
 
-        # Add category indicator (works for Text, passed through for others)
-        indicator_name = _category_indicator_name(block)
-        indicator_added_to_text = False
-        if indicator_name:
-            original_text = text
-            text = _add_filter_indicator(text, indicator_name)
-            indicator_added_to_text = text is not original_text  # True if Text modified
-
         block_strip_map[orig_idx] = len(all_strips)
 
-        # Cache key: simpler with VisState
+        # Cache key uses render_width (content width without gutter)
         cache_key = (
             id(block),
-            width,
+            render_width,
             vis,
             search_hash,
         )
@@ -1202,25 +1200,19 @@ def render_turn_to_strips(
         if block_cache is not None and cache_key in block_cache:
             block_strips = block_cache[cache_key]
         else:
-            # Render block
-            segments = console.render(text, render_options)
+            # Render block at render_width
+            segments = console.render(text, block_render_options)
             lines = list(Segment.split_lines(segments))
             if lines:
                 block_strips = Strip.from_lines(lines)
                 for strip in block_strips:
-                    strip.adjust_cell_length(width)
+                    strip.adjust_cell_length(render_width)
             else:
                 block_strips = []
 
             # Cache result
             if block_cache is not None:
                 block_cache[cache_key] = block_strips
-
-        # If indicator wasn't added to text (e.g., Markdown), add to strips
-        if indicator_name and not indicator_added_to_text:
-            block_strips = _prepend_indicator_to_strips(
-                block_strips, indicator_name, width
-            )
 
         # Track expandability: always check against collapsed limit for this detail level
         # // [LAW:single-enforcer] _expandable enables click-to-expand interaction
@@ -1240,20 +1232,18 @@ def render_turn_to_strips(
         ):
             hidden = len(block_strips) - max_lines
             truncated_strips = list(block_strips[:max_lines])
-            # Add arrow (collapsed) or space for alignment (only if has indicator)
+            truncated_strips.append(_make_collapse_indicator(hidden, render_width))
+            # Add gutter to truncated strips (gutter_expanded=False for collapsed state)
             if indicator_name:
-                cat_color = FILTER_INDICATORS.get(indicator_name, (None, None))[1]
-                truncated_strips = _add_arrow_or_space_to_strips(
-                    truncated_strips, block._expandable, False, cat_color, width
+                truncated_strips = _add_gutter_to_strips(
+                    truncated_strips, indicator_name, block._expandable, False, width
                 )
-            truncated_strips.append(_make_collapse_indicator(hidden, width))
             all_strips.extend(truncated_strips)
         else:
-            # Not truncated - add arrow (expanded) or space for alignment (only if has indicator)
+            # Not truncated - add gutter to all strips (gutter_expanded=True)
             if indicator_name:
-                cat_color = FILTER_INDICATORS.get(indicator_name, (None, None))[1]
-                final_strips = _add_arrow_or_space_to_strips(
-                    list(block_strips), block._expandable, True, cat_color, width
+                final_strips = _add_gutter_to_strips(
+                    list(block_strips), indicator_name, block._expandable, True, width
                 )
                 all_strips.extend(final_strips)
             else:
