@@ -8,6 +8,7 @@ becomes a thin non-reloadable shell that just holds the current instances.
 """
 
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from textual.widgets import RichLog, Static
 from textual.scroll_view import ScrollView
@@ -163,10 +164,20 @@ class ConversationView(ScrollView):
         ] = {}  # Track cache keys per turn
         self._last_filters: dict = {}
         self._last_width: int = 78
+        self._last_search_ctx = None  # Store search context for lazy rerenders
         self._follow_mode: bool = True
         self._pending_restore: dict | None = None
         self._scrolling_programmatically: bool = False
         self._scroll_anchor: ScrollAnchor | None = None
+
+    @contextmanager
+    def _programmatic_scroll(self):
+        """Guard scroll operations from anchor recomputation."""
+        self._scrolling_programmatically = True
+        try:
+            yield
+        finally:
+            self._scrolling_programmatically = False
 
     def render_line(self, y: int) -> Strip:
         """Line API: render a single line at virtual position y."""
@@ -280,6 +291,7 @@ class ConversationView(ScrollView):
             console,
             width,
             block_cache=self._block_strip_cache,
+            search_ctx=self._last_search_ctx,  # Pass stored search context
         )
         # re_render clears _pending_filter_snapshot
 
@@ -360,9 +372,8 @@ class ConversationView(ScrollView):
         self._recalculate_offsets()
 
         if self._follow_mode:
-            self._scrolling_programmatically = True
-            self.scroll_end(animate=False, immediate=False, x_axis=False)
-            self._scrolling_programmatically = False
+            with self._programmatic_scroll():
+                self.scroll_end(animate=False, immediate=False, x_axis=False)
 
     # ─── Sprint 6: Inline streaming ──────────────────────────────────────────
 
@@ -525,14 +536,6 @@ class ConversationView(ScrollView):
         # Add block to blocks list (always store for finalization)
         td.blocks.append(block)
 
-        # Filter: only render USER and ASSISTANT content during streaming
-        # [LAW:dataflow-not-control-flow] Category resolved via lookup, not control flow
-        from cc_dump.formatting import Category
-        block_category = cc_dump.tui.rendering.get_category(block)
-        if block_category not in (Category.USER, Category.ASSISTANT, None):
-            # Skip rendering (but keep in blocks for finalize). None = always visible (ErrorBlock etc)
-            return
-
         # [LAW:dataflow-not-control-flow] Dispatch via handler lookup
         block_type_name = type(block).__name__
         handler = self._get_streaming_block_handler(block_type_name)
@@ -548,9 +551,8 @@ class ConversationView(ScrollView):
 
         # Auto-scroll if follow mode
         if self._follow_mode:
-            self._scrolling_programmatically = True
-            self.scroll_end(animate=False, immediate=False, x_axis=False)
-            self._scrolling_programmatically = False
+            with self._programmatic_scroll():
+                self.scroll_end(animate=False, immediate=False, x_axis=False)
 
     def finalize_streaming_turn(self) -> list:
         """Finalize the streaming turn.
@@ -640,6 +642,7 @@ class ConversationView(ScrollView):
             search_ctx: Optional SearchContext for highlighting matches
         """
         self._last_filters = filters
+        self._last_search_ctx = search_ctx  # Store for lazy rerenders
 
         if self._pending_restore is not None:
             self._rebuild_from_state(filters)
@@ -687,6 +690,23 @@ class ConversationView(ScrollView):
         # Resolve stored block-level anchor to restore scroll position
         if not self._follow_mode:
             self._resolve_anchor()
+
+    def ensure_turn_rendered(self, turn_index: int):
+        """Force-render a specific turn, then recalculate offsets.
+
+        Used before scroll_to_block() to ensure the target turn has accurate
+        block_strip_map and line_offset after _force_vis changes or deferred renders.
+        """
+        if turn_index >= len(self._turns):
+            return
+        td = self._turns[turn_index]
+        width = self._content_width if self._size_known else self._last_width
+        td.re_render(
+            self._last_filters, self.app.console, width,
+            force=True, block_cache=self._block_strip_cache,
+            search_ctx=self._last_search_ctx,
+        )
+        self._recalculate_offsets_from(turn_index)
 
     def _rebuild_from_state(self, filters: dict):
         """Rebuild from restored state."""
@@ -749,16 +769,14 @@ class ConversationView(ScrollView):
         """Toggle follow mode."""
         self._follow_mode = not self._follow_mode
         if self._follow_mode:
-            self._scrolling_programmatically = True
-            self.scroll_end(animate=False)
-            self._scrolling_programmatically = False
+            with self._programmatic_scroll():
+                self.scroll_end(animate=False)
 
     def scroll_to_bottom(self):
         """Scroll to bottom and enable follow mode."""
         self._follow_mode = True
-        self._scrolling_programmatically = True
-        self.scroll_end(animate=False)
-        self._scrolling_programmatically = False
+        with self._programmatic_scroll():
+            self.scroll_end(animate=False)
 
     def scroll_to_block(self, turn_index: int, block_index: int) -> None:
         """Scroll to center a specific block in the viewport."""
@@ -777,9 +795,8 @@ class ConversationView(ScrollView):
         centered_y = max(0, target_y - viewport_height // 2)
 
         self._follow_mode = False
-        self._scrolling_programmatically = True
-        self.scroll_to(y=centered_y, animate=False)
-        self._scrolling_programmatically = False
+        with self._programmatic_scroll():
+            self.scroll_to(y=centered_y, animate=False)
 
     def _block_index_at_line(self, turn: TurnData, content_y: int) -> int | None:
         """Find the block index within a turn for a given content line.
@@ -885,9 +902,8 @@ class ConversationView(ScrollView):
             if self._turns:
                 last_turn = self._turns[-1]
                 if last_turn.line_count > 0:
-                    self._scrolling_programmatically = True
-                    self.scroll_to(y=last_turn.line_offset, animate=False)
-                    self._scrolling_programmatically = False
+                    with self._programmatic_scroll():
+                        self.scroll_to(y=last_turn.line_offset, animate=False)
             return
 
         turn = self._turns[anchor.turn_index]
@@ -900,9 +916,8 @@ class ConversationView(ScrollView):
                     if 0 <= idx < len(self._turns) and self._turns[idx].line_count > 0:
                         turn = self._turns[idx]
                         target_y = turn.line_offset
-                        self._scrolling_programmatically = True
-                        self.scroll_to(y=target_y, animate=False)
-                        self._scrolling_programmatically = False
+                        with self._programmatic_scroll():
+                            self.scroll_to(y=target_y, animate=False)
                         return
             # No visible turns
             return
@@ -936,9 +951,8 @@ class ConversationView(ScrollView):
 
         target_y = turn.line_offset + block_start + clamped_line
 
-        self._scrolling_programmatically = True
-        self.scroll_to(y=target_y, animate=False)
-        self._scrolling_programmatically = False
+        with self._programmatic_scroll():
+            self.scroll_to(y=target_y, animate=False)
 
     def on_click(self, event) -> None:
         """Toggle expand on truncated blocks."""
