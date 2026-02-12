@@ -72,21 +72,23 @@ def test_gutter_on_all_lines_multiline_block():
 
 
 def test_gutter_on_truncated_blocks():
-    """Gutter should appear on truncated blocks including collapse indicator."""
+    """Gutter should appear on truncated blocks including collapse indicator.
+
+    ToolResultBlock at full-collapsed uses header-only summary renderer,
+    so use TextContentBlock instead to test truncation + gutter behavior.
+    """
     theme = BUILTIN_THEMES["textual-dark"]
     set_theme(theme)
 
-    # Create a long block that will be truncated
+    # Create a long text block that will be truncated
     long_text = "\n".join([f"Line {i}" for i in range(20)])
-    block = ToolResultBlock(
-        tool_name="test",
-        content=long_text,
-        size=len(long_text),
+    block = TextContentBlock(
+        text=long_text,
         category=Category.TOOLS,
     )
 
     console = Console()
-    # Set tools to FULL but collapsed (will truncate to 10 lines)
+    # Set tools to FULL but collapsed (will truncate to 4 lines)
     filters = {"tools": type("VisState", (), {"visible": True, "full": True, "expanded": False})()}
 
     strips, _ = render_turn_to_strips(

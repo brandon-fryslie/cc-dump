@@ -368,6 +368,19 @@ def _category_indicator_name(block: FormattedBlock) -> str | None:
     return cat.value
 
 
+def _render_xml_tag(tag_text: str) -> Syntax:
+    """Render an XML open/close tag with syntax highlighting.
+
+    Uses the html lexer for proper token-level colorization:
+    angle brackets, tag names, attributes each get distinct colors.
+
+    // [LAW:one-source-of-truth] Single function for all XML tag rendering.
+    // [LAW:one-type-per-behavior] All XML tags render identically — one function.
+    """
+    tc = get_theme_colors()
+    return Syntax(tag_text, "html", theme=tc.code_theme, background_color="default")
+
+
 # ─── Full-content renderers (BLOCK_RENDERERS) ─────────────────────────────────
 # [LAW:single-enforcer] These render FULL content only. No filter checks.
 # Signature: (block) -> Text | None
@@ -572,7 +585,7 @@ def _render_text_as_markdown(text: str) -> ConsoleRenderable:
             ].rstrip("\n")
             inner = text[m.inner_span.start : m.inner_span.end]
             xml_parts: list[ConsoleRenderable] = [
-                Text(start_tag, style="bold dim")
+                _render_xml_tag(start_tag)
             ]
             if inner.strip():
                 xml_parts.append(
@@ -581,7 +594,7 @@ def _render_text_as_markdown(text: str) -> ConsoleRenderable:
                         code_theme=tc.code_theme,
                     )
                 )
-            xml_parts.append(Text(end_tag, style="bold dim"))
+            xml_parts.append(_render_xml_tag(end_tag))
             parts.append(Group(*xml_parts))
 
     if not parts:
@@ -691,27 +704,16 @@ def _render_segmented_parts(
             inner_line_count = inner.count("\n") + (1 if inner and not inner.endswith("\n") else 0)
 
             if is_expanded:
-                # Full XML rendering (same as _render_text_as_markdown XML path)
+                # Full XML rendering with syntax-highlighted tags
                 start_tag = text[m.start_tag_span.start : m.start_tag_span.end].rstrip("\n")
                 end_tag = text[m.end_tag_span.start : m.end_tag_span.end].rstrip("\n")
-                xml_parts: list[ConsoleRenderable] = [
-                    Text(start_tag, style="bold dim")
-                ]
-                if inner.strip():
-                    xml_parts.append(
-                        Markdown(
-                            wrap_tags_outside_fences(inner),
-                            code_theme=tc.code_theme,
-                        )
-                    )
-                xml_parts.append(Text(end_tag, style="bold dim"))
-                # Expanded XML: tag line as header, then content
+                # Expanded XML: arrow + tag as header, then content, then end tag
                 # // [LAW:dataflow-not-control-flow] Group always created,
                 # inner content varies by data
-                expanded_header = Text()
-                expanded_header.append("▽ ", style="bold dim")
-                expanded_header.append(start_tag, style="bold dim")
-                xml_parts_with_header: list[ConsoleRenderable] = [expanded_header]
+                # // [LAW:one-source-of-truth] _render_xml_tag for all XML tag rendering
+                xml_parts_with_header: list[ConsoleRenderable] = [
+                    _render_xml_tag("▽ " + start_tag)
+                ]
                 if inner.strip():
                     xml_parts_with_header.append(
                         Markdown(
@@ -719,7 +721,7 @@ def _render_segmented_parts(
                             code_theme=tc.code_theme,
                         )
                     )
-                xml_parts_with_header.append(Text(end_tag, style="bold dim"))
+                xml_parts_with_header.append(_render_xml_tag(end_tag))
                 parts.append((Group(*xml_parts_with_header), current_xml_idx))
             else:
                 # Collapsed: one-line indicator
@@ -759,7 +761,92 @@ def _render_text_content(block: TextContentBlock) -> ConsoleRenderable | None:
     return _indent_text(block.text, block.indent)
 
 
-def _render_tool_use(block: ToolUseBlock) -> Text | None:
+# ─── Language inference helper ─────────────────────────────────────────────────
+
+# [LAW:one-source-of-truth] Single mapping from file extension to Pygments lexer name.
+_EXT_TO_LANG: dict[str, str] = {
+    ".py": "python",
+    ".ts": "typescript",
+    ".tsx": "tsx",
+    ".js": "javascript",
+    ".jsx": "jsx",
+    ".rs": "rust",
+    ".go": "go",
+    ".rb": "ruby",
+    ".java": "java",
+    ".c": "c",
+    ".cpp": "cpp",
+    ".h": "c",
+    ".hpp": "cpp",
+    ".cs": "csharp",
+    ".sh": "bash",
+    ".bash": "bash",
+    ".zsh": "zsh",
+    ".json": "json",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".toml": "toml",
+    ".xml": "xml",
+    ".html": "html",
+    ".css": "css",
+    ".scss": "scss",
+    ".sql": "sql",
+    ".md": "markdown",
+    ".swift": "swift",
+    ".kt": "kotlin",
+    ".lua": "lua",
+    ".r": "r",
+    ".R": "r",
+    ".ex": "elixir",
+    ".exs": "elixir",
+    ".zig": "zig",
+    ".nim": "nim",
+    ".dart": "dart",
+    ".vue": "vue",
+    ".svelte": "svelte",
+    ".tf": "terraform",
+    ".dockerfile": "docker",
+    ".proto": "protobuf",
+    ".graphql": "graphql",
+    ".gql": "graphql",
+}
+
+
+def _infer_lang_from_path(path: str) -> str:
+    """Infer Pygments lexer name from a file path's extension.
+
+    Returns empty string for unknown extensions (Syntax falls back to plain text).
+    // [LAW:one-source-of-truth] _EXT_TO_LANG is the sole mapping.
+    """
+    import os
+    _, ext = os.path.splitext(path)
+    return _EXT_TO_LANG.get(ext.lower(), "")
+
+
+def _tool_result_header(block: ToolResultBlock, color: str) -> Text:
+    """Build the shared header line for ToolResultBlock rendering.
+
+    // [LAW:one-source-of-truth] Single header builder for all tool result renderers.
+    """
+    suffix = " ERROR" if block.is_error else ""
+    name_part = block.tool_name if block.tool_name else ""
+    label = f"[Result: {name_part}{suffix}]" if name_part else f"[Result{suffix}]"
+    t = Text("  ")
+    t.append(label, style="bold {}".format(color))
+    if block.detail:
+        t.append(" {}".format(block.detail), style="dim")
+    t.append(" ({} bytes)".format(block.size))
+    return t
+
+
+# ─── ToolUseBlock renderers ────────────────────────────────────────────────────
+
+
+def _render_tool_use_oneliner(block: ToolUseBlock) -> Text | None:
+    """One-liner ToolUseBlock renderer (used for summary level).
+
+    // [LAW:one-source-of-truth] Renamed from original _render_tool_use.
+    """
     color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
     t = Text("  ")
     t.append("[Use: {}]".format(block.name), style="bold {}".format(color))
@@ -769,25 +856,154 @@ def _render_tool_use(block: ToolUseBlock) -> Text | None:
     return t
 
 
-def _render_tool_result(block: ToolResultBlock) -> Text | None:
+def _render_tool_use_bash_full(block: ToolUseBlock) -> ConsoleRenderable | None:
+    """Full ToolUseBlock for Bash: header + $ command with syntax highlighting.
+
+    // [LAW:dataflow-not-control-flow] Dispatch via _TOOL_USE_FULL_RENDERERS table.
+    """
+    tc = get_theme_colors()
     color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
-    # [LAW:dataflow-not-control-flow] Build label unconditionally from data
-    suffix = " ERROR" if block.is_error else ""
-    name_part = block.tool_name if block.tool_name else ""
-    if name_part:
-        label = f"[Result: {name_part}{suffix}]"
-    else:
-        label = f"[Result{suffix}]"
+    header = Text("  ")
+    header.append("[Use: Bash]", style="bold {}".format(color))
+    header.append(" ({} bytes)".format(block.input_size))
+
+    command = block.tool_input.get("command", "")
+    if not command:
+        return header
+
+    # Render command with bash syntax highlighting
+    code = Syntax(
+        "$ " + command,
+        "bash",
+        theme=tc.code_theme,
+        background_color="default",
+    )
+    return Group(header, code)
+
+
+def _render_tool_use_edit_full(block: ToolUseBlock) -> Text | None:
+    """Full ToolUseBlock for Edit: header + old/new line count preview.
+
+    // [LAW:dataflow-not-control-flow] Dispatch via _TOOL_USE_FULL_RENDERERS table.
+    """
+    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
     t = Text("  ")
-    t.append(label, style="bold {}".format(color))
+    t.append("[Use: Edit]", style="bold {}".format(color))
     if block.detail:
         t.append(" {}".format(block.detail), style="dim")
-    t.append(" ({} bytes)".format(block.size))
-    # [LAW:dataflow-not-control-flow] Append content unconditionally
-    if block.content:
-        t.append("\n")
-        t.append(block.content, style="dim")
+    t.append(" ({} bytes)".format(block.input_size))
+
+    old_str = block.tool_input.get("old_string", "")
+    new_str = block.tool_input.get("new_string", "")
+    old_lines = old_str.count("\n") + (1 if old_str else 0)
+    new_lines = new_str.count("\n") + (1 if new_str else 0)
+
+    tc = get_theme_colors()
+    t.append("\n    ")
+    t.append("- old ({} lines)".format(old_lines), style=tc.error)
+    t.append(" / ")
+    t.append("+ new ({} lines)".format(new_lines), style=tc.success)
     return t
+
+
+# [LAW:dataflow-not-control-flow] Tool-specific full renderers for ToolUseBlock
+_TOOL_USE_FULL_RENDERERS: dict[str, Callable] = {
+    "Bash": _render_tool_use_bash_full,
+    "Edit": _render_tool_use_edit_full,
+}
+
+
+def _render_tool_use_full(block: ToolUseBlock) -> ConsoleRenderable | None:
+    """Full ToolUseBlock: dispatches to tool-specific or falls back to oneliner.
+
+    // [LAW:dataflow-not-control-flow] Two-level dispatch via table lookup.
+    """
+    renderer = _TOOL_USE_FULL_RENDERERS.get(block.name)
+    if renderer is not None:
+        return renderer(block)
+    return _render_tool_use_oneliner(block)
+
+
+# ─── ToolResultBlock renderers ─────────────────────────────────────────────────
+
+
+def _render_tool_result_summary(block: ToolResultBlock) -> Text | None:
+    """Summary ToolResultBlock: header only, no content.
+
+    // [LAW:dataflow-not-control-flow] Registered in BLOCK_STATE_RENDERERS.
+    """
+    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    return _tool_result_header(block, color)
+
+
+def _render_read_content(block: ToolResultBlock) -> ConsoleRenderable | None:
+    """Render Read tool result content with syntax highlighting by file extension.
+
+    // [LAW:dataflow-not-control-flow] Dispatch via _TOOL_RESULT_CONTENT_RENDERERS.
+    """
+    tc = get_theme_colors()
+    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    header = _tool_result_header(block, color)
+
+    if not block.content:
+        return header
+
+    # Infer language from file path in tool_input or detail
+    file_path = block.tool_input.get("file_path", "") or block.detail or ""
+    lang = _infer_lang_from_path(file_path)
+
+    code = Syntax(
+        block.content,
+        lang or "text",
+        theme=tc.code_theme,
+        background_color="default",
+    )
+    return Group(header, code)
+
+
+def _render_confirm_content(block: ToolResultBlock) -> Text | None:
+    """Render Write/Edit result: ✓ for success, error content for errors.
+
+    // [LAW:dataflow-not-control-flow] Dispatch via _TOOL_RESULT_CONTENT_RENDERERS.
+    """
+    tc = get_theme_colors()
+    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    header = _tool_result_header(block, color)
+
+    if block.is_error and block.content:
+        header.append("\n")
+        header.append(block.content, style=tc.error)
+        return header
+
+    header.append(" ")
+    header.append("✓", style=f"bold {tc.success}")
+    return header
+
+
+# [LAW:dataflow-not-control-flow] Tool-specific content renderers for ToolResultBlock
+_TOOL_RESULT_CONTENT_RENDERERS: dict[str, Callable] = {
+    "Read": _render_read_content,
+    "Write": _render_confirm_content,
+    "Edit": _render_confirm_content,
+}
+
+
+def _render_tool_result_full(block: ToolResultBlock) -> ConsoleRenderable | None:
+    """Full ToolResultBlock: dispatches to tool-specific or falls back to generic.
+
+    // [LAW:dataflow-not-control-flow] Two-level dispatch via table lookup.
+    """
+    renderer = _TOOL_RESULT_CONTENT_RENDERERS.get(block.tool_name)
+    if renderer is not None:
+        return renderer(block)
+
+    # Generic fallback: header + dim content
+    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    header = _tool_result_header(block, color)
+    if block.content:
+        header.append("\n")
+        header.append(block.content, style="dim")
+    return header
 
 
 def _render_tool_use_summary(block: ToolUseSummaryBlock) -> Text | None:
@@ -1000,8 +1216,8 @@ BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], ConsoleRenderable | None]]
     "TrackedContentBlock": _render_tracked_content_full,
     "RoleBlock": _render_role,
     "TextContentBlock": _render_text_content,
-    "ToolUseBlock": _render_tool_use,
-    "ToolResultBlock": _render_tool_result,
+    "ToolUseBlock": _render_tool_use_full,
+    "ToolResultBlock": _render_tool_result_full,
     "ToolUseSummaryBlock": _render_tool_use_summary,
     "ImageBlock": _render_image,
     "UnknownTypeBlock": _render_unknown_type,
@@ -1026,6 +1242,10 @@ BLOCK_STATE_RENDERERS: dict[
     # TurnBudgetBlock: oneliner at summary level
     ("TurnBudgetBlock", True, False, False): _render_turn_budget_oneliner,
     ("TurnBudgetBlock", True, False, True):  _render_turn_budget_oneliner,
+    # ToolResultBlock: header-only at full collapsed (no raw content dump)
+    ("ToolResultBlock", True, True, False): _render_tool_result_summary,
+    # ToolUseBlock: one-liner at full collapsed (no tool-specific expansion)
+    ("ToolUseBlock", True, True, False): _render_tool_use_oneliner,
 }
 
 

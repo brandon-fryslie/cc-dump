@@ -111,7 +111,7 @@ def main():
     ProxyHandler.target_host = args.target.rstrip("/") if args.target else None
     ProxyHandler.event_queue = event_q
 
-    server = http.server.HTTPServer((args.host, args.port), ProxyHandler)
+    server = http.server.ThreadingHTTPServer((args.host, args.port), ProxyHandler)
 
     # Get the actual port assigned by the OS (important when args.port=0)
     actual_port = server.server_address[1]

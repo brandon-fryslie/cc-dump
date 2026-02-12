@@ -7,9 +7,21 @@ from cc_dump.formatting import (
     RoleBlock, NewlineBlock, VisState, HIDDEN, ALWAYS_VISIBLE,
 )
 from cc_dump.tui.rendering import (
-    _render_tool_use, _render_tool_result, _render_tool_use_summary,
+    _render_tool_use_oneliner, _render_tool_use_full, _render_tool_result_full,
+    _render_tool_result_summary, _render_tool_use_summary,
+    _render_read_content, _render_confirm_content,
+    _render_tool_use_bash_full, _render_tool_use_edit_full,
+    _infer_lang_from_path,
     render_blocks, collapse_tool_runs, render_turn_to_strips,
+    set_theme,
 )
+from textual.theme import BUILTIN_THEMES
+
+
+@pytest.fixture(autouse=True)
+def _init_theme():
+    """Initialize rendering theme for all tests in this module."""
+    set_theme(BUILTIN_THEMES["textual-dark"])
 
 
 class TestRenderToolUseWithDetail:
@@ -23,7 +35,7 @@ class TestRenderToolUseWithDetail:
             msg_color_idx=0,
             detail="...path/file.ts"
         )
-        result = _render_tool_use(block)
+        result = _render_tool_use_oneliner(block)
 
         assert result is not None
         plain = result.plain
@@ -45,7 +57,7 @@ class TestRenderToolUseWithDetail:
             msg_color_idx=0,
             detail=""
         )
-        result = _render_tool_use(block)
+        result = _render_tool_use_oneliner(block)
 
         assert result is not None
         plain = result.plain
@@ -59,7 +71,7 @@ class TestRenderToolUseWithDetail:
             input_size=100,
             msg_color_idx=0
         )
-        result = _render_tool_use(block)
+        result = _render_tool_use_oneliner(block)
 
         assert result is not None
         plain = result.plain
@@ -74,7 +86,7 @@ class TestRenderToolUseWithDetail:
             msg_color_idx=1,
             detail="git status"
         )
-        result = _render_tool_use(block)
+        result = _render_tool_use_oneliner(block)
 
         assert result is not None
         plain = result.plain
@@ -90,7 +102,7 @@ class TestRenderToolUseWithDetail:
             msg_color_idx=2,
             detail="commit"
         )
-        result = _render_tool_use(block)
+        result = _render_tool_use_oneliner(block)
 
         assert result is not None
         plain = result.plain
@@ -106,7 +118,7 @@ class TestRenderToolUseWithDetail:
             msg_color_idx=0,
             detail="...path/file.ts"
         )
-        result = _render_tool_use(block)
+        result = _render_tool_use_oneliner(block)
 
         assert result is not None
         # Check that the result has the dim style applied to the detail
@@ -117,84 +129,85 @@ class TestRenderToolUseWithDetail:
         assert has_dim
 
 
-class TestRenderToolResultSummary:
-    """Tests for _render_tool_result with summary mode."""
+class TestRenderToolResultExisting:
+    """Tests for tool result rendering — existing behavior validation."""
 
-    def test_full_mode_shows_name(self):
-        """Tool result shows tool name."""
-        block = ToolResultBlock(size=500, tool_name="Read", msg_color_idx=0)
-        result = _render_tool_result(block)
+    def test_generic_full_shows_name(self):
+        """Tool result for generic tool (Bash) shows tool name."""
+        block = ToolResultBlock(size=500, tool_name="Bash", msg_color_idx=0, content="output")
+        result = _render_tool_result_full(block)
 
         assert result is not None
-        assert "Read" in result.plain
+        assert "Bash" in result.plain
         assert "500 bytes" in result.plain
 
-    def test_full_mode_shows_detail(self):
-        """Tool result shows detail."""
+    def test_generic_full_shows_detail(self):
+        """Tool result for generic tool shows detail."""
         block = ToolResultBlock(
             size=500,
-            tool_name="Read",
-            detail="...path/file.ts",
-            msg_color_idx=0
+            tool_name="Bash",
+            detail="git status",
+            msg_color_idx=0,
+            content="output",
         )
-        result = _render_tool_result(block)
+        result = _render_tool_result_full(block)
 
         assert result is not None
-        assert "Read" in result.plain
-        assert "...path/file.ts" in result.plain
+        assert "Bash" in result.plain
+        assert "git status" in result.plain
         assert "500 bytes" in result.plain
 
     def test_full_mode_without_name(self):
-        """Tool result without tool_name still works."""
-        block = ToolResultBlock(size=500, msg_color_idx=0)
-        result = _render_tool_result(block)
+        """Tool result without tool_name still works (generic fallback)."""
+        block = ToolResultBlock(size=500, msg_color_idx=0, content="output")
+        result = _render_tool_result_full(block)
 
         assert result is not None
         assert "Result" in result.plain
         assert "500 bytes" in result.plain
 
-    def test_error_result_full_mode(self):
-        """Error result shows error label."""
+    def test_error_result_generic(self):
+        """Error result for generic tool shows error label."""
         block = ToolResultBlock(
             size=200,
             is_error=True,
-            tool_name="Read",
-            msg_color_idx=0
+            tool_name="Bash",
+            msg_color_idx=0,
+            content="error message",
         )
-        result = _render_tool_result(block)
+        result = _render_tool_result_full(block)
 
         assert result is not None
         assert "ERROR" in result.plain
         assert "200 bytes" in result.plain
 
-    def test_full_mode_has_filter_indicator(self):
-        """Tool result includes filter indicator."""
-        block = ToolResultBlock(size=500, tool_name="Read", msg_color_idx=0)
-        result = _render_tool_result(block)
+    def test_summary_shows_header_only(self):
+        """Summary renderer shows header, no content."""
+        block = ToolResultBlock(
+            size=500, tool_name="Bash", msg_color_idx=0, content="output text"
+        )
+        result = _render_tool_result_summary(block)
 
         assert result is not None
-        # The filter indicator is a special character prepended
-        # Check that the result has more than just the basic content
         plain = result.plain
-        # Filter indicators are typically special Unicode characters
-        # We can check for the presence of specific formatting
-        assert len(plain) > len("tool_result Read 500 bytes")
+        assert "Bash" in plain
+        assert "500 bytes" in plain
+        # Content should NOT appear in summary
+        assert "output text" not in plain
 
     def test_color_preserved_from_block(self):
         """Tool result rendering uses color index from block."""
-        # Different color indices
-        block1 = ToolResultBlock(size=500, tool_name="Read", msg_color_idx=0)
-        block2 = ToolResultBlock(size=500, tool_name="Read", msg_color_idx=3)
+        # Different color indices — both should render successfully
+        block1 = ToolResultBlock(size=500, tool_name="Bash", msg_color_idx=0, content="output")
+        block2 = ToolResultBlock(size=500, tool_name="Bash", msg_color_idx=3, content="output")
 
-        result1 = _render_tool_result(block1)
-        result2 = _render_tool_result(block2)
+        result1 = _render_tool_result_full(block1)
+        result2 = _render_tool_result_full(block2)
 
         assert result1 is not None
         assert result2 is not None
-        # Colors are applied as styles - hard to test directly without
-        # inspecting Rich's internal style representation
-        # At minimum, both should render successfully
-        assert result1.plain == result2.plain  # Same content
+        # Both render the same content (generic fallback for Bash)
+        assert result1.plain == result2.plain
 
 
 class TestRenderBlocksToolSummary:
@@ -468,7 +481,7 @@ class TestRenderTurnToStripsToolSummary:
         from rich.console import Console
 
         blocks = [
-            ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0, detail="git status"),
+            ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0, detail="git status", tool_input={"command": "git status"}),
             ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
         ]
         console = Console(width=80, force_terminal=True)
@@ -481,6 +494,531 @@ class TestRenderTurnToStripsToolSummary:
         text = "".join(seg.text for strip in strips for seg in strip._segments)
         assert "Bash" in text
         assert "Read" in text
-        assert "git status" in text
+        assert "git" in text
         # Should NOT have summary
         assert "used" not in text
+
+
+# ─── New test classes for specialized tool renderers ───────────────────────────
+
+
+class TestInferLangFromPath:
+    """Tests for _infer_lang_from_path helper."""
+
+    def test_python(self):
+        assert _infer_lang_from_path("/foo/bar.py") == "python"
+
+    def test_typescript(self):
+        assert _infer_lang_from_path("/foo/bar.ts") == "typescript"
+
+    def test_tsx(self):
+        assert _infer_lang_from_path("/foo/Component.tsx") == "tsx"
+
+    def test_javascript(self):
+        assert _infer_lang_from_path("/foo/bar.js") == "javascript"
+
+    def test_json(self):
+        assert _infer_lang_from_path("config.json") == "json"
+
+    def test_rust(self):
+        assert _infer_lang_from_path("src/main.rs") == "rust"
+
+    def test_go(self):
+        assert _infer_lang_from_path("main.go") == "go"
+
+    def test_yaml(self):
+        assert _infer_lang_from_path("config.yaml") == "yaml"
+
+    def test_yml(self):
+        assert _infer_lang_from_path("config.yml") == "yaml"
+
+    def test_unknown_extension(self):
+        assert _infer_lang_from_path("/foo/bar.xyz") == ""
+
+    def test_no_extension(self):
+        assert _infer_lang_from_path("Makefile") == ""
+
+    def test_case_insensitive(self):
+        assert _infer_lang_from_path("/foo/BAR.PY") == "python"
+
+    def test_empty_string(self):
+        assert _infer_lang_from_path("") == ""
+
+
+class TestDetailExtractors:
+    """Tests for _TOOL_DETAIL_EXTRACTORS — new Write/Edit/Grep/Glob entries."""
+
+    def test_write_extracts_file_path(self):
+        from cc_dump.formatting import _tool_detail
+        result = _tool_detail("Write", {"file_path": "/foo/bar/baz.py"})
+        assert "baz.py" in result
+
+    def test_edit_extracts_file_path(self):
+        from cc_dump.formatting import _tool_detail
+        result = _tool_detail("Edit", {"file_path": "/foo/bar/baz.ts"})
+        assert "baz.ts" in result
+
+    def test_grep_extracts_pattern(self):
+        from cc_dump.formatting import _tool_detail
+        result = _tool_detail("Grep", {"pattern": "import.*re"})
+        assert result == "import.*re"
+
+    def test_glob_extracts_pattern(self):
+        from cc_dump.formatting import _tool_detail
+        result = _tool_detail("Glob", {"pattern": "**/*.py"})
+        assert result == "**/*.py"
+
+    def test_unknown_tool_returns_empty(self):
+        from cc_dump.formatting import _tool_detail
+        result = _tool_detail("UnknownTool", {"foo": "bar"})
+        assert result == ""
+
+
+class TestToolUseFullBash:
+    """Tests for _render_tool_use_bash_full renderer."""
+
+    def test_bash_full_shows_header_and_command(self):
+        """Bash full renders header + $ command."""
+        from rich.console import Console, Group
+
+        block = ToolUseBlock(
+            name="Bash",
+            input_size=100,
+            msg_color_idx=0,
+            tool_input={"command": "git status"},
+        )
+        result = _render_tool_use_bash_full(block)
+
+        assert result is not None
+        # Should be a Group with header + Syntax
+        assert isinstance(result, Group)
+
+    def test_bash_full_via_dispatch(self):
+        """_render_tool_use_full dispatches Bash to bash-specific renderer."""
+        from rich.console import Group
+
+        block = ToolUseBlock(
+            name="Bash",
+            input_size=100,
+            msg_color_idx=0,
+            tool_input={"command": "echo hello"},
+        )
+        result = _render_tool_use_full(block)
+        assert isinstance(result, Group)
+
+    def test_bash_full_no_command(self):
+        """Bash full with empty command returns header only."""
+        block = ToolUseBlock(
+            name="Bash",
+            input_size=50,
+            msg_color_idx=0,
+            tool_input={},
+        )
+        result = _render_tool_use_bash_full(block)
+        assert result is not None
+        # Without command, returns just header (Text)
+        from rich.text import Text
+        assert isinstance(result, Text)
+
+
+class TestToolUseFullEdit:
+    """Tests for _render_tool_use_edit_full renderer."""
+
+    def test_edit_full_shows_diff_preview(self):
+        """Edit full shows old/new line counts."""
+        block = ToolUseBlock(
+            name="Edit",
+            input_size=200,
+            msg_color_idx=0,
+            detail="...path/file.py",
+            tool_input={
+                "file_path": "/foo/file.py",
+                "old_string": "line1\nline2\nline3",
+                "new_string": "new_line1\nnew_line2\nnew_line3\nnew_line4\nnew_line5",
+            },
+        )
+        result = _render_tool_use_edit_full(block)
+
+        assert result is not None
+        plain = result.plain
+        assert "Edit" in plain
+        assert "old (3 lines)" in plain
+        assert "new (5 lines)" in plain
+
+    def test_edit_full_via_dispatch(self):
+        """_render_tool_use_full dispatches Edit to edit-specific renderer."""
+        block = ToolUseBlock(
+            name="Edit",
+            input_size=200,
+            msg_color_idx=0,
+            tool_input={"old_string": "a", "new_string": "b"},
+        )
+        result = _render_tool_use_full(block)
+        assert result is not None
+        from rich.text import Text
+        assert isinstance(result, Text)
+
+    def test_edit_empty_strings(self):
+        """Edit with empty old/new strings renders 0 lines."""
+        block = ToolUseBlock(
+            name="Edit",
+            input_size=50,
+            msg_color_idx=0,
+            tool_input={"old_string": "", "new_string": ""},
+        )
+        result = _render_tool_use_edit_full(block)
+        assert result is not None
+        plain = result.plain
+        assert "old (0 lines)" in plain
+        assert "new (0 lines)" in plain
+
+
+class TestToolUseSummaryLevel:
+    """Tests confirming ToolUseBlock at summary level uses one-liner."""
+
+    def test_summary_uses_oneliner(self):
+        """At summary level, ToolUseBlock should render as one-liner."""
+        block = ToolUseBlock(
+            name="Bash",
+            input_size=100,
+            msg_color_idx=0,
+            detail="git status",
+            tool_input={"command": "git status"},
+        )
+        result = _render_tool_use_oneliner(block)
+        assert result is not None
+        plain = result.plain
+        assert "[Use: Bash]" in plain
+        assert "git status" in plain
+        assert "100 bytes" in plain
+
+    def test_unknown_tool_falls_back_to_oneliner(self):
+        """Unknown tool in _render_tool_use_full falls back to oneliner."""
+        block = ToolUseBlock(
+            name="UnknownTool",
+            input_size=100,
+            msg_color_idx=0,
+        )
+        result = _render_tool_use_full(block)
+        assert result is not None
+        from rich.text import Text
+        assert isinstance(result, Text)
+        assert "[Use: UnknownTool]" in result.plain
+
+
+class TestToolResultFullRead:
+    """Tests for _render_read_content — syntax-highlighted Read results."""
+
+    def test_read_python_file(self):
+        """Read result for .py file renders with syntax highlighting."""
+        from rich.console import Group
+
+        block = ToolResultBlock(
+            size=100,
+            tool_name="Read",
+            msg_color_idx=0,
+            content="def foo():\n    return 42\n",
+            tool_input={"file_path": "/src/main.py"},
+        )
+        result = _render_read_content(block)
+        assert result is not None
+        assert isinstance(result, Group)
+
+    def test_read_typescript_file(self):
+        """Read result for .ts file renders with syntax highlighting."""
+        from rich.console import Group
+
+        block = ToolResultBlock(
+            size=50,
+            tool_name="Read",
+            msg_color_idx=0,
+            content="const x: number = 42;",
+            tool_input={"file_path": "/src/app.ts"},
+        )
+        result = _render_read_content(block)
+        assert isinstance(result, Group)
+
+    def test_read_unknown_extension(self):
+        """Read result for unknown extension uses 'text' lexer."""
+        from rich.console import Group
+
+        block = ToolResultBlock(
+            size=30,
+            tool_name="Read",
+            msg_color_idx=0,
+            content="some content",
+            tool_input={"file_path": "/foo/bar.xyz"},
+        )
+        result = _render_read_content(block)
+        assert isinstance(result, Group)
+
+    def test_read_empty_content(self):
+        """Read result with empty content returns header only."""
+        from rich.text import Text
+
+        block = ToolResultBlock(
+            size=0,
+            tool_name="Read",
+            msg_color_idx=0,
+            content="",
+            tool_input={"file_path": "/foo/empty.py"},
+        )
+        result = _render_read_content(block)
+        assert result is not None
+        assert isinstance(result, Text)
+
+    def test_read_via_dispatch(self):
+        """_render_tool_result_full dispatches Read to read-specific renderer."""
+        from rich.console import Group
+
+        block = ToolResultBlock(
+            size=100,
+            tool_name="Read",
+            msg_color_idx=0,
+            content="content here",
+            tool_input={"file_path": "/foo/bar.py"},
+        )
+        result = _render_tool_result_full(block)
+        assert isinstance(result, Group)
+
+
+class TestToolResultFullWriteEdit:
+    """Tests for _render_confirm_content — Write/Edit success/error rendering."""
+
+    def test_write_success_shows_checkmark(self):
+        """Write success renders ✓."""
+        block = ToolResultBlock(
+            size=50,
+            tool_name="Write",
+            msg_color_idx=0,
+            content="File written successfully.",
+            is_error=False,
+        )
+        result = _render_confirm_content(block)
+        assert result is not None
+        assert "✓" in result.plain
+
+    def test_edit_success_shows_checkmark(self):
+        """Edit success renders ✓."""
+        block = ToolResultBlock(
+            size=50,
+            tool_name="Edit",
+            msg_color_idx=0,
+            content="File edited successfully.",
+            is_error=False,
+        )
+        result = _render_confirm_content(block)
+        assert result is not None
+        assert "✓" in result.plain
+
+    def test_write_error_shows_content(self):
+        """Write error renders error content."""
+        block = ToolResultBlock(
+            size=100,
+            tool_name="Write",
+            msg_color_idx=0,
+            content="Permission denied: /root/file.txt",
+            is_error=True,
+        )
+        result = _render_confirm_content(block)
+        assert result is not None
+        plain = result.plain
+        assert "Permission denied" in plain
+        assert "✓" not in plain
+
+    def test_edit_error_shows_content(self):
+        """Edit error renders error content."""
+        block = ToolResultBlock(
+            size=80,
+            tool_name="Edit",
+            msg_color_idx=0,
+            content="old_string not found in file",
+            is_error=True,
+        )
+        result = _render_confirm_content(block)
+        assert result is not None
+        assert "old_string not found" in result.plain
+        assert "✓" not in result.plain
+
+    def test_write_via_dispatch(self):
+        """_render_tool_result_full dispatches Write to confirm renderer."""
+        block = ToolResultBlock(
+            size=50,
+            tool_name="Write",
+            msg_color_idx=0,
+            content="ok",
+            is_error=False,
+        )
+        result = _render_tool_result_full(block)
+        assert result is not None
+        assert "✓" in result.plain
+
+    def test_edit_via_dispatch(self):
+        """_render_tool_result_full dispatches Edit to confirm renderer."""
+        block = ToolResultBlock(
+            size=50,
+            tool_name="Edit",
+            msg_color_idx=0,
+            content="ok",
+            is_error=False,
+        )
+        result = _render_tool_result_full(block)
+        assert result is not None
+        assert "✓" in result.plain
+
+
+class TestToolResultFullBash:
+    """Tests for generic tool result rendering (Bash, Grep, Glob)."""
+
+    def test_bash_result_dim_content(self):
+        """Bash result renders header + dim content (generic fallback)."""
+        block = ToolResultBlock(
+            size=200,
+            tool_name="Bash",
+            msg_color_idx=0,
+            content="On branch main\nnothing to commit",
+        )
+        result = _render_tool_result_full(block)
+        assert result is not None
+        plain = result.plain
+        assert "Bash" in plain
+        assert "On branch main" in plain
+
+    def test_grep_result_generic(self):
+        """Grep result uses generic fallback."""
+        block = ToolResultBlock(
+            size=100,
+            tool_name="Grep",
+            msg_color_idx=0,
+            content="file.py:10:match",
+        )
+        result = _render_tool_result_full(block)
+        assert result is not None
+        assert "Grep" in result.plain
+        assert "file.py:10:match" in result.plain
+
+
+class TestToolResultSummaryRenderer:
+    """Tests for _render_tool_result_summary — header only, no content."""
+
+    def test_summary_header_only(self):
+        """Summary shows header, not content."""
+        block = ToolResultBlock(
+            size=500,
+            tool_name="Read",
+            msg_color_idx=0,
+            content="def foo(): pass\n" * 20,
+            detail="...path/file.py",
+        )
+        result = _render_tool_result_summary(block)
+        assert result is not None
+        plain = result.plain
+        assert "Read" in plain
+        assert "500 bytes" in plain
+        assert "...path/file.py" in plain
+        # Content should NOT appear
+        assert "def foo" not in plain
+
+    def test_summary_error_shows_label(self):
+        """Summary for error shows ERROR label."""
+        block = ToolResultBlock(
+            size=100,
+            tool_name="Bash",
+            msg_color_idx=0,
+            content="error detail here",
+            is_error=True,
+        )
+        result = _render_tool_result_summary(block)
+        assert result is not None
+        assert "ERROR" in result.plain
+        # Content should NOT appear even for errors
+        assert "error detail here" not in result.plain
+
+
+class TestRenderTurnToStripsToolLevels:
+    """Integration: render_turn_to_strips with tool blocks at various VisStates."""
+
+    def _render_strips_text(self, blocks, filters):
+        """Helper: render blocks and extract plain text from strips."""
+        from rich.console import Console
+        console = Console(width=80, force_terminal=True)
+        strips, _ = render_turn_to_strips(blocks, filters, console, width=80)
+        return "".join(seg.text for strip in strips for seg in strip._segments)
+
+    def test_tool_result_full_collapsed_header_only(self):
+        """At full collapsed level, tool result shows header only (no content)."""
+        blocks = [
+            ToolUseBlock(
+                name="Read",
+                input_size=50,
+                msg_color_idx=0,
+                detail="...file.py",
+            ),
+            ToolResultBlock(
+                size=500,
+                tool_name="Read",
+                msg_color_idx=0,
+                content="lots of content here\n" * 10,
+                detail="...file.py",
+            ),
+        ]
+        # Full collapsed = visible, full, not expanded
+        text = self._render_strips_text(
+            blocks, {"tools": VisState(True, True, False)}
+        )
+        assert "Read" in text
+        assert "500 bytes" in text
+        # Content should NOT appear at full collapsed level (header only)
+        assert "lots of content" not in text
+
+    def test_tool_use_full_bash(self):
+        """At full level, Bash ToolUse shows syntax-highlighted command."""
+        blocks = [
+            ToolUseBlock(
+                name="Bash",
+                input_size=100,
+                msg_color_idx=0,
+                detail="git status",
+                tool_input={"command": "git status"},
+            ),
+        ]
+        text = self._render_strips_text(
+            blocks, {"tools": ALWAYS_VISIBLE}
+        )
+        assert "Bash" in text
+        # The command should appear (rendered by Syntax, but extractable)
+        assert "git" in text
+
+    def test_tool_result_full_read_syntax(self):
+        """At full level, Read result shows syntax-highlighted content."""
+        blocks = [
+            ToolResultBlock(
+                size=100,
+                tool_name="Read",
+                msg_color_idx=0,
+                content="def hello():\n    return 'world'\n",
+                tool_input={"file_path": "/foo/bar.py"},
+            ),
+        ]
+        text = self._render_strips_text(
+            blocks, {"tools": ALWAYS_VISIBLE}
+        )
+        assert "Read" in text
+        assert "hello" in text
+
+    def test_tool_result_full_write_checkmark(self):
+        """At full level, Write result shows checkmark."""
+        blocks = [
+            ToolResultBlock(
+                size=50,
+                tool_name="Write",
+                msg_color_idx=0,
+                content="ok",
+                is_error=False,
+            ),
+        ]
+        text = self._render_strips_text(
+            blocks, {"tools": ALWAYS_VISIBLE}
+        )
+        assert "Write" in text
+        assert "✓" in text

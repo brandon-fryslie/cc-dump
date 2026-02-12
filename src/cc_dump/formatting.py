@@ -156,7 +156,6 @@ class ToolUseBlock(FormattedBlock):
     )
     tool_use_id: str = ""  # Tool use ID for correlation
     tool_input: dict = field(default_factory=dict)  # Raw input for rendering
-    tool_input: dict = field(default_factory=dict)  # Raw input for rendering
 
 
 @dataclass
@@ -170,7 +169,6 @@ class ToolResultBlock(FormattedBlock):
     tool_name: str = ""  # Tool name for summary display
     detail: str = ""  # Tool-specific detail (copied from corresponding ToolUseBlock)
     content: str = ""  # Actual result text for full-level rendering
-    tool_input: dict = field(default_factory=dict)  # From correlated ToolUseBlock
     tool_input: dict = field(default_factory=dict)  # From correlated ToolUseBlock
 
 
@@ -401,6 +399,10 @@ def _front_ellipse_path(path: str, max_len: int = 40) -> str:
 # [LAW:dataflow-not-control-flow] Tool detail extraction dispatch table
 _TOOL_DETAIL_EXTRACTORS = {
     "Read": lambda inp: _front_ellipse_path(inp.get("file_path", ""), max_len=40),
+    "Write": lambda inp: _front_ellipse_path(inp.get("file_path", ""), max_len=40),
+    "Edit": lambda inp: _front_ellipse_path(inp.get("file_path", ""), max_len=40),
+    "Grep": lambda inp: inp.get("pattern", "")[:60],
+    "Glob": lambda inp: inp.get("pattern", "")[:60],
     "mcp__plugin_repomix-mcp_repomix__file_system_read_file": lambda inp: (
         _front_ellipse_path(inp.get("file_path", ""), max_len=40)
     ),
