@@ -476,8 +476,8 @@ _TRACKED_STATUS_RENDERERS = {
 }
 
 
-def _render_tracked_content(block: TrackedContentBlock) -> ConsoleRenderable | None:
-    """Render a TrackedContentBlock with tag colors — full content."""
+def _render_tracked_content_summary(block: TrackedContentBlock) -> ConsoleRenderable | None:
+    """Render a TrackedContentBlock at SUMMARY level — tag colors + diff-aware display."""
     fg, bg = TAG_STYLES[block.color_idx % len(TAG_STYLES)]
     tag_style = "bold {} on {}".format(fg, bg)
 
@@ -485,6 +485,17 @@ def _render_tracked_content(block: TrackedContentBlock) -> ConsoleRenderable | N
     if renderer:
         return renderer(block, tag_style)
     return Text("")
+
+
+def _render_tracked_content_full(block: TrackedContentBlock) -> ConsoleRenderable | None:
+    """Render TrackedContentBlock at FULL level — just the content, like any text block.
+
+    // [LAW:one-source-of-truth] block.content is always the current text.
+    // No status dispatch, no diff, no tag styling — renderers decide presentation.
+    """
+    if not block.content:
+        return None
+    return _render_text_as_markdown(block.content)
 
 
 def _render_role(block: RoleBlock) -> Text | None:
@@ -986,7 +997,7 @@ BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], ConsoleRenderable | None]]
     "MetadataBlock": _render_metadata,
     "TurnBudgetBlock": _render_turn_budget,
     "SystemLabelBlock": _render_system_label,
-    "TrackedContentBlock": _render_tracked_content,
+    "TrackedContentBlock": _render_tracked_content_full,
     "RoleBlock": _render_role,
     "TextContentBlock": _render_text_content,
     "ToolUseBlock": _render_tool_use,
@@ -1009,9 +1020,9 @@ BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], ConsoleRenderable | None]]
 BLOCK_STATE_RENDERERS: dict[
     tuple[str, bool, bool, bool], Callable[[FormattedBlock], ConsoleRenderable | None]
 ] = {
-    # TrackedContentBlock: title-only at summary level collapsed, content at expanded
+    # TrackedContentBlock: title-only at summary level collapsed, diff-aware at summary expanded
     ("TrackedContentBlock", True, False, False): _render_tracked_content_title,
-    ("TrackedContentBlock", True, False, True):  _render_tracked_content,
+    ("TrackedContentBlock", True, False, True):  _render_tracked_content_summary,
     # TurnBudgetBlock: oneliner at summary level
     ("TurnBudgetBlock", True, False, False): _render_turn_budget_oneliner,
     ("TurnBudgetBlock", True, False, True):  _render_turn_budget_oneliner,

@@ -5,6 +5,7 @@ so it can be hot-reloaded without affecting the live widget instances.
 """
 
 import cc_dump.analysis
+import cc_dump.palette
 from rich.text import Text
 
 
@@ -216,3 +217,69 @@ def render_timeline_panel(budgets: list[cc_dump.analysis.TurnBudget]) -> str:
         )
 
     return "\n".join(lines)
+
+
+def render_info_panel(info: dict) -> Text:
+    """Render the server info panel display.
+
+    // [LAW:dataflow-not-control-flow] All rows always rendered; empty values shown as "--".
+
+    Args:
+        info: Dict with server info fields:
+            - proxy_url: Full proxy URL (e.g., "http://127.0.0.1:12345")
+            - proxy_mode: "reverse" or "forward"
+            - target: Upstream target URL (or None)
+            - session_name: Session name string
+            - session_id: Session ID hex string (or None)
+            - db_path: Database file path (or None)
+            - recording_path: HAR recording path (or None)
+            - recording_dir: Directory containing recordings
+            - replay_file: Replay source file (or None)
+            - python_version: Python version string
+            - textual_version: Textual framework version
+            - pid: Process ID
+
+    Returns:
+        Rich Text object with labeled rows
+    """
+    p = cc_dump.palette.PALETTE
+
+    # // [LAW:one-source-of-truth] Row definitions: (label, value)
+    # Every row is rendered. None/empty → "--". All values are click-to-copy.
+    proxy_url = info.get("proxy_url", "--")
+    rows = [
+        ("Proxy URL", proxy_url),
+        ("Proxy Mode", info.get("proxy_mode", "--")),
+        ("Target", info.get("target") or "--"),
+        ("Session", info.get("session_name", "--")),
+        ("Session ID", info.get("session_id") or "--"),
+        ("Database", info.get("db_path") or "disabled"),
+        ("Recording", info.get("recording_path") or "disabled"),
+        ("Recordings Dir", info.get("recording_dir", "--")),
+        ("Replay From", info.get("replay_file") or "--"),
+        ("Python", info.get("python_version", "--")),
+        ("Textual", info.get("textual_version", "--")),
+        ("PID", str(info.get("pid", "--"))),
+    ]
+
+    text = Text()
+    text.append("Server Info", style=f"bold {p.info}")
+    text.append("\n")
+
+    label_width = max(len(label) for label, _ in rows)
+
+    for label, value in rows:
+        text.append("  ")
+        text.append("{:<{}}".format(label + ":", label_width + 1), style="bold")
+        text.append(" ")
+        text.append(value, style=f"{p.info}")
+        text.append("\n")
+
+    # Usage hint at bottom
+    text.append("\n  ")
+    text.append("Usage: ", style="bold")
+    text.append("ANTHROPIC_BASE_URL=", style="dim")
+    text.append(proxy_url, style=f"bold {p.info}")
+    text.append(" claude", style="dim")
+
+    return text

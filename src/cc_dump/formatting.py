@@ -155,6 +155,8 @@ class ToolUseBlock(FormattedBlock):
         ""  # Tool-specific enrichment (file path, skill name, command preview)
     )
     tool_use_id: str = ""  # Tool use ID for correlation
+    tool_input: dict = field(default_factory=dict)  # Raw input for rendering
+    tool_input: dict = field(default_factory=dict)  # Raw input for rendering
 
 
 @dataclass
@@ -168,6 +170,8 @@ class ToolResultBlock(FormattedBlock):
     tool_name: str = ""  # Tool name for summary display
     detail: str = ""  # Tool-specific detail (copied from corresponding ToolUseBlock)
     content: str = ""  # Actual result text for full-level rendering
+    tool_input: dict = field(default_factory=dict)  # From correlated ToolUseBlock
+    tool_input: dict = field(default_factory=dict)  # From correlated ToolUseBlock
 
 
 @dataclass
@@ -285,11 +289,13 @@ def track_content(content, position_key, state, indent="    "):
             "id": tag_id,
             "color_idx": color_idx,
         }
+        # [LAW:one-source-of-truth] content is always the current text;
+        # renderers decide whether to show it or diff metadata.
         return TrackedContentBlock(
             status="ref",
             tag_id=tag_id,
             color_idx=color_idx,
-            content="",
+            content=content,
             old_content="",
             new_content="",
             indent=indent,
@@ -309,11 +315,13 @@ def track_content(content, position_key, state, indent="    "):
             "id": tag_id,
             "color_idx": color_idx,
         }
+        # [LAW:one-source-of-truth] content is always the current text;
+        # old_content/new_content carry diff data for SUMMARY renderer.
         return TrackedContentBlock(
             status="changed",
             tag_id=tag_id,
             color_idx=color_idx,
-            content="",
+            content=content,
             old_content=old_content_val,
             new_content=content,
             indent=indent,
@@ -456,7 +464,7 @@ def _format_tool_use_content(cblock, ctx: _ContentContext) -> list:
     tool_color_idx = ctx.tool_color_counter % MSG_COLOR_CYCLE
     ctx.tool_color_counter += 1
     if tool_use_id:
-        ctx.tool_id_map[tool_use_id] = (name, tool_color_idx, detail)
+        ctx.tool_id_map[tool_use_id] = (name, tool_color_idx, detail, tool_input)
     return [
         ToolUseBlock(
             name=name,
@@ -464,6 +472,7 @@ def _format_tool_use_content(cblock, ctx: _ContentContext) -> list:
             msg_color_idx=tool_color_idx,
             detail=detail,
             tool_use_id=tool_use_id,
+            tool_input=tool_input,
         )
     ]
 
@@ -491,8 +500,9 @@ def _format_tool_result_content(cblock, ctx: _ContentContext) -> list:
     tool_name = ""
     tool_color_idx = msg_color_idx  # fallback to message color
     detail = ""
+    correlated_tool_input: dict = {}
     if tool_use_id and tool_use_id in ctx.tool_id_map:
-        tool_name, tool_color_idx, detail = ctx.tool_id_map[tool_use_id]
+        tool_name, tool_color_idx, detail, correlated_tool_input = ctx.tool_id_map[tool_use_id]
     return [
         ToolResultBlock(
             size=size,
@@ -502,6 +512,7 @@ def _format_tool_result_content(cblock, ctx: _ContentContext) -> list:
             tool_name=tool_name,
             detail=detail,
             content=content_text,
+            tool_input=correlated_tool_input,
         )
     ]
 

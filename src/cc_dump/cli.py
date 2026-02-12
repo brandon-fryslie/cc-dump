@@ -163,6 +163,7 @@ def main():
     # [LAW:one-source-of-truth] Session name from CLI or default
     session_name = args.session
     har_recorder = None
+    record_path = None
     if not args.no_record:
         # Generate session_id if not already created for database
         if session_id is None:
@@ -207,6 +208,8 @@ def main():
         port=actual_port,
         target=ProxyHandler.target_host,
         replay_data=replay_data,
+        recording_path=record_path,
+        replay_file=args.replay,
     )
     try:
         app.run()

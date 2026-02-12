@@ -108,4 +108,14 @@ class StatusFooter(Static):
             line2.append(" ")
             line2.append(label, style="")
 
+        # Filterset indicator — show active preset slot
+        active_slot = state.get("active_filterset")
+        # [LAW:dataflow-not-control-flow] Always append; style varies by value.
+        line2.append("  ")
+        if active_slot is not None:
+            tc = cc_dump.tui.rendering.get_theme_colors()
+            line2.append(f" F{active_slot} ", style=tc.follow_active_style)
+        else:
+            line2.append(" F- ", style="dim")
+
         return Text("\n").join([line1, line2])

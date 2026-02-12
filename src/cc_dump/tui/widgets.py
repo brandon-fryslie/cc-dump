@@ -13,6 +13,7 @@ from cc_dump.tui.widget_factory import (
     LogsPanel,
     TurnData,
 )
+from cc_dump.tui.info_panel import InfoPanel
 
 __all__ = [
     "ConversationView",
@@ -20,5 +21,6 @@ __all__ = [
     "ToolEconomicsPanel",
     "TimelinePanel",
     "LogsPanel",
+    "InfoPanel",
     "TurnData",
 ]
