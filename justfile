@@ -19,13 +19,21 @@ reinstall: uninstall install
 run-module *args:
     uv run python -m cc_dump {{args}}
 
-# Check code with ruff
-lint:
+# Check code with ruff and mypy
+lint: check
     uvx ruff check src/
+
+# Type-check with mypy
+check:
+    uvx mypy src/cc_dump/
 
 # Format code with ruff
 fmt:
     uvx ruff format src/
+
+# Run in browser via textual-serve
+web:
+    uv run cc-dump-serve
 
 # Pack Textual repo into a single AI-friendly file
 textual-repomix:

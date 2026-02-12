@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-cc-dump is a transparent HTTP proxy for monitoring Claude Code API traffic. It intercepts Anthropic API requests, tracks system prompt changes with diffs, and provides a real-time Textual TUI with HAR recording/replay capabilities. Python 3.10+, single production dependency (`textual`). See [PROJECT_SPEC.md](PROJECT_SPEC.md) for goals and [ARCHITECTURE.md](ARCHITECTURE.md) for system design.
+cc-dump is a transparent HTTP proxy for monitoring Claude Code API traffic. It intercepts Anthropic API requests, tracks system prompt changes with diffs, and provides a real-time Textual TUI with HAR recording/replay capabilities. Python 3.10+, production dependencies: `textual`, `textual-serve`, `tiktoken`. See [PROJECT_SPEC.md](PROJECT_SPEC.md) for goals and [ARCHITECTURE.md](ARCHITECTURE.md) for system design.
 
 ## Textual Framework Reference
 
@@ -21,6 +21,10 @@ When working on TUI code, consult CC_DUMP_USAGE.md first to see what we use, the
 ```bash
 # Run (live proxy mode)
 just run                          # or: uv run cc-dump [--port PORT] [--target URL]
+
+# Run in browser via textual-serve
+just web                          # launches at http://localhost:8000
+# or: cc-dump-serve                # standalone command
 
 # Recording and replay
 cc-dump --list                    # list available recordings

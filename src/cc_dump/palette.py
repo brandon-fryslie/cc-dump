@@ -87,9 +87,26 @@ def _darken_hex(
     return _hsl_to_hex(h * 360.0, saturation, lightness)
 
 
-# Pre-compute foreground and dark background variants for indicators
+def _lighten_hex(
+    hex_color: str, lightness: float = 0.85, saturation: float = 0.50
+) -> str:
+    """Derive a light foreground variant from a hex color.
+
+    Target: high lightness with moderate saturation — readable on a dark
+    background variant of the same hue.
+    """
+    r, g, b = _hex_to_rgb(hex_color)
+    h, l_orig, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
+    # Re-synthesize at target lightness/saturation, preserving hue
+    return _hsl_to_hex(h * 360.0, saturation, lightness)
+
+
+# Pre-compute foreground, dark background, and light foreground variants
 INDICATOR_FG: list[str] = [hex_color for _, hex_color in _INDICATOR_COLORS]
 INDICATOR_BG: list[str] = [_darken_hex(hex_color) for _, hex_color in _INDICATOR_COLORS]
+INDICATOR_FG_LIGHT: list[str] = [
+    _lighten_hex(hex_color) for _, hex_color in _INDICATOR_COLORS
+]
 
 
 class Palette:
@@ -233,6 +250,14 @@ class Palette:
         """
         idx = _FILTER_INDICATOR_INDEX.get(filter_name, 0)
         return INDICATOR_BG[idx]
+
+    def filter_fg_light(self, filter_name: str) -> str:
+        """Get a stable light foreground for a named filter.
+
+        High-lightness variant readable on the dark background of the same hue.
+        """
+        idx = _FILTER_INDICATOR_INDEX.get(filter_name, 0)
+        return INDICATOR_FG_LIGHT[idx]
 
     # ── Accent color (for keybinding highlights, etc.) ──
 

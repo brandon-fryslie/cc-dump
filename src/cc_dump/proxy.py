@@ -28,7 +28,7 @@ def _safe_headers(headers):
 
 
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
-    target_host = "https://api.anthropic.com"
+    target_host = None  # set by cli.py from --target arg before server starts
     event_queue = None  # set by cli.py before server starts
 
     def log_message(self, fmt, *args):

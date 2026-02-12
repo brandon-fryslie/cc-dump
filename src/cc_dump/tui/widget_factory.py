@@ -955,19 +955,93 @@ class ConversationView(ScrollView):
             self.scroll_to(y=target_y, animate=False)
 
     def on_click(self, event) -> None:
-        """Toggle expand on truncated blocks."""
+        """Toggle expand on truncated blocks or XML sub-blocks."""
         # event.y is viewport-relative; add scroll offset for content-space
         content_y = int(event.y + self.scroll_offset.y)
         turn = self._find_turn_for_line(content_y)
         if turn is None:
             return
 
-        # Check if click hit an expandable block
+        # Check if click hit a block
         block_idx = self._block_index_at_line(turn, content_y)
-        if block_idx is not None and block_idx < len(turn.blocks):
-            block = turn.blocks[block_idx]
-            if self._is_expandable_block(block):
-                self._toggle_block_expand(turn, block_idx)
+        if block_idx is None or block_idx >= len(turn.blocks):
+            return
+
+        block = turn.blocks[block_idx]
+
+        # Check XML sub-block click first (more specific target)
+        xml_sb_idx = self._xml_sub_block_at_line(turn, block, block_idx, content_y)
+        if xml_sb_idx is not None:
+            self._toggle_xml_sub_block(turn, block_idx, xml_sb_idx)
+            return
+
+        # Fall through to parent block expand
+        if self._is_expandable_block(block):
+            self._toggle_block_expand(turn, block_idx)
+
+    def _xml_sub_block_at_line(
+        self, turn: TurnData, block, block_idx: int, content_y: int
+    ) -> int | None:
+        """Map click y → XML sub-block index using _xml_strip_ranges.
+
+        Returns the sub-block index if the click hit an XML sub-block's
+        strip range, or None if no XML sub-block was hit.
+        """
+        xml_strip_ranges = getattr(block, "_xml_strip_ranges", None)
+        if not xml_strip_ranges:
+            return None
+
+        # Compute the click's local strip offset within this block
+        block_start_strip = turn.block_strip_map.get(block_idx)
+        if block_start_strip is None:
+            return None
+
+        local_y = content_y - turn.line_offset - block_start_strip
+
+        # Check each XML sub-block's strip range
+        for sb_idx, (range_start, range_end) in xml_strip_ranges.items():
+            if range_start <= local_y < range_end:
+                return sb_idx
+
+        return None
+
+    def _toggle_xml_sub_block(
+        self, turn: TurnData, block_idx: int, xml_sb_idx: int
+    ) -> None:
+        """Toggle an XML sub-block's expanded state and re-render the turn.
+
+        // [LAW:dataflow-not-control-flow] _xml_expanded dict is the value;
+        // absent key = True (default expanded).
+        """
+        block = turn.blocks[block_idx]
+
+        # Initialize _xml_expanded if needed
+        if not hasattr(block, "_xml_expanded") or block._xml_expanded is None:
+            block._xml_expanded = {}
+
+        # Toggle: absent/True → False, False → True (remove key to restore default)
+        current = block._xml_expanded.get(xml_sb_idx, True)
+        if current:
+            block._xml_expanded[xml_sb_idx] = False
+        else:
+            # Restore default (expanded) by removing the key
+            block._xml_expanded.pop(xml_sb_idx, None)
+
+        # Re-render just this turn
+        if not turn.is_streaming:
+            width = self._content_width if self._size_known else self._last_width
+            console = self.app.console
+            turn.re_render(
+                self._last_filters,
+                console,
+                width,
+                force=True,
+                block_cache=self._block_strip_cache,
+            )
+            self._recalculate_offsets()
+            # Resolve anchor to maintain scroll position
+            if not self._follow_mode:
+                self._resolve_anchor()
 
     def _toggle_block_expand(self, turn: TurnData, block_idx: int):
         """Toggle expand state for a single block and re-render its turn."""

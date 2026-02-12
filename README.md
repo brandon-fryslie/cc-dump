@@ -8,11 +8,29 @@ Transparent HTTP proxy for monitoring Claude Code API traffic. Intercepts reques
 uv tool install -e .
 ```
 
-Requires Python 3.10+. Single production dependency: [Textual](https://github.com/Textualize/textual).
+Requires Python 3.10+. Production dependencies: [Textual](https://github.com/Textualize/textual), [textual-serve](https://github.com/Textualize/textual-serve), tiktoken.
 
 ## Usage
 
-### Reverse Proxy Mode (default)
+### Browser Mode
+
+Run cc-dump in your browser using textual-serve:
+
+```bash
+cc-dump-serve
+# Visit http://localhost:8000
+# Each browser tab runs an independent cc-dump instance
+```
+
+Or using the justfile:
+
+```bash
+just web
+```
+
+### Terminal Mode
+
+#### Reverse Proxy Mode (default)
 
 Point Claude Code at cc-dump, which forwards to the real API:
 
@@ -23,7 +41,7 @@ cc-dump [--port PORT] [--target URL]
 ANTHROPIC_BASE_URL=http://127.0.0.1:12345 claude  # use the port from cc-dump output
 ```
 
-### Forward Proxy Mode
+#### Forward Proxy Mode
 
 For dynamic targets (e.g., non-Anthropic APIs):
 
@@ -36,7 +54,7 @@ HTTP_PROXY=http://127.0.0.1:12345 ANTHROPIC_BASE_URL=http://api.minimax.com clau
 
 In forward proxy mode, requests are sent as plain HTTP to cc-dump, inspected, then upgraded to HTTPS for the upstream API. Set `ANTHROPIC_BASE_URL` to an HTTP URL (not HTTPS) to avoid TLS tunneling.
 
-### Recording and Replay
+#### Recording and Replay
 
 cc-dump automatically records all API traffic to HAR files for later replay:
 

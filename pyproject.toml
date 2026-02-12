@@ -8,6 +8,7 @@ authors = [{name = "Brandon Fryslie", email = "brandon@fryslie.com"}]
 requires-python = ">=3.10"
 dependencies = [
     "textual>=0.80.0",
+    "textual-serve>=1.0.0",
     "tiktoken>=0.5.0",
 ]
 keywords = ["claude", "anthropic", "proxy", "api", "debugging", "tui"]
@@ -31,6 +32,7 @@ Issues = "https://github.com/brandon-fryslie/cc-dump/issues"
 
 [project.scripts]
 cc-dump = "cc_dump.cli:main"
+cc-dump-serve = "cc_dump.serve:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -53,4 +55,22 @@ asyncio_mode = "auto"
 markers = [
     "pty: tests requiring PTY subprocess (slow)",
     "textual: in-process Textual harness tests (fast)",
+]
+
+[tool.mypy]
+# Minimal config — passes today, tighten incrementally.
+# To see what's disabled: uvx mypy src/cc_dump/ --no-error-summary
+ignore_missing_imports = true
+disable_error_code = [
+    "arg-type",       # 32 errors — loose tuple/list element types in har_replayer, formatting
+    "dict-item",      # 25 errors — rendering dispatch table signature mismatches
+    "union-attr",     # 12 errors — accessing attrs on Optional without narrowing
+    "var-annotated",  #  8 errors — untyped empty containers (list = [], dict = {})
+    "attr-defined",   #  6 errors — dynamic attrs (_expandable, _pending_filter_snapshot)
+    "index",          #  5 errors — indexing Collection[str] in har_replayer
+    "assignment",     #  5 errors — incompatible assignment (None → datetime, tuple widths)
+    "has-type",       #  2 errors — variable used before type can be determined
+    "return-value",   #  1 error  — har_replayer return type mismatch
+    "no-redef",       #  1 error  — variable redefinition
+    "operator",       #  1 error  — int - None in rendering.py truncation logic
 ]

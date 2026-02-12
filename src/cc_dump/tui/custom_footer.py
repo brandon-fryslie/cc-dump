@@ -59,28 +59,33 @@ class StatusFooter(Static):
         """
         p = cc_dump.palette.PALETTE
 
-        # Line 1: categories with icon+color
-        line1 = Text()
+        # Line 1: categories with icon+color — active gets colored background
+        # no_wrap=True prevents mid-chip line breaks
+        line1 = Text(no_wrap=True)
         for key, name in self._CATEGORY_ITEMS:
             vis = state.get(name, HIDDEN)
             icon = self._VIS_ICONS[vis]
-            color = p.filter_color(name)
-            style = f"bold {color}" if vis.visible else "dim"
-            if line1.plain:
-                line1.append("  ")
-            line1.append(f" {key} ", style="bold" if vis.visible else "dim")
-            line1.append(icon, style=style)
+            fg_light = p.filter_fg_light(name)
+            bg_color = p.filter_bg(name)
+            # // [LAW:dataflow-not-control-flow] Style derived from vis.visible value
+            active_style = f"bold {fg_light} on {bg_color}"
+            style = active_style if vis.visible else "dim"
+            line1.append(f" {key} ", style=active_style if vis.visible else "dim")
             line1.append(name, style=style)
+            line1.append(f" {icon} ", style=style)
 
         # Line 2: actions + follow + commands
-        line2 = Text()
+        line2 = Text(no_wrap=True)
         for key, label, state_key in self._ACTION_ITEMS:
             is_active = bool(state.get(state_key, False))
-            color = p.filter_color(state_key)
-            style = f"bold {color}" if is_active else "dim"
+            fg_light = p.filter_fg_light(state_key)
+            bg_color = p.filter_bg(state_key)
+            # // [LAW:dataflow-not-control-flow] Style derived from is_active value
+            active_style = f"bold {fg_light} on {bg_color}"
+            style = active_style if is_active else "dim"
             if line2.plain:
                 line2.append("  ")
-            line2.append(f" {key}", style="bold" if is_active else "dim")
+            line2.append(f" {key}", style=active_style if is_active else "dim")
             line2.append(" ")
             line2.append(label, style=style)
 

@@ -228,10 +228,10 @@ TRUNCATION_LIMITS: dict[VisState, int | None] = {
     VisState(False, True, False):  0,
     VisState(False, True, True):   0,
     # Summary level (visible=True, full=False)
-    VisState(True, False, False):  3,    # summary collapsed
-    VisState(True, False, True):   12,   # summary expanded
+    VisState(True, False, False):  4,    # summary collapsed
+    VisState(True, False, True):   None,   # summary expanded
     # Full level (visible=True, full=True)
-    VisState(True, True, False):   10,   # full collapsed
+    VisState(True, True, False):   4,   # full collapsed
     VisState(True, True, True):    None, # full expanded (unlimited)
 }
 
@@ -588,6 +588,155 @@ def _render_segmented_block(block) -> ConsoleRenderable:
     # Use cached segmentation on the block object for efficiency
     seg = _get_or_segment(block)
     return _render_text_as_markdown(block.text)
+
+
+def _render_xml_collapsed(tag_name: str, inner_line_count: int) -> Text:
+    """Render a collapsed XML sub-block indicator.
+
+    Returns Text("▷ <tag> (N lines)") in dim style.
+    // [LAW:one-source-of-truth] Collapsed XML arrow is ▷ (summary collapsed).
+    """
+    t = Text()
+    t.append("▷ ", style="bold dim")
+    t.append(f"<{tag_name}>", style="bold dim")
+    t.append(f" ({inner_line_count} lines)", style="dim")
+    return t
+
+
+def _render_segmented_parts(
+    text: str,
+    xml_expanded: dict[int, bool] | None,
+) -> list[tuple[ConsoleRenderable, int | None]]:
+    """Render text into per-part renderables with XML sub-block tracking.
+
+    Like _render_text_as_markdown() but returns (renderable, xml_sub_block_index)
+    tuples. Non-XML parts have xml_sub_block_index=None. XML sub-blocks have
+    their index from the sub_blocks list (counting only XML_BLOCK entries).
+
+    // [LAW:dataflow-not-control-flow] xml_expanded dict controls the data;
+    // absent key = expanded (default True).
+
+    Args:
+        text: Raw text to segment and render.
+        xml_expanded: Dict mapping xml_sub_block_index → bool.
+            None or absent key means expanded (default).
+
+    Returns:
+        List of (renderable, xml_sb_idx_or_None) tuples.
+    """
+    from cc_dump.segmentation import (
+        segment,
+        SubBlockKind,
+        wrap_tags_in_backticks,
+        wrap_tags_outside_fences,
+    )
+
+    tc = get_theme_colors()
+    seg = segment(text)
+
+    # Count XML sub-blocks to assign indices
+    xml_sb_idx = 0
+    has_xml = any(sb.kind == SubBlockKind.XML_BLOCK for sb in seg.sub_blocks)
+
+    # Fast path: no XML blocks → render as one Markdown part
+    if not has_xml:
+        md = _render_text_as_markdown(text)
+        return [(md, None)]
+
+    parts: list[tuple[ConsoleRenderable, int | None]] = []
+    xml_sb_idx = 0
+
+    for sb in seg.sub_blocks:
+        text_slice = text[sb.span.start : sb.span.end]
+
+        if sb.kind == SubBlockKind.MD:
+            wrapped = wrap_tags_in_backticks(text_slice)
+            if wrapped.strip():
+                parts.append((Markdown(wrapped, code_theme=tc.code_theme), None))
+
+        elif sb.kind == SubBlockKind.MD_FENCE:
+            inner = text[sb.meta.inner_span.start : sb.meta.inner_span.end]
+            wrapped = wrap_tags_in_backticks(inner)
+            if wrapped.strip():
+                parts.append((Markdown(wrapped, code_theme=tc.code_theme), None))
+
+        elif sb.kind == SubBlockKind.CODE_FENCE:
+            inner = text[sb.meta.inner_span.start : sb.meta.inner_span.end]
+            parts.append((
+                Syntax(inner, sb.meta.info or "", theme=tc.code_theme),
+                None,
+            ))
+
+        elif sb.kind == SubBlockKind.XML_BLOCK:
+            current_xml_idx = xml_sb_idx
+            xml_sb_idx += 1
+
+            # Check expanded state: default is True (expanded)
+            # // [LAW:dataflow-not-control-flow] Value lookup, not branch
+            is_expanded = (xml_expanded or {}).get(current_xml_idx, True)
+
+            m = sb.meta
+            inner = text[m.inner_span.start : m.inner_span.end]
+            inner_line_count = inner.count("\n") + (1 if inner and not inner.endswith("\n") else 0)
+
+            if is_expanded:
+                # Full XML rendering (same as _render_text_as_markdown XML path)
+                start_tag = text[m.start_tag_span.start : m.start_tag_span.end].rstrip("\n")
+                end_tag = text[m.end_tag_span.start : m.end_tag_span.end].rstrip("\n")
+                xml_parts: list[ConsoleRenderable] = [
+                    Text(start_tag, style="bold dim")
+                ]
+                if inner.strip():
+                    xml_parts.append(
+                        Markdown(
+                            wrap_tags_outside_fences(inner),
+                            code_theme=tc.code_theme,
+                        )
+                    )
+                xml_parts.append(Text(end_tag, style="bold dim"))
+                # Expanded XML: tag line as header, then content
+                # // [LAW:dataflow-not-control-flow] Group always created,
+                # inner content varies by data
+                expanded_header = Text()
+                expanded_header.append("▽ ", style="bold dim")
+                expanded_header.append(start_tag, style="bold dim")
+                xml_parts_with_header: list[ConsoleRenderable] = [expanded_header]
+                if inner.strip():
+                    xml_parts_with_header.append(
+                        Markdown(
+                            wrap_tags_outside_fences(inner),
+                            code_theme=tc.code_theme,
+                        )
+                    )
+                xml_parts_with_header.append(Text(end_tag, style="bold dim"))
+                parts.append((Group(*xml_parts_with_header), current_xml_idx))
+            else:
+                # Collapsed: one-line indicator
+                collapsed = _render_xml_collapsed(m.tag_name, inner_line_count)
+                parts.append((collapsed, current_xml_idx))
+
+    if not parts:
+        # Fallback: render as plain markdown
+        md = _render_text_as_markdown(text)
+        return [(md, None)]
+
+    return parts
+
+
+def _block_has_xml(block) -> bool:
+    """Check if a text block contains XML sub-blocks worth collapsing.
+
+    // [LAW:dataflow-not-control-flow] Pure predicate on cached segmentation.
+    """
+    from cc_dump.segmentation import SubBlockKind
+
+    if not hasattr(block, "text") or not block.text:
+        return False
+    cat = getattr(block, "category", None)
+    if cat not in _MARKDOWN_CATEGORIES:
+        return False
+    seg = _get_or_segment(block)
+    return any(sb.kind == SubBlockKind.XML_BLOCK for sb in seg.sub_blocks)
 
 
 def _render_text_content(block: TextContentBlock) -> ConsoleRenderable | None:
@@ -976,67 +1125,108 @@ def _make_collapse_indicator(hidden_lines: int, content_width: int):
 
     text = "    \u00b7\u00b7\u00b7 {} more lines".format(hidden_lines)
     seg = Segment(text, style=Style(dim=True))
-    strip = Strip([seg])
-    strip.adjust_cell_length(content_width)
-    return strip
+    # // [LAW:no-shared-mutable-globals] adjust_cell_length returns a NEW Strip
+    return Strip([seg]).adjust_cell_length(content_width)
 
 
 # ─── Gutter constants ──────────────────────────────────────────────────────────
 # [LAW:one-source-of-truth] Single constant controls gutter sizing for all blocks
-GUTTER_WIDTH = 3  # "▌▶ " or "▌  " — tweak this one value to resize all gutters
+GUTTER_WIDTH = 4  # "▌▶  " or "▌   " — tweak this one value to resize all gutters
+RIGHT_GUTTER_WIDTH = 1  # "▐"
+MIN_WIDTH_FOR_RIGHT_GUTTER = 40  # hide right gutter below this width
 
-_ARROW_COLLAPSED = "\u25b6"  # ▶
-_ARROW_EXPANDED = "\u25bc"  # ▼
+# [LAW:one-source-of-truth] Arrow icons by vis state (mirrors _VIS_ICONS in custom_footer.py)
+# Key: (full, expanded) where expanded is the gutter's actual expanded state
+GUTTER_ARROWS: dict[tuple[bool, bool], str] = {
+    (False, False): "\u25b7",  # ▷ summary collapsed
+    (False, True):  "\u25bd",  # ▽ summary expanded
+    (True, False):  "\u25b6",  # ▶ full collapsed
+    (True, True):   "\u25bc",  # ▼ full expanded
+}
 
 
 def _add_gutter_to_strips(
     block_strips,
-    indicator_name: str,
+    indicator_name: str | None,
     is_expandable: bool,
-    is_expanded: bool,
-    width: int
+    arrow_char: str,
+    width: int,
+    neutral: bool = False,
+    show_right: bool = True
 ):
-    """Add gutter column (indicator + arrow/space) to ALL strips.
+    """Add gutter columns (left + optional right) to ALL strips.
 
-    Strip 0: [indicator, arrow/space] + content
-    Strip 1+: [indicator, continuation_space] + content
+    Strip 0: [▌][arrow_char + "  "] + content + [▐]
+    Strip 1+: [▌]["   "] + content + [▐]
 
-    Content is assumed to be rendered at (width - GUTTER_WIDTH).
-    This function prepends the gutter and adjusts final width.
+    Content is assumed to be rendered at (width - GUTTER_WIDTH - RIGHT_GUTTER_WIDTH).
+    This function prepends the left gutter, appends the right gutter, and adjusts final width.
 
-    // [LAW:one-source-of-truth] GUTTER_WIDTH constant defines all gutter sizing.
+    // [LAW:one-source-of-truth] GUTTER_WIDTH and RIGHT_GUTTER_WIDTH define all sizing.
+
+    Args:
+        block_strips: Pre-rendered content strips at content width
+        indicator_name: Category name for color lookup (None for neutral mode)
+        is_expandable: Whether block can be toggled
+        arrow_char: Arrow character from GUTTER_ARROWS (empty string if not expandable)
+        width: Final target width (includes gutters)
+        neutral: If True, use dim style instead of category color (for NewlineBlock, etc.)
+        show_right: If True, append right gutter segment
     """
-    if not block_strips or indicator_name not in FILTER_INDICATORS:
+    if not block_strips:
         return block_strips
 
     from rich.segment import Segment
     from rich.style import Style
     from textual.strip import Strip
 
-    symbol, color = FILTER_INDICATORS[indicator_name]
-    indicator_seg = Segment(symbol, Style(bold=True, color=color))
+    # Neutral mode: dim gutters, no arrow
+    if neutral:
+        left_seg = Segment("\u258c", Style(dim=True))  # ▌
+        arrow_seg = Segment("   ", Style())  # three spaces
+        continuation_seg = Segment("   ", Style())
+        right_seg = Segment("\u2590", Style(dim=True)) if show_right else None  # ▐
+    # Category mode: colored gutters + arrow
+    elif indicator_name and indicator_name in FILTER_INDICATORS:
+        symbol, color = FILTER_INDICATORS[indicator_name]
+        left_seg = Segment(symbol, Style(bold=True, color=color))
 
-    # First strip: indicator + arrow (if expandable) or space
-    if is_expandable:
-        arrow = _ARROW_EXPANDED if is_expanded else _ARROW_COLLAPSED
-        arrow_seg = Segment(arrow + " ", Style(color=color, bold=True))
+        # First strip: arrow (if expandable) or spaces
+        if is_expandable and arrow_char:
+            arrow_seg = Segment(arrow_char + "  ", Style(color=color, bold=True))
+        else:
+            arrow_seg = Segment("   ", Style())
+
+        # Continuation strips: spaces
+        continuation_seg = Segment("   ", Style())
+        right_seg = Segment("\u2590", Style(bold=True, color=color)) if show_right else None  # ▐
     else:
-        arrow_seg = Segment("  ", Style())  # two spaces for alignment
+        # No gutter mode
+        return block_strips
 
-    # Continuation strips: indicator + spaces
-    continuation_seg = Segment("  ", Style())
+    # Width for content + left gutter (everything except right gutter).
+    # Pad to this first so the right gutter lands at the terminal edge.
+    inner_width = width - (RIGHT_GUTTER_WIDTH if right_seg is not None else 0)
 
     result_strips = []
     for i, strip in enumerate(block_strips):
         segments = list(strip)
-        if i == 0:
-            new_segments = [indicator_seg, arrow_seg] + segments
-        else:
-            new_segments = [indicator_seg, continuation_seg] + segments
 
-        new_strip = Strip(new_segments)
-        new_strip.adjust_cell_length(width)
-        result_strips.append(new_strip)
+        # Prepend left gutter
+        if i == 0:
+            new_segments = [left_seg, arrow_seg] + segments
+        else:
+            new_segments = [left_seg, continuation_seg] + segments
+
+        # Pad content area to fill up to the right gutter column
+        # // [LAW:no-shared-mutable-globals] adjust_cell_length returns a NEW Strip
+        padded = Strip(new_segments).adjust_cell_length(inner_width)
+
+        # Append right gutter AFTER padding so it sits at the right edge
+        if right_seg is not None:
+            padded = Strip(list(padded) + [right_seg])
+
+        result_strips.append(padded)
 
     return result_strips
 
@@ -1133,6 +1323,12 @@ def render_turn_to_strips(
     if not wrap:
         base_render_options = base_render_options.update(overflow="ignore", no_wrap=True)
 
+    # // [LAW:dataflow-not-control-flow] Compute gutter config once for all blocks
+    show_right = width >= MIN_WIDTH_FOR_RIGHT_GUTTER
+    total_gutter = GUTTER_WIDTH + (RIGHT_GUTTER_WIDTH if show_right else 0)
+    render_width = max(1, width - total_gutter)
+    base_render_options = base_render_options.update_width(render_width)
+
     all_strips: list[Strip] = []
     block_strip_map: dict[int, int] = {}
 
@@ -1157,15 +1353,71 @@ def render_turn_to_strips(
             block_has_matches = bool(block_matches)
             search_hash = search_ctx.pattern_str if block_has_matches else None
 
-        # Compute gutter and render width BEFORE rendering
+        # Resolve category indicator name
         indicator_name = _category_indicator_name(block)
-        render_width = max(1, width - GUTTER_WIDTH) if indicator_name else width
-        block_render_options = base_render_options.update_width(render_width)
 
         # Single unified renderer lookup
         # // [LAW:dataflow-not-control-flow] One lookup replaces conditional dispatch
         renderer = RENDERERS.get((type_name, vis.visible, vis.full, vis.expanded))
-        if renderer:
+
+        # Detect blocks with XML sub-blocks for per-part rendering
+        # // [LAW:dataflow-not-control-flow] Never parse XML on streaming blocks —
+        # TextDeltaBlock text is incomplete fragments, segmentation would break.
+        uses_xml_parts = (
+            not is_streaming
+            and _block_has_xml(block)
+            and not block_has_matches
+        )
+
+        if uses_xml_parts:
+            # Per-part XML rendering path: render each segment separately
+            # so we can track strip ranges for click-to-collapse
+            xml_expanded = getattr(block, "_xml_expanded", None) or {}
+            segmented_parts = _render_segmented_parts(block.text, xml_expanded)
+
+            # Include xml_expanded state in cache key
+            xml_cache_state = tuple(sorted(xml_expanded.items())) if xml_expanded else ()
+            cache_key = (
+                id(block),
+                render_width,
+                vis,
+                search_hash,
+                xml_cache_state,
+            )
+
+            if block_cache is not None and cache_key in block_cache:
+                block_strips, xml_strip_ranges = block_cache[cache_key]
+            else:
+                # Render each part and assemble strips with range tracking
+                block_strips = []
+                xml_strip_ranges: dict[int, tuple[int, int]] = {}
+
+                for part_renderable, xml_sb_idx in segmented_parts:
+                    part_start = len(block_strips)
+                    part_segments = console.render(part_renderable, base_render_options)
+                    part_lines = list(Segment.split_lines(part_segments))
+                    if part_lines:
+                        part_strips = [
+                            s.adjust_cell_length(render_width)
+                            for s in Strip.from_lines(part_lines)
+                        ]
+                        block_strips.extend(part_strips)
+
+                    # Track XML sub-block strip ranges
+                    if xml_sb_idx is not None:
+                        xml_strip_ranges[xml_sb_idx] = (part_start, len(block_strips))
+
+                if block_cache is not None:
+                    block_cache[cache_key] = (block_strips, xml_strip_ranges)
+
+            # Store XML strip ranges on block for click handling
+            block._xml_strip_ranges = xml_strip_ranges
+            block._xml_expandable = bool(xml_strip_ranges)
+
+            # Set text to non-None so the rest of the pipeline proceeds
+            text = True  # sentinel — we already have block_strips
+
+        elif renderer:
             # For Markdown blocks with search matches, render as plain Text
             # so highlight_regex works correctly
             if block_has_matches and isinstance(renderer(block), Markdown):
@@ -1188,31 +1440,45 @@ def render_turn_to_strips(
 
         block_strip_map[orig_idx] = len(all_strips)
 
-        # Cache key uses render_width (content width without gutter)
-        cache_key = (
-            id(block),
-            render_width,
-            vis,
-            search_hash,
-        )
+        # Standard rendering path (non-XML or when text is a renderable)
+        if not uses_xml_parts:
+            # Cache key uses render_width (content width without gutter)
+            cache_key = (
+                id(block),
+                render_width,
+                vis,
+                search_hash,
+            )
 
-        # Check cache first
-        if block_cache is not None and cache_key in block_cache:
-            block_strips = block_cache[cache_key]
-        else:
-            # Render block at render_width
-            segments = console.render(text, block_render_options)
-            lines = list(Segment.split_lines(segments))
-            if lines:
-                block_strips = Strip.from_lines(lines)
-                for strip in block_strips:
-                    strip.adjust_cell_length(render_width)
+            # Check cache first
+            if block_cache is not None and cache_key in block_cache:
+                cached = block_cache[cache_key]
+                # Handle both old (list) and new (tuple) cache formats
+                if isinstance(cached, tuple):
+                    block_strips = cached[0]
+                else:
+                    block_strips = cached
             else:
-                block_strips = []
+                # Render block at render_width (all blocks use same width)
+                segments = console.render(text, base_render_options)
+                lines = list(Segment.split_lines(segments))
+                if lines:
+                    # // [LAW:no-shared-mutable-globals] adjust_cell_length returns
+                    # a NEW Strip; build a fresh list so no reader sees unpadded data.
+                    block_strips = [
+                        s.adjust_cell_length(render_width)
+                        for s in Strip.from_lines(lines)
+                    ]
+                else:
+                    block_strips = []
 
-            # Cache result
-            if block_cache is not None:
-                block_cache[cache_key] = block_strips
+                # Cache result
+                if block_cache is not None:
+                    block_cache[cache_key] = block_strips
+
+            # Clear XML attrs on non-XML blocks
+            block._xml_strip_ranges = {}
+            block._xml_expandable = False
 
         # Track expandability: always check against collapsed limit for this detail level
         # // [LAW:single-enforcer] _expandable enables click-to-expand interaction
@@ -1232,29 +1498,36 @@ def render_turn_to_strips(
 
         # Truncation: ALWAYS applies when max_lines < strip count (not streaming)
         # // [LAW:dataflow-not-control-flow] No should_truncate flag, just max_lines value
-        if (
+        is_truncated = (
             not is_streaming
             and max_lines is not None
             and len(block_strips) > max_lines
-        ):
+        )
+
+        if is_truncated:
             hidden = len(block_strips) - max_lines
             truncated_strips = list(block_strips[:max_lines])
             truncated_strips.append(_make_collapse_indicator(hidden, render_width))
-            # Add gutter to truncated strips (gutter_expanded=False for collapsed state)
-            if indicator_name:
-                truncated_strips = _add_gutter_to_strips(
-                    truncated_strips, indicator_name, block._expandable, False, width
-                )
-            all_strips.extend(truncated_strips)
+            block_strips_for_gutter = truncated_strips
+            # Arrow: truncated blocks are collapsed
+            arrow = GUTTER_ARROWS.get((vis.full, False), "") if block._expandable else ""
         else:
-            # Not truncated - add gutter to all strips (gutter_expanded=True)
-            if indicator_name:
-                final_strips = _add_gutter_to_strips(
-                    list(block_strips), indicator_name, block._expandable, True, width
-                )
-                all_strips.extend(final_strips)
-            else:
-                all_strips.extend(block_strips)
+            block_strips_for_gutter = list(block_strips)
+            # Arrow: non-truncated blocks use actual expanded state
+            arrow = GUTTER_ARROWS.get((vis.full, vis.expanded), "") if block._expandable else ""
+
+        # Unified gutter path — all blocks go through here
+        is_neutral = indicator_name is None
+        final_strips = _add_gutter_to_strips(
+            block_strips_for_gutter,
+            indicator_name,
+            block._expandable,
+            arrow,
+            width,
+            neutral=is_neutral,
+            show_right=show_right
+        )
+        all_strips.extend(final_strips)
 
     return all_strips, block_strip_map
 

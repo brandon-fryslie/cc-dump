@@ -1437,15 +1437,31 @@ class CcDumpApp(App):
         td = conv._turns[match.turn_index]
         if match.block_index >= len(td.blocks):
             return
-        block = td.blocks[match.block_index]
 
-        # Force this block to be visible at FULL level (bypasses category filters)
         # // [LAW:single-enforcer] _force_vis is the runtime visibility override
-        block._force_vis = cc_dump.formatting.ALWAYS_VISIBLE
-        state.expanded_blocks.append((match.turn_index, match.block_index))
+        # Collect all block indices that need force-vis, then apply in one pass.
+        force_indices = {match.block_index}
 
-        # Re-render with search context and scroll
+        # Turn header cluster (HeaderBlock, SeparatorBlock, NewlineBlock at start)
+        for i, b in enumerate(td.blocks):
+            if type(b).__name__ in ("HeaderBlock", "SeparatorBlock", "NewlineBlock"):
+                force_indices.add(i)
+            else:
+                break
+
+        # Nearest preceding RoleBlock for role context
+        for i in range(match.block_index - 1, -1, -1):
+            if type(td.blocks[i]).__name__ == "RoleBlock":
+                force_indices.add(i)
+                break
+
+        for i in force_indices:
+            td.blocks[i]._force_vis = cc_dump.formatting.ALWAYS_VISIBLE
+            state.expanded_blocks.append((match.turn_index, i))
+
+        # Re-render with search context, ensure target is materialized, scroll
         self._search_rerender()
+        conv.ensure_turn_rendered(match.turn_index)
         conv.scroll_to_block(match.turn_index, match.block_index)
         self._update_search_bar()
 
