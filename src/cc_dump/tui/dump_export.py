@@ -150,7 +150,7 @@ def dump_conversation(app) -> None:
     conv = app._get_conv()
     if conv is None or not conv._turns:
         app._app_log("WARNING", "No conversation data to dump")
-        app.znotify("No conversation to dump", severity="warning")
+        app.notify("No conversation to dump", severity="warning")
         return
 
     try:

@@ -30,14 +30,28 @@ import pytest
 
 from cc_dump.har_recorder import HARRecordingSubscriber
 from cc_dump.har_replayer import load_har, convert_to_events
+from cc_dump.event_types import (
+    PipelineEvent,
+    RequestHeadersEvent,
+    RequestBodyEvent,
+    ResponseHeadersEvent,
+    ResponseSSEEvent,
+    ResponseDoneEvent,
+    parse_sse_event,
+)
 import cc_dump.formatting as fmt
 
 
+def _sse_events(event_type: str, raw: dict) -> ResponseSSEEvent:
+    """Helper to build a ResponseSSEEvent from raw SSE data."""
+    return ResponseSSEEvent(sse_event=parse_sse_event(event_type, raw))
+
+
 # Sample events representing a realistic API exchange with multiple event types
-SAMPLE_EVENTS = [
+SAMPLE_EVENTS: list[PipelineEvent] = [
     # Request with system prompt and user message
-    ("request_headers", {"content-type": "application/json", "anthropic-version": "2023-06-01"}),
-    ("request", {
+    RequestHeadersEvent(headers={"content-type": "application/json", "anthropic-version": "2023-06-01"}),
+    RequestBodyEvent(body={
         "model": "claude-3-opus-20240229",
         "max_tokens": 4096,
         "stream": True,
@@ -46,8 +60,8 @@ SAMPLE_EVENTS = [
     }),
 
     # Response with text content
-    ("response_headers", 200, {"content-type": "text/event-stream"}),
-    ("response_event", "message_start", {
+    ResponseHeadersEvent(status_code=200, headers={"content-type": "text/event-stream"}),
+    _sse_events("message_start", {
         "type": "message_start",
         "message": {
             "id": "msg_01ABC",
@@ -57,39 +71,39 @@ SAMPLE_EVENTS = [
             "usage": {"input_tokens": 125, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
         }
     }),
-    ("response_event", "content_block_start", {
+    _sse_events("content_block_start", {
         "type": "content_block_start",
         "index": 0,
         "content_block": {"type": "text", "text": ""}
     }),
-    ("response_event", "content_block_delta", {
+    _sse_events("content_block_delta", {
         "type": "content_block_delta",
         "index": 0,
         "delta": {"type": "text_delta", "text": "Here's a simple function:\n\n"}
     }),
-    ("response_event", "content_block_delta", {
+    _sse_events("content_block_delta", {
         "type": "content_block_delta",
         "index": 0,
         "delta": {"type": "text_delta", "text": "def sum(a, b):\n    return a + b"}
     }),
-    ("response_event", "content_block_stop", {
+    _sse_events("content_block_stop", {
         "type": "content_block_stop",
         "index": 0,
     }),
-    ("response_event", "message_delta", {
+    _sse_events("message_delta", {
         "type": "message_delta",
         "delta": {"stop_reason": "end_turn"},
         "usage": {"output_tokens": 28}
     }),
-    ("response_event", "message_stop", {"type": "message_stop"}),
-    ("response_done",),
+    _sse_events("message_stop", {"type": "message_stop"}),
+    ResponseDoneEvent(),
 ]
 
 
-TOOL_USE_EVENTS = [
+TOOL_USE_EVENTS: list[PipelineEvent] = [
     # Request with tool definitions
-    ("request_headers", {"content-type": "application/json", "anthropic-version": "2023-06-01"}),
-    ("request", {
+    RequestHeadersEvent(headers={"content-type": "application/json", "anthropic-version": "2023-06-01"}),
+    RequestBodyEvent(body={
         "model": "claude-3-opus-20240229",
         "max_tokens": 4096,
         "stream": True,
@@ -108,8 +122,8 @@ TOOL_USE_EVENTS = [
     }),
 
     # Response with tool use
-    ("response_headers", 200, {"content-type": "text/event-stream"}),
-    ("response_event", "message_start", {
+    ResponseHeadersEvent(status_code=200, headers={"content-type": "text/event-stream"}),
+    _sse_events("message_start", {
         "type": "message_start",
         "message": {
             "id": "msg_02XYZ",
@@ -119,7 +133,7 @@ TOOL_USE_EVENTS = [
             "usage": {"input_tokens": 250, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
         }
     }),
-    ("response_event", "content_block_start", {
+    _sse_events("content_block_start", {
         "type": "content_block_start",
         "index": 0,
         "content_block": {
@@ -128,32 +142,32 @@ TOOL_USE_EVENTS = [
             "name": "read_file",
         }
     }),
-    ("response_event", "content_block_delta", {
+    _sse_events("content_block_delta", {
         "type": "content_block_delta",
         "index": 0,
         "delta": {"type": "input_json_delta", "partial_json": '{"path": "config.json"}'}
     }),
-    ("response_event", "content_block_stop", {
+    _sse_events("content_block_stop", {
         "type": "content_block_stop",
         "index": 0,
     }),
-    ("response_event", "message_delta", {
+    _sse_events("message_delta", {
         "type": "message_delta",
         "delta": {"stop_reason": "tool_use"},
         "usage": {"output_tokens": 45}
     }),
-    ("response_event", "message_stop", {"type": "message_stop"}),
-    ("response_done",),
+    _sse_events("message_stop", {"type": "message_stop"}),
+    ResponseDoneEvent(),
 ]
 
 
-def format_events(events: list[tuple], state: dict) -> list:
+def format_events(events: list[PipelineEvent], state: dict) -> list:
     """Process events through formatting pipeline and return all blocks.
 
     This mimics what event_handlers.py does when processing live events.
 
     Args:
-        events: List of event tuples
+        events: List of typed PipelineEvent objects
         state: Content tracking state dict
 
     Returns:
@@ -162,24 +176,20 @@ def format_events(events: list[tuple], state: dict) -> list:
     all_blocks = []
 
     for event in events:
-        kind = event[0]
-
-        if kind == "request":
-            blocks = fmt.format_request(event[1], state)
+        if isinstance(event, RequestBodyEvent):
+            blocks = fmt.format_request(event.body, state)
             all_blocks.extend(blocks)
 
-        elif kind == "request_headers":
-            blocks = fmt.format_request_headers(event[1])
+        elif isinstance(event, RequestHeadersEvent):
+            blocks = fmt.format_request_headers(event.headers)
             all_blocks.extend(blocks)
 
-        elif kind == "response_headers":
-            status_code, headers_dict = event[1], event[2]
-            blocks = fmt.format_response_headers(status_code, headers_dict)
+        elif isinstance(event, ResponseHeadersEvent):
+            blocks = fmt.format_response_headers(event.status_code, event.headers)
             all_blocks.extend(blocks)
 
-        elif kind == "response_event":
-            event_type, event_data = event[1], event[2]
-            blocks = fmt.format_response_event(event_type, event_data)
+        elif isinstance(event, ResponseSSEEvent):
+            blocks = fmt.format_response_event(event.sse_event)
             all_blocks.extend(blocks)
 
     return all_blocks
@@ -329,12 +339,30 @@ def test_record_replay_tool_use(tmp_path, fresh_state):
     compare_blocks(live_blocks, replayed_blocks)
 
 
+def _make_typed_events(raw_events: list[tuple]) -> list[PipelineEvent]:
+    """Convert raw event tuples to typed PipelineEvent objects for inline test data."""
+    result: list[PipelineEvent] = []
+    for raw in raw_events:
+        kind = raw[0]
+        if kind == "request_headers":
+            result.append(RequestHeadersEvent(headers=raw[1]))
+        elif kind == "request":
+            result.append(RequestBodyEvent(body=raw[1]))
+        elif kind == "response_headers":
+            result.append(ResponseHeadersEvent(status_code=raw[1], headers=raw[2]))
+        elif kind == "response_event":
+            result.append(_sse_events(raw[1], raw[2]))
+        elif kind == "response_done":
+            result.append(ResponseDoneEvent())
+    return result
+
+
 def test_record_replay_content_tracking_state(tmp_path):
     """Content tracking state (system prompt hashing) is identical in replay."""
     har_path = tmp_path / "test_state.har"
 
     # Create two requests with same system prompt (should get same tag)
-    events_1 = [
+    events_1 = _make_typed_events([
         ("request_headers", {}),
         ("request", {
             "model": "claude-3-opus-20240229",
@@ -348,9 +376,9 @@ def test_record_replay_content_tracking_state(tmp_path):
         }),
         ("response_event", "message_stop", {"type": "message_stop"}),
         ("response_done",),
-    ]
+    ])
 
-    events_2 = [
+    events_2 = _make_typed_events([
         ("request_headers", {}),
         ("request", {
             "model": "claude-3-opus-20240229",
@@ -364,7 +392,7 @@ def test_record_replay_content_tracking_state(tmp_path):
         }),
         ("response_event", "message_stop", {"type": "message_stop"}),
         ("response_done",),
-    ]
+    ])
 
     # 1. Process live with state tracking
     state_live = {
@@ -422,7 +450,7 @@ def test_multiple_turns_in_single_har(tmp_path, fresh_state):
     har_path = tmp_path / "test_multi.har"
 
     # Combine multiple turns
-    all_events = SAMPLE_EVENTS + TOOL_USE_EVENTS
+    all_events = list(SAMPLE_EVENTS) + list(TOOL_USE_EVENTS)
 
     # 1. Process live
     live_blocks = format_events(all_events, copy.deepcopy(fresh_state))
@@ -456,7 +484,7 @@ def test_har_is_source_of_truth(tmp_path):
     har_path = tmp_path / "source_of_truth.har"
 
     # Create events with rich metadata
-    events = [
+    events = _make_typed_events([
         ("request_headers", {
             "content-type": "application/json",
             "anthropic-version": "2023-06-01",
@@ -503,7 +531,7 @@ def test_har_is_source_of_truth(tmp_path):
         ("response_event", "content_block_delta", {
             "type": "content_block_delta",
             "index": 0,
-            "delta": {"type": "text_delta", "text": "I can help! 🎉"}  # Unicode
+            "delta": {"type": "text_delta", "text": "I can help! \U0001f389"}  # Unicode
         }),
         ("response_event", "content_block_stop", {"type": "content_block_stop", "index": 0}),
         ("response_event", "message_delta", {
@@ -513,7 +541,7 @@ def test_har_is_source_of_truth(tmp_path):
         }),
         ("response_event", "message_stop", {"type": "message_stop"}),
         ("response_done",),
-    ]
+    ])
 
     # Record
     recorder = HARRecordingSubscriber(str(har_path), "test-session")
@@ -541,7 +569,7 @@ def test_har_is_source_of_truth(tmp_path):
     response_body = json.loads(entry["response"]["content"]["text"])
     assert response_body["id"] == "msg_abc"
     assert response_body["usage"]["cache_read_input_tokens"] == 50
-    assert "🎉" in response_body["content"][0]["text"]  # Unicode preserved
+    assert "\U0001f389" in response_body["content"][0]["text"]  # Unicode preserved
 
     # Verify response headers preserved
     resp_headers = {h["name"]: h["value"] for h in entry["response"]["headers"]}

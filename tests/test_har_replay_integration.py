@@ -5,6 +5,10 @@ import pytest
 
 from cc_dump.har_replayer import load_har, convert_to_events
 from cc_dump.formatting import format_request, format_response_event
+from cc_dump.event_types import (
+    RequestBodyEvent,
+    ResponseSSEEvent,
+)
 
 
 def test_replay_events_through_formatting(tmp_path, fresh_state):
@@ -59,14 +63,11 @@ def test_replay_events_through_formatting(tmp_path, fresh_state):
     all_blocks = []
 
     for event in events:
-        kind = event[0]
-
-        if kind == "request":
-            blocks = format_request(event[1], fresh_state)
+        if isinstance(event, RequestBodyEvent):
+            blocks = format_request(event.body, fresh_state)
             all_blocks.extend(blocks)
-        elif kind == "response_event":
-            event_type, event_data = event[1], event[2]
-            blocks = format_response_event(event_type, event_data)
+        elif isinstance(event, ResponseSSEEvent):
+            blocks = format_response_event(event.sse_event)
             all_blocks.extend(blocks)
 
     # Verify we got blocks
@@ -147,14 +148,11 @@ def test_replay_with_tool_use(tmp_path, fresh_state):
     all_blocks = []
 
     for event in events:
-        kind = event[0]
-
-        if kind == "request":
-            blocks = format_request(event[1], fresh_state)
+        if isinstance(event, RequestBodyEvent):
+            blocks = format_request(event.body, fresh_state)
             all_blocks.extend(blocks)
-        elif kind == "response_event":
-            event_type, event_data = event[1], event[2]
-            blocks = format_response_event(event_type, event_data)
+        elif isinstance(event, ResponseSSEEvent):
+            blocks = format_response_event(event.sse_event)
             all_blocks.extend(blocks)
 
     # Verify tool use was processed
@@ -247,9 +245,8 @@ def test_replay_multiple_turns(tmp_path, fresh_state):
     for pair in pairs:
         events = convert_to_events(*pair)
         for event in events:
-            kind = event[0]
-            if kind == "request":
-                format_request(event[1], fresh_state)
+            if isinstance(event, RequestBodyEvent):
+                format_request(event.body, fresh_state)
 
     # Verify both requests were processed
     assert fresh_state["request_counter"] == 2
@@ -339,8 +336,8 @@ def test_replay_system_prompt_tracking(tmp_path, fresh_state):
     for pair in pairs:
         events = convert_to_events(*pair)
         for event in events:
-            if event[0] == "request":
-                format_request(event[1], fresh_state)
+            if isinstance(event, RequestBodyEvent):
+                format_request(event.body, fresh_state)
 
     # Verify both system prompts were tracked
     assert "system:0" in fresh_state["positions"]

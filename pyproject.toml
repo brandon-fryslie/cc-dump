@@ -68,5 +68,4 @@ disable_error_code = [
     "union-attr",     # 23 errors — accessing attrs on Optional without narrowing
     "attr-defined",   # 18 errors — dynamic attrs (_expandable, _xml_strip_ranges, etc.)
     "assignment",     #  8 errors — None → datetime, implicit Optional defaults
-#    "index",          #  5 errors — indexing Collection[str] in har_replayer
 ]

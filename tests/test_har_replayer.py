@@ -4,6 +4,22 @@ import json
 import pytest
 
 from cc_dump.har_replayer import load_har, convert_to_events
+from cc_dump.event_types import (
+    RequestHeadersEvent,
+    RequestBodyEvent,
+    ResponseHeadersEvent,
+    ResponseSSEEvent,
+    ResponseDoneEvent,
+    MessageStartEvent,
+    MessageDeltaEvent,
+    MessageStopEvent,
+    TextBlockStartEvent,
+    ToolUseBlockStartEvent,
+    TextDeltaEvent,
+    InputJsonDeltaEvent,
+    ContentBlockStopEvent,
+    StopReason,
+)
 
 
 # ─── HAR Loading Tests ────────────────────────────────────────────────────────
@@ -304,43 +320,44 @@ def test_convert_to_events_simple_text():
     events = convert_to_events(req_headers, req_body, resp_status, resp_headers, complete_message)
 
     # Verify event sequence
-    assert events[0] == ("request_headers", req_headers)
-    assert events[1] == ("request", req_body)
-    assert events[2] == ("response_headers", resp_status, resp_headers)
+    assert isinstance(events[0], RequestHeadersEvent)
+    assert events[0].headers == req_headers
+    assert isinstance(events[1], RequestBodyEvent)
+    assert events[1].body == req_body
+    assert isinstance(events[2], ResponseHeadersEvent)
+    assert events[2].status_code == resp_status
 
     # message_start
-    assert events[3][0] == "response_event"
-    assert events[3][1] == "message_start"
-    assert events[3][2]["message"]["id"] == "msg_123"
-    assert events[3][2]["message"]["usage"]["output_tokens"] == 0  # Should be 0 in message_start
+    assert isinstance(events[3], ResponseSSEEvent)
+    assert isinstance(events[3].sse_event, MessageStartEvent)
+    assert events[3].sse_event.message.id == "msg_123"
+    assert events[3].sse_event.message.usage.output_tokens == 0  # Should be 0 in message_start
 
     # content_block_start
-    assert events[4][0] == "response_event"
-    assert events[4][1] == "content_block_start"
-    assert events[4][2]["content_block"]["type"] == "text"
+    assert isinstance(events[4], ResponseSSEEvent)
+    assert isinstance(events[4].sse_event, TextBlockStartEvent)
 
     # content_block_delta
-    assert events[5][0] == "response_event"
-    assert events[5][1] == "content_block_delta"
-    assert events[5][2]["delta"]["type"] == "text_delta"
-    assert events[5][2]["delta"]["text"] == "Hello world"
+    assert isinstance(events[5], ResponseSSEEvent)
+    assert isinstance(events[5].sse_event, TextDeltaEvent)
+    assert events[5].sse_event.text == "Hello world"
 
     # content_block_stop
-    assert events[6][0] == "response_event"
-    assert events[6][1] == "content_block_stop"
+    assert isinstance(events[6], ResponseSSEEvent)
+    assert isinstance(events[6].sse_event, ContentBlockStopEvent)
 
     # message_delta
-    assert events[7][0] == "response_event"
-    assert events[7][1] == "message_delta"
-    assert events[7][2]["delta"]["stop_reason"] == "end_turn"
-    assert events[7][2]["usage"]["output_tokens"] == 5
+    assert isinstance(events[7], ResponseSSEEvent)
+    assert isinstance(events[7].sse_event, MessageDeltaEvent)
+    assert events[7].sse_event.stop_reason == StopReason.END_TURN
+    assert events[7].sse_event.output_tokens == 5
 
     # message_stop
-    assert events[8][0] == "response_event"
-    assert events[8][1] == "message_stop"
+    assert isinstance(events[8], ResponseSSEEvent)
+    assert isinstance(events[8].sse_event, MessageStopEvent)
 
     # response_done
-    assert events[9] == ("response_done",)
+    assert isinstance(events[9], ResponseDoneEvent)
 
 
 def test_convert_to_events_tool_use():
@@ -370,23 +387,22 @@ def test_convert_to_events_tool_use():
     tool_stop = None
 
     for event in events:
-        if event[0] == "response_event":
-            if event[1] == "content_block_start":
-                if event[2]["content_block"]["type"] == "tool_use":
-                    tool_start = event[2]
-            elif event[1] == "content_block_delta":
-                if event[2]["delta"]["type"] == "input_json_delta":
-                    tool_delta = event[2]
-            elif event[1] == "content_block_stop":
-                tool_stop = event[2]
+        if isinstance(event, ResponseSSEEvent):
+            sse = event.sse_event
+            if isinstance(sse, ToolUseBlockStartEvent):
+                tool_start = sse
+            elif isinstance(sse, InputJsonDeltaEvent):
+                tool_delta = sse
+            elif isinstance(sse, ContentBlockStopEvent):
+                tool_stop = sse
 
     assert tool_start is not None
-    assert tool_start["content_block"]["id"] == "toolu_abc"
-    assert tool_start["content_block"]["name"] == "read_file"
+    assert tool_start.id == "toolu_abc"
+    assert tool_start.name == "read_file"
 
     assert tool_delta is not None
     # Input should be complete JSON in a single delta
-    assert json.loads(tool_delta["delta"]["partial_json"]) == {"path": "test.py"}
+    assert json.loads(tool_delta.partial_json) == {"path": "test.py"}
 
     assert tool_stop is not None
 
@@ -413,14 +429,15 @@ def test_convert_to_events_mixed_content():
 
     events = convert_to_events({}, {}, 200, {}, complete_message)
 
-    # Count content blocks
-    content_block_starts = [
-        e for e in events if e[0] == "response_event" and e[1] == "content_block_start"
+    # Count content block starts
+    block_starts = [
+        e for e in events
+        if isinstance(e, ResponseSSEEvent) and isinstance(e.sse_event, (TextBlockStartEvent, ToolUseBlockStartEvent))
     ]
 
-    assert len(content_block_starts) == 2
-    assert content_block_starts[0][2]["content_block"]["type"] == "text"
-    assert content_block_starts[1][2]["content_block"]["type"] == "tool_use"
+    assert len(block_starts) == 2
+    assert isinstance(block_starts[0].sse_event, TextBlockStartEvent)
+    assert isinstance(block_starts[1].sse_event, ToolUseBlockStartEvent)
 
 
 def test_convert_to_events_empty_content():
@@ -442,7 +459,8 @@ def test_convert_to_events_empty_content():
 
     # No content blocks
     content_blocks = [
-        e for e in events if e[0] == "response_event" and e[1] == "content_block_start"
+        e for e in events
+        if isinstance(e, ResponseSSEEvent) and isinstance(e.sse_event, (TextBlockStartEvent, ToolUseBlockStartEvent))
     ]
     assert len(content_blocks) == 0
 
@@ -453,7 +471,7 @@ def test_convert_to_events_unicode():
         "id": "msg_unicode",
         "type": "message",
         "role": "assistant",
-        "content": [{"type": "text", "text": "Hello 👋 世界"}],
+        "content": [{"type": "text", "text": "Hello \U0001f44b \u4e16\u754c"}],
         "model": "claude-3-opus-20240229",
         "stop_reason": "end_turn",
         "usage": {"input_tokens": 5, "output_tokens": 8},
@@ -464,15 +482,11 @@ def test_convert_to_events_unicode():
     # Find text delta
     text_delta = None
     for event in events:
-        if (
-            event[0] == "response_event"
-            and event[1] == "content_block_delta"
-            and event[2]["delta"]["type"] == "text_delta"
-        ):
-            text_delta = event[2]["delta"]["text"]
+        if isinstance(event, ResponseSSEEvent) and isinstance(event.sse_event, TextDeltaEvent):
+            text_delta = event.sse_event.text
             break
 
-    assert text_delta == "Hello 👋 世界"
+    assert text_delta == "Hello \U0001f44b \u4e16\u754c"
 
 
 def test_convert_to_events_no_stop_reason():
@@ -491,13 +505,13 @@ def test_convert_to_events_no_stop_reason():
     # Should still generate message_delta event
     message_delta = None
     for event in events:
-        if event[0] == "response_event" and event[1] == "message_delta":
-            message_delta = event[2]
+        if isinstance(event, ResponseSSEEvent) and isinstance(event.sse_event, MessageDeltaEvent):
+            message_delta = event.sse_event
             break
 
     assert message_delta is not None
-    # stop_reason should not be in delta if not in message
-    assert "stop_reason" not in message_delta["delta"]
+    # stop_reason should be NONE (empty sentinel)
+    assert message_delta.stop_reason == StopReason.NONE
 
 
 def test_convert_to_events_empty_text():
@@ -516,7 +530,8 @@ def test_convert_to_events_empty_text():
 
     # Should still have content_block_start and stop, but no delta
     content_deltas = [
-        e for e in events if e[0] == "response_event" and e[1] == "content_block_delta"
+        e for e in events
+        if isinstance(e, ResponseSSEEvent) and isinstance(e.sse_event, (TextDeltaEvent, InputJsonDeltaEvent))
     ]
     assert len(content_deltas) == 0
 
@@ -568,12 +583,8 @@ def test_convert_to_events_large_tool_input():
     # Find tool delta
     tool_delta = None
     for event in events:
-        if (
-            event[0] == "response_event"
-            and event[1] == "content_block_delta"
-            and event[2]["delta"]["type"] == "input_json_delta"
-        ):
-            tool_delta = event[2]["delta"]["partial_json"]
+        if isinstance(event, ResponseSSEEvent) and isinstance(event.sse_event, InputJsonDeltaEvent):
+            tool_delta = event.sse_event.partial_json
             break
 
     assert tool_delta is not None
@@ -599,16 +610,17 @@ def test_convert_to_events_multiple_text_blocks():
 
     events = convert_to_events({}, {}, 200, {}, complete_message)
 
-    # Count content blocks
+    # Count content block starts
     content_block_starts = [
-        e for e in events if e[0] == "response_event" and e[1] == "content_block_start"
+        e for e in events
+        if isinstance(e, ResponseSSEEvent) and isinstance(e.sse_event, TextBlockStartEvent)
     ]
 
     assert len(content_block_starts) == 3
 
     # Verify each block has correct index
     for i, event in enumerate(content_block_starts):
-        assert event[2]["index"] == i
+        assert event.sse_event.index == i
 
 
 # ─── Integration Tests ────────────────────────────────────────────────────────
@@ -662,15 +674,14 @@ def test_roundtrip_har_load_and_convert(tmp_path):
     # Convert to events
     events = convert_to_events(*pairs[0])
 
-    # Verify event structure matches what formatting.py expects
-    assert events[0][0] == "request_headers"
-    assert events[1][0] == "request"
-    assert events[2][0] == "response_headers"
-    assert events[-1] == ("response_done",)
+    # Verify event structure matches typed pipeline events
+    assert isinstance(events[0], RequestHeadersEvent)
+    assert isinstance(events[1], RequestBodyEvent)
+    assert isinstance(events[2], ResponseHeadersEvent)
+    assert isinstance(events[-1], ResponseDoneEvent)
 
-    # All response events should be ("response_event", event_type, event_data)
-    response_events = [e for e in events if e[0] == "response_event"]
+    # All response SSE events should be ResponseSSEEvent wrapping an SSEEvent
+    response_events = [e for e in events if isinstance(e, ResponseSSEEvent)]
     for event in response_events:
-        assert len(event) == 3
-        assert isinstance(event[1], str)  # event_type
-        assert isinstance(event[2], dict)  # event_data
+        from cc_dump.event_types import SSEEvent
+        assert isinstance(event.sse_event, SSEEvent)

@@ -1,0 +1,31 @@
+#!/bin/bash
+# PreToolUse hook: block destructive git commands when working tree is dirty.
+#
+# When there are uncommitted changes, only allow safe git commands.
+# This prevents Claude from destroying in-progress work with stash, checkout, etc.
+
+set -e
+
+INPUT=$(cat)
+COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command')
+
+# Not a git command — allow
+if ! echo "$COMMAND" | grep -qE '\bgit\b'; then
+  exit 0
+fi
+
+# Dangerous git subcommands that can destroy uncommitted work
+DANGEROUS="stash checkout restore reset clean rebase"
+
+for word in $DANGEROUS; do
+  if echo "$COMMAND" | grep -qE "\bgit\b.*\b${word}\b"; then
+    # Check for dirty worktree
+    CWD=$(echo "$INPUT" | jq -r '.cwd')
+    if cd "$CWD" 2>/dev/null && git status --porcelain 2>/dev/null | grep -q .; then
+      echo "BLOCKED: 'git $word' is not allowed when there are uncommitted changes. Only git add/commit and read-only commands (status/diff/log/show/branch) are permitted. This hook exists because 'git stash' destroyed in-progress work." >&2
+      exit 2
+    fi
+  fi
+done
+
+exit 0

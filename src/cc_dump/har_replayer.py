@@ -1,11 +1,32 @@
 """HAR replay module - loads HAR files and converts to synthetic event streams.
 
-This is the inverse of har_recorder.py: complete messages → synthetic SSE events.
+This is the inverse of har_recorder.py: complete messages -> synthetic SSE events.
 The synthetic events match the format that formatting.py expects from the live pipeline.
 """
 
 import json
 import sys
+
+from cc_dump.event_types import (
+    ContentBlockStopEvent,
+    InputJsonDeltaEvent,
+    MessageDeltaEvent,
+    MessageInfo,
+    MessageRole,
+    MessageStartEvent,
+    MessageStopEvent,
+    PipelineEvent,
+    RequestBodyEvent,
+    RequestHeadersEvent,
+    ResponseDoneEvent,
+    ResponseHeadersEvent,
+    ResponseSSEEvent,
+    StopReason,
+    TextBlockStartEvent,
+    TextDeltaEvent,
+    ToolUseBlockStartEvent,
+    Usage,
+)
 
 
 def load_har(path: str) -> list[tuple[dict, dict, int, dict, dict]]:
@@ -124,12 +145,11 @@ def convert_to_events(
     response_status: int,
     response_headers: dict,
     complete_message: dict,
-) -> list[tuple]:
-    """Convert a complete request/response pair to synthetic event tuples.
+) -> list[PipelineEvent]:
+    """Convert a complete request/response pair to typed pipeline events.
 
     This function "explodes" a complete message back into the SSE event sequence
-    that the live pipeline produces. The events match exactly what formatting.py
-    expects from proxy.py.
+    that the live pipeline produces.
 
     Args:
         request_headers: Request headers dict
@@ -139,155 +159,89 @@ def convert_to_events(
         complete_message: Complete Claude message (non-streaming format)
 
     Returns:
-        List of event tuples in the format:
-        - ("request_headers", headers_dict)
-        - ("request", request_body_dict)
-        - ("response_headers", status_code, headers_dict)
-        - ("response_event", event_type, event_data)
-        - ("response_done",)
+        List of typed PipelineEvent objects
     """
-    events = []
+    events: list[PipelineEvent] = []
 
     # Request events
-    events.append(("request_headers", request_headers))
-    events.append(("request", request_body))
+    events.append(RequestHeadersEvent(headers=request_headers))
+    events.append(RequestBodyEvent(body=request_body))
 
     # Response start
-    events.append(("response_headers", response_status, response_headers))
+    events.append(ResponseHeadersEvent(status_code=response_status, headers=response_headers))
 
     # Reconstruct SSE event sequence from complete message
     # 1. message_start
-    start_usage = dict(complete_message.get("usage", {}))
-    # Set output_tokens to 0 in message_start (it's updated in message_delta)
-    if "output_tokens" in start_usage:
-        start_usage["output_tokens"] = 0
-    message_start_event = {
-        "type": "message_start",
-        "message": {
-            "id": complete_message.get("id", ""),
-            "type": "message",
-            "role": complete_message.get("role", "assistant"),
-            "model": complete_message.get("model", ""),
-            "usage": start_usage,
-        },
-    }
-
-    events.append(("response_event", "message_start", message_start_event))
+    raw_usage = complete_message.get("usage", {})
+    if not isinstance(raw_usage, dict):
+        raw_usage = {}
+    start_usage = Usage(
+        input_tokens=raw_usage.get("input_tokens", 0),
+        output_tokens=0,  # Output tokens are 0 in message_start
+        cache_read_input_tokens=raw_usage.get("cache_read_input_tokens", 0),
+        cache_creation_input_tokens=raw_usage.get("cache_creation_input_tokens", 0),
+    )
+    role_str = complete_message.get("role", "assistant")
+    role = MessageRole(role_str) if role_str in ("user", "assistant") else MessageRole.ASSISTANT
+    message_info = MessageInfo(
+        id=complete_message.get("id", ""),
+        role=role,
+        model=complete_message.get("model", ""),
+        usage=start_usage,
+    )
+    events.append(ResponseSSEEvent(sse_event=MessageStartEvent(message=message_info)))
 
     # 2. Content blocks
     content_blocks = complete_message.get("content", [])
+    block_index = 0
     for block in content_blocks:
         block_type = block.get("type", "")
 
         if block_type == "text":
-            # Text block: start → delta → stop
-            content_block_start = {
-                "type": "content_block_start",
-                "index": len(
-                    [
-                        e
-                        for e in events
-                        if e[0] == "response_event" and e[1] == "content_block_start"
-                    ]
-                ),
-                "content_block": {"type": "text", "text": ""},
-            }
-            events.append(
-                ("response_event", "content_block_start", content_block_start)
-            )
+            # Text block: start -> delta -> stop
+            events.append(ResponseSSEEvent(
+                sse_event=TextBlockStartEvent(index=block_index)
+            ))
 
             # Emit text as a single delta (not character-by-character)
             text = block.get("text", "")
             if text:
-                content_block_delta = {
-                    "type": "content_block_delta",
-                    "index": len(
-                        [
-                            e
-                            for e in events
-                            if e[0] == "response_event"
-                            and e[1] == "content_block_start"
-                        ]
-                    )
-                    - 1,
-                    "delta": {"type": "text_delta", "text": text},
-                }
-                events.append(
-                    ("response_event", "content_block_delta", content_block_delta)
-                )
+                events.append(ResponseSSEEvent(
+                    sse_event=TextDeltaEvent(index=block_index, text=text)
+                ))
 
             # Block stop
-            content_block_stop = {
-                "type": "content_block_stop",
-                "index": len(
-                    [
-                        e
-                        for e in events
-                        if e[0] == "response_event" and e[1] == "content_block_start"
-                    ]
-                )
-                - 1,
-            }
-            events.append(("response_event", "content_block_stop", content_block_stop))
+            events.append(ResponseSSEEvent(
+                sse_event=ContentBlockStopEvent(index=block_index)
+            ))
+            block_index += 1
 
         elif block_type == "tool_use":
-            # Tool use block: start → input_json_deltas → stop
+            # Tool use block: start -> input_json_deltas -> stop
             tool_use_id = block.get("id", "")
             tool_name = block.get("name", "")
             tool_input = block.get("input", {})
 
-            content_block_start = {
-                "type": "content_block_start",
-                "index": len(
-                    [
-                        e
-                        for e in events
-                        if e[0] == "response_event" and e[1] == "content_block_start"
-                    ]
-                ),
-                "content_block": {
-                    "type": "tool_use",
-                    "id": tool_use_id,
-                    "name": tool_name,
-                },
-            }
-            events.append(
-                ("response_event", "content_block_start", content_block_start)
-            )
+            events.append(ResponseSSEEvent(
+                sse_event=ToolUseBlockStartEvent(
+                    index=block_index, id=tool_use_id, name=tool_name
+                )
+            ))
 
-            # Emit tool input as a single JSON delta (not character-by-character)
+            # Emit tool input as a single JSON delta
             input_json = json.dumps(tool_input)
             if input_json:
-                content_block_delta = {
-                    "type": "content_block_delta",
-                    "index": len(
-                        [
-                            e
-                            for e in events
-                            if e[0] == "response_event"
-                            and e[1] == "content_block_start"
-                        ]
+                events.append(ResponseSSEEvent(
+                    sse_event=InputJsonDeltaEvent(
+                        index=block_index, partial_json=input_json
                     )
-                    - 1,
-                    "delta": {"type": "input_json_delta", "partial_json": input_json},
-                }
-                events.append(
-                    ("response_event", "content_block_delta", content_block_delta)
-                )
+                ))
 
             # Block stop
-            content_block_stop = {
-                "type": "content_block_stop",
-                "index": len(
-                    [
-                        e
-                        for e in events
-                        if e[0] == "response_event" and e[1] == "content_block_start"
-                    ]
-                )
-                - 1,
-            }
-            events.append(("response_event", "content_block_stop", content_block_stop))
+            events.append(ResponseSSEEvent(
+                sse_event=ContentBlockStopEvent(index=block_index)
+            ))
+            block_index += 1
 
         else:
             # Unknown block type - log warning but continue
@@ -297,32 +251,26 @@ def convert_to_events(
             sys.stderr.flush()
 
     # 3. message_delta (stop_reason and usage)
-    delta: dict[str, object] = {}
-    stop_reason = complete_message.get("stop_reason")
-    if stop_reason:
-        delta["stop_reason"] = stop_reason
-    stop_sequence = complete_message.get("stop_sequence")
-    if stop_sequence:
-        delta["stop_sequence"] = stop_sequence
+    stop_reason_str = complete_message.get("stop_reason") or ""
+    try:
+        stop_reason = StopReason(stop_reason_str)
+    except ValueError:
+        stop_reason = StopReason.NONE
+    stop_sequence = complete_message.get("stop_sequence") or ""
+    output_tokens = raw_usage.get("output_tokens", 0)
 
-    delta_usage: dict[str, object] = {}
-    usage = complete_message.get("usage", {})
-    if "output_tokens" in usage:
-        delta_usage["output_tokens"] = usage["output_tokens"]
-
-    message_delta_event = {
-        "type": "message_delta",
-        "delta": delta,
-        "usage": delta_usage,
-    }
-
-    events.append(("response_event", "message_delta", message_delta_event))
+    events.append(ResponseSSEEvent(
+        sse_event=MessageDeltaEvent(
+            stop_reason=stop_reason,
+            stop_sequence=stop_sequence,
+            output_tokens=output_tokens,
+        )
+    ))
 
     # 4. message_stop
-    message_stop_event = {"type": "message_stop"}
-    events.append(("response_event", "message_stop", message_stop_event))
+    events.append(ResponseSSEEvent(sse_event=MessageStopEvent()))
 
     # 5. response_done
-    events.append(("response_done",))
+    events.append(ResponseDoneEvent())
 
     return events

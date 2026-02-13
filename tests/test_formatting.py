@@ -33,6 +33,7 @@ from cc_dump.formatting import (
     _tool_detail,
     _front_ellipse_path,
 )
+from cc_dump.event_types import parse_sse_event
 
 
 # ─── format_request Tests ─────────────────────────────────────────────────────
@@ -256,12 +257,12 @@ def test_format_request_with_unknown_type(fresh_state):
 
 def test_format_response_event_message_start():
     """message_start creates StreamInfoBlock."""
-    data = {
+    sse = parse_sse_event("message_start", {
         "message": {
             "model": "claude-3-opus-20240229",
         },
-    }
-    blocks = format_response_event("message_start", data)
+    })
+    blocks = format_response_event(sse)
 
     assert len(blocks) == 1
     assert isinstance(blocks[0], StreamInfoBlock)
@@ -270,13 +271,13 @@ def test_format_response_event_message_start():
 
 def test_format_response_event_content_block_start_tool():
     """content_block_start with tool_use creates StreamToolUseBlock."""
-    data = {
+    sse = parse_sse_event("content_block_start", {
         "content_block": {
             "type": "tool_use",
             "name": "read_file",
         },
-    }
-    blocks = format_response_event("content_block_start", data)
+    })
+    blocks = format_response_event(sse)
 
     assert len(blocks) == 1
     assert isinstance(blocks[0], StreamToolUseBlock)
@@ -285,24 +286,24 @@ def test_format_response_event_content_block_start_tool():
 
 def test_format_response_event_content_block_start_text():
     """content_block_start with text returns empty (no block needed)."""
-    data = {
+    sse = parse_sse_event("content_block_start", {
         "content_block": {
             "type": "text",
         },
-    }
-    blocks = format_response_event("content_block_start", data)
+    })
+    blocks = format_response_event(sse)
     assert len(blocks) == 0
 
 
 def test_format_response_event_content_block_delta():
     """content_block_delta creates TextDeltaBlock."""
-    data = {
+    sse = parse_sse_event("content_block_delta", {
         "delta": {
             "type": "text_delta",
             "text": "Hello",
         },
-    }
-    blocks = format_response_event("content_block_delta", data)
+    })
+    blocks = format_response_event(sse)
 
     assert len(blocks) == 1
     assert isinstance(blocks[0], TextDeltaBlock)
@@ -311,24 +312,24 @@ def test_format_response_event_content_block_delta():
 
 def test_format_response_event_content_block_delta_empty():
     """content_block_delta with empty text returns empty list."""
-    data = {
+    sse = parse_sse_event("content_block_delta", {
         "delta": {
             "type": "text_delta",
             "text": "",
         },
-    }
-    blocks = format_response_event("content_block_delta", data)
+    })
+    blocks = format_response_event(sse)
     assert len(blocks) == 0
 
 
 def test_format_response_event_message_delta():
     """message_delta with stop_reason creates StopReasonBlock."""
-    data = {
+    sse = parse_sse_event("message_delta", {
         "delta": {
             "stop_reason": "end_turn",
         },
-    }
-    blocks = format_response_event("message_delta", data)
+    })
+    blocks = format_response_event(sse)
 
     assert len(blocks) == 1
     assert isinstance(blocks[0], StopReasonBlock)
@@ -337,16 +338,17 @@ def test_format_response_event_message_delta():
 
 def test_format_response_event_message_delta_no_stop():
     """message_delta without stop_reason returns empty list."""
-    data = {
+    sse = parse_sse_event("message_delta", {
         "delta": {},
-    }
-    blocks = format_response_event("message_delta", data)
+    })
+    blocks = format_response_event(sse)
     assert len(blocks) == 0
 
 
 def test_format_response_event_message_stop():
     """message_stop returns empty list."""
-    blocks = format_response_event("message_stop", {})
+    sse = parse_sse_event("message_stop", {})
+    blocks = format_response_event(sse)
     assert len(blocks) == 0
 
 

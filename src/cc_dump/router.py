@@ -8,9 +8,9 @@ import queue
 import threading
 from typing import Protocol
 
-Event = (
-    tuple  # event tuples from proxy: ("request", ...), ("response_event", ...), etc.
-)
+from cc_dump.event_types import PipelineEvent
+
+Event = PipelineEvent
 
 
 class Subscriber(Protocol):
@@ -23,7 +23,7 @@ class QueueSubscriber:
     """Subscriber that puts events into its own queue for async consumption."""
 
     def __init__(self):
-        self.queue: queue.Queue = queue.Queue()
+        self.queue: queue.Queue[PipelineEvent] = queue.Queue()
 
     def on_event(self, event: Event) -> None:
         self.queue.put(event)
@@ -42,7 +42,7 @@ class DirectSubscriber:
 class EventRouter:
     """Router that drains a source queue and fans out to subscribers."""
 
-    def __init__(self, source: queue.Queue):
+    def __init__(self, source: queue.Queue[PipelineEvent]):
         self._source = source
         self._subscribers: list[Subscriber] = []
         self._stop = threading.Event()

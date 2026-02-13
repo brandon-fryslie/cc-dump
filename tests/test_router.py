@@ -7,6 +7,13 @@ import time
 import pytest
 
 from cc_dump.router import DirectSubscriber, EventRouter, QueueSubscriber
+from cc_dump.event_types import (
+    PipelineEvent,
+    RequestBodyEvent,
+    ResponseDoneEvent,
+    ErrorEvent,
+    LogEvent,
+)
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -33,8 +40,8 @@ def test_queue_subscriber_receives_events():
     """QueueSubscriber puts events into queue."""
     sub = QueueSubscriber()
 
-    event1 = ("request", {"data": "test"})
-    event2 = ("response", {"data": "result"})
+    event1 = RequestBodyEvent(body={"data": "test"})
+    event2 = ResponseDoneEvent()
 
     sub.on_event(event1)
     sub.on_event(event2)
@@ -48,10 +55,10 @@ def test_queue_subscriber_order_preserved():
     """QueueSubscriber preserves event order."""
     sub = QueueSubscriber()
 
-    events = [
-        ("event1", 1),
-        ("event2", 2),
-        ("event3", 3),
+    events: list[PipelineEvent] = [
+        RequestBodyEvent(body={"n": 1}),
+        ResponseDoneEvent(),
+        ErrorEvent(code=500, reason="fail"),
     ]
 
     for event in events:
@@ -75,7 +82,7 @@ def test_direct_subscriber_calls_function():
 
     sub = DirectSubscriber(collector)
 
-    event = ("test", {"data": "value"})
+    event = RequestBodyEvent(body={"data": "value"})
     sub.on_event(event)
 
     # Function should be called immediately
@@ -92,7 +99,11 @@ def test_direct_subscriber_multiple_events():
 
     sub = DirectSubscriber(collector)
 
-    events = [("event1", 1), ("event2", 2), ("event3", 3)]
+    events: list[PipelineEvent] = [
+        RequestBodyEvent(body={"n": 1}),
+        ResponseDoneEvent(),
+        ErrorEvent(code=400, reason="bad"),
+    ]
     for event in events:
         sub.on_event(event)
 
@@ -120,7 +131,7 @@ def test_router_fanout(router, source_queue):
     # Give router time to start
     time.sleep(0.1)
 
-    event = ("test", "data")
+    event = RequestBodyEvent(body={"test": "data"})
     source_queue.put(event)
 
     # Wait for router to process
@@ -143,7 +154,11 @@ def test_router_multiple_events(router, source_queue):
 
     time.sleep(0.1)
 
-    events = [("event1", 1), ("event2", 2), ("event3", 3)]
+    events: list[PipelineEvent] = [
+        RequestBodyEvent(body={"n": 1}),
+        ResponseDoneEvent(),
+        ErrorEvent(code=500, reason="err"),
+    ]
     for event in events:
         source_queue.put(event)
 
@@ -172,7 +187,7 @@ def test_router_error_isolation(router, source_queue):
 
     time.sleep(0.1)
 
-    event = ("test", "data")
+    event = RequestBodyEvent(body={"test": "data"})
     source_queue.put(event)
 
     # Wait for processing
@@ -232,7 +247,7 @@ def test_router_queue_subscriber_integration(router, source_queue):
 
     time.sleep(0.1)
 
-    event = ("test", "data")
+    event = RequestBodyEvent(body={"test": "data"})
     source_queue.put(event)
 
     # Wait for router to process and forward
@@ -250,7 +265,7 @@ def test_router_empty_subscribers(router, source_queue):
     time.sleep(0.1)
 
     # Send event with no subscribers
-    source_queue.put(("test", "data"))
+    source_queue.put(RequestBodyEvent(body={"test": "data"}))
 
     time.sleep(0.2)
 
@@ -269,7 +284,7 @@ def test_router_subscriber_exception_logged(router, source_queue, capsys):
 
     time.sleep(0.1)
 
-    source_queue.put(("test", "data"))
+    source_queue.put(RequestBodyEvent(body={"test": "data"}))
 
     # Wait for processing
     time.sleep(0.2)
@@ -299,7 +314,7 @@ def test_router_thread_safety(router, source_queue):
     # Submit events from multiple threads
     def submit_events(start_idx):
         for i in range(5):
-            source_queue.put((f"thread_{start_idx}", i))
+            source_queue.put(LogEvent(method="GET", path=f"/{start_idx}", status=str(i)))
 
     threads = []
     for i in range(3):
@@ -334,7 +349,7 @@ def test_router_graceful_shutdown_with_pending_events(source_queue):
 
     # Queue multiple events
     for i in range(5):
-        source_queue.put(("event", i))
+        source_queue.put(LogEvent(method="GET", path="/", status=str(i)))
 
     # Stop immediately without waiting for all to process
     router.stop()

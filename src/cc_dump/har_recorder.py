@@ -10,6 +10,22 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
+from cc_dump.event_types import (
+    PipelineEvent,
+    PipelineEventKind,
+    ResponseSSEEvent,
+    RequestHeadersEvent,
+    RequestBodyEvent,
+    ResponseHeadersEvent,
+    MessageStartEvent,
+    TextBlockStartEvent,
+    ToolUseBlockStartEvent,
+    TextDeltaEvent,
+    InputJsonDeltaEvent,
+    ContentBlockStopEvent,
+    MessageDeltaEvent,
+)
+
 
 def build_har_request(method: str, url: str, headers: dict, body: dict) -> dict:
     """Build HAR request entry from HTTP headers and JSON body.
@@ -219,6 +235,77 @@ def reconstruct_message_from_events(events: list[dict]) -> dict:
     return state.message
 
 
+def _sse_event_to_dict(sse_event: object) -> dict:
+    """Convert a typed SSEEvent back to the raw dict format for reconstruction.
+
+    The reconstruct_message_from_events function works with raw dicts internally.
+    This function bridges from typed events back to that format.
+    """
+    if isinstance(sse_event, MessageStartEvent):
+        return {
+            "type": "message_start",
+            "message": {
+                "id": sse_event.message.id,
+                "type": "message",
+                "role": sse_event.message.role.value,
+                "model": sse_event.message.model,
+                "usage": {
+                    "input_tokens": sse_event.message.usage.input_tokens,
+                    "output_tokens": sse_event.message.usage.output_tokens,
+                    "cache_read_input_tokens": sse_event.message.usage.cache_read_input_tokens,
+                    "cache_creation_input_tokens": sse_event.message.usage.cache_creation_input_tokens,
+                },
+            },
+        }
+    elif isinstance(sse_event, TextBlockStartEvent):
+        return {
+            "type": "content_block_start",
+            "index": sse_event.index,
+            "content_block": {"type": "text", "text": ""},
+        }
+    elif isinstance(sse_event, ToolUseBlockStartEvent):
+        return {
+            "type": "content_block_start",
+            "index": sse_event.index,
+            "content_block": {
+                "type": "tool_use",
+                "id": sse_event.id,
+                "name": sse_event.name,
+            },
+        }
+    elif isinstance(sse_event, TextDeltaEvent):
+        return {
+            "type": "content_block_delta",
+            "index": sse_event.index,
+            "delta": {"type": "text_delta", "text": sse_event.text},
+        }
+    elif isinstance(sse_event, InputJsonDeltaEvent):
+        return {
+            "type": "content_block_delta",
+            "index": sse_event.index,
+            "delta": {"type": "input_json_delta", "partial_json": sse_event.partial_json},
+        }
+    elif isinstance(sse_event, ContentBlockStopEvent):
+        return {
+            "type": "content_block_stop",
+            "index": sse_event.index,
+        }
+    elif isinstance(sse_event, MessageDeltaEvent):
+        delta: dict[str, object] = {}
+        if sse_event.stop_reason.value:
+            delta["stop_reason"] = sse_event.stop_reason.value
+        if sse_event.stop_sequence:
+            delta["stop_sequence"] = sse_event.stop_sequence
+        return {
+            "type": "message_delta",
+            "delta": delta,
+            "usage": {"output_tokens": sse_event.output_tokens},
+        }
+    else:
+        # MessageStopEvent or unknown
+        return {"type": "message_stop"}
+
+
 class HARRecordingSubscriber:
     """Subscriber that accumulates events and writes HAR entries incrementally.
 
@@ -269,14 +356,14 @@ class HARRecordingSubscriber:
         self._first_entry = True
         self._entry_count = 0
 
-    def on_event(self, event: tuple) -> None:
+    def on_event(self, event: PipelineEvent) -> None:
         """Handle an event from the router.
 
         State machine:
-        - "request_headers" + "request" -> store pending request
-        - "response_headers" -> store response metadata
-        - "response_event" -> accumulate in response_events list
-        - "response_done" -> reconstruct complete message, build HAR entry
+        - request_headers + request -> store pending request
+        - response_headers -> store response metadata
+        - response_event -> accumulate SSE events (converted back to dicts)
+        - response_done -> reconstruct complete message, build HAR entry
 
         Errors are logged but never crash the router.
         """
@@ -289,30 +376,30 @@ class HARRecordingSubscriber:
             traceback.print_exc(file=sys.stderr)
             sys.stderr.flush()
 
-    def _handle(self, event: tuple) -> None:
+    def _handle(self, event: PipelineEvent) -> None:
         """Internal event handler - may raise exceptions."""
-        kind = event[0]
+        kind = event.kind
 
-        if kind == "request_headers":
-            # Store request headers
-            self.pending_request_headers = event[1]
+        if kind == PipelineEventKind.REQUEST_HEADERS:
+            assert isinstance(event, RequestHeadersEvent)
+            self.pending_request_headers = event.headers
             self.request_start_time = datetime.now(timezone.utc)
 
-        elif kind == "request":
-            # Store request body
-            self.pending_request = event[1]
+        elif kind == PipelineEventKind.REQUEST:
+            assert isinstance(event, RequestBodyEvent)
+            self.pending_request = event.body
 
-        elif kind == "response_headers":
-            # Store response status and headers
-            self.response_status = event[1]
-            self.response_headers = event[2]
+        elif kind == PipelineEventKind.RESPONSE_HEADERS:
+            assert isinstance(event, ResponseHeadersEvent)
+            self.response_status = event.status_code
+            self.response_headers = event.headers
 
-        elif kind == "response_event":
-            # Accumulate SSE event
-            _event_type, event_data = event[1], event[2]
-            self.response_events.append(event_data)
+        elif kind == PipelineEventKind.RESPONSE_EVENT:
+            assert isinstance(event, ResponseSSEEvent)
+            # Convert typed SSE event back to dict for reconstruction
+            self.response_events.append(_sse_event_to_dict(event.sse_event))
 
-        elif kind == "response_done":
+        elif kind == PipelineEventKind.RESPONSE_DONE:
             # Complete - reconstruct message and write HAR entry
             self._commit_entry()
 

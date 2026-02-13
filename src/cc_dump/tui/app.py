@@ -435,7 +435,7 @@ class CcDumpApp(App):
         if self._replacing_widgets:
             return
 
-        kind = event[0]
+        kind = event.kind
         conv = self._get_conv()
         stats = self._get_stats()
         if conv is None or stats is None:
@@ -454,7 +454,7 @@ class CcDumpApp(App):
         }
 
         handler = cc_dump.tui.event_handlers.EVENT_HANDLERS.get(kind)
-        if handler:
+        if handler and callable(handler):
             self._app_state = handler(
                 event, self._state, widgets, self._app_state, self._log
             )

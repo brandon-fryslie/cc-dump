@@ -33,6 +33,7 @@ _EXCLUDED_FILES = {
     "proxy.py",  # stable boundary, never reload
     "cli.py",  # entry point, not reloadable at runtime
     "hot_reload.py",  # this file
+    "event_types.py",  # stable type definitions, never reload
     "__init__.py",  # module init
     "__main__.py",  # entry point
 }

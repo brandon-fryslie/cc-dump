@@ -10,9 +10,22 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum, IntEnum
+from enum import Enum
 from collections.abc import Callable
 from typing import Any, NamedTuple
+
+from cc_dump.event_types import (
+    InputJsonDeltaEvent,
+    MessageDeltaEvent,
+    MessageStartEvent,
+    MessageStopEvent,
+    SSEEvent,
+    ContentBlockStopEvent,
+    StopReason,
+    TextBlockStartEvent,
+    TextDeltaEvent,
+    ToolUseBlockStartEvent,
+)
 
 from cc_dump.analysis import TurnBudget, compute_turn_budget, tool_result_breakdown
 from cc_dump.colors import TAG_COLORS
@@ -736,67 +749,50 @@ def format_request(body, state, request_headers: dict | None = None):
     return blocks
 
 
-def _format_message_start(data):
+def _fmt_message_start(event: MessageStartEvent) -> list[FormattedBlock]:
     """Handle message_start event."""
-    msg = data.get("message", {})
-    return [StreamInfoBlock(model=msg.get("model", "?"))]
+    return [StreamInfoBlock(model=event.message.model)]
 
 
-# [LAW:dataflow-not-control-flow] content_block_start dispatch
-_CBLOCK_START_HANDLERS = {
-    "tool_use": lambda block: [StreamToolUseBlock(name=block.get("name", "?"))],
-}
+def _fmt_tool_use_block_start(event: ToolUseBlockStartEvent) -> list[FormattedBlock]:
+    """Handle content_block_start with type=tool_use."""
+    return [StreamToolUseBlock(name=event.name)]
 
 
-def _format_cblock_start(data):
-    """Handle content_block_start event."""
-    block = data.get("content_block", {})
-    btype = block.get("type", "?")
-    handler = _CBLOCK_START_HANDLERS.get(btype, lambda _: [])
-    return handler(block)
-
-
-# [LAW:dataflow-not-control-flow] content_block_delta dispatch
-_CBLOCK_DELTA_HANDLERS = {
-    "text_delta": lambda delta: (
-        [TextDeltaBlock(text=delta.get("text", ""), category=Category.ASSISTANT)]
-        if delta.get("text", "")
-        else []
-    ),
-}
-
-
-def _format_cblock_delta(data):
-    """Handle content_block_delta event."""
-    delta = data.get("delta", {})
-    dtype = delta.get("type", "?")
-    handler = _CBLOCK_DELTA_HANDLERS.get(dtype, lambda _: [])
-    return handler(delta)
-
-
-def _format_message_delta(data):
-    """Handle message_delta event."""
-    delta = data.get("delta", {})
-    stop = delta.get("stop_reason", "")
-    if stop:
-        return [StopReasonBlock(reason=stop)]
+def _fmt_text_delta(event: TextDeltaEvent) -> list[FormattedBlock]:
+    """Handle content_block_delta with type=text_delta."""
+    if event.text:
+        return [TextDeltaBlock(text=event.text, category=Category.ASSISTANT)]
     return []
 
 
-# [LAW:dataflow-not-control-flow] Dispatch table replaces if/elif chain
-_RESPONSE_EVENT_FORMATTERS = {
-    "message_start": _format_message_start,
-    "content_block_start": _format_cblock_start,
-    "content_block_delta": _format_cblock_delta,
-    "message_delta": _format_message_delta,
-    "message_stop": lambda _: [],
+def _fmt_message_delta(event: MessageDeltaEvent) -> list[FormattedBlock]:
+    """Handle message_delta event."""
+    if event.stop_reason != StopReason.NONE:
+        return [StopReasonBlock(reason=event.stop_reason.value)]
+    return []
+
+
+# [LAW:dataflow-not-control-flow] Dispatch table: SSEEvent type -> formatter
+_RESPONSE_EVENT_FORMATTERS: dict[type, Callable[..., list[FormattedBlock]]] = {
+    MessageStartEvent: _fmt_message_start,
+    TextBlockStartEvent: lambda _: [],
+    ToolUseBlockStartEvent: _fmt_tool_use_block_start,
+    TextDeltaEvent: _fmt_text_delta,
+    InputJsonDeltaEvent: lambda _: [],
+    ContentBlockStopEvent: lambda _: [],
+    MessageDeltaEvent: _fmt_message_delta,
+    MessageStopEvent: lambda _: [],
 }
 
 
-def format_response_event(event_type, data):
-    """Format a streaming response event as a list of FormattedBlock."""
-    formatter = _RESPONSE_EVENT_FORMATTERS.get(event_type, lambda _: [])
-    return formatter(data)
+def format_response_event(sse_event: SSEEvent) -> list[FormattedBlock]:
+    """Format a streaming SSE event as a list of FormattedBlock.
+
+    // [LAW:one-source-of-truth] The class IS the type — dispatch on type().
+    """
+    formatter = _RESPONSE_EVENT_FORMATTERS.get(type(sse_event), lambda _: [])
+    return formatter(sse_event)
 
 
 # [LAW:dataflow-not-control-flow] Complete response content block factories

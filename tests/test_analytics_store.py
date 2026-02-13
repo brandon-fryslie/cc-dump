@@ -4,6 +4,17 @@ import pytest
 
 from cc_dump.analytics_store import AnalyticsStore, TurnRecord, ToolInvocationRecord
 from cc_dump.analysis import ToolEconomicsRow
+from cc_dump.event_types import (
+    RequestBodyEvent,
+    ResponseSSEEvent,
+    ResponseDoneEvent,
+    parse_sse_event,
+)
+
+
+def _sse(event_type: str, raw: dict) -> ResponseSSEEvent:
+    """Helper to build a ResponseSSEEvent from raw SSE data."""
+    return ResponseSSEEvent(sse_event=parse_sse_event(event_type, raw))
 
 
 # ─── Basic Event Handling Tests ────────────────────────────────────────────────
@@ -19,27 +30,18 @@ def test_store_accumulates_turn():
         "messages": [{"role": "user", "content": "Hello"}],
     }
 
-    store.on_event(("request", request))
-    store.on_event(
-        (
-            "response_event",
-            "message_start",
-            {
-                "message": {
-                    "model": "claude-sonnet-4",
-                    "usage": {"input_tokens": 100, "output_tokens": 0},
-                }
-            },
-        )
-    )
-    store.on_event(
-        (
-            "response_event",
-            "message_delta",
-            {"delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 50}},
-        )
-    )
-    store.on_event(("response_done",))
+    store.on_event(RequestBodyEvent(body=request))
+    store.on_event(_sse("message_start", {
+        "message": {
+            "model": "claude-sonnet-4",
+            "usage": {"input_tokens": 100, "output_tokens": 0},
+        }
+    }))
+    store.on_event(_sse("message_delta", {
+        "delta": {"stop_reason": "end_turn"},
+        "usage": {"output_tokens": 50},
+    }))
+    store.on_event(ResponseDoneEvent())
 
     # Verify turn was recorded
     assert len(store._turns) == 1
@@ -83,27 +85,18 @@ def test_store_populates_token_counts():
         ],
     }
 
-    store.on_event(("request", request))
-    store.on_event(
-        (
-            "response_event",
-            "message_start",
-            {
-                "message": {
-                    "model": "claude-sonnet-4",
-                    "usage": {"input_tokens": 100, "output_tokens": 0},
-                }
-            },
-        )
-    )
-    store.on_event(
-        (
-            "response_event",
-            "message_delta",
-            {"delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 50}},
-        )
-    )
-    store.on_event(("response_done",))
+    store.on_event(RequestBodyEvent(body=request))
+    store.on_event(_sse("message_start", {
+        "message": {
+            "model": "claude-sonnet-4",
+            "usage": {"input_tokens": 100, "output_tokens": 0},
+        }
+    }))
+    store.on_event(_sse("message_delta", {
+        "delta": {"stop_reason": "end_turn"},
+        "usage": {"output_tokens": 50},
+    }))
+    store.on_event(ResponseDoneEvent())
 
     # Verify tool invocation was recorded
     assert len(store._turns) == 1
@@ -147,15 +140,11 @@ def test_store_handles_empty_tool_inputs():
         ],
     }
 
-    store.on_event(("request", request))
-    store.on_event(
-        (
-            "response_event",
-            "message_start",
-            {"message": {"model": "claude-sonnet-4", "usage": {}}},
-        )
-    )
-    store.on_event(("response_done",))
+    store.on_event(RequestBodyEvent(body=request))
+    store.on_event(_sse("message_start", {
+        "message": {"model": "claude-sonnet-4", "usage": {}},
+    }))
+    store.on_event(ResponseDoneEvent())
 
     assert len(store._turns[0].tool_invocations) == 1
     inv = store._turns[0].tool_invocations[0]
@@ -187,11 +176,11 @@ def test_store_handles_multiple_tools():
         ],
     }
 
-    store.on_event(("request", request))
-    store.on_event(
-        ("response_event", "message_start", {"message": {"model": "claude-sonnet-4", "usage": {}}})
-    )
-    store.on_event(("response_done",))
+    store.on_event(RequestBodyEvent(body=request))
+    store.on_event(_sse("message_start", {
+        "message": {"model": "claude-sonnet-4", "usage": {}},
+    }))
+    store.on_event(ResponseDoneEvent())
 
     assert len(store._turns[0].tool_invocations) == 2
 

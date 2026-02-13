@@ -78,7 +78,9 @@ def main():
         args.replay = latest
         print(f"🔄 Continuing from: {latest}")
 
-    event_q: queue.Queue[tuple] = queue.Queue()
+    from cc_dump.event_types import PipelineEvent
+
+    event_q: queue.Queue[PipelineEvent] = queue.Queue()
 
     # Load replay data if specified, but always start proxy
     server = None

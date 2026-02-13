@@ -8,6 +8,18 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
+from cc_dump.event_types import (
+    ErrorEvent,
+    LogEvent,
+    ProxyErrorEvent,
+    RequestBodyEvent,
+    RequestHeadersEvent,
+    ResponseDoneEvent,
+    ResponseHeadersEvent,
+    ResponseSSEEvent,
+    parse_sse_event,
+)
+
 # Headers to exclude from emitted events (security + noise reduction)
 _EXCLUDED_HEADERS = frozenset(
     {
@@ -58,10 +70,14 @@ class EventQueueSink(StreamSink):
         self._queue = queue
 
     def on_event(self, event_type, event):
-        self._queue.put(("response_event", event_type, event))
+        try:
+            sse = parse_sse_event(event_type, event)
+        except ValueError:
+            return
+        self._queue.put(ResponseSSEEvent(sse_event=sse))
 
     def on_done(self):
-        self._queue.put(("response_done",))
+        self._queue.put(ResponseDoneEvent())
 
 
 def _fan_out_sse(resp, sinks):
@@ -106,7 +122,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
     event_queue = None  # set by cli.py before server starts
 
     def log_message(self, fmt, *args):
-        self.event_queue.put(("log", self.command, self.path, args[0] if args else ""))
+        self.event_queue.put(LogEvent(method=self.command, path=self.path, status=args[0] if args else ""))
 
     def _proxy(self):
         content_len = int(self.headers.get("Content-Length", 0))
@@ -126,7 +142,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             request_path = self.path
             if not self.target_host:
                 self.event_queue.put(
-                    ("error", 500, "No target_host configured for reverse proxy mode")
+                    ErrorEvent(code=500, reason="No target_host configured for reverse proxy mode")
                 )
                 self.send_response(500)
                 self.end_headers()
@@ -141,8 +157,8 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 body = json.loads(body_bytes)
                 # Emit request headers before request body
                 safe_req_headers = _safe_headers(self.headers)
-                self.event_queue.put(("request_headers", safe_req_headers))
-                self.event_queue.put(("request", body))
+                self.event_queue.put(RequestHeadersEvent(headers=safe_req_headers))
+                self.event_queue.put(RequestBodyEvent(body=body))
             except json.JSONDecodeError as e:
                 sys.stderr.write(f"[proxy] malformed request JSON: {e}\n")
                 sys.stderr.flush()
@@ -162,7 +178,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             ctx = ssl.create_default_context()
             resp = urllib.request.urlopen(req, context=ctx, timeout=300)
         except urllib.error.HTTPError as e:
-            self.event_queue.put(("error", e.code, e.reason))
+            self.event_queue.put(ErrorEvent(code=e.code, reason=e.reason))
             self.send_response(e.code)
             for k, v in e.headers.items():
                 if k.lower() != "transfer-encoding":
@@ -171,7 +187,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(e.read())
             return
         except Exception as e:
-            self.event_queue.put(("proxy_error", str(e)))
+            self.event_queue.put(ProxyErrorEvent(error=str(e)))
             self.send_response(502)
             self.end_headers()
             return
@@ -189,7 +205,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         if is_stream:
             # Emit response headers before streaming
             safe_resp_headers = _safe_headers(resp.headers)
-            self.event_queue.put(("response_headers", resp.status, safe_resp_headers))
+            self.event_queue.put(ResponseHeadersEvent(status_code=resp.status, headers=safe_resp_headers))
             self._stream_response(resp)
         else:
             data = resp.read()

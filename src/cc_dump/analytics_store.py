@@ -12,13 +12,20 @@ import json
 import sys
 from dataclasses import dataclass, field
 
+from cc_dump.event_types import (
+    PipelineEvent,
+    PipelineEventKind,
+    RequestBodyEvent,
+    ResponseSSEEvent,
+    MessageStartEvent,
+    MessageDeltaEvent,
+    TextDeltaEvent,
+)
 from cc_dump.analysis import (
     correlate_tools,
     classify_model,
-    compute_turn_budget,
     HAIKU_BASE_UNIT,
     ToolEconomicsRow,
-    TurnBudget,
 )
 from cc_dump.token_counter import count_tokens
 
@@ -68,7 +75,7 @@ class AnalyticsStore:
         self._current_stop = ""
         self._current_model = ""
 
-    def on_event(self, event):
+    def on_event(self, event: PipelineEvent) -> None:
         """Handle an event from the router. Errors logged, never crash the proxy."""
         try:
             self._handle(event)
@@ -79,43 +86,44 @@ class AnalyticsStore:
             traceback.print_exc(file=sys.stderr)
             sys.stderr.flush()
 
-    def _handle(self, event):
+    def _handle(self, event: PipelineEvent) -> None:
         """Internal event handler - may raise exceptions."""
-        kind = event[0]
+        kind = event.kind
 
-        if kind == "request":
+        if kind == PipelineEventKind.REQUEST:
+            assert isinstance(event, RequestBodyEvent)
             # Start accumulating a new turn
-            self._current_request = event[1]
+            self._current_request = event.body
             self._current_response_events = []
             self._current_text = []
             self._current_usage = {}
             self._current_stop = ""
             self._current_model = self._current_request.get("model", "")
 
-        elif kind == "response_event":
-            event_type, data = event[1], event[2]
-            self._current_response_events.append(data)
+        elif kind == PipelineEventKind.RESPONSE_EVENT:
+            assert isinstance(event, ResponseSSEEvent)
+            sse = event.sse_event
 
-            if event_type == "message_start":
-                msg = data.get("message", {})
-                usage = msg.get("usage", {})
-                self._current_usage = dict(usage)
-                self._current_model = msg.get("model", self._current_model)
+            if isinstance(sse, MessageStartEvent):
+                usage = sse.message.usage
+                self._current_usage = {
+                    "input_tokens": usage.input_tokens,
+                    "output_tokens": usage.output_tokens,
+                    "cache_read_input_tokens": usage.cache_read_input_tokens,
+                    "cache_creation_input_tokens": usage.cache_creation_input_tokens,
+                }
+                self._current_model = sse.message.model or self._current_model
 
-            elif event_type == "content_block_delta":
-                delta = data.get("delta", {})
-                if delta.get("type") == "text_delta":
-                    self._current_text.append(delta.get("text", ""))
+            elif isinstance(sse, TextDeltaEvent):
+                self._current_text.append(sse.text)
 
-            elif event_type == "message_delta":
-                delta = data.get("delta", {})
-                self._current_stop = delta.get("stop_reason", "")
+            elif isinstance(sse, MessageDeltaEvent):
+                self._current_stop = sse.stop_reason.value
                 # Accumulate final usage (output tokens)
-                usage = data.get("usage", {})
-                if usage:
-                    self._current_usage.update(usage)
+                if sse.output_tokens:
+                    self._current_usage["output_tokens"] = sse.output_tokens
 
-        elif kind == "response_done":
+        elif kind == PipelineEventKind.RESPONSE_DONE:
             self._commit_turn()
 
     def _commit_turn(self):
