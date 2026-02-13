@@ -157,6 +157,10 @@ def convert_to_events(
 
     # Reconstruct SSE event sequence from complete message
     # 1. message_start
+    start_usage = dict(complete_message.get("usage", {}))
+    # Set output_tokens to 0 in message_start (it's updated in message_delta)
+    if "output_tokens" in start_usage:
+        start_usage["output_tokens"] = 0
     message_start_event = {
         "type": "message_start",
         "message": {
@@ -164,12 +168,9 @@ def convert_to_events(
             "type": "message",
             "role": complete_message.get("role", "assistant"),
             "model": complete_message.get("model", ""),
-            "usage": dict(complete_message.get("usage", {})),
+            "usage": start_usage,
         },
     }
-    # Set output_tokens to 0 in message_start (it's updated in message_delta)
-    if "output_tokens" in message_start_event["message"]["usage"]:
-        message_start_event["message"]["usage"]["output_tokens"] = 0
 
     events.append(("response_event", "message_start", message_start_event))
 
@@ -296,24 +297,24 @@ def convert_to_events(
             sys.stderr.flush()
 
     # 3. message_delta (stop_reason and usage)
-    message_delta_event = {
-        "type": "message_delta",
-        "delta": {},
-        "usage": {},
-    }
-
+    delta: dict[str, object] = {}
     stop_reason = complete_message.get("stop_reason")
     if stop_reason:
-        message_delta_event["delta"]["stop_reason"] = stop_reason
-
+        delta["stop_reason"] = stop_reason
     stop_sequence = complete_message.get("stop_sequence")
     if stop_sequence:
-        message_delta_event["delta"]["stop_sequence"] = stop_sequence
+        delta["stop_sequence"] = stop_sequence
 
-    # Output tokens in message_delta
+    delta_usage: dict[str, object] = {}
     usage = complete_message.get("usage", {})
     if "output_tokens" in usage:
-        message_delta_event["usage"]["output_tokens"] = usage["output_tokens"]
+        delta_usage["output_tokens"] = usage["output_tokens"]
+
+    message_delta_event = {
+        "type": "message_delta",
+        "delta": delta,
+        "usage": delta_usage,
+    }
 
     events.append(("response_event", "message_delta", message_delta_event))
 

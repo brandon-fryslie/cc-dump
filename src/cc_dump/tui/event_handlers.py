@@ -7,6 +7,7 @@ but the actual behavior can be hot-swapped.
 
 import cc_dump.analysis
 import cc_dump.formatting
+from cc_dump.formatting import NewSessionBlock
 
 
 def handle_request_headers(event, state, widgets, app_state, log_fn):
@@ -50,6 +51,12 @@ def handle_request(event, state, widgets, app_state, log_fn):
         # [LAW:one-source-of-truth] Header injection moved into format_request
         pending_headers = app_state.pop("pending_request_headers", None)
         blocks = cc_dump.formatting.format_request(body, state, request_headers=pending_headers)
+
+        # Check for new session — signal to app for notification/message
+        for block in blocks:
+            if isinstance(block, NewSessionBlock):
+                app_state["new_session_id"] = block.session_id
+                break
 
         conv = widgets["conv"]
         stats = widgets["stats"]

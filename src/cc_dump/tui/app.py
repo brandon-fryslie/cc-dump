@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 from textual.app import App, ComposeResult, SystemCommand
 from textual.css.query import NoMatches
+from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Header
 
@@ -35,6 +36,14 @@ from cc_dump.tui import search_controller as _search
 from cc_dump.tui import dump_export as _dump
 from cc_dump.tui import theme_controller as _theme
 from cc_dump.tui import hot_reload_controller as _hot_reload
+
+
+class NewSession(Message):
+    """Message posted when a new Claude Code session is detected."""
+
+    def __init__(self, session_id: str) -> None:
+        self.session_id = session_id
+        super().__init__()
 
 
 class CcDumpApp(App):
@@ -449,6 +458,12 @@ class CcDumpApp(App):
             self._app_state = handler(
                 event, self._state, widgets, self._app_state, self._log
             )
+
+            # Check for new session signal from handler
+            new_session_id = self._app_state.pop("new_session_id", None)
+            if new_session_id:
+                self.post_message(NewSession(new_session_id))
+                self.notify(f"New session: {new_session_id[:8]}...")
 
     # ─── Delegates to extracted modules ────────────────────────────────
     # Textual requires action_* and watch_* as methods on the App class.
