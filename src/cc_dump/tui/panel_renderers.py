@@ -231,7 +231,6 @@ def render_info_panel(info: dict) -> Text:
             - target: Upstream target URL (or None)
             - session_name: Session name string
             - session_id: Session ID hex string (or None)
-            - db_path: Database file path (or None)
             - recording_path: HAR recording path (or None)
             - recording_dir: Directory containing recordings
             - replay_file: Replay source file (or None)
@@ -253,7 +252,6 @@ def render_info_panel(info: dict) -> Text:
         ("Target", info.get("target") or "--"),
         ("Session", info.get("session_name", "--")),
         ("Session ID", info.get("session_id") or "--"),
-        ("Database", info.get("db_path") or "disabled"),
         ("Recording", info.get("recording_path") or "disabled"),
         ("Recordings Dir", info.get("recording_dir", "--")),
         ("Replay From", info.get("replay_file") or "--"),

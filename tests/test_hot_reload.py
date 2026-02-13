@@ -393,7 +393,7 @@ class TestHotReloadModuleStructure:
 
         assert isinstance(_RELOAD_IF_CHANGED, list)
 
-        expected_modules = ["cc_dump.schema", "cc_dump.store", "cc_dump.router"]
+        expected_modules = ["cc_dump.router"]
         for mod in expected_modules:
             assert mod in _RELOAD_IF_CHANGED
 

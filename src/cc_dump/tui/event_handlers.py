@@ -177,7 +177,7 @@ def handle_response_done(event, state, widgets, app_state, log_fn):
     Args:
         event: The event tuple ("response_done",)
         state: The content tracking state dict
-        widgets: Dict with widget references (includes refresh_callbacks and db_context)
+        widgets: Dict with widget references (includes refresh_callbacks and analytics_store)
         app_state: Dict with app-level state
         log_fn: Function to log application messages
 
@@ -189,26 +189,24 @@ def handle_response_done(event, state, widgets, app_state, log_fn):
         stats = widgets["stats"]
         filters = widgets["filters"]
         refresh_callbacks = widgets.get("refresh_callbacks", {})
-        db_context = widgets.get("db_context", {})
+        analytics_store = widgets.get("analytics_store")
 
         # Finalize streaming turn in ConversationView
         _ = conv.finalize_streaming_turn()
 
-        # Clear current turn usage (turn is now committed to DB)
+        # Clear current turn usage (turn is now committed to store)
         app_state["current_turn_usage"] = {}
 
-        # Refresh stats panel from database (merges current turn if streaming)
-        db_path = db_context.get("db_path")
-        session_id = db_context.get("session_id")
-        if db_path and session_id:
-            stats.refresh_from_db(db_path, session_id, current_turn=None)
+        # Refresh stats panel from analytics store (merges current turn if streaming)
+        if analytics_store is not None:
+            stats.refresh_from_store(analytics_store, current_turn=None)
 
         # Re-render to show cache data in budget blocks
         budget_vis = filters.get("budget", cc_dump.formatting.HIDDEN)
         if budget_vis.visible:
             conv.rerender(filters)
 
-        # Update economics and timeline panels (these query database)
+        # Update economics and timeline panels (these query analytics store)
         if "refresh_economics" in refresh_callbacks:
             refresh_callbacks["refresh_economics"]()
         if "refresh_timeline" in refresh_callbacks:

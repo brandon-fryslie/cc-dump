@@ -58,7 +58,7 @@ class CcDumpApp(App):
         event_queue,
         state,
         router,
-        db_path: Optional[str] = None,
+        analytics_store=None,
         session_id: Optional[str] = None,
         session_name: str = "unnamed-session",
         host: str = "127.0.0.1",
@@ -72,7 +72,7 @@ class CcDumpApp(App):
         self._event_queue = event_queue
         self._state = state
         self._router = router
-        self._db_path = db_path
+        self._analytics_store = analytics_store
         self._session_id = session_id
         self._session_name = session_name
         self._host = host
@@ -261,11 +261,8 @@ class CcDumpApp(App):
                 f"Usage: HTTP_PROXY=http://{self._host}:{self._port} ANTHROPIC_BASE_URL=http://api.minimax.com claude",
             )
 
-        if self._db_path and self._session_id:
-            self._log("INFO", f"Database: {self._db_path}")
+        if self._session_id:
             self._log("INFO", f"Session: {self._session_id}")
-        else:
-            self._log("WARNING", "Database disabled (--no-db)")
 
         self.run_worker(self._drain_events, thread=True, exclusive=False)
 
@@ -330,7 +327,6 @@ class CcDumpApp(App):
             "target": self._target,
             "session_name": self._session_name,
             "session_id": self._session_id,
-            "db_path": self._db_path,
             "recording_path": self._recording_path,
             "recording_dir": cc_dump.sessions.get_recordings_dir(),
             "replay_file": self._replay_file,
@@ -389,8 +385,8 @@ class CcDumpApp(App):
             except Exception as e:
                 self._log("ERROR", f"Error processing replay pair: {e}")
 
-        if stats and self._db_path and self._session_id:
-            stats.refresh_from_db(self._db_path, self._session_id)
+        if stats and self._analytics_store:
+            stats.refresh_from_store(self._analytics_store)
 
         self._log(
             "INFO",
@@ -445,7 +441,7 @@ class CcDumpApp(App):
                 "refresh_economics": self._refresh_economics,
                 "refresh_timeline": self._refresh_timeline,
             },
-            "db_context": {"db_path": self._db_path, "session_id": self._session_id},
+            "analytics_store": self._analytics_store,
         }
 
         handler = cc_dump.tui.event_handlers.EVENT_HANDLERS.get(kind)

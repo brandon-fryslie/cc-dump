@@ -10,7 +10,7 @@ import uuid
 
 from cc_dump.proxy import ProxyHandler
 from cc_dump.router import EventRouter, QueueSubscriber, DirectSubscriber
-from cc_dump.store import SQLiteWriter
+from cc_dump.analytics_store import AnalyticsStore
 
 
 def main():
@@ -28,15 +28,6 @@ def main():
         type=str,
         default=target,
         help="Upstream API URL for reverse proxy mode (default: https://api.anthropic.com)",
-    )
-    parser.add_argument(
-        "--db",
-        type=str,
-        default=os.path.expanduser("~/.local/share/cc-dump/sessions.db"),
-        help="SQLite database path",
-    )
-    parser.add_argument(
-        "--no-db", action="store_true", help="Disable persistence (no database)"
     )
     parser.add_argument(
         "--record", type=str, default=None, help="HAR recording output path"
@@ -146,18 +137,11 @@ def main():
     display_sub = QueueSubscriber()
     router.add_subscriber(display_sub)
 
-    # SQLite writer (direct subscriber, inline writes)
-    session_id = None
-    db_path = None
-    if not args.no_db:
-        session_id = uuid.uuid4().hex
-        db_path = args.db
-        writer = SQLiteWriter(db_path, session_id)
-        router.add_subscriber(DirectSubscriber(writer.on_event))
-        print(f"   Database: {db_path}")
-        print(f"   Session ID: {session_id}")
-    else:
-        print("   Database: disabled (--no-db)")
+    # Analytics store (direct subscriber, in-memory)
+    session_id = uuid.uuid4().hex
+    analytics_store = AnalyticsStore()
+    router.add_subscriber(DirectSubscriber(analytics_store.on_event))
+    print(f"   Session ID: {session_id}")
 
     # HAR recording subscriber (direct subscriber, inline writes)
     # [LAW:one-source-of-truth] Session name from CLI or default
@@ -165,10 +149,6 @@ def main():
     har_recorder = None
     record_path = None
     if not args.no_record:
-        # Generate session_id if not already created for database
-        if session_id is None:
-            session_id = uuid.uuid4().hex
-
         import cc_dump.har_recorder
 
         # [LAW:one-source-of-truth] Recordings organized by session name
@@ -201,7 +181,7 @@ def main():
         display_sub.queue,
         state,
         router,
-        db_path=db_path,
+        analytics_store=analytics_store,
         session_id=session_id,
         session_name=session_name,
         host=args.host,

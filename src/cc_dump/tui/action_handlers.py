@@ -174,12 +174,12 @@ def half_page_up(app) -> None:
 
 
 def _refresh_panel(app, getter_name: str) -> None:
-    """// [LAW:one-type-per-behavior] Shared refresh logic for db-backed panels."""
-    if not app.is_running or not app._db_path or not app._session_id:
+    """// [LAW:one-type-per-behavior] Shared refresh logic for store-backed panels."""
+    if not app.is_running or app._analytics_store is None:
         return
     panel = getattr(app, getter_name)()
     if panel is not None:
-        panel.refresh_from_db(app._db_path, app._session_id)
+        panel.refresh_from_store(app._analytics_store)
 
 
 def refresh_economics(app) -> None:

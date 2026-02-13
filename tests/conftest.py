@@ -135,19 +135,12 @@ def modify_file(filepath, modification_fn):
 # Internal process launcher (shared by function- and class-scoped fixtures)
 # ---------------------------------------------------------------------------
 
-def _launch_cc_dump(port=None, timeout=10, db_path=None, session_id=None):
+def _launch_cc_dump(port=None, timeout=10):
     """Launch cc-dump and wait for TUI to be ready. Returns (proc, port)."""
     if port is None:
         port = random.randint(10000, 60000)
 
     cmd = ["uv", "run", "cc-dump", "--port", str(port)]
-
-    if db_path is None:
-        cmd.append("--no-db")
-    else:
-        cmd.extend(["--db", str(db_path)])
-        if session_id:
-            cmd.extend(["--session-id", session_id])
 
     proc = PtyProcess(cmd, timeout=timeout)
 
@@ -204,9 +197,8 @@ def start_cc_dump():
     """Factory fixture to start cc-dump TUI and return PtyProcess."""
     processes = []
 
-    def _start(port=None, timeout=10, db_path=None, session_id=None):
-        proc, _port = _launch_cc_dump(port=port, timeout=timeout,
-                                       db_path=db_path, session_id=session_id)
+    def _start(port=None, timeout=10):
+        proc, _port = _launch_cc_dump(port=port, timeout=timeout)
         processes.append(proc)
         return proc
 
@@ -240,18 +232,6 @@ def class_proc_with_port():
 # ---------------------------------------------------------------------------
 # Misc fixtures
 # ---------------------------------------------------------------------------
-
-@pytest.fixture
-def temp_db():
-    """Create a temporary database with initialized schema for testing."""
-    from cc_dump.schema import init_db
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = str(Path(tmpdir) / "test.db")
-        conn = init_db(db_path)
-        conn.close()
-        yield db_path
-
 
 @pytest.fixture
 def fresh_state():

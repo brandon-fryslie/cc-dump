@@ -10,6 +10,7 @@ from typing import AsyncIterator, Callable
 
 from textual.pilot import Pilot
 
+from cc_dump.analytics_store import AnalyticsStore
 from cc_dump.router import EventRouter, QueueSubscriber
 from cc_dump.tui.app import CcDumpApp
 
@@ -46,12 +47,14 @@ async def run_app(
         "request_counter": 0,
     }
 
+    # Create in-memory analytics store for testing
+    analytics_store = AnalyticsStore()
+
     app = CcDumpApp(
         event_queue=tui_sub.queue,
         state=state,
         router=router,
-        db_path=None,
-        session_id=None,
+        analytics_store=analytics_store,
         replay_data=replay_data,
     )
 

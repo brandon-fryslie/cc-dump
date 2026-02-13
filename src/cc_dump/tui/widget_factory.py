@@ -23,7 +23,6 @@ import cc_dump.palette
 import cc_dump.analysis
 import cc_dump.tui.rendering
 import cc_dump.tui.panel_renderers
-import cc_dump.db_queries
 
 
 def _compute_widest(strips: list) -> int:
@@ -1144,27 +1143,26 @@ class StatsPanel(Static):
         """Update statistics and refresh display.
 
         Only updates in-memory fields (requests, models).
-        Token counts come from database via refresh_from_db().
+        Token counts come from analytics store via refresh_from_store().
         """
         if "requests" in kwargs:
             self.request_count = kwargs["requests"]
         if "model" in kwargs and kwargs["model"]:
             self.models_seen.add(kwargs["model"])
 
-        # No longer accumulating token counts here - they come from DB
+        # No longer accumulating token counts here - they come from analytics store
 
-    def refresh_from_db(self, db_path: str, session_id: str, current_turn: dict = None):
-        """Refresh token counts from database.
+    def refresh_from_store(self, store, current_turn: dict = None):
+        """Refresh token counts from analytics store.
 
         Args:
-            db_path: Path to SQLite database
-            session_id: Session identifier
+            store: AnalyticsStore instance
             current_turn: Optional dict with in-progress turn data to merge for real-time display
                          Expected keys: input_tokens, output_tokens, cache_read_tokens,
                          cache_creation_tokens, model
         """
-        if not db_path or not session_id:
-            # No database - show only in-memory fields with defaults
+        if store is None:
+            # No store - show only in-memory fields with defaults
             self._refresh_display(
                 turn_count=self.request_count,
                 context_total=0,
@@ -1177,10 +1175,10 @@ class StatsPanel(Static):
             return
 
         # Query session cumulative stats
-        session_stats = cc_dump.db_queries.get_session_stats(db_path, session_id, current_turn)
+        session_stats = store.get_session_stats(current_turn)
 
         # Query latest turn stats (for context window usage)
-        latest_turn = cc_dump.db_queries.get_latest_turn_stats(db_path, session_id)
+        latest_turn = store.get_latest_turn_stats()
 
         # If we have a current_turn (streaming), merge it for latest turn values
         if current_turn:
@@ -1190,7 +1188,7 @@ class StatsPanel(Static):
             latest_cache_creation = current_turn.get("cache_creation_tokens", 0)
             latest_model = current_turn.get("model", "unknown")
         elif latest_turn:
-            # Use completed latest turn from DB
+            # Use completed latest turn from store
             latest_input = latest_turn["input_tokens"]
             latest_cache_read = latest_turn["cache_read_tokens"]
             latest_cache_creation = latest_turn["cache_creation_tokens"]
@@ -1269,7 +1267,7 @@ class StatsPanel(Static):
         """Restore state from a previous instance."""
         self.request_count = state.get("request_count", 0)
         self.models_seen = state.get("models_seen", set())
-        # Note: Display refresh will happen when refresh_from_db() is called
+        # Note: Display refresh will happen when refresh_from_store() is called
         # after the widget is mounted in the app. Don't call _refresh_display()
         # here as it requires an app context for Rich Text rendering.
 
@@ -1277,7 +1275,7 @@ class StatsPanel(Static):
 class ToolEconomicsPanel(Static):
     """Panel showing per-tool token usage aggregates.
 
-    Queries database as single source of truth.
+    Queries analytics store as single source of truth.
     Supports two view modes:
     - Aggregate (default): one row per tool (all models combined)
     - Breakdown (Ctrl+M): separate rows per (tool, model) combination
@@ -1286,36 +1284,31 @@ class ToolEconomicsPanel(Static):
     def __init__(self):
         super().__init__("")
         self._breakdown_mode = False  # Default to aggregate view
-        self._db_path = None
-        self._session_id = None
+        self._store = None
 
-    def refresh_from_db(self, db_path: str, session_id: str):
-        """Refresh panel data from database.
+    def refresh_from_store(self, store):
+        """Refresh panel data from analytics store.
 
         Args:
-            db_path: Path to SQLite database
-            session_id: Session identifier
+            store: AnalyticsStore instance
         """
         # Store for use in toggle_breakdown
-        self._db_path = db_path
-        self._session_id = session_id
+        self._store = store
 
-        if not db_path or not session_id:
+        if store is None:
             self._refresh_display([])
             return
 
         # Query tool economics with real tokens and cache attribution
-        rows = cc_dump.db_queries.get_tool_economics(
-            db_path, session_id, group_by_model=self._breakdown_mode
-        )
+        rows = store.get_tool_economics(group_by_model=self._breakdown_mode)
         self._refresh_display(rows)
 
     def toggle_breakdown(self):
         """Toggle between aggregate and breakdown view modes."""
         self._breakdown_mode = not self._breakdown_mode
         # Re-query with new mode
-        if self._db_path and self._session_id:
-            self.refresh_from_db(self._db_path, self._session_id)
+        if self._store is not None:
+            self.refresh_from_store(self._store)
 
     def _refresh_display(self, rows):
         """Rebuild the economics table."""
@@ -1337,27 +1330,26 @@ class ToolEconomicsPanel(Static):
 class TimelinePanel(Static):
     """Panel showing per-turn context growth over time.
 
-    Queries database as single source of truth.
+    Queries analytics store as single source of truth.
     """
 
     def __init__(self):
         super().__init__("")
 
-    def refresh_from_db(self, db_path: str, session_id: str):
-        """Refresh panel data from database.
+    def refresh_from_store(self, store):
+        """Refresh panel data from analytics store.
 
         Args:
-            db_path: Path to SQLite database
-            session_id: Session identifier
+            store: AnalyticsStore instance
         """
-        if not db_path or not session_id:
+        if store is None:
             self._refresh_display([])
             return
 
-        # Query turn timeline from database
-        turn_data = cc_dump.db_queries.get_turn_timeline(db_path, session_id)
+        # Query turn timeline from store
+        turn_data = store.get_turn_timeline()
 
-        # Reconstruct TurnBudget objects from database data
+        # Reconstruct TurnBudget objects from store data
         budgets = []
         for row in turn_data:
             # Parse request JSON to compute budget estimates
@@ -1366,7 +1358,7 @@ class TimelinePanel(Static):
 
             budget = cc_dump.analysis.compute_turn_budget(request_body)
 
-            # Fill in actual token counts from database
+            # Fill in actual token counts from store
             budget.actual_input_tokens = row["input_tokens"]
             budget.actual_cache_read_tokens = row["cache_read_tokens"]
             budget.actual_cache_creation_tokens = row["cache_creation_tokens"]

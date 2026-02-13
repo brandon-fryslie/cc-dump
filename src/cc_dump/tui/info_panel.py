@@ -41,7 +41,6 @@ class InfoPanel(Static):
             "Target": "target",
             "Session": "session_name",
             "Session ID": "session_id",
-            "Database": "db_path",
             "Recording": "recording_path",
             "Recordings Dir": "recording_dir",
             "Replay From": "replay_file",

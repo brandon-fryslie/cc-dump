@@ -29,10 +29,7 @@ _RELOAD_ORDER = [
 
 # Additional modules reloaded only if they themselves changed
 _RELOAD_IF_CHANGED = [
-    "cc_dump.schema",
-    "cc_dump.store",
     "cc_dump.router",
-    "cc_dump.db_queries",  # query layer for TUI panels
 ]
 
 # Files to explicitly exclude from watching
