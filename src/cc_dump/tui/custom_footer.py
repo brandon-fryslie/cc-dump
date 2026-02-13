@@ -1,11 +1,17 @@
 """Custom Footer widget with data-driven rendering."""
 
+from rich.style import Style
 from rich.text import Text
 from textual.widgets import Static
 
 import cc_dump.palette
 import cc_dump.tui.rendering
 from cc_dump.formatting import VisState, HIDDEN
+
+
+def _click(action: str) -> Style:
+    """Create a Style with @click meta for Textual action dispatch."""
+    return Style.from_meta({"@click": action})
 
 
 class StatusFooter(Static):
@@ -15,6 +21,8 @@ class StatusFooter(Static):
     // [LAW:single-enforcer] update_display() is the sole render entry.
     // [LAW:one-source-of-truth] Icons from _VIS_ICONS, colors from palette.
     """
+
+    ALLOW_SELECT = False
 
     # Icon encodes visibility state (5 states)
     _VIS_ICONS: dict[VisState, str] = {
@@ -46,7 +54,7 @@ class StatusFooter(Static):
         ("9", "timeline", "timeline"),
     ]
 
-    _COMMAND_ITEMS = [("/", "search"), ("q", "quit")]
+    _COMMAND_ITEMS = [("/", "search")]
 
     def update_display(self, state: dict) -> None:
         """Render footer from state. Called by app._update_footer_state()."""
@@ -56,6 +64,7 @@ class StatusFooter(Static):
         """Build 2-line Rich Text — categories on line 1, actions on line 2.
 
         // [LAW:dataflow-not-control-flow] State values determine rendering, no branching.
+        Each span carries @click meta so clicks dispatch the matching action.
         """
         p = cc_dump.palette.PALETTE
 
@@ -70,9 +79,10 @@ class StatusFooter(Static):
             # // [LAW:dataflow-not-control-flow] Style derived from vis.visible value
             active_style = f"bold {fg_light} on {bg_color}"
             style = active_style if vis.visible else "dim"
-            line1.append(f" {key} ", style=active_style if vis.visible else "dim")
-            line1.append(name, style=style)
-            line1.append(f" {icon} ", style=style)
+            click = _click(f"toggle_vis('{name}')")
+            line1.append(f" {key} ", style=Style.parse(active_style if vis.visible else "dim") + click)
+            line1.append(name, style=Style.parse(style) + click)
+            line1.append(f" {icon} ", style=Style.parse(style) + click)
 
         # Line 2: actions + follow + commands
         line2 = Text(no_wrap=True)
@@ -83,24 +93,26 @@ class StatusFooter(Static):
             # // [LAW:dataflow-not-control-flow] Style derived from is_active value
             active_style = f"bold {fg_light} on {bg_color}"
             style = active_style if is_active else "dim"
+            click = _click(f"toggle_{state_key}")
             if line2.plain:
                 line2.append("  ")
-            line2.append(f" {key}", style=active_style if is_active else "dim")
-            line2.append(" ")
-            line2.append(label, style=style)
+            line2.append(f" {key}", style=Style.parse(active_style if is_active else "dim") + click)
+            line2.append(" ", style=click)
+            line2.append(label, style=Style.parse(style) + click)
 
         # Follow mode — prominent when active
         follow_active = bool(state.get("follow", False))
+        follow_click = _click("toggle_follow")
         line2.append("  ")
         if follow_active:
-            line2.append(" 0", style="bold")
-            line2.append(" ")
+            line2.append(" 0", style=Style.parse("bold") + follow_click)
+            line2.append(" ", style=follow_click)
             tc = cc_dump.tui.rendering.get_theme_colors()
-            line2.append("FOLLOW", style=tc.follow_active_style)
+            line2.append("FOLLOW", style=Style.parse(tc.follow_active_style) + follow_click)
         else:
-            line2.append(" 0", style="dim")
-            line2.append(" ")
-            line2.append("follow", style="dim")
+            line2.append(" 0", style=Style.parse("dim") + follow_click)
+            line2.append(" ", style=follow_click)
+            line2.append("follow", style=Style.parse("dim") + follow_click)
 
         for key, label in self._COMMAND_ITEMS:
             line2.append("  ")

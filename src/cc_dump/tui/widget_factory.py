@@ -1006,13 +1006,62 @@ class ConversationView(ScrollView):
             return (turn, block_idx, cc_dump.tui.rendering.META_TOGGLE_REGION, region_idx)
         return None
 
+    def text_select_all(self) -> None:
+        """Override to select only the block at the last click position.
+
+        Textual's Widget._on_click calls text_select_all() on double-click
+        (chain==2), which normally selects ALL text. We narrow to the block
+        under the cursor using the position stored from the most recent click.
+        """
+        from textual.geometry import Offset
+
+        content_y = getattr(self, "_last_click_content_y", None)
+        if content_y is None:
+            super().text_select_all()
+            return
+
+        turn = self._find_turn_for_line(content_y)
+        if turn is None:
+            super().text_select_all()
+            return
+
+        block_idx = self._block_index_at_line(turn, content_y)
+        if block_idx is None:
+            super().text_select_all()
+            return
+
+        block_start_in_turn = turn.block_strip_map.get(block_idx)
+        if block_start_in_turn is None:
+            super().text_select_all()
+            return
+
+        strip_count = self._block_strip_count(turn, block_idx)
+        if strip_count == 0:
+            super().text_select_all()
+            return
+
+        # Global line coordinates for this block
+        start_y = turn.line_offset + block_start_in_turn
+        end_y = start_y + strip_count - 1
+
+        start = Offset(0, start_y)
+        end = Offset(10000, end_y)  # Large x to cover full last line
+
+        selection = Selection.from_offsets(start, end)
+        self.screen.selections = {self: selection}
+
     def on_click(self, event) -> None:
         """Toggle expand on truncated blocks or content regions.
 
         Uses segment metadata (Style.from_meta) set during rendering to
         determine what was clicked, following the same pattern as Textual's
         Tree widget. Only arrow segments carry toggle metadata.
+
+        Also stores click position for text_select_all() block selection.
         """
+        # Store for text_select_all (called by Widget._on_click on double-click)
+        self._last_click_content_y = int(event.y + self.scroll_offset.y)
+
         target = self._resolve_click_target(event)
         if target is None:
             return

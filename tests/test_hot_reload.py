@@ -145,12 +145,10 @@ class TestHotReloadErrorResilience:
         """Reload continues past a module that raises SyntaxError."""
         hr = self._setup_and_trigger()
 
-        original_reload = importlib.reload
-
         def failing_reload(mod):
             if mod.__name__ == "cc_dump.colors":
                 raise SyntaxError("simulated syntax error")
-            return original_reload(mod)
+            return mod  # Don't actually reload — avoids polluting sys.modules
 
         with patch.object(importlib, "reload", side_effect=failing_reload):
             reloaded = hr.check_and_get_reloaded()
@@ -162,12 +160,10 @@ class TestHotReloadErrorResilience:
         """Reload continues past a module that raises ModuleNotFoundError."""
         hr = self._setup_and_trigger()
 
-        original_reload = importlib.reload
-
         def failing_reload(mod):
             if mod.__name__ == "cc_dump.formatting":
                 raise ModuleNotFoundError("No module named 'nonexistent'")
-            return original_reload(mod)
+            return mod  # Don't actually reload — avoids polluting sys.modules
 
         with patch.object(importlib, "reload", side_effect=failing_reload):
             reloaded = hr.check_and_get_reloaded()
@@ -179,12 +175,10 @@ class TestHotReloadErrorResilience:
         """Reload continues past a module that raises an arbitrary exception."""
         hr = self._setup_and_trigger()
 
-        original_reload = importlib.reload
-
         def failing_reload(mod):
             if mod.__name__ == "cc_dump.analysis":
                 raise RuntimeError("simulated runtime error")
-            return original_reload(mod)
+            return mod  # Don't actually reload — avoids polluting sys.modules
 
         with patch.object(importlib, "reload", side_effect=failing_reload):
             reloaded = hr.check_and_get_reloaded()
