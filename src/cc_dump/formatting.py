@@ -858,10 +858,18 @@ def format_request_headers(headers_dict: dict) -> list:
 
 def format_response_headers(status_code: int, headers_dict: dict) -> list:
     """Format HTTP response headers as blocks."""
-    if not headers_dict:
-        return []
+    # [LAW:dataflow-not-control-flow] Always emit both blocks;
+    # empty headers dict → HttpHeadersBlock with no entries (status code still shown)
     return [
+        HeaderBlock(
+            label="RESPONSE",
+            request_num=0,
+            timestamp=_get_timestamp(),
+            header_type="response",
+        ),
         HttpHeadersBlock(
-            headers=headers_dict, header_type="response", status_code=status_code
-        )
+            headers=headers_dict or {},
+            header_type="response",
+            status_code=status_code,
+        ),
     ]

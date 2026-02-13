@@ -377,13 +377,13 @@ class CcDumpApp(App):
                 )
                 conv.add_turn(request_blocks, self.active_filters)
 
-                response_blocks = []
-                if resp_headers:
-                    response_blocks.extend(
-                        cc_dump.formatting.format_response_headers(
-                            resp_status, resp_headers
-                        )
+                # [LAW:dataflow-not-control-flow] Always emit response header blocks;
+                # format_response_headers handles empty headers via empty dict
+                response_blocks = list(
+                    cc_dump.formatting.format_response_headers(
+                        resp_status, resp_headers or {}
                     )
+                )
                 response_blocks.extend(
                     cc_dump.formatting.format_complete_response(complete_message)
                 )

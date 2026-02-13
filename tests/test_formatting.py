@@ -374,21 +374,29 @@ def test_format_request_headers_with_headers():
 
 
 def test_format_response_headers_empty():
-    """Empty headers dict returns empty list."""
+    """Empty headers dict still emits HeaderBlock + HttpHeadersBlock (status code is informative)."""
     blocks = format_response_headers(200, {})
-    assert blocks == []
+    assert len(blocks) == 2
+    assert isinstance(blocks[0], HeaderBlock)
+    assert blocks[0].header_type == "response"
+    assert blocks[0].label == "RESPONSE"
+    assert isinstance(blocks[1], HttpHeadersBlock)
+    assert blocks[1].headers == {}
+    assert blocks[1].status_code == 200
 
 
 def test_format_response_headers_with_headers():
-    """Response headers formatted as HttpHeadersBlock with status code."""
+    """Response headers formatted as HeaderBlock + HttpHeadersBlock with status code."""
     headers = {"Content-Type": "text/event-stream", "x-request-id": "abc123"}
     blocks = format_response_headers(200, headers)
 
-    assert len(blocks) == 1
-    assert isinstance(blocks[0], HttpHeadersBlock)
-    assert blocks[0].headers == headers
+    assert len(blocks) == 2
+    assert isinstance(blocks[0], HeaderBlock)
     assert blocks[0].header_type == "response"
-    assert blocks[0].status_code == 200
+    assert isinstance(blocks[1], HttpHeadersBlock)
+    assert blocks[1].headers == headers
+    assert blocks[1].header_type == "response"
+    assert blocks[1].status_code == 200
 
 
 def test_http_headers_block_instantiation():

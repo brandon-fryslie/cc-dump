@@ -2,12 +2,25 @@
 
 import json
 
+from cc_dump.event_types import (
+    RequestHeadersEvent,
+    RequestBodyEvent,
+    ResponseHeadersEvent,
+    ResponseSSEEvent,
+    ResponseDoneEvent,
+    parse_sse_event,
+)
 from cc_dump.har_recorder import (
     HARRecordingSubscriber,
     build_har_request,
     build_har_response,
     reconstruct_message_from_events,
 )
+
+
+def _sse(event_type: str, raw: dict) -> ResponseSSEEvent:
+    """Helper to build a ResponseSSEEvent from raw SSE data."""
+    return ResponseSSEEvent(sse_event=parse_sse_event(event_type, raw))
 
 
 # ─── HAR Request Builder Tests ────────────────────────────────────────────────
@@ -351,14 +364,13 @@ def test_har_subscriber_accumulates_events(tmp_path):
     subscriber = HARRecordingSubscriber(str(har_path), "session_123")
 
     # Simulate event sequence
-    subscriber.on_event(("request_headers", {"content-type": "application/json"}))
+    subscriber.on_event(RequestHeadersEvent(headers={"content-type": "application/json"}))
     subscriber.on_event(
-        ("request", {"model": "claude-3-opus-20240229", "stream": True})
+        RequestBodyEvent(body={"model": "claude-3-opus-20240229", "stream": True})
     )
-    subscriber.on_event(("response_headers", 200, {}))
+    subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={}))
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "message_start",
             {
                 "type": "message_start",
@@ -372,15 +384,13 @@ def test_har_subscriber_accumulates_events(tmp_path):
         )
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "content_block_start",
             {"type": "content_block_start", "content_block": {"type": "text"}},
         )
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "content_block_delta",
             {
                 "type": "content_block_delta",
@@ -389,11 +399,10 @@ def test_har_subscriber_accumulates_events(tmp_path):
         )
     )
     subscriber.on_event(
-        ("response_event", "content_block_stop", {"type": "content_block_stop"})
+        _sse("content_block_stop", {"type": "content_block_stop"})
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "message_delta",
             {
                 "type": "message_delta",
@@ -402,7 +411,7 @@ def test_har_subscriber_accumulates_events(tmp_path):
             },
         )
     )
-    subscriber.on_event(("response_done",))
+    subscriber.on_event(ResponseDoneEvent())
 
     # Close and read file
     subscriber.close()
@@ -437,12 +446,11 @@ def test_har_subscriber_writes_file(tmp_path):
     subscriber = HARRecordingSubscriber(str(har_path), "session_123")
 
     # Add a complete request/response cycle
-    subscriber.on_event(("request_headers", {}))
-    subscriber.on_event(("request", {"model": "claude-3-opus-20240229"}))
-    subscriber.on_event(("response_headers", 200, {}))
+    subscriber.on_event(RequestHeadersEvent(headers={}))
+    subscriber.on_event(RequestBodyEvent(body={"model": "claude-3-opus-20240229"}))
+    subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={}))
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "message_start",
             {
                 "type": "message_start",
@@ -456,15 +464,13 @@ def test_har_subscriber_writes_file(tmp_path):
         )
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "content_block_start",
             {"type": "content_block_start", "content_block": {"type": "text"}},
         )
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "content_block_delta",
             {
                 "type": "content_block_delta",
@@ -473,11 +479,10 @@ def test_har_subscriber_writes_file(tmp_path):
         )
     )
     subscriber.on_event(
-        ("response_event", "content_block_stop", {"type": "content_block_stop"})
+        _sse("content_block_stop", {"type": "content_block_stop"})
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "message_delta",
             {
                 "type": "message_delta",
@@ -486,7 +491,7 @@ def test_har_subscriber_writes_file(tmp_path):
             },
         )
     )
-    subscriber.on_event(("response_done",))
+    subscriber.on_event(ResponseDoneEvent())
 
     # Close and write file
     subscriber.close()
@@ -513,20 +518,18 @@ def test_har_subscriber_multiple_requests(tmp_path):
     subscriber = HARRecordingSubscriber(str(har_path), "session_123")
 
     # First request
-    subscriber.on_event(("request_headers", {}))
+    subscriber.on_event(RequestHeadersEvent(headers={}))
     subscriber.on_event(
-        (
-            "request",
-            {
+        RequestBodyEvent(
+            body={
                 "model": "claude-3-opus-20240229",
                 "messages": [{"role": "user", "content": "First"}],
-            },
+            }
         )
     )
-    subscriber.on_event(("response_headers", 200, {}))
+    subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={}))
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "message_start",
             {
                 "type": "message_start",
@@ -540,15 +543,13 @@ def test_har_subscriber_multiple_requests(tmp_path):
         )
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "content_block_start",
             {"type": "content_block_start", "content_block": {"type": "text"}},
         )
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "content_block_delta",
             {
                 "type": "content_block_delta",
@@ -557,11 +558,10 @@ def test_har_subscriber_multiple_requests(tmp_path):
         )
     )
     subscriber.on_event(
-        ("response_event", "content_block_stop", {"type": "content_block_stop"})
+        _sse("content_block_stop", {"type": "content_block_stop"})
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "message_delta",
             {
                 "type": "message_delta",
@@ -570,23 +570,21 @@ def test_har_subscriber_multiple_requests(tmp_path):
             },
         )
     )
-    subscriber.on_event(("response_done",))
+    subscriber.on_event(ResponseDoneEvent())
 
     # Second request
-    subscriber.on_event(("request_headers", {}))
+    subscriber.on_event(RequestHeadersEvent(headers={}))
     subscriber.on_event(
-        (
-            "request",
-            {
+        RequestBodyEvent(
+            body={
                 "model": "claude-3-opus-20240229",
                 "messages": [{"role": "user", "content": "Second"}],
-            },
+            }
         )
     )
-    subscriber.on_event(("response_headers", 200, {}))
+    subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={}))
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "message_start",
             {
                 "type": "message_start",
@@ -600,15 +598,13 @@ def test_har_subscriber_multiple_requests(tmp_path):
         )
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "content_block_start",
             {"type": "content_block_start", "content_block": {"type": "text"}},
         )
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "content_block_delta",
             {
                 "type": "content_block_delta",
@@ -617,11 +613,10 @@ def test_har_subscriber_multiple_requests(tmp_path):
         )
     )
     subscriber.on_event(
-        ("response_event", "content_block_stop", {"type": "content_block_stop"})
+        _sse("content_block_stop", {"type": "content_block_stop"})
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "message_delta",
             {
                 "type": "message_delta",
@@ -630,7 +625,7 @@ def test_har_subscriber_multiple_requests(tmp_path):
             },
         )
     )
-    subscriber.on_event(("response_done",))
+    subscriber.on_event(ResponseDoneEvent())
 
     # Close and read file
     subscriber.close()
@@ -668,12 +663,11 @@ def test_har_subscriber_incomplete_stream(tmp_path):
     subscriber = HARRecordingSubscriber(str(har_path), "session_123")
 
     # Start a request but never complete it
-    subscriber.on_event(("request_headers", {}))
-    subscriber.on_event(("request", {"model": "claude-3-opus-20240229"}))
-    subscriber.on_event(("response_headers", 200, {}))
+    subscriber.on_event(RequestHeadersEvent(headers={}))
+    subscriber.on_event(RequestBodyEvent(body={"model": "claude-3-opus-20240229"}))
+    subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={}))
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "message_start",
             {
                 "type": "message_start",
@@ -705,12 +699,11 @@ def test_har_subscriber_large_content(tmp_path):
 
     large_text = "A" * 10000  # 10KB of text
 
-    subscriber.on_event(("request_headers", {}))
-    subscriber.on_event(("request", {"model": "claude-3-opus-20240229"}))
-    subscriber.on_event(("response_headers", 200, {}))
+    subscriber.on_event(RequestHeadersEvent(headers={}))
+    subscriber.on_event(RequestBodyEvent(body={"model": "claude-3-opus-20240229"}))
+    subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={}))
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "message_start",
             {
                 "type": "message_start",
@@ -724,15 +717,13 @@ def test_har_subscriber_large_content(tmp_path):
         )
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "content_block_start",
             {"type": "content_block_start", "content_block": {"type": "text"}},
         )
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "content_block_delta",
             {
                 "type": "content_block_delta",
@@ -741,11 +732,10 @@ def test_har_subscriber_large_content(tmp_path):
         )
     )
     subscriber.on_event(
-        ("response_event", "content_block_stop", {"type": "content_block_stop"})
+        _sse("content_block_stop", {"type": "content_block_stop"})
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "message_delta",
             {
                 "type": "message_delta",
@@ -754,7 +744,7 @@ def test_har_subscriber_large_content(tmp_path):
             },
         )
     )
-    subscriber.on_event(("response_done",))
+    subscriber.on_event(ResponseDoneEvent())
 
     subscriber.close()
 
@@ -778,20 +768,18 @@ def test_har_subscriber_progressive_saving(tmp_path):
     subscriber = HARRecordingSubscriber(str(har_path), "session_123")
 
     # First request/response cycle
-    subscriber.on_event(("request_headers", {}))
+    subscriber.on_event(RequestHeadersEvent(headers={}))
     subscriber.on_event(
-        (
-            "request",
-            {
+        RequestBodyEvent(
+            body={
                 "model": "claude-3-opus-20240229",
                 "messages": [{"role": "user", "content": "First"}],
-            },
+            }
         )
     )
-    subscriber.on_event(("response_headers", 200, {}))
+    subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={}))
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "message_start",
             {
                 "type": "message_start",
@@ -805,15 +793,13 @@ def test_har_subscriber_progressive_saving(tmp_path):
         )
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "content_block_start",
             {"type": "content_block_start", "content_block": {"type": "text"}},
         )
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "content_block_delta",
             {
                 "type": "content_block_delta",
@@ -822,11 +808,10 @@ def test_har_subscriber_progressive_saving(tmp_path):
         )
     )
     subscriber.on_event(
-        ("response_event", "content_block_stop", {"type": "content_block_stop"})
+        _sse("content_block_stop", {"type": "content_block_stop"})
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "message_delta",
             {
                 "type": "message_delta",
@@ -835,7 +820,7 @@ def test_har_subscriber_progressive_saving(tmp_path):
             },
         )
     )
-    subscriber.on_event(("response_done",))
+    subscriber.on_event(ResponseDoneEvent())
 
     # Verify first entry is on disk BEFORE close() - this is progressive saving
     assert har_path.exists()
@@ -850,20 +835,18 @@ def test_har_subscriber_progressive_saving(tmp_path):
     )
 
     # Second request/response cycle
-    subscriber.on_event(("request_headers", {}))
+    subscriber.on_event(RequestHeadersEvent(headers={}))
     subscriber.on_event(
-        (
-            "request",
-            {
+        RequestBodyEvent(
+            body={
                 "model": "claude-3-opus-20240229",
                 "messages": [{"role": "user", "content": "Second"}],
-            },
+            }
         )
     )
-    subscriber.on_event(("response_headers", 200, {}))
+    subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={}))
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "message_start",
             {
                 "type": "message_start",
@@ -877,15 +860,13 @@ def test_har_subscriber_progressive_saving(tmp_path):
         )
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "content_block_start",
             {"type": "content_block_start", "content_block": {"type": "text"}},
         )
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "content_block_delta",
             {
                 "type": "content_block_delta",
@@ -894,11 +875,10 @@ def test_har_subscriber_progressive_saving(tmp_path):
         )
     )
     subscriber.on_event(
-        ("response_event", "content_block_stop", {"type": "content_block_stop"})
+        _sse("content_block_stop", {"type": "content_block_stop"})
     )
     subscriber.on_event(
-        (
-            "response_event",
+        _sse(
             "message_delta",
             {
                 "type": "message_delta",
@@ -907,7 +887,7 @@ def test_har_subscriber_progressive_saving(tmp_path):
             },
         )
     )
-    subscriber.on_event(("response_done",))
+    subscriber.on_event(ResponseDoneEvent())
 
     # Verify second entry is on disk BEFORE close()
     with open(har_path, "r") as f:

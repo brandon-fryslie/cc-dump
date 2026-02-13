@@ -413,16 +413,38 @@ def _render_header(block: HeaderBlock) -> Text | None:
 def _render_http_headers(block: HttpHeadersBlock) -> Text | None:
     tc = get_theme_colors()
     t = Text()
-    if block.header_type == "response":
-        t.append("  HTTP {} ".format(block.status_code), style=f"bold {tc.info}")
-    else:
-        t.append("  HTTP Headers ", style=f"bold {tc.info}")
+    # [LAW:dataflow-not-control-flow] Label dispatch via dict
+    labels = {
+        "response": "  Response HTTP {} ".format(block.status_code),
+        "request": "  Request Headers ",
+    }
+    t.append(labels.get(block.header_type, "  Headers "), style=f"bold {tc.info}")
 
     for key in sorted(block.headers.keys()):
         value = block.headers[key]
         t.append("\n    {}: ".format(key), style=f"dim {tc.info}")
         t.append(value, style="dim")
 
+    return t
+
+
+def _render_http_headers_summary(block: HttpHeadersBlock) -> Text | None:
+    """One-liner summary for HttpHeadersBlock at SUMMARY level."""
+    tc = get_theme_colors()
+    t = Text("  ")
+    n = len(block.headers)
+    # [LAW:dataflow-not-control-flow] Label dispatch via dict
+    labels = {
+        "response": ("HTTP {}".format(block.status_code), f"bold {tc.success}"),
+        "request": ("Request Headers", f"bold {tc.info}"),
+    }
+    label, style = labels.get(block.header_type, ("Headers", "bold"))
+    t.append(label, style=style)
+    t.append("  ({} header{})".format(n, "s" if n != 1 else ""), style="dim")
+    # Show content-type inline when present
+    ct = block.headers.get("content-type", "")
+    if ct:
+        t.append("  content-type: {}".format(ct), style="dim")
     return t
 
 
@@ -1262,6 +1284,8 @@ BLOCK_STATE_RENDERERS: dict[
     # TrackedContentBlock: title-only at summary level collapsed, diff-aware at summary expanded
     ("TrackedContentBlock", True, False, False): _render_tracked_content_title,
     ("TrackedContentBlock", True, False, True): _render_tracked_content_summary,
+    # HttpHeadersBlock: one-liner at summary level collapsed
+    ("HttpHeadersBlock", True, False, False): _render_http_headers_summary,
     # TurnBudgetBlock: oneliner at summary level
     ("TurnBudgetBlock", True, False, False): _render_turn_budget_oneliner,
     ("TurnBudgetBlock", True, False, True): _render_turn_budget_oneliner,
