@@ -90,23 +90,23 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         # Info panel
         "i": "toggle_info",
 
-        # Filterset presets (F1-F8 apply, Ctrl+F1-F8 save)
+        # Filterset presets (F-key apply, Shift+F-key save; F3 broken, skip it)
         "f1": "apply_filterset('1')",
         "f2": "apply_filterset('2')",
-        "f3": "apply_filterset('3')",
         "f4": "apply_filterset('4')",
         "f5": "apply_filterset('5')",
         "f6": "apply_filterset('6')",
         "f7": "apply_filterset('7')",
         "f8": "apply_filterset('8')",
-        "ctrl+f1": "save_filterset('1')",
-        "ctrl+f2": "save_filterset('2')",
-        "ctrl+f3": "save_filterset('3')",
-        "ctrl+f4": "save_filterset('4')",
-        "ctrl+f5": "save_filterset('5')",
-        "ctrl+f6": "save_filterset('6')",
-        "ctrl+f7": "save_filterset('7')",
-        "ctrl+f8": "save_filterset('8')",
+        "f9": "apply_filterset('9')",
+        "shift+f1": "save_filterset('1')",
+        "shift+f2": "save_filterset('2')",
+        "shift+f4": "save_filterset('4')",
+        "shift+f5": "save_filterset('5')",
+        "shift+f6": "save_filterset('6')",
+        "shift+f7": "save_filterset('7')",
+        "shift+f8": "save_filterset('8')",
+        "shift+f9": "save_filterset('9')",
 
         # Theme (try both key names - Textual might use descriptive names)
         "[": "prev_theme",
@@ -148,7 +148,7 @@ FOOTER_KEYS: dict[InputMode, list[tuple[str, str]]] = {
         ("0", "follow"),
         ("[]", "theme"),
         ("i", "info"),
-        ("F1-F8", "presets"),
+        ("F1-F9", "presets"),
         ("/", "search"),
     ],
     InputMode.SEARCH_EDIT: [

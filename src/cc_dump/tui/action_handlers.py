@@ -8,6 +8,7 @@ Not hot-reloadable (accesses app widgets and reactive state).
 """
 
 import cc_dump.formatting
+import cc_dump.settings
 import cc_dump.tui.rendering
 
 
@@ -30,6 +31,8 @@ def _toggle_vis_dicts(app, category: str, spec_key: str) -> None:
         new[category] = (not old[category]) if force is None else force
         setattr(app, attr, new)
     clear_overrides(app, category)
+    # Manual toggle invalidates active filterset indicator
+    app._active_filterset_slot = None
 
 
 def clear_overrides(app, category_name: str) -> None:
@@ -97,6 +100,31 @@ def toggle_logs(app) -> None:
 
 def toggle_info(app) -> None:
     _toggle_panel(app, "info")
+
+
+# ─── Filterset actions ─────────────────────────────────────────────────
+
+
+def save_filterset(app, slot: str) -> None:
+    """Save current visibility state to a filterset slot."""
+    cc_dump.settings.save_filterset(slot, app.active_filters)
+    app._active_filterset_slot = slot
+    app._update_footer_state()
+    app.notify(f"Saved filterset F{slot}")
+
+
+def apply_filterset(app, slot: str) -> None:
+    """Apply a saved filterset slot to the current visibility state."""
+    filters = cc_dump.settings.get_filterset(slot)
+    if filters is None:
+        app.notify(f"Filterset F{slot} is empty", severity="warning")
+        return
+    # Apply all three axes from the loaded VisState values
+    app._is_visible = {name: vs.visible for name, vs in filters.items()}
+    app._is_full = {name: vs.full for name, vs in filters.items()}
+    app._is_expanded = {name: vs.expanded for name, vs in filters.items()}
+    app._active_filterset_slot = slot
+    app.notify(f"Applied filterset F{slot}")
 
 
 def toggle_economics_breakdown(app) -> None:

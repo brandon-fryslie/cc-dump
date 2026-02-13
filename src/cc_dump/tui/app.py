@@ -109,6 +109,7 @@ class CcDumpApp(App):
         self._is_expanded = {name: d.expanded for _, name, _, d in CATEGORY_CONFIG}
 
         self._search_state = cc_dump.tui.search.SearchState()
+        self._active_filterset_slot = None
 
         self._conv_id = "conversation-view"
         self._search_bar_id = "search-bar"
@@ -318,6 +319,7 @@ class CcDumpApp(App):
                     "economics": self.show_economics,
                     "timeline": self.show_timeline,
                     "follow": conv._follow_mode if conv is not None else True,
+                    "active_filterset": self._active_filterset_slot,
                 }
                 footer.update_display(state)
 
@@ -501,6 +503,13 @@ class CcDumpApp(App):
 
     def _clear_overrides(self, category_name: str):
         _actions.clear_overrides(self, category_name)
+
+    # Filterset actions
+    def action_save_filterset(self, slot: str):
+        _actions.save_filterset(self, slot)
+
+    def action_apply_filterset(self, slot: str):
+        _actions.apply_filterset(self, slot)
 
     # Panel toggles
     def action_toggle_economics(self):
