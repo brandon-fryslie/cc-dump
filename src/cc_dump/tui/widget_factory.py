@@ -909,18 +909,6 @@ class ConversationView(ScrollView):
         meta_value is True for block toggles, or the sub-block index for XML.
         """
         meta = event.style.meta
-
-        # Determine which meta key was hit (if any)
-        # // [LAW:single-enforcer] Only rendering.py sets these meta keys
-        if meta.get(cc_dump.tui.rendering.META_TOGGLE_BLOCK):
-            meta_type = cc_dump.tui.rendering.META_TOGGLE_BLOCK
-            meta_value = True
-        elif meta.get(cc_dump.tui.rendering.META_TOGGLE_XML) is not None:
-            meta_type = cc_dump.tui.rendering.META_TOGGLE_XML
-            meta_value = meta.get(cc_dump.tui.rendering.META_TOGGLE_XML)
-        else:
-            return None
-
         content_y = int(event.y + self.scroll_offset.y)
         turn = self._find_turn_for_line(content_y)
         if turn is None:
@@ -929,7 +917,20 @@ class ConversationView(ScrollView):
         if block_idx is None or block_idx >= len(turn.blocks):
             return None
 
-        return (turn, block_idx, meta_type, meta_value)
+        # Fast path: segment metadata
+        # // [LAW:single-enforcer] Only rendering.py sets these meta keys
+        if meta.get(cc_dump.tui.rendering.META_TOGGLE_BLOCK):
+            return (turn, block_idx, cc_dump.tui.rendering.META_TOGGLE_BLOCK, True)
+        if meta.get(cc_dump.tui.rendering.META_TOGGLE_XML) is not None:
+            return (turn, block_idx, cc_dump.tui.rendering.META_TOGGLE_XML,
+                    meta.get(cc_dump.tui.rendering.META_TOGGLE_XML))
+
+        # Coordinate fallback for gutter clicks on XML tag lines
+        block = turn.blocks[block_idx]
+        xml_sb_idx = self._xml_tag_at_line(turn, block, block_idx, content_y)
+        if xml_sb_idx is not None:
+            return (turn, block_idx, cc_dump.tui.rendering.META_TOGGLE_XML, xml_sb_idx)
+        return None
 
     def on_click(self, event) -> None:
         """Toggle expand on truncated blocks or XML sub-blocks.
@@ -975,6 +976,26 @@ class ConversationView(ScrollView):
             if range_start <= local_y < range_end:
                 return sb_idx
 
+        return None
+
+    def _xml_tag_at_line(
+        self, turn: TurnData, block, block_idx: int, content_y: int
+    ) -> int | None:
+        """Check if click is on an XML tag line (first or last strip of sub-block).
+
+        Only matches start tag and end tag lines, not inner content.
+        This is the coordinate-based complement to META_TOGGLE_XML metadata.
+        """
+        xml_strip_ranges = getattr(block, "_xml_strip_ranges", None)
+        if not xml_strip_ranges:
+            return None
+        block_start_strip = turn.block_strip_map.get(block_idx)
+        if block_start_strip is None:
+            return None
+        local_y = content_y - turn.line_offset - block_start_strip
+        for sb_idx, (range_start, range_end) in xml_strip_ranges.items():
+            if local_y == range_start or local_y == range_end - 1:
+                return sb_idx
         return None
 
     def _toggle_xml_sub_block(

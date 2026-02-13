@@ -10,7 +10,6 @@ from cc_dump.tui.rendering import (
     GUTTER_WIDTH,
 )
 from rich.console import Console
-from rich.text import Text
 from textual.theme import BUILTIN_THEMES
 
 
@@ -23,12 +22,18 @@ def _setup_theme():
 # ─── _render_xml_collapsed ─────────────────────────────────────────────────
 
 
-def test_render_xml_collapsed_returns_text():
-    """_render_xml_collapsed returns a Text with arrow, tag, and line count."""
+def _render_to_text(renderable) -> str:
+    """Render a ConsoleRenderable to plain text via Console."""
+    c = Console(file=__import__("io").StringIO(), width=120)
+    c.print(renderable, end="")
+    return c.file.getvalue()
+
+
+def test_render_xml_collapsed_returns_renderable():
+    """_render_xml_collapsed returns a renderable with arrow, tag, and line count."""
     _setup_theme()
     result = _render_xml_collapsed("thinking", 47)
-    assert isinstance(result, Text)
-    plain = result.plain
+    plain = _render_to_text(result)
     assert "▷" in plain
     assert "<thinking>" in plain
     assert "47 lines" in plain
@@ -39,8 +44,9 @@ def test_render_xml_collapsed_various_tags():
     _setup_theme()
     for tag, lines in [("search_results", 100), ("x", 1), ("my-tag", 0)]:
         result = _render_xml_collapsed(tag, lines)
-        assert f"<{tag}>" in result.plain
-        assert f"{lines} lines" in result.plain
+        plain = _render_to_text(result)
+        assert f"<{tag}>" in plain
+        assert f"{lines} lines" in plain
 
 
 # ─── _block_has_xml ─────────────────────────────────────────────────────────
@@ -116,11 +122,11 @@ def test_segmented_parts_xml_collapsed():
     assert len(xml_parts) == 1
     renderable, _ = xml_parts[0]
 
-    # Collapsed XML should be a Text with ▷
-    assert isinstance(renderable, Text)
-    assert "▷" in renderable.plain
-    assert "<thinking>" in renderable.plain
-    assert "lines" in renderable.plain
+    # Collapsed XML should be a renderable with ▷
+    plain = _render_to_text(renderable)
+    assert "▷" in plain
+    assert "<thinking>" in plain
+    assert "lines" in plain
 
 
 def test_segmented_parts_multiple_xml_blocks():
@@ -157,13 +163,13 @@ def test_segmented_parts_mixed_collapse():
     xml_parts = [(r, idx) for r, idx in parts if idx is not None]
     assert len(xml_parts) == 2
 
-    # First XML (thinking) should be collapsed (Text with ▷)
-    assert isinstance(xml_parts[0][0], Text)
-    assert "▷" in xml_parts[0][0].plain
+    # First XML (thinking) should be collapsed (renderable with ▷)
+    plain = _render_to_text(xml_parts[0][0])
+    assert "▷" in plain
 
-    # Second XML (search_results) should be expanded (Group with ▽)
-    # It won't be a plain Text since it's expanded
-    assert not isinstance(xml_parts[1][0], Text) or "▽" in xml_parts[1][0].plain
+    # Second XML (search_results) should be expanded (renderable with ▽)
+    plain2 = _render_to_text(xml_parts[1][0])
+    assert "▽" in plain2
 
 
 # ─── render_turn_to_strips with XML ────────────────────────────────────────

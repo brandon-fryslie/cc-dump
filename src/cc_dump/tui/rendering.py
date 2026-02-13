@@ -633,17 +633,13 @@ def _render_segmented_block(block) -> ConsoleRenderable:
     return _render_text_as_markdown(block.text)
 
 
-def _render_xml_collapsed(tag_name: str, inner_line_count: int) -> Text:
-    """Render a collapsed XML sub-block indicator.
+def _render_xml_collapsed(tag_name: str, inner_line_count: int) -> ConsoleRenderable:
+    """Render a collapsed XML sub-block indicator with themed syntax colors.
 
-    Returns Text("▷ <tag> (N lines)") in dim style.
+    // [LAW:one-source-of-truth] _render_xml_tag for all XML tag rendering.
     // [LAW:one-source-of-truth] Collapsed XML arrow is ▷ (summary collapsed).
     """
-    t = Text()
-    t.append("▷ ", style="bold dim")
-    t.append(f"<{tag_name}>", style="bold dim")
-    t.append(f" ({inner_line_count} lines)", style="dim")
-    return t
+    return _render_xml_tag(f"▷ <{tag_name}> ({inner_line_count} lines)")
 
 
 def _render_segmented_parts(
@@ -1671,13 +1667,21 @@ def render_turn_to_strips(
                         block_strips.extend(part_strips)
 
                     # Track XML sub-block strip ranges and apply toggle meta
-                    # // [LAW:single-enforcer] Meta on first strip is the sole XML toggle trigger
+                    # // [LAW:single-enforcer] Meta on tag strips is the XML toggle trigger
                     if xml_sb_idx is not None:
                         xml_strip_ranges[xml_sb_idx] = (part_start, len(block_strips))
+                        xml_meta = {META_TOGGLE_XML: xml_sb_idx}
                         if part_start < len(block_strips):
+                            # First strip: start tag or collapsed indicator
                             block_strips[part_start] = block_strips[
                                 part_start
-                            ].apply_meta({META_TOGGLE_XML: xml_sb_idx})
+                            ].apply_meta(xml_meta)
+                            # Last strip: end tag (same as first when collapsed)
+                            last_i = len(block_strips) - 1
+                            if last_i != part_start:
+                                block_strips[last_i] = block_strips[
+                                    last_i
+                                ].apply_meta(xml_meta)
 
                 if block_cache is not None:
                     block_cache[cache_key] = (block_strips, xml_strip_ranges)
