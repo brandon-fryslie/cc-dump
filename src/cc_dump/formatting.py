@@ -7,13 +7,40 @@ Returns FormattedBlock dataclasses that can be rendered by different backends
 import difflib
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, IntEnum
-from typing import NamedTuple
+from collections.abc import Callable
+from typing import Any, NamedTuple
 
 from cc_dump.analysis import TurnBudget, compute_turn_budget, tool_result_breakdown
 from cc_dump.colors import TAG_COLORS
+
+
+# ─── API Metadata parsing ────────────────────────────────────────────────────
+
+
+_USER_ID_PATTERN = re.compile(
+    r"user_([a-f0-9]+)_account_([a-f0-9-]+)_session_([a-f0-9-]+)"
+)
+
+
+def parse_user_id(user_id: str) -> dict | None:
+    """Parse compound user_id into user, account, session components.
+
+    Format: user_<hash>_account_<uuid>_session_<uuid>
+
+    Returns dict with user_hash, account_id, session_id or None if no match.
+    """
+    match = _USER_ID_PATTERN.match(user_id)
+    if match:
+        return {
+            "user_hash": match.group(1),
+            "account_id": match.group(2),
+            "session_id": match.group(3),
+        }
+    return None
 
 
 # ─── Visibility model ─────────────────────────────────────────────────────────
@@ -110,6 +137,17 @@ class MetadataBlock(FormattedBlock):
     max_tokens: str = ""
     stream: bool = False
     tool_count: int = 0
+    # API metadata from metadata.user_id field:
+    user_hash: str = ""
+    account_id: str = ""
+    session_id: str = ""
+
+
+@dataclass
+class NewSessionBlock(FormattedBlock):
+    """Indicates a new Claude Code session started."""
+
+    session_id: str = ""
 
 
 @dataclass
@@ -577,12 +615,35 @@ def format_request(body, state, request_headers: dict | None = None):
     stream = body.get("stream", False)
     tools = body.get("tools", [])
 
+    # Parse API metadata from metadata.user_id
+    user_hash = ""
+    account_id = ""
+    session_id = ""
+    metadata = body.get("metadata", {})
+    if metadata:
+        user_id_raw = metadata.get("user_id", "")
+        if user_id_raw:
+            parsed = parse_user_id(user_id_raw)
+            if parsed:
+                user_hash = parsed["user_hash"]
+                account_id = parsed["account_id"]
+                session_id = parsed["session_id"]
+
+    # Track session changes — emit NewSessionBlock when session changes
+    current_session = state.get("current_session")
+    if session_id and session_id != current_session:
+        blocks.append(NewSessionBlock(session_id=session_id))
+        state["current_session"] = session_id
+
     blocks.append(
         MetadataBlock(
             model=str(model),
             max_tokens=str(max_tokens),
             stream=stream,
             tool_count=len(tools),
+            user_hash=user_hash,
+            account_id=account_id,
+            session_id=session_id,
         )
     )
 
@@ -782,7 +843,7 @@ def format_complete_response(complete_message):
     content = complete_message.get("content", [])
     for block in content:
         block_type = block.get("type", "")
-        factory = _COMPLETE_RESPONSE_FACTORIES.get(block_type, lambda _: [])
+        factory: Callable[[dict[str, Any]], list[FormattedBlock]] = _COMPLETE_RESPONSE_FACTORIES.get(block_type, lambda _: [])
         blocks.extend(factory(block))
 
     # [LAW:dataflow-not-control-flow] Always create block, let renderer handle empty

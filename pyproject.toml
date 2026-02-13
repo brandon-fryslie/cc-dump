@@ -43,6 +43,7 @@ packages = ["src/cc_dump"]
 
 [dependency-groups]
 dev = [
+    "mypy>=1.10.0",
     "ptydriver>=0.2.0",
     "pytest>=9.0.2",
     "pytest-asyncio>=0.24.0",
@@ -58,19 +59,13 @@ markers = [
 ]
 
 [tool.mypy]
-# Minimal config — passes today, tighten incrementally.
-# To see what's disabled: uvx mypy src/cc_dump/ --no-error-summary
-ignore_missing_imports = true
+# Run: uv run mypy src
+check_untyped_defs = true
 disable_error_code = [
-    "arg-type",       # 32 errors — loose tuple/list element types in har_replayer, formatting
-    "dict-item",      # 25 errors — rendering dispatch table signature mismatches
-    "union-attr",     # 12 errors — accessing attrs on Optional without narrowing
-    "var-annotated",  #  8 errors — untyped empty containers (list = [], dict = {})
-    "attr-defined",   #  6 errors — dynamic attrs (_expandable, _pending_filter_snapshot)
-    "index",          #  5 errors — indexing Collection[str] in har_replayer
-    "assignment",     #  5 errors — incompatible assignment (None → datetime, tuple widths)
-    "has-type",       #  2 errors — variable used before type can be determined
-    "return-value",   #  1 error  — har_replayer return type mismatch
-    "no-redef",       #  1 error  — variable redefinition
-    "operator",       #  1 error  — int - None in rendering.py truncation logic
+    "dict-item",      # 27 errors — rendering dispatch table signature mismatches
+    "arg-type",       # 26 errors — list variance, tuple element types
+    "union-attr",     # 23 errors — accessing attrs on Optional without narrowing
+    "attr-defined",   # 18 errors — dynamic attrs (_expandable, _xml_strip_ranges, etc.)
+#    "assignment",     #  8 errors — None → datetime, implicit Optional defaults
+#    "index",          #  5 errors — indexing Collection[str] in har_replayer
 ]

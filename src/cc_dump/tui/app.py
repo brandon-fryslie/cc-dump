@@ -10,7 +10,7 @@
 import os
 import queue
 import threading
-from typing import Optional
+from typing import Any, Optional
 
 from textual.app import App, ComposeResult, SystemCommand
 from textual.css.query import NoMatches
@@ -43,9 +43,9 @@ class CcDumpApp(App):
     CSS_PATH = "styles.css"
 
     # [LAW:one-source-of-truth] Three orthogonal reactive dicts for visibility state
-    _is_visible = reactive({})
-    _is_full = reactive({})
-    _is_expanded = reactive({})
+    _is_visible: reactive[dict[str, bool]] = reactive({})
+    _is_full: reactive[dict[str, bool]] = reactive({})
+    _is_expanded: reactive[dict[str, bool]] = reactive({})
 
     # Panel visibility
     show_economics = reactive(False)
@@ -92,7 +92,7 @@ class CcDumpApp(App):
         if not replay_data:
             self._replay_complete.set()
 
-        self._app_state = {"current_turn_usage": {}}
+        self._app_state: dict[str, Any] = {"current_turn_usage": {}}
 
         # [LAW:one-source-of-truth] Initialize from CATEGORY_CONFIG
         self._is_visible = {name: d.visible for _, name, _, d in CATEGORY_CONFIG}
@@ -245,24 +245,24 @@ class CcDumpApp(App):
         cc_dump.tui.rendering.set_theme(self.current_theme)
         self._apply_markdown_theme()
 
-        self._log("INFO", "🚀 cc-dump proxy started")
-        self._log("INFO", f"Listening on: http://{self._host}:{self._port}")
+        self._app_log("INFO", "🚀 cc-dump proxy started")
+        self._app_log("INFO", f"Listening on: http://{self._host}:{self._port}")
 
         if self._target:
-            self._log("INFO", f"Reverse proxy mode: {self._target}")
-            self._log(
+            self._app_log("INFO", f"Reverse proxy mode: {self._target}")
+            self._app_log(
                 "INFO",
                 f"Usage: ANTHROPIC_BASE_URL=http://{self._host}:{self._port} claude",
             )
         else:
-            self._log("INFO", "Forward proxy mode (dynamic targets)")
-            self._log(
+            self._app_log("INFO", "Forward proxy mode (dynamic targets)")
+            self._app_log(
                 "INFO",
                 f"Usage: HTTP_PROXY=http://{self._host}:{self._port} ANTHROPIC_BASE_URL=http://api.minimax.com claude",
             )
 
         if self._session_id:
-            self._log("INFO", f"Session: {self._session_id}")
+            self._app_log("INFO", f"Session: {self._session_id}")
 
         self.run_worker(self._drain_events, thread=True, exclusive=False)
 
@@ -287,17 +287,17 @@ class CcDumpApp(App):
             self._process_replay_data()
 
     def on_unmount(self):
-        self._log("INFO", "cc-dump TUI shutting down")
+        self._app_log("INFO", "cc-dump TUI shutting down")
         self._closing = True
         self._router.stop()
 
     # ─── Helpers ───────────────────────────────────────────────────────
 
-    def _log(self, level: str, message: str):
+    def _app_log(self, level: str, message: str):
         if self.is_running:
             logs = self._get_logs()
             if logs is not None:
-                logs.log(level, message)
+                logs.app_log(level, message)
 
     def _update_footer_state(self):
         if self.is_running:
@@ -348,11 +348,11 @@ class CcDumpApp(App):
         if not self._replay_data:
             return
 
-        self._log("INFO", f"Processing {len(self._replay_data)} request/response pairs")
+        self._app_log("INFO", f"Processing {len(self._replay_data)} request/response pairs")
         conv = self._get_conv()
         stats = self._get_stats()
         if conv is None:
-            self._log("ERROR", "Cannot process replay: conversation widget not found")
+            self._app_log("ERROR", "Cannot process replay: conversation widget not found")
             return
 
         for (
@@ -383,12 +383,12 @@ class CcDumpApp(App):
                 if stats:
                     stats.update_stats(requests=self._state["request_counter"])
             except Exception as e:
-                self._log("ERROR", f"Error processing replay pair: {e}")
+                self._app_log("ERROR", f"Error processing replay pair: {e}")
 
         if stats and self._analytics_store:
             stats.refresh_from_store(self._analytics_store)
 
-        self._log(
+        self._app_log(
             "INFO",
             f"Replay complete: {self._state['request_counter']} requests processed",
         )
@@ -414,13 +414,13 @@ class CcDumpApp(App):
         try:
             self._handle_event_inner(event)
         except Exception as e:
-            self._log("ERROR", f"Uncaught exception handling event: {e}")
+            self._app_log("ERROR", f"Uncaught exception handling event: {e}")
             import traceback
 
             tb = traceback.format_exc()
             for line in tb.split("\n"):
                 if line:
-                    self._log("ERROR", f"  {line}")
+                    self._app_log("ERROR", f"  {line}")
 
     def _handle_event_inner(self, event):
         if self._replacing_widgets:

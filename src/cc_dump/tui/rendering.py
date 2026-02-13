@@ -23,12 +23,18 @@ from rich.theme import Theme as RichTheme
 
 from collections import Counter
 
+# Click-target meta keys — the sole identifiers for interactive segments.
+# // [LAW:one-source-of-truth] Canonical constants; widget_factory reads these via module import.
+META_TOGGLE_BLOCK = "toggle_block"
+META_TOGGLE_XML = "toggle_xml"
+
 from cc_dump.formatting import (
     FormattedBlock,
     SeparatorBlock,
     HeaderBlock,
     HttpHeadersBlock,
     MetadataBlock,
+    NewSessionBlock,
     SystemLabelBlock,
     TrackedContentBlock,
     RoleBlock,
@@ -188,9 +194,7 @@ _theme_colors: ThemeColors | None = None
 def get_theme_colors() -> ThemeColors:
     """Get the current ThemeColors. Raises RuntimeError if set_theme() not called."""
     if _theme_colors is None:
-        raise RuntimeError(
-            "Theme not initialized. Call set_theme() before rendering."
-        )
+        raise RuntimeError("Theme not initialized. Call set_theme() before rendering.")
     return _theme_colors
 
 
@@ -224,15 +228,15 @@ def set_theme(textual_theme) -> None:
 TRUNCATION_LIMITS: dict[VisState, int | None] = {
     # Hidden states (visible=False) — all produce 0 lines
     VisState(False, False, False): 0,
-    VisState(False, False, True):  0,
-    VisState(False, True, False):  0,
-    VisState(False, True, True):   0,
+    VisState(False, False, True): 0,
+    VisState(False, True, False): 0,
+    VisState(False, True, True): 0,
     # Summary level (visible=True, full=False)
-    VisState(True, False, False):  4,    # summary collapsed
-    VisState(True, False, True):   None,   # summary expanded
+    VisState(True, False, False): 4,  # summary collapsed
+    VisState(True, False, True): None,  # summary expanded
     # Full level (visible=True, full=True)
-    VisState(True, True, False):   4,   # full collapsed
-    VisState(True, True, True):    None, # full expanded (unlimited)
+    VisState(True, True, False): 4,  # full collapsed
+    VisState(True, True, True): None,  # full expanded (unlimited)
 }
 
 # Categories that should render as Markdown instead of plain text
@@ -248,6 +252,7 @@ BLOCK_CATEGORY: dict[str, Category | None] = {
     "HeaderBlock": Category.HEADERS,
     "HttpHeadersBlock": Category.HEADERS,
     "MetadataBlock": Category.METADATA,
+    "NewSessionBlock": Category.METADATA,
     "TurnBudgetBlock": Category.BUDGET,
     "SystemLabelBlock": Category.SYSTEM,
     "TrackedContentBlock": Category.SYSTEM,
@@ -281,9 +286,7 @@ def get_category(block: FormattedBlock) -> Category | None:
     return BLOCK_CATEGORY.get(type(block).__name__)
 
 
-def _resolve_visibility(
-    block: FormattedBlock, filters: dict
-) -> VisState:
+def _resolve_visibility(block: FormattedBlock, filters: dict) -> VisState:
     """Determine VisState for a block given current filter state.
 
     // [LAW:one-source-of-truth] Returns THE visibility representation.
@@ -295,7 +298,7 @@ def _resolve_visibility(
     Returns ALWAYS_VISIBLE for blocks with no category.
     """
     # Check for runtime override (search mode)
-    force_vis = getattr(block, '_force_vis', None)
+    force_vis = getattr(block, "_force_vis", None)
     if force_vis is not None:
         return force_vis
 
@@ -340,7 +343,9 @@ def _build_filter_indicators() -> dict[str, tuple[str, str]]:
 FILTER_INDICATORS = _build_filter_indicators()
 
 
-def _add_filter_indicator(text: ConsoleRenderable, filter_name: str) -> ConsoleRenderable:
+def _add_filter_indicator(
+    text: ConsoleRenderable, filter_name: str
+) -> ConsoleRenderable:
     """Add a colored indicator to show which filter controls this content.
 
     Only works for Text objects. Non-Text renderables (like Markdown) are returned unchanged.
@@ -398,9 +403,7 @@ def _render_header(block: HeaderBlock) -> Text | None:
         "request": (lambda b: b.label, f"bold {tc.info}"),
         "response": (lambda b: "RESPONSE", f"bold {tc.success}"),
     }
-    label_fn, style = specs.get(
-        block.header_type, (lambda b: "UNKNOWN", "bold")
-    )
+    label_fn, style = specs.get(block.header_type, (lambda b: "UNKNOWN", "bold"))
     t = Text()
     t.append(" {} ".format(label_fn(block)), style=style)
     t.append(" ({})".format(block.timestamp), style="dim")
@@ -424,13 +427,21 @@ def _render_http_headers(block: HttpHeadersBlock) -> Text | None:
 
 
 def _render_metadata(block: MetadataBlock) -> Text | None:
-    parts = []
-    parts.append("model: ")
-    parts.append(("{}".format(block.model), "bold"))
-    parts.append(" | max_tokens: {}".format(block.max_tokens))
-    parts.append(" | stream: {}".format(block.stream))
+    parts = [
+        "model: ",
+        ("{}".format(block.model), "bold"),
+        " | max_tokens: {}".format(block.max_tokens),
+        " | stream: {}".format(block.stream),
+    ]
     if block.tool_count:
         parts.append(" | tools: {}".format(block.tool_count))
+    # API metadata from metadata.user_id field (truncate for readability)
+    if block.user_hash:
+        parts.append(" | user: {}..".format(block.user_hash[:6]))
+    if block.account_id:
+        parts.append(" | account: {}".format(block.account_id[:8]))
+    if block.session_id:
+        parts.append(" | session: {}".format(block.session_id[:8]))
 
     t = Text()
     t.append("  ", style="dim")
@@ -443,12 +454,27 @@ def _render_metadata(block: MetadataBlock) -> Text | None:
     return t
 
 
+def _render_new_session(block: NewSessionBlock) -> Text | None:
+    """Render a NewSessionBlock - prominent session boundary indicator."""
+    tc = get_theme_colors()
+    t = Text()
+    t.append("═" * 40, style=f"bold {tc.info}")
+    t.append("\n")
+    t.append(" NEW SESSION: ", style=f"bold {tc.info}")
+    t.append(block.session_id, style="bold")
+    t.append("\n")
+    t.append("═" * 40, style=f"bold {tc.info}")
+    return t
+
+
 def _render_system_label(block: SystemLabelBlock) -> Text | None:
     tc = get_theme_colors()
     return Text("SYSTEM:", style=f"bold {tc.system}")
 
 
-def _render_tracked_new(block: TrackedContentBlock, tag_style: str) -> ConsoleRenderable:
+def _render_tracked_new(
+    block: TrackedContentBlock, tag_style: str
+) -> ConsoleRenderable:
     """Render a TrackedContentBlock with status='new'."""
     content_len = len(block.content)
     header = Text(block.indent + "  ")
@@ -489,7 +515,9 @@ _TRACKED_STATUS_RENDERERS = {
 }
 
 
-def _render_tracked_content_summary(block: TrackedContentBlock) -> ConsoleRenderable | None:
+def _render_tracked_content_summary(
+    block: TrackedContentBlock,
+) -> ConsoleRenderable | None:
     """Render a TrackedContentBlock at SUMMARY level — tag colors + diff-aware display."""
     fg, bg = TAG_STYLES[block.color_idx % len(TAG_STYLES)]
     tag_style = "bold {} on {}".format(fg, bg)
@@ -500,7 +528,9 @@ def _render_tracked_content_summary(block: TrackedContentBlock) -> ConsoleRender
     return Text("")
 
 
-def _render_tracked_content_full(block: TrackedContentBlock) -> ConsoleRenderable | None:
+def _render_tracked_content_full(
+    block: TrackedContentBlock,
+) -> ConsoleRenderable | None:
     """Render TrackedContentBlock at FULL level — just the content, like any text block.
 
     // [LAW:one-source-of-truth] block.content is always the current text.
@@ -548,10 +578,7 @@ def _render_text_as_markdown(text: str) -> ConsoleRenderable:
     seg = segment(text)
 
     # Single SubBlock of kind MD: fast path — just Markdown with tag wrapping
-    if (
-        len(seg.sub_blocks) == 1
-        and seg.sub_blocks[0].kind == SubBlockKind.MD
-    ):
+    if len(seg.sub_blocks) == 1 and seg.sub_blocks[0].kind == SubBlockKind.MD:
         return Markdown(wrap_tags_in_backticks(text), code_theme=tc.code_theme)
 
     parts: list[ConsoleRenderable] = []
@@ -571,22 +598,14 @@ def _render_text_as_markdown(text: str) -> ConsoleRenderable:
 
         elif sb.kind == SubBlockKind.CODE_FENCE:
             inner = text[sb.meta.inner_span.start : sb.meta.inner_span.end]
-            parts.append(
-                Syntax(inner, sb.meta.info or "", theme=tc.code_theme)
-            )
+            parts.append(Syntax(inner, sb.meta.info or "", theme=tc.code_theme))
 
         elif sb.kind == SubBlockKind.XML_BLOCK:
             m = sb.meta
-            start_tag = text[
-                m.start_tag_span.start : m.start_tag_span.end
-            ].rstrip("\n")
-            end_tag = text[
-                m.end_tag_span.start : m.end_tag_span.end
-            ].rstrip("\n")
+            start_tag = text[m.start_tag_span.start : m.start_tag_span.end].rstrip("\n")
+            end_tag = text[m.end_tag_span.start : m.end_tag_span.end].rstrip("\n")
             inner = text[m.inner_span.start : m.inner_span.end]
-            xml_parts: list[ConsoleRenderable] = [
-                _render_xml_tag(start_tag)
-            ]
+            xml_parts: list[ConsoleRenderable] = [_render_xml_tag(start_tag)]
             if inner.strip():
                 xml_parts.append(
                     Markdown(
@@ -686,10 +705,12 @@ def _render_segmented_parts(
 
         elif sb.kind == SubBlockKind.CODE_FENCE:
             inner = text[sb.meta.inner_span.start : sb.meta.inner_span.end]
-            parts.append((
-                Syntax(inner, sb.meta.info or "", theme=tc.code_theme),
-                None,
-            ))
+            parts.append(
+                (
+                    Syntax(inner, sb.meta.info or "", theme=tc.code_theme),
+                    None,
+                )
+            )
 
         elif sb.kind == SubBlockKind.XML_BLOCK:
             current_xml_idx = xml_sb_idx
@@ -701,11 +722,15 @@ def _render_segmented_parts(
 
             m = sb.meta
             inner = text[m.inner_span.start : m.inner_span.end]
-            inner_line_count = inner.count("\n") + (1 if inner and not inner.endswith("\n") else 0)
+            inner_line_count = inner.count("\n") + (
+                1 if inner and not inner.endswith("\n") else 0
+            )
 
             if is_expanded:
                 # Full XML rendering with syntax-highlighted tags
-                start_tag = text[m.start_tag_span.start : m.start_tag_span.end].rstrip("\n")
+                start_tag = text[m.start_tag_span.start : m.start_tag_span.end].rstrip(
+                    "\n"
+                )
                 end_tag = text[m.end_tag_span.start : m.end_tag_span.end].rstrip("\n")
                 # Expanded XML: arrow + tag as header, then content, then end tag
                 # // [LAW:dataflow-not-control-flow] Group always created,
@@ -819,6 +844,7 @@ def _infer_lang_from_path(path: str) -> str:
     // [LAW:one-source-of-truth] _EXT_TO_LANG is the sole mapping.
     """
     import os
+
     _, ext = os.path.splitext(path)
     return _EXT_TO_LANG.get(ext.lower(), "")
 
@@ -1211,6 +1237,7 @@ BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], ConsoleRenderable | None]]
     "HeaderBlock": _render_header,
     "HttpHeadersBlock": _render_http_headers,
     "MetadataBlock": _render_metadata,
+    "NewSessionBlock": _render_new_session,
     "TurnBudgetBlock": _render_turn_budget,
     "SystemLabelBlock": _render_system_label,
     "TrackedContentBlock": _render_tracked_content_full,
@@ -1238,10 +1265,10 @@ BLOCK_STATE_RENDERERS: dict[
 ] = {
     # TrackedContentBlock: title-only at summary level collapsed, diff-aware at summary expanded
     ("TrackedContentBlock", True, False, False): _render_tracked_content_title,
-    ("TrackedContentBlock", True, False, True):  _render_tracked_content_summary,
+    ("TrackedContentBlock", True, False, True): _render_tracked_content_summary,
     # TurnBudgetBlock: oneliner at summary level
     ("TurnBudgetBlock", True, False, False): _render_turn_budget_oneliner,
-    ("TurnBudgetBlock", True, False, True):  _render_turn_budget_oneliner,
+    ("TurnBudgetBlock", True, False, True): _render_turn_budget_oneliner,
     # ToolResultBlock: header-only at full collapsed (no raw content dump)
     ("ToolResultBlock", True, True, False): _render_tool_result_summary,
     # ToolUseBlock: one-liner at full collapsed (no tool-specific expansion)
@@ -1256,8 +1283,10 @@ def _build_renderer_registry() -> dict[tuple[str, bool, bool, bool], Callable]:
     """
     registry: dict[tuple[str, bool, bool, bool], Callable] = {}
     visible_states = [
-        (True, False, False), (True, False, True),
-        (True, True, False), (True, True, True),
+        (True, False, False),
+        (True, False, True),
+        (True, True, False),
+        (True, True, True),
     ]
     # Populate all visible states with the full renderer
     for type_name, fn in BLOCK_RENDERERS.items():
@@ -1297,7 +1326,7 @@ def collapse_tool_runs(
             return
         # Check if any pending block has _force_vis override (search mode)
         # If so, emit individual blocks instead of collapsing
-        if any(getattr(b, '_force_vis', None) is not None for _, b in pending):
+        if any(getattr(b, "_force_vis", None) is not None for _, b in pending):
             result.extend(pending)
             pending.clear()
             return
@@ -1333,9 +1362,7 @@ def collapse_tool_runs(
     return result
 
 
-def _prepare_blocks(
-    blocks: list, filters: dict
-) -> list[tuple[int, FormattedBlock]]:
+def _prepare_blocks(blocks: list, filters: dict) -> list[tuple[int, FormattedBlock]]:
     """Pre-pass: apply tool summarization based on tools level.
 
     // [LAW:dataflow-not-control-flow] tools_on is a value, not a branch.
@@ -1370,9 +1397,9 @@ MIN_WIDTH_FOR_RIGHT_GUTTER = 40  # hide right gutter below this width
 # Key: (full, expanded) where expanded is the gutter's actual expanded state
 GUTTER_ARROWS: dict[tuple[bool, bool], str] = {
     (False, False): "\u25b7",  # ▷ summary collapsed
-    (False, True):  "\u25bd",  # ▽ summary expanded
-    (True, False):  "\u25b6",  # ▶ full collapsed
-    (True, True):   "\u25bc",  # ▼ full expanded
+    (False, True): "\u25bd",  # ▽ summary expanded
+    (True, False): "\u25b6",  # ▶ full collapsed
+    (True, True): "\u25bc",  # ▼ full expanded
 }
 
 
@@ -1383,7 +1410,7 @@ def _add_gutter_to_strips(
     arrow_char: str,
     width: int,
     neutral: bool = False,
-    show_right: bool = True
+    show_right: bool = True,
 ):
     """Add gutter columns (left + optional right) to ALL strips.
 
@@ -1425,14 +1452,18 @@ def _add_gutter_to_strips(
         # First strip: arrow (if expandable) or spaces
         # // [LAW:single-enforcer] Meta on arrow segment is the sole toggle trigger
         if is_expandable and arrow_char:
-            arrow_style = Style(color=color, bold=True) + Style.from_meta({"toggle_block": True})
+            arrow_style = Style(color=color, bold=True) + Style.from_meta(
+                {META_TOGGLE_BLOCK: True}
+            )
             arrow_seg = Segment(arrow_char + "  ", arrow_style)
         else:
             arrow_seg = Segment("   ", Style())
 
         # Continuation strips: spaces
         continuation_seg = Segment("   ", Style())
-        right_seg = Segment("\u2590", Style(bold=True, color=color)) if show_right else None  # ▐
+        right_seg = (
+            Segment("\u2590", Style(bold=True, color=color)) if show_right else None
+        )  # ▐
     else:
         # No gutter mode
         return block_strips
@@ -1554,7 +1585,9 @@ def render_turn_to_strips(
 
     base_render_options = console.options
     if not wrap:
-        base_render_options = base_render_options.update(overflow="ignore", no_wrap=True)
+        base_render_options = base_render_options.update(
+            overflow="ignore", no_wrap=True
+        )
 
     # // [LAW:dataflow-not-control-flow] Compute gutter config once for all blocks
     show_right = width >= MIN_WIDTH_FOR_RIGHT_GUTTER
@@ -1597,9 +1630,7 @@ def render_turn_to_strips(
         # // [LAW:dataflow-not-control-flow] Never parse XML on streaming blocks —
         # TextDeltaBlock text is incomplete fragments, segmentation would break.
         uses_xml_parts = (
-            not is_streaming
-            and _block_has_xml(block)
-            and not block_has_matches
+            not is_streaming and _block_has_xml(block) and not block_has_matches
         )
 
         if uses_xml_parts:
@@ -1609,7 +1640,9 @@ def render_turn_to_strips(
             segmented_parts = _render_segmented_parts(block.text, xml_expanded)
 
             # Include xml_expanded state in cache key
-            xml_cache_state = tuple(sorted(xml_expanded.items())) if xml_expanded else ()
+            xml_cache_state = (
+                tuple(sorted(xml_expanded.items())) if xml_expanded else ()
+            )
             cache_key = (
                 id(block),
                 render_width,
@@ -1618,12 +1651,13 @@ def render_turn_to_strips(
                 xml_cache_state,
             )
 
+            xml_strip_ranges: dict[int, tuple[int, int]]
             if block_cache is not None and cache_key in block_cache:
                 block_strips, xml_strip_ranges = block_cache[cache_key]
             else:
                 # Render each part and assemble strips with range tracking
                 block_strips = []
-                xml_strip_ranges: dict[int, tuple[int, int]] = {}
+                xml_strip_ranges = {}
 
                 for part_renderable, xml_sb_idx in segmented_parts:
                     part_start = len(block_strips)
@@ -1641,9 +1675,9 @@ def render_turn_to_strips(
                     if xml_sb_idx is not None:
                         xml_strip_ranges[xml_sb_idx] = (part_start, len(block_strips))
                         if part_start < len(block_strips):
-                            block_strips[part_start] = block_strips[part_start].apply_meta(
-                                {"toggle_xml": xml_sb_idx}
-                            )
+                            block_strips[part_start] = block_strips[
+                                part_start
+                            ].apply_meta({META_TOGGLE_XML: xml_sb_idx})
 
                 if block_cache is not None:
                     block_cache[cache_key] = (block_strips, xml_strip_ranges)
@@ -1724,35 +1758,39 @@ def render_turn_to_strips(
         collapsed_limit = TRUNCATION_LIMITS[VisState(True, vis.full, False)]
         collapsed_key = (type_name, vis.visible, vis.full, False)
         expanded_key = (type_name, vis.visible, vis.full, True)
-        has_different_expanded = RENDERERS.get(collapsed_key) is not RENDERERS.get(expanded_key)
-        block._expandable = (
-            has_different_expanded
-            or (
-                collapsed_limit is not None
-                and collapsed_limit > 0
-                and len(block_strips) > collapsed_limit
-            )
+        has_different_expanded = RENDERERS.get(collapsed_key) is not RENDERERS.get(
+            expanded_key
+        )
+        block._expandable = has_different_expanded or (
+            collapsed_limit is not None
+            and collapsed_limit > 0
+            and len(block_strips) > collapsed_limit
         )
 
         # Truncation: ALWAYS applies when max_lines < strip count (not streaming)
         # // [LAW:dataflow-not-control-flow] No should_truncate flag, just max_lines value
         is_truncated = (
-            not is_streaming
-            and max_lines is not None
-            and len(block_strips) > max_lines
+            not is_streaming and max_lines is not None and len(block_strips) > max_lines
         )
 
         if is_truncated:
+            assert max_lines is not None  # implied by is_truncated
             hidden = len(block_strips) - max_lines
             truncated_strips = list(block_strips[:max_lines])
             truncated_strips.append(_make_collapse_indicator(hidden, render_width))
             block_strips_for_gutter = truncated_strips
             # Arrow: truncated blocks are collapsed
-            arrow = GUTTER_ARROWS.get((vis.full, False), "") if block._expandable else ""
+            arrow = (
+                GUTTER_ARROWS.get((vis.full, False), "") if block._expandable else ""
+            )
         else:
             block_strips_for_gutter = list(block_strips)
             # Arrow: non-truncated blocks use actual expanded state
-            arrow = GUTTER_ARROWS.get((vis.full, vis.expanded), "") if block._expandable else ""
+            arrow = (
+                GUTTER_ARROWS.get((vis.full, vis.expanded), "")
+                if block._expandable
+                else ""
+            )
 
         # Unified gutter path — all blocks go through here
         is_neutral = indicator_name is None
@@ -1763,14 +1801,16 @@ def render_turn_to_strips(
             arrow,
             width,
             neutral=is_neutral,
-            show_right=show_right
+            show_right=show_right,
         )
         all_strips.extend(final_strips)
 
     return all_strips, block_strip_map
 
 
-def _apply_search_highlights(text: Text, search_ctx, turn_index: int, block_index: int) -> None:
+def _apply_search_highlights(
+    text: Text, search_ctx, turn_index: int, block_index: int
+) -> None:
     """Apply search highlights to a Text object.
 
     All matches get a dim background highlight.

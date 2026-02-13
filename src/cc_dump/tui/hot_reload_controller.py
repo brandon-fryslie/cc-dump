@@ -21,7 +21,7 @@ async def check_hot_reload(app) -> None:
         reloaded_modules = cc_dump.hot_reload.check_and_get_reloaded()
     except Exception as e:
         app.notify(f"[hot-reload] error checking: {e}", severity="error")
-        app._log("ERROR", f"Hot-reload error checking: {e}")
+        app._app_log("ERROR", f"Hot-reload error checking: {e}")
         return
 
     if not reloaded_modules:
@@ -29,7 +29,7 @@ async def check_hot_reload(app) -> None:
 
     # Notify user
     app.notify("[hot-reload] modules reloaded", severity="information")
-    app._log("INFO", f"Hot-reload: {', '.join(reloaded_modules)}")
+    app._app_log("INFO", f"Hot-reload: {', '.join(reloaded_modules)}")
 
     # Cancel any active search on reload (state references may be stale)
     SearchPhase = cc_dump.tui.search.SearchPhase
@@ -59,7 +59,7 @@ async def check_hot_reload(app) -> None:
                 conv.rerender(app.active_filters)
     except Exception as e:
         app.notify(f"[hot-reload] error applying: {e}", severity="error")
-        app._log("ERROR", f"Hot-reload error applying: {e}")
+        app._app_log("ERROR", f"Hot-reload error applying: {e}")
 
 
 async def replace_all_widgets(app) -> None:

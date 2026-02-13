@@ -172,6 +172,18 @@ TurnData:
 
 When filters change, only affected turns re-render (tracked via `relevant_filter_keys` per turn).
 
+### Why render_line, Not Widgets
+
+ConversationView uses `render_line()` + `Style.from_meta()` for interactive elements (expand/collapse arrows). This is the same pattern Textual's own `Tree` widget uses internally — it is the endorsed approach for virtual-scrolling content.
+
+Widget-based alternatives were evaluated and rejected:
+
+- **Widget-per-block** (ScrollableContainer + Static/Collapsible): No virtual rendering. All children are fully rendered in the DOM. A conversation with 1000+ blocks degrades at ~500 widgets.
+- **Turn-level widgets** (ListView): Non-virtual. 100+ turns in long sessions hits the widget limit. Replaces O(log n) binary search with O(n) layout.
+- **Arrow overlay widgets**: Overlay positioning with virtual scroll is harder than the meta approach. Adds a second mechanism for the same outcome.
+
+Click targets are isolated via segment metadata: only the arrow segment carries `META_TOGGLE_BLOCK` metadata (defined in `rendering.py`). Content clicks produce empty meta and are ignored. This provides precise hit-testing without DOM nodes.
+
 ## Streaming
 
 Streaming responses build incrementally:

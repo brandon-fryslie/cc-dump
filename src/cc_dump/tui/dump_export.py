@@ -149,8 +149,8 @@ def dump_conversation(app) -> None:
     """
     conv = app._get_conv()
     if conv is None or not conv._turns:
-        app._log("WARNING", "No conversation data to dump")
-        app.notify("No conversation to dump", severity="warning")
+        app._app_log("WARNING", "No conversation data to dump")
+        app.znotify("No conversation to dump", severity="warning")
         return
 
     try:
@@ -167,16 +167,16 @@ def dump_conversation(app) -> None:
                 f.write(f"{'─' * 80}\n\n")
 
                 for block_idx, block in enumerate(turn_data.blocks):
-                    write_block_text(f, block, block_idx, log_fn=app._log)
+                    write_block_text(f, block, block_idx, log_fn=app._app_log)
                     f.write("\n")
 
-        app._log("INFO", f"Conversation dumped to: {tmp_path}")
+        app._app_log("INFO", f"Conversation dumped to: {tmp_path}")
         app.notify(f"Exported to: {tmp_path}")
 
         # On macOS with $VISUAL, open the file
         if platform.system() == "Darwin" and os.environ.get("VISUAL"):
             editor = os.environ["VISUAL"]
-            app._log("INFO", f"Opening in $VISUAL ({editor})...")
+            app._app_log("INFO", f"Opening in $VISUAL ({editor})...")
             app.notify(f"Opening in {editor}...")
 
             try:
@@ -184,19 +184,19 @@ def dump_conversation(app) -> None:
                     [editor, tmp_path], timeout=20, capture_output=True, text=True
                 )
                 if result.returncode == 0:
-                    app._log("INFO", "Editor opened successfully")
+                    app._app_log("INFO", "Editor opened successfully")
                 else:
-                    app._log("WARNING", f"Editor exited with code {result.returncode}")
+                    app._app_log("WARNING", f"Editor exited with code {result.returncode}")
             except subprocess.TimeoutExpired:
-                app._log(
+                app._app_log(
                     "WARNING",
                     "Editor timeout after 20s (still running in background)",
                 )
                 app.notify("Editor timeout (still open)", severity="warning")
             except Exception as e:
-                app._log("ERROR", f"Failed to open editor: {e}")
+                app._app_log("ERROR", f"Failed to open editor: {e}")
                 app.notify(f"Editor error: {e}", severity="error")
 
     except Exception as e:
-        app._log("ERROR", f"Failed to dump conversation: {e}")
+        app._app_log("ERROR", f"Failed to dump conversation: {e}")
         app.notify(f"Dump failed: {e}", severity="error")

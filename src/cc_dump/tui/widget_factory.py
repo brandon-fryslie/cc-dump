@@ -661,14 +661,6 @@ class ConversationView(ScrollView):
         )
         self._recalculate_offsets_from(turn_index)
 
-    def _rebuild_from_state(self, filters: dict):
-        """Rebuild from restored state."""
-        state = self._pending_restore
-        self._pending_restore = None
-        self._turns.clear()
-        for block_list in state.get("all_blocks", []):
-            self.add_turn(block_list, filters)
-
     @property
     def _content_width(self) -> int:
         """Render width for content, with margin to prevent horizontal scrollbar."""
@@ -907,6 +899,38 @@ class ConversationView(ScrollView):
         with self._programmatic_scroll():
             self.scroll_to(y=target_y, animate=False)
 
+    def _resolve_click_target(self, event):
+        """Pure coordinate/meta resolution for a click event.
+
+        Returns (turn, block_idx, meta_type, meta_value) if the click hit
+        a toggle target, or None if it missed.
+
+        meta_type is META_TOGGLE_BLOCK or META_TOGGLE_XML.
+        meta_value is True for block toggles, or the sub-block index for XML.
+        """
+        meta = event.style.meta
+
+        # Determine which meta key was hit (if any)
+        # // [LAW:single-enforcer] Only rendering.py sets these meta keys
+        if meta.get(cc_dump.tui.rendering.META_TOGGLE_BLOCK):
+            meta_type = cc_dump.tui.rendering.META_TOGGLE_BLOCK
+            meta_value = True
+        elif meta.get(cc_dump.tui.rendering.META_TOGGLE_XML) is not None:
+            meta_type = cc_dump.tui.rendering.META_TOGGLE_XML
+            meta_value = meta.get(cc_dump.tui.rendering.META_TOGGLE_XML)
+        else:
+            return None
+
+        content_y = int(event.y + self.scroll_offset.y)
+        turn = self._find_turn_for_line(content_y)
+        if turn is None:
+            return None
+        block_idx = self._block_index_at_line(turn, content_y)
+        if block_idx is None or block_idx >= len(turn.blocks):
+            return None
+
+        return (turn, block_idx, meta_type, meta_value)
+
     def on_click(self, event) -> None:
         """Toggle expand on truncated blocks or XML sub-blocks.
 
@@ -914,32 +938,17 @@ class ConversationView(ScrollView):
         determine what was clicked, following the same pattern as Textual's
         Tree widget. Only arrow segments carry toggle metadata.
         """
-        meta = event.style.meta
-
-        # Block-level toggle: arrow segment carries {"toggle_block": True}
-        if meta.get("toggle_block"):
-            content_y = int(event.y + self.scroll_offset.y)
-            turn = self._find_turn_for_line(content_y)
-            if turn is None:
-                return
-            block_idx = self._block_index_at_line(turn, content_y)
-            if block_idx is None or block_idx >= len(turn.blocks):
-                return
-            if self._is_expandable_block(turn.blocks[block_idx]):
-                self._toggle_block_expand(turn, block_idx)
+        target = self._resolve_click_target(event)
+        if target is None:
             return
 
-        # XML sub-block toggle: first strip carries {"toggle_xml": sb_idx}
-        toggle_xml = meta.get("toggle_xml")
-        if toggle_xml is not None:
-            content_y = int(event.y + self.scroll_offset.y)
-            turn = self._find_turn_for_line(content_y)
-            if turn is None:
-                return
-            block_idx = self._block_index_at_line(turn, content_y)
-            if block_idx is None or block_idx >= len(turn.blocks):
-                return
-            self._toggle_xml_sub_block(turn, block_idx, toggle_xml)
+        turn, block_idx, meta_type, meta_value = target
+
+        if meta_type == cc_dump.tui.rendering.META_TOGGLE_BLOCK:
+            if self._is_expandable_block(turn.blocks[block_idx]):
+                self._toggle_block_expand(turn, block_idx)
+        elif meta_type == cc_dump.tui.rendering.META_TOGGLE_XML:
+            self._toggle_xml_sub_block(turn, block_idx, meta_value)
 
 
     def _xml_sub_block_at_line(
@@ -1452,7 +1461,7 @@ class LogsPanel(RichLog):
             "DEBUG": "dim",
         }
 
-    def log(self, level: str, message: str):
+    def app_log(self, level: str, message: str):
         """Add an application log entry.
 
         Args:

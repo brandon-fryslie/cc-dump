@@ -78,7 +78,7 @@ def main():
         args.replay = latest
         print(f"🔄 Continuing from: {latest}")
 
-    event_q = queue.Queue()
+    event_q: queue.Queue[tuple] = queue.Queue()
 
     # Load replay data if specified, but always start proxy
     server = None
@@ -128,6 +128,7 @@ def main():
         "next_id": 0,
         "next_color": 0,
         "request_counter": 0,
+        "current_session": None,  # Track Claude Code session ID for change detection
     }
 
     # Set up event router with subscribers

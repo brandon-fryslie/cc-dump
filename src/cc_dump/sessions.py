@@ -8,7 +8,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 
 def get_recordings_dir() -> str:
@@ -44,7 +44,7 @@ def list_recordings(recordings_dir: Optional[str] = None) -> list[dict]:
     if recordings_dir is None:
         recordings_dir = get_recordings_dir()
 
-    recordings = []
+    recordings: list[dict[str, Any]] = []
     recordings_path = Path(recordings_dir)
 
     # Return empty list if directory doesn't exist
@@ -55,7 +55,7 @@ def list_recordings(recordings_dir: Optional[str] = None) -> list[dict]:
     # Collect all .har files from:
     # 1. Session subdirectories (recordings/*/recording-*.har)
     # 2. Flat directory (recordings/recording-*.har) - backwards compatibility
-    har_files = []
+    har_files: list[tuple[Path, str | None]] = []
 
     # Session subdirectories
     for session_dir in recordings_path.iterdir():

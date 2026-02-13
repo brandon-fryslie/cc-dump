@@ -8,6 +8,7 @@ import json
 import os
 import sys
 from datetime import datetime, timezone
+from typing import Any
 
 
 def build_har_request(method: str, url: str, headers: dict, body: dict) -> dict:
@@ -189,7 +190,7 @@ def reconstruct_message_from_events(events: list[dict]) -> dict:
     Returns:
         Complete message dict: {"id": "...", "type": "message", "content": [...], "usage": {...}}
     """
-    message = {
+    message: dict[str, Any] = {
         "id": "",
         "type": "message",
         "role": "assistant",
@@ -241,7 +242,7 @@ class HARRecordingSubscriber:
         self.pending_request_headers = None
         self.response_status = None
         self.response_headers = None
-        self.response_events = []
+        self.response_events: list[dict[str, Any]] = []
         self.request_start_time = None
 
         # Open file and write valid empty HAR structure

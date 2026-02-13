@@ -8,14 +8,14 @@ import json
 import sys
 
 
-def load_har(path: str) -> list[tuple[dict, dict]]:
+def load_har(path: str) -> list[tuple[dict, dict, int, dict, dict]]:
     """Load HAR file and extract request/response pairs.
 
     Args:
         path: Path to HAR file
 
     Returns:
-        List of (request_body, complete_message) tuples
+        List of (request_headers, request_body, response_status, response_headers, complete_message) tuples
 
     Raises:
         ValueError: If HAR structure is invalid
