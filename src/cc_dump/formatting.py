@@ -91,6 +91,19 @@ class Category(Enum):
 
 
 @dataclass
+class ContentRegion:
+    """An independently expandable/collapsible region within a block.
+
+    // [LAW:one-source-of-truth] Replaces _xml_expanded shadow dict, _xml_strip_ranges,
+    // and _xml_expandable bool — all region state lives here.
+    """
+
+    index: int  # Position in parent's content_regions list
+    expanded: bool | None = None  # None = default (expanded). False = collapsed.
+    _strip_range: tuple[int, int] | None = None  # Set by renderer: (start, end) in block strips
+
+
+@dataclass
 class FormattedBlock:
     """Base class for all formatted output blocks.
 
@@ -100,6 +113,10 @@ class FormattedBlock:
       None means use the level default.
     - category: overrides static BLOCK_CATEGORY for context-dependent blocks
       (e.g., TextContentBlock can be USER or ASSISTANT depending on the message).
+
+    Sub-region axis:
+    - content_regions: list[ContentRegion] — independently toggleable regions
+      within the block (e.g., XML sub-blocks). Empty = no sub-regions.
     """
 
     # Per-block expand/collapse override. None = use level default.
@@ -114,6 +131,10 @@ class FormattedBlock:
     # // [LAW:dataflow-not-control-flow] Block type declares streaming behavior,
     # // consumer code checks the value, not the type.
     show_during_streaming: bool = False
+
+    # Per-region expand/collapse state. Empty = no sub-regions.
+    # // [LAW:one-source-of-truth] All sub-region state lives here, not in shadow attrs.
+    content_regions: list[ContentRegion] = field(default_factory=list)
 
 
 @dataclass

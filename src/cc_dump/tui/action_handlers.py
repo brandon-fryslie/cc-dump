@@ -33,7 +33,7 @@ def _toggle_vis_dicts(app, category: str, spec_key: str) -> None:
 
 
 def clear_overrides(app, category_name: str) -> None:
-    """Reset per-block expanded overrides for a category."""
+    """Reset per-block expanded overrides and content region states for a category."""
     cat = cc_dump.formatting.Category(category_name)
     conv = app._get_conv()
     if conv is None:
@@ -43,6 +43,8 @@ def clear_overrides(app, category_name: str) -> None:
             block_cat = cc_dump.tui.rendering.get_category(block)
             if block_cat == cat:
                 block.expanded = None
+                for region in block.content_regions:
+                    region.expanded = None
 
 
 def toggle_vis(app, category: str) -> None:

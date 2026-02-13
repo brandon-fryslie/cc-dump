@@ -905,8 +905,8 @@ class ConversationView(ScrollView):
         Returns (turn, block_idx, meta_type, meta_value) if the click hit
         a toggle target, or None if it missed.
 
-        meta_type is META_TOGGLE_BLOCK or META_TOGGLE_XML.
-        meta_value is True for block toggles, or the sub-block index for XML.
+        meta_type is META_TOGGLE_BLOCK or META_TOGGLE_REGION.
+        meta_value is True for block toggles, or the region index for regions.
         """
         meta = event.style.meta
         content_y = int(event.y + self.scroll_offset.y)
@@ -921,19 +921,19 @@ class ConversationView(ScrollView):
         # // [LAW:single-enforcer] Only rendering.py sets these meta keys
         if meta.get(cc_dump.tui.rendering.META_TOGGLE_BLOCK):
             return (turn, block_idx, cc_dump.tui.rendering.META_TOGGLE_BLOCK, True)
-        if meta.get(cc_dump.tui.rendering.META_TOGGLE_XML) is not None:
-            return (turn, block_idx, cc_dump.tui.rendering.META_TOGGLE_XML,
-                    meta.get(cc_dump.tui.rendering.META_TOGGLE_XML))
+        if meta.get(cc_dump.tui.rendering.META_TOGGLE_REGION) is not None:
+            return (turn, block_idx, cc_dump.tui.rendering.META_TOGGLE_REGION,
+                    meta.get(cc_dump.tui.rendering.META_TOGGLE_REGION))
 
-        # Coordinate fallback for gutter clicks on XML tag lines
+        # Coordinate fallback for gutter clicks on region tag lines
         block = turn.blocks[block_idx]
-        xml_sb_idx = self._xml_tag_at_line(turn, block, block_idx, content_y)
-        if xml_sb_idx is not None:
-            return (turn, block_idx, cc_dump.tui.rendering.META_TOGGLE_XML, xml_sb_idx)
+        region_idx = self._region_tag_at_line(turn, block, block_idx, content_y)
+        if region_idx is not None:
+            return (turn, block_idx, cc_dump.tui.rendering.META_TOGGLE_REGION, region_idx)
         return None
 
     def on_click(self, event) -> None:
-        """Toggle expand on truncated blocks or XML sub-blocks.
+        """Toggle expand on truncated blocks or content regions.
 
         Uses segment metadata (Style.from_meta) set during rendering to
         determine what was clicked, following the same pattern as Textual's
@@ -948,20 +948,18 @@ class ConversationView(ScrollView):
         if meta_type == cc_dump.tui.rendering.META_TOGGLE_BLOCK:
             if self._is_expandable_block(turn.blocks[block_idx]):
                 self._toggle_block_expand(turn, block_idx)
-        elif meta_type == cc_dump.tui.rendering.META_TOGGLE_XML:
-            self._toggle_xml_sub_block(turn, block_idx, meta_value)
+        elif meta_type == cc_dump.tui.rendering.META_TOGGLE_REGION:
+            self._toggle_region(turn, block_idx, meta_value)
 
-
-    def _xml_sub_block_at_line(
+    def _region_at_line(
         self, turn: TurnData, block, block_idx: int, content_y: int
     ) -> int | None:
-        """Map click y → XML sub-block index using _xml_strip_ranges.
+        """Map click y → content region index using region._strip_range.
 
-        Returns the sub-block index if the click hit an XML sub-block's
-        strip range, or None if no XML sub-block was hit.
+        Returns the region index if the click hit a region's strip range,
+        or None if no region was hit.
         """
-        xml_strip_ranges = getattr(block, "_xml_strip_ranges", None)
-        if not xml_strip_ranges:
+        if not block.content_regions:
             return None
 
         # Compute the click's local strip offset within this block
@@ -971,54 +969,52 @@ class ConversationView(ScrollView):
 
         local_y = content_y - turn.line_offset - block_start_strip
 
-        # Check each XML sub-block's strip range
-        for sb_idx, (range_start, range_end) in xml_strip_ranges.items():
-            if range_start <= local_y < range_end:
-                return sb_idx
+        # Check each region's strip range
+        for region in block.content_regions:
+            if region._strip_range is not None:
+                range_start, range_end = region._strip_range
+                if range_start <= local_y < range_end:
+                    return region.index
 
         return None
 
-    def _xml_tag_at_line(
+    def _region_tag_at_line(
         self, turn: TurnData, block, block_idx: int, content_y: int
     ) -> int | None:
-        """Check if click is on an XML tag line (first or last strip of sub-block).
+        """Check if click is on a region tag line (first or last strip of region).
 
         Only matches start tag and end tag lines, not inner content.
-        This is the coordinate-based complement to META_TOGGLE_XML metadata.
+        This is the coordinate-based complement to META_TOGGLE_REGION metadata.
         """
-        xml_strip_ranges = getattr(block, "_xml_strip_ranges", None)
-        if not xml_strip_ranges:
+        if not block.content_regions:
             return None
         block_start_strip = turn.block_strip_map.get(block_idx)
         if block_start_strip is None:
             return None
         local_y = content_y - turn.line_offset - block_start_strip
-        for sb_idx, (range_start, range_end) in xml_strip_ranges.items():
-            if local_y == range_start or local_y == range_end - 1:
-                return sb_idx
+        for region in block.content_regions:
+            if region._strip_range is not None:
+                range_start, range_end = region._strip_range
+                if local_y == range_start or local_y == range_end - 1:
+                    return region.index
         return None
 
-    def _toggle_xml_sub_block(
-        self, turn: TurnData, block_idx: int, xml_sb_idx: int
+    def _toggle_region(
+        self, turn: TurnData, block_idx: int, region_idx: int
     ) -> None:
-        """Toggle an XML sub-block's expanded state and re-render the turn.
+        """Toggle a content region's expanded state and re-render the turn.
 
-        // [LAW:dataflow-not-control-flow] _xml_expanded dict is the value;
-        // absent key = True (default expanded).
+        // [LAW:dataflow-not-control-flow] content_regions[i].expanded is the value;
+        // None = default (expanded). False = collapsed.
         """
         block = turn.blocks[block_idx]
 
-        # Initialize _xml_expanded if needed
-        if not hasattr(block, "_xml_expanded") or block._xml_expanded is None:
-            block._xml_expanded = {}
+        if region_idx >= len(block.content_regions):
+            return
 
-        # Toggle: absent/True → False, False → True (remove key to restore default)
-        current = block._xml_expanded.get(xml_sb_idx, True)
-        if current:
-            block._xml_expanded[xml_sb_idx] = False
-        else:
-            # Restore default (expanded) by removing the key
-            block._xml_expanded.pop(xml_sb_idx, None)
+        region = block.content_regions[region_idx]
+        # Toggle: None/True → False, False → None (restore default)
+        region.expanded = None if region.expanded is False else False
 
         # Re-render just this turn
         if not turn.is_streaming:

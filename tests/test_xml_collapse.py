@@ -1,13 +1,12 @@
 """Tests for collapsible XML sub-blocks within TextContentBlock."""
 
-from cc_dump.formatting import TextContentBlock, Category, ALWAYS_VISIBLE
+from cc_dump.formatting import TextContentBlock, ContentRegion, Category, ALWAYS_VISIBLE
 from cc_dump.tui.rendering import (
     render_turn_to_strips,
     set_theme,
     _render_xml_collapsed,
-    _render_segmented_parts,
-    _block_has_xml,
-    GUTTER_WIDTH,
+    _render_region_parts,
+    _ensure_content_regions,
 )
 from rich.console import Console
 from textual.theme import BUILTIN_THEMES
@@ -49,56 +48,78 @@ def test_render_xml_collapsed_various_tags():
         assert f"{lines} lines" in plain
 
 
-# ─── _block_has_xml ─────────────────────────────────────────────────────────
+# ─── _ensure_content_regions ───────────────────────────────────────────────
 
 
-def test_block_has_xml_with_xml_content():
-    """Block with XML tags is detected."""
+def test_ensure_content_regions_with_xml_content():
+    """Block with XML tags gets content_regions populated."""
     _setup_theme()
     text = "Some text\n<thinking>\ninner content\n</thinking>\nmore text"
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
-    assert _block_has_xml(block) is True
+    _ensure_content_regions(block)
+    assert len(block.content_regions) == 1
+    assert block.content_regions[0].index == 0
 
 
-def test_block_has_xml_without_xml():
-    """Block without XML tags is not detected."""
+def test_ensure_content_regions_without_xml():
+    """Block without XML tags gets no content_regions."""
     _setup_theme()
     block = TextContentBlock(text="Just plain text", category=Category.ASSISTANT)
-    assert _block_has_xml(block) is False
+    _ensure_content_regions(block)
+    assert block.content_regions == []
 
 
-def test_block_has_xml_wrong_category():
-    """Block with XML but non-markdown category is not detected."""
+def test_ensure_content_regions_wrong_category():
+    """Block with XML but non-markdown category gets no content_regions."""
     _setup_theme()
     text = "Some text\n<thinking>\ninner content\n</thinking>\nmore text"
     block = TextContentBlock(text=text, category=Category.TOOLS)
-    assert _block_has_xml(block) is False
+    _ensure_content_regions(block)
+    assert block.content_regions == []
 
 
-def test_block_has_xml_no_text():
-    """Block with empty text is not detected."""
+def test_ensure_content_regions_no_text():
+    """Block with empty text gets no content_regions."""
     _setup_theme()
     block = TextContentBlock(text="", category=Category.ASSISTANT)
-    assert _block_has_xml(block) is False
+    _ensure_content_regions(block)
+    assert block.content_regions == []
 
 
-# ─── _render_segmented_parts ───────────────────────────────────────────────
+def test_ensure_content_regions_idempotent():
+    """Calling _ensure_content_regions twice preserves existing regions."""
+    _setup_theme()
+    text = "Some text\n<thinking>\ninner content\n</thinking>\nmore text"
+    block = TextContentBlock(text=text, category=Category.ASSISTANT)
+    _ensure_content_regions(block)
+    # Modify a region's state
+    block.content_regions[0].expanded = False
+    # Call again — should not overwrite
+    _ensure_content_regions(block)
+    assert block.content_regions[0].expanded is False
 
 
-def test_segmented_parts_no_xml():
+# ─── _render_region_parts ─────────────────────────────────────────────────
+
+
+def test_region_parts_no_xml():
     """Text without XML returns single part with None index."""
     _setup_theme()
-    parts = _render_segmented_parts("Hello world", None)
+    block = TextContentBlock(text="Hello world", category=Category.ASSISTANT)
+    block.content_regions = []  # no regions
+    parts = _render_region_parts(block)
     assert len(parts) == 1
     renderable, idx = parts[0]
     assert idx is None
 
 
-def test_segmented_parts_with_xml_expanded():
+def test_region_parts_with_xml_expanded():
     """Text with XML returns parts including XML with index, all expanded by default."""
     _setup_theme()
     text = "Intro text\n<thinking>\nI need to think about this\n</thinking>\nConclusion"
-    parts = _render_segmented_parts(text, None)
+    block = TextContentBlock(text=text, category=Category.ASSISTANT)
+    _ensure_content_regions(block)
+    parts = _render_region_parts(block)
 
     # Should have multiple parts: MD before, XML block, MD after
     assert len(parts) >= 2  # at least intro+xml or xml+conclusion
@@ -110,12 +131,13 @@ def test_segmented_parts_with_xml_expanded():
     assert xml_idx == 0  # first XML block
 
 
-def test_segmented_parts_xml_collapsed():
+def test_region_parts_xml_collapsed():
     """Collapsed XML sub-block renders as single-line indicator."""
     _setup_theme()
     text = "Intro text\n<thinking>\nLine 1\nLine 2\nLine 3\n</thinking>\nConclusion"
-    xml_expanded = {0: False}  # collapse first XML block
-    parts = _render_segmented_parts(text, xml_expanded)
+    block = TextContentBlock(text=text, category=Category.ASSISTANT)
+    block.content_regions = [ContentRegion(index=0, expanded=False)]
+    parts = _render_region_parts(block)
 
     # Find the XML part
     xml_parts = [(r, idx) for r, idx in parts if idx is not None]
@@ -129,7 +151,7 @@ def test_segmented_parts_xml_collapsed():
     assert "lines" in plain
 
 
-def test_segmented_parts_multiple_xml_blocks():
+def test_region_parts_multiple_xml_blocks():
     """Multiple XML blocks get sequential indices."""
     _setup_theme()
     text = (
@@ -139,7 +161,9 @@ def test_segmented_parts_multiple_xml_blocks():
         "<search_results>\nResult 1\n</search_results>\n"
         "After"
     )
-    parts = _render_segmented_parts(text, None)
+    block = TextContentBlock(text=text, category=Category.ASSISTANT)
+    _ensure_content_regions(block)
+    parts = _render_region_parts(block)
 
     xml_parts = [(r, idx) for r, idx in parts if idx is not None]
     assert len(xml_parts) == 2
@@ -147,7 +171,7 @@ def test_segmented_parts_multiple_xml_blocks():
     assert xml_parts[1][1] == 1
 
 
-def test_segmented_parts_mixed_collapse():
+def test_region_parts_mixed_collapse():
     """One XML collapsed, another expanded."""
     _setup_theme()
     text = (
@@ -157,8 +181,12 @@ def test_segmented_parts_mixed_collapse():
         "<search_results>\nResult 1\n</search_results>\n"
         "After"
     )
-    xml_expanded = {0: False, 1: True}  # thinking collapsed, search expanded
-    parts = _render_segmented_parts(text, xml_expanded)
+    block = TextContentBlock(text=text, category=Category.ASSISTANT)
+    block.content_regions = [
+        ContentRegion(index=0, expanded=False),  # thinking collapsed
+        ContentRegion(index=1, expanded=None),    # search expanded (default)
+    ]
+    parts = _render_region_parts(block)
 
     xml_parts = [(r, idx) for r, idx in parts if idx is not None]
     assert len(xml_parts) == 2
@@ -175,8 +203,8 @@ def test_segmented_parts_mixed_collapse():
 # ─── render_turn_to_strips with XML ────────────────────────────────────────
 
 
-def test_xml_block_renders_with_strip_ranges():
-    """TextContentBlock with XML sets _xml_strip_ranges on the block."""
+def test_xml_block_renders_with_content_regions():
+    """TextContentBlock with XML sets content_regions with _strip_range on each."""
     _setup_theme()
     text = "Intro\n<thinking>\nLine 1\nLine 2\nLine 3\n</thinking>\nEnd"
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
@@ -191,16 +219,15 @@ def test_xml_block_renders_with_strip_ranges():
         width=80,
     )
 
-    # Block should have _xml_strip_ranges set
-    assert hasattr(block, "_xml_strip_ranges")
-    assert isinstance(block._xml_strip_ranges, dict)
-    assert 0 in block._xml_strip_ranges, "First XML sub-block should have range"
+    # Block should have content_regions populated
+    assert len(block.content_regions) == 1
+    region = block.content_regions[0]
+    assert region._strip_range is not None, "Region should have strip range set"
 
     # Range should be valid
-    start, end = block._xml_strip_ranges[0]
+    start, end = region._strip_range
     assert start >= 0
     assert end > start
-    assert block._xml_expandable is True
 
 
 def test_xml_collapsed_fewer_strips():
@@ -228,7 +255,7 @@ def test_xml_collapsed_fewer_strips():
 
     # Collapsed
     block_collapsed = TextContentBlock(text=text, category=Category.ASSISTANT)
-    block_collapsed._xml_expanded = {0: False}
+    block_collapsed.content_regions = [ContentRegion(index=0, expanded=False)]
     strips_collapsed, _ = render_turn_to_strips(
         blocks=[block_collapsed],
         filters=filters,
@@ -243,8 +270,8 @@ def test_xml_collapsed_fewer_strips():
     )
 
 
-def test_xml_no_strip_ranges_for_plain_text():
-    """TextContentBlock without XML has empty _xml_strip_ranges."""
+def test_xml_no_content_regions_for_plain_text():
+    """TextContentBlock without XML has empty content_regions."""
     _setup_theme()
     block = TextContentBlock(text="Just plain text", category=Category.ASSISTANT)
 
@@ -258,17 +285,16 @@ def test_xml_no_strip_ranges_for_plain_text():
         width=80,
     )
 
-    # Should have empty strip ranges
-    assert getattr(block, "_xml_strip_ranges", {}) == {}
-    assert getattr(block, "_xml_expandable", False) is False
+    # Should have empty content_regions
+    assert block.content_regions == []
 
 
 def test_xml_expanded_survives_rerender():
-    """_xml_expanded state persists across re-renders (same block object)."""
+    """content_regions state persists across re-renders (same block object)."""
     _setup_theme()
     text = "Intro\n<thinking>\nLine 1\nLine 2\n</thinking>\nEnd"
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
-    block._xml_expanded = {0: False}
+    block.content_regions = [ContentRegion(index=0, expanded=False)]
 
     console = Console()
     filters = {"assistant": ALWAYS_VISIBLE}
@@ -282,7 +308,7 @@ def test_xml_expanded_survives_rerender():
     )
 
     # Verify state preserved
-    assert block._xml_expanded == {0: False}
+    assert block.content_regions[0].expanded is False
 
     # Second render (same block, should use same state)
     strips2, _ = render_turn_to_strips(

@@ -26,9 +26,10 @@ from collections import Counter
 # Click-target meta keys — the sole identifiers for interactive segments.
 # // [LAW:one-source-of-truth] Canonical constants; widget_factory reads these via module import.
 META_TOGGLE_BLOCK = "toggle_block"
-META_TOGGLE_XML = "toggle_xml"
+META_TOGGLE_REGION = "toggle_region"
 
 from cc_dump.formatting import (
+    ContentRegion,
     FormattedBlock,
     SeparatorBlock,
     HeaderBlock,
@@ -664,45 +665,40 @@ def _render_xml_collapsed(tag_name: str, inner_line_count: int) -> ConsoleRender
     return _render_xml_tag(f"▷ <{tag_name}> ({inner_line_count} lines)")
 
 
-def _render_segmented_parts(
-    text: str,
-    xml_expanded: dict[int, bool] | None,
+def _render_region_parts(
+    block,
 ) -> list[tuple[ConsoleRenderable, int | None]]:
-    """Render text into per-part renderables with XML sub-block tracking.
+    """Render text into per-part renderables using block.content_regions for state.
 
-    Like _render_text_as_markdown() but returns (renderable, xml_sub_block_index)
-    tuples. Non-XML parts have xml_sub_block_index=None. XML sub-blocks have
-    their index from the sub_blocks list (counting only XML_BLOCK entries).
+    Like _render_text_as_markdown() but returns (renderable, region_index)
+    tuples. Non-XML parts have region_index=None. XML sub-blocks have
+    their index from the content_regions list.
 
-    // [LAW:dataflow-not-control-flow] xml_expanded dict controls the data;
-    // absent key = expanded (default True).
+    // [LAW:dataflow-not-control-flow] content_regions controls the data;
+    // region.expanded=None means expanded (default True).
 
     Args:
-        text: Raw text to segment and render.
-        xml_expanded: Dict mapping xml_sub_block_index → bool.
-            None or absent key means expanded (default).
+        block: A block with .text and .content_regions already populated
+            by _ensure_content_regions().
 
     Returns:
-        List of (renderable, xml_sb_idx_or_None) tuples.
+        List of (renderable, region_idx_or_None) tuples.
     """
     from cc_dump.segmentation import (
-        segment,
         SubBlockKind,
         wrap_tags_in_backticks,
         wrap_tags_outside_fences,
     )
 
+    text = block.text
+    regions = block.content_regions
+
     tc = get_theme_colors()
-    seg = segment(text)
+    seg = _get_or_segment(block)
 
-    # Count XML sub-blocks to assign indices
-    xml_sb_idx = 0
-    has_xml = any(sb.kind == SubBlockKind.XML_BLOCK for sb in seg.sub_blocks)
-
-    # Fast path: no XML blocks → render as one Markdown part
-    if not has_xml:
-        md = _render_text_as_markdown(text)
-        return [(md, None)]
+    # Build lookup: region index → expanded state
+    # // [LAW:dataflow-not-control-flow] Value lookup, not branch
+    region_expanded = {r.index: r.expanded for r in regions}
 
     parts: list[tuple[ConsoleRenderable, int | None]] = []
     xml_sb_idx = 0
@@ -734,9 +730,8 @@ def _render_segmented_parts(
             current_xml_idx = xml_sb_idx
             xml_sb_idx += 1
 
-            # Check expanded state: default is True (expanded)
-            # // [LAW:dataflow-not-control-flow] Value lookup, not branch
-            is_expanded = (xml_expanded or {}).get(current_xml_idx, True)
+            # expanded=None or True means expanded; False means collapsed
+            is_expanded = region_expanded.get(current_xml_idx, None) is not False
 
             m = sb.meta
             inner = text[m.inner_span.start : m.inner_span.end]
@@ -779,20 +774,33 @@ def _render_segmented_parts(
     return parts
 
 
-def _block_has_xml(block) -> bool:
-    """Check if a text block contains XML sub-blocks worth collapsing.
+def _ensure_content_regions(block) -> None:
+    """Lazily populate block.content_regions from segmentation if applicable.
 
-    // [LAW:dataflow-not-control-flow] Pure predicate on cached segmentation.
+    Returns early if content_regions is already populated. Only populates
+    for text blocks in markdown categories that contain XML sub-blocks.
+
+    // [LAW:one-source-of-truth] Single place that creates ContentRegion instances.
+    // [LAW:dataflow-not-control-flow] Pure data population, not control flow.
     """
     from cc_dump.segmentation import SubBlockKind
 
+    # Already populated — idempotent
+    if block.content_regions:
+        return
+
     if not hasattr(block, "text") or not block.text:
-        return False
+        return
     cat = getattr(block, "category", None)
     if cat not in _MARKDOWN_CATEGORIES:
-        return False
+        return
     seg = _get_or_segment(block)
-    return any(sb.kind == SubBlockKind.XML_BLOCK for sb in seg.sub_blocks)
+    xml_count = sum(1 for sb in seg.sub_blocks if sb.kind == SubBlockKind.XML_BLOCK)
+    if xml_count == 0:
+        return
+
+    # Populate content_regions — one per XML sub-block
+    block.content_regions = [ContentRegion(index=i) for i in range(xml_count)]
 
 
 def _render_text_content(block: TextContentBlock) -> ConsoleRenderable | None:
@@ -1646,40 +1654,38 @@ def render_turn_to_strips(
         # // [LAW:dataflow-not-control-flow] One lookup replaces conditional dispatch
         renderer = RENDERERS.get((type_name, vis.visible, vis.full, vis.expanded))
 
-        # Detect blocks with XML sub-blocks for per-part rendering
+        # Detect blocks with content regions for per-part rendering
         # // [LAW:dataflow-not-control-flow] Never parse XML on streaming blocks —
         # TextDeltaBlock text is incomplete fragments, segmentation would break.
-        uses_xml_parts = (
-            not is_streaming and _block_has_xml(block) and not block_has_matches
-        )
+        # // [LAW:one-source-of-truth] _ensure_content_regions populates block.content_regions
+        if not is_streaming and not block_has_matches:
+            _ensure_content_regions(block)
+        has_regions = bool(block.content_regions)
 
-        if uses_xml_parts:
-            # Per-part XML rendering path: render each segment separately
+        if has_regions:
+            # Per-part region rendering path: render each segment separately
             # so we can track strip ranges for click-to-collapse
-            xml_expanded = getattr(block, "_xml_expanded", None) or {}
-            segmented_parts = _render_segmented_parts(block.text, xml_expanded)
+            region_parts = _render_region_parts(block)
 
-            # Include xml_expanded state in cache key
-            xml_cache_state = (
-                tuple(sorted(xml_expanded.items())) if xml_expanded else ()
+            # Include region expanded state in cache key
+            region_cache_state = tuple(
+                (r.index, r.expanded) for r in block.content_regions
             )
             cache_key = (
                 id(block),
                 render_width,
                 vis,
                 search_hash,
-                xml_cache_state,
+                region_cache_state,
             )
 
-            xml_strip_ranges: dict[int, tuple[int, int]]
             if block_cache is not None and cache_key in block_cache:
-                block_strips, xml_strip_ranges = block_cache[cache_key]
+                block_strips = block_cache[cache_key]
             else:
                 # Render each part and assemble strips with range tracking
                 block_strips = []
-                xml_strip_ranges = {}
 
-                for part_renderable, xml_sb_idx in segmented_parts:
+                for part_renderable, region_idx in region_parts:
                     part_start = len(block_strips)
                     part_segments = console.render(part_renderable, base_render_options)
                     part_lines = list(Segment.split_lines(part_segments))
@@ -1690,29 +1696,26 @@ def render_turn_to_strips(
                         ]
                         block_strips.extend(part_strips)
 
-                    # Track XML sub-block strip ranges and apply toggle meta
-                    # // [LAW:single-enforcer] Meta on tag strips is the XML toggle trigger
-                    if xml_sb_idx is not None:
-                        xml_strip_ranges[xml_sb_idx] = (part_start, len(block_strips))
-                        xml_meta = {META_TOGGLE_XML: xml_sb_idx}
+                    # Track region strip ranges and apply toggle meta
+                    # // [LAW:single-enforcer] Meta on tag strips is the region toggle trigger
+                    if region_idx is not None:
+                        region = block.content_regions[region_idx]
+                        region._strip_range = (part_start, len(block_strips))
+                        region_meta = {META_TOGGLE_REGION: region_idx}
                         if part_start < len(block_strips):
                             # First strip: start tag or collapsed indicator
                             block_strips[part_start] = block_strips[
                                 part_start
-                            ].apply_meta(xml_meta)
+                            ].apply_meta(region_meta)
                             # Last strip: end tag (same as first when collapsed)
                             last_i = len(block_strips) - 1
                             if last_i != part_start:
                                 block_strips[last_i] = block_strips[
                                     last_i
-                                ].apply_meta(xml_meta)
+                                ].apply_meta(region_meta)
 
                 if block_cache is not None:
-                    block_cache[cache_key] = (block_strips, xml_strip_ranges)
-
-            # Store XML strip ranges on block for click handling
-            block._xml_strip_ranges = xml_strip_ranges
-            block._xml_expandable = bool(xml_strip_ranges)
+                    block_cache[cache_key] = block_strips
 
             # Set text to non-None so the rest of the pipeline proceeds
             text = True  # sentinel — we already have block_strips
@@ -1740,8 +1743,8 @@ def render_turn_to_strips(
 
         block_strip_map[orig_idx] = len(all_strips)
 
-        # Standard rendering path (non-XML or when text is a renderable)
-        if not uses_xml_parts:
+        # Standard rendering path (non-region or when text is a renderable)
+        if not has_regions:
             # Cache key uses render_width (content width without gutter)
             cache_key = (
                 id(block),
@@ -1775,10 +1778,6 @@ def render_turn_to_strips(
                 # Cache result
                 if block_cache is not None:
                     block_cache[cache_key] = block_strips
-
-            # Clear XML attrs on non-XML blocks
-            block._xml_strip_ranges = {}
-            block._xml_expandable = False
 
         # Track expandability: always check against collapsed limit for this detail level
         # // [LAW:single-enforcer] _expandable enables click-to-expand interaction
