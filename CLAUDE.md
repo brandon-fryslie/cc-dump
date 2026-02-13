@@ -80,7 +80,9 @@ See `HOT_RELOAD_ARCHITECTURE.md` for full details. The critical rule:
 
 **Stable boundary modules** (`proxy.py`, `cli.py`, `tui/app.py`, `tui/widgets.py`, `hot_reload.py`, `har_recorder.py`, `har_replayer.py`, `sessions.py`) must use `import cc_dump.module` — never `from cc_dump.module import func`. Direct imports create stale references that won't update on reload.
 
-**Reloadable modules** (`formatting.py`, `tui/rendering.py`, `tui/widget_factory.py`, `tui/event_handlers.py`, `tui/panel_renderers.py`, `colors.py`, `analysis.py`, `palette.py`, `tui/protocols.py`, `tui/custom_footer.py`) can be safely reloaded in dependency order.
+**Reloadable modules** (`formatting.py`, `tui/rendering.py`, `tui/widget_factory.py`, `tui/event_handlers.py`, `tui/panel_renderers.py`, `colors.py`, `analysis.py`, `palette.py`, `router.py`, `tui/protocols.py`, `tui/custom_footer.py`) can be safely reloaded in dependency order.
+
+**Any file change triggers full reload + widget replacement.** This is intentional — the reload is fast and eliminates partial-reload complexity.
 
 When adding new modules, classify them as stable or reloadable and follow the corresponding import pattern.
 

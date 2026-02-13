@@ -8,6 +8,8 @@ The hot-reload system allows you to modify formatting, rendering, and widget cod
 
 **Key Principle**: Code modules are reloadable, but live object instances (the running HTTP server, the Textual app) are stable boundaries that never reload.
 
+**Design Choice**: Any file change triggers a full reload of all reloadable modules plus widget replacement. This is intentional — the reload is fast and eliminates complexity from partial-reload logic.
+
 ## Module Categories
 
 All code modules fall into one of three categories:
@@ -58,6 +60,7 @@ These modules contain pure functions and class definitions. They can be safely r
 | `colors.py` | (none) | Color scheme definitions |
 | `analysis.py` | (none) | Request/response analysis functions |
 | `tui/protocols.py` | (none) | Protocol definitions for hot-swappable widgets |
+| `router.py` | (none) | Request routing / event fan-out |
 | `formatting.py` | colors, analysis | Format requests/responses to structured blocks |
 | `tui/rendering.py` | formatting, colors | Render blocks to Rich Text objects |
 | `tui/panel_renderers.py` | analysis | Render stats/economics/timeline panels |
@@ -65,16 +68,6 @@ These modules contain pure functions and class definitions. They can be safely r
 | `tui/widget_factory.py` | analysis, rendering, panel_renderers, protocols | Widget class definitions and factory functions |
 
 **Reload Order**: Modules reload in dependency order (leaves first, dependents after). See `hot_reload.py:_RELOAD_ORDER` for the authoritative list.
-
-### 3. Conditional Reload (Reload only if self changed)
-
-These modules are reloaded only if they themselves are modified (not when their dependencies change):
-
-| Module | Purpose |
-|--------|---------|
-| `schema.py` | Data structure definitions |
-| `store.py` | State management |
-| `router.py` | Request routing |
 
 ## Widget Hot-Swap Pattern
 
@@ -115,19 +108,19 @@ The protocol uses structural typing (duck typing with type safety), so widgets d
 
 Each widget defines what state it needs to preserve across hot-swaps:
 
-**ConversationView** (conversation history):
+**ConversationView** (conversation history + streaming state):
 ```python
 def get_state(self) -> dict:
     return {
-        "turn_blocks": self._turn_blocks,  # All completed turns
-        "current_turn_blocks": self._current_turn_blocks,  # In-progress turn
-        "text_delta_buffer": self._text_delta_buffer,  # Buffered streaming text
+        "all_blocks": [td.blocks for td in self._turns],
+        "follow_mode": self._follow_mode,
+        "turn_count": len(self._turns),
+        "streaming_states": [...],  # active streaming turn deltas
     }
 
 def restore_state(self, state: dict):
-    self._turn_blocks = state.get("turn_blocks", [])
-    self._current_turn_blocks = state.get("current_turn_blocks", [])
-    self._text_delta_buffer = state.get("text_delta_buffer", [])
+    self._pending_restore = state
+    self._follow_mode = state.get("follow_mode", True)
 ```
 
 **StatsPanel** (accumulated statistics):
@@ -135,18 +128,12 @@ def restore_state(self, state: dict):
 def get_state(self) -> dict:
     return {
         "request_count": self.request_count,
-        "input_tokens": self.input_tokens,
-        "output_tokens": self.output_tokens,
-        "cache_read_tokens": self.cache_read_tokens,
-        "cache_creation_tokens": self.cache_creation_tokens,
         "models_seen": set(self.models_seen),
     }
 
 def restore_state(self, state: dict):
     self.request_count = state.get("request_count", 0)
-    self.input_tokens = state.get("input_tokens", 0)
-    # ... (restore all fields with defaults)
-    self._refresh_display()  # Re-render with new code
+    self.models_seen = state.get("models_seen", set())
 ```
 
 ## Developer Workflows
@@ -224,7 +211,7 @@ _RELOAD_ORDER = [
 ### How to Debug Hot-Reload Issues
 
 **Module Not Reloading?**
-- Check that it's in `_RELOAD_ORDER` or `_RELOAD_IF_CHANGED` in `hot_reload.py`
+- Check that it's in `_RELOAD_ORDER` in `hot_reload.py`
 - Check that it's not in `_EXCLUDED_FILES` or `_EXCLUDED_MODULES`
 - Watch stderr for `[hot-reload]` messages
 

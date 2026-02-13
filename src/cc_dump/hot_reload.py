@@ -18,6 +18,7 @@ _RELOAD_ORDER = [
     "cc_dump.analysis",  # no deps within project
     "cc_dump.formatting",  # depends on: colors, analysis
     "cc_dump.segmentation",  # depends on: nothing (pure parser, before rendering)
+    "cc_dump.router",  # depends on: nothing within reloadable set
     "cc_dump.tui.search",  # depends on: palette
     "cc_dump.tui.rendering",  # depends on: formatting, colors
     "cc_dump.tui.custom_footer",  # depends on: palette, rendering
@@ -25,11 +26,6 @@ _RELOAD_ORDER = [
     "cc_dump.tui.event_handlers",  # depends on: analysis, formatting
     "cc_dump.tui.info_panel",  # depends on: palette, panel_renderers
     "cc_dump.tui.widget_factory",  # depends on: analysis, rendering, panel_renderers
-]
-
-# Additional modules reloaded only if they themselves changed
-_RELOAD_IF_CHANGED = [
-    "cc_dump.router",
 ]
 
 # Files to explicitly exclude from watching
@@ -97,14 +93,8 @@ def check_and_get_reloaded() -> list[str]:
     for path in changed_files:
         print(f"[hot-reload] detected change: {path}", file=sys.stderr)
 
-    # Determine which modules to reload
-    to_reload = list(_RELOAD_ORDER)  # always reload full display path if any changed
-
-    # Add optional modules only if they themselves changed
-    for mod_name in _RELOAD_IF_CHANGED:
-        mod = sys.modules.get(mod_name)
-        if mod and hasattr(mod, "__file__") and mod.__file__ in changed_files:
-            to_reload.append(mod_name)
+    # Reload all modules in dependency order — any file change triggers full reload
+    to_reload = list(_RELOAD_ORDER)
 
     # Reload in order
     reloaded = []
@@ -141,9 +131,9 @@ def _scan_mtimes() -> None:
 
             path = os.path.join(d, fname)
             # Check if this is an excluded module
-            rel_path = Path(path).relative_to(Path(_watch_dirs[0]).parent)
+            rel_path = Path(path).relative_to(Path(_watch_dirs[0]))
             rel_str = str(rel_path).replace(os.sep, "/")
-            if any(excl in rel_str for excl in _EXCLUDED_MODULES):
+            if rel_str in _EXCLUDED_MODULES:
                 continue
 
             try:
@@ -173,9 +163,9 @@ def _get_changed_files() -> set[str]:
 
             path = os.path.join(d, fname)
             # Check if this is an excluded module
-            rel_path = Path(path).relative_to(Path(_watch_dirs[0]).parent)
+            rel_path = Path(path).relative_to(Path(_watch_dirs[0]))
             rel_str = str(rel_path).replace(os.sep, "/")
-            if any(excl in rel_str for excl in _EXCLUDED_MODULES):
+            if rel_str in _EXCLUDED_MODULES:
                 continue
 
             try:

@@ -208,6 +208,8 @@ class TestImportValidation:
 
     def test_import_validation(self):
         """Validate that stable modules use module-level imports, not direct imports."""
+        from cc_dump.hot_reload import _RELOAD_ORDER
+
         test_dir = Path(__file__).parent
         project_root = test_dir.parent
         src_dir = project_root / "src" / "cc_dump"
@@ -215,17 +217,20 @@ class TestImportValidation:
         stable_modules = [
             src_dir / "tui" / "app.py",
             src_dir / "proxy.py",
+            src_dir / "tui" / "hot_reload_controller.py",
+            src_dir / "tui" / "action_handlers.py",
+            src_dir / "tui" / "search_controller.py",
+            src_dir / "tui" / "theme_controller.py",
+            src_dir / "tui" / "dump_export.py",
         ]
 
-        forbidden_modules = {
-            "cc_dump.formatting",
-            "cc_dump.colors",
-            "cc_dump.analysis",
-            "cc_dump.tui.rendering",
-            "cc_dump.tui.panel_renderers",
-            "cc_dump.tui.event_handlers",
-            "cc_dump.tui.widget_factory",
-            "cc_dump.tui.protocols",
+        # // [LAW:one-source-of-truth] Derive from _RELOAD_ORDER, not a separate list
+        forbidden_modules = set(_RELOAD_ORDER)
+
+        # Known-safe direct imports: class references used for query_one() that
+        # are never replaced during hot-reload. Document why each is safe.
+        allowed_imports = {
+            ("cc_dump.tui.custom_footer", "StatusFooter"),  # footer never hot-swapped
         }
 
         violations = []
@@ -244,6 +249,11 @@ class TestImportValidation:
                 if isinstance(node, ast.ImportFrom):
                     if node.module in forbidden_modules:
                         imported_names = [alias.name for alias in node.names]
+                        if all(
+                            (node.module, name) in allowed_imports
+                            for name in imported_names
+                        ):
+                            continue
                         violations.append(
                             f"{module_path.name}:{node.lineno}: "
                             f"from {node.module} import {', '.join(imported_names)}\n"
@@ -382,20 +392,12 @@ class TestHotReloadModuleStructure:
 
         expected_modules = [
             "cc_dump.formatting",
+            "cc_dump.router",
             "cc_dump.tui.rendering",
             "cc_dump.tui.widget_factory",
         ]
         for mod in expected_modules:
             assert mod in _RELOAD_ORDER, f"Expected module {mod} in reload order"
-
-    def test_reload_if_changed_is_defined(self):
-        from cc_dump.hot_reload import _RELOAD_IF_CHANGED
-
-        assert isinstance(_RELOAD_IF_CHANGED, list)
-
-        expected_modules = ["cc_dump.router"]
-        for mod in expected_modules:
-            assert mod in _RELOAD_IF_CHANGED
 
     def test_excluded_files_contain_stable_boundaries(self):
         from cc_dump.hot_reload import _EXCLUDED_FILES

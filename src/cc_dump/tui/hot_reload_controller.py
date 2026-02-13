@@ -45,18 +45,10 @@ async def check_hot_reload(app) -> None:
 
     apply_markdown_theme(app)
 
-    # Check if widget_factory was reloaded - if so, replace widgets
+    # Any file change triggers full widget replacement
+    # // [LAW:dataflow-not-control-flow] Unconditional — all reloads take same path
     try:
-        if (
-            "cc_dump.tui.widget_factory" in reloaded_modules
-            or "cc_dump.tui.info_panel" in reloaded_modules
-        ):
-            await replace_all_widgets(app)
-        elif app.is_running:
-            # Just re-render with new code (for rendering/formatting changes)
-            conv = app._get_conv()
-            if conv is not None:
-                conv.rerender(app.active_filters)
+        await replace_all_widgets(app)
     except Exception as e:
         app.notify(f"[hot-reload] error applying: {e}", severity="error")
         app._app_log("ERROR", f"Hot-reload error applying: {e}")
