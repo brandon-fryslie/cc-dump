@@ -79,7 +79,7 @@ class StatusFooter(Static):
             # // [LAW:dataflow-not-control-flow] Style derived from vis.visible value
             active_style = f"bold {fg_light} on {bg_color}"
             style = active_style if vis.visible else "dim"
-            click = _click(f"toggle_vis('{name}')")
+            click = _click(f"app.toggle_vis('{name}')")
             line1.append(f" {key} ", style=Style.parse(active_style if vis.visible else "dim") + click)
             line1.append(name, style=Style.parse(style) + click)
             line1.append(f" {icon} ", style=Style.parse(style) + click)
@@ -93,7 +93,7 @@ class StatusFooter(Static):
             # // [LAW:dataflow-not-control-flow] Style derived from is_active value
             active_style = f"bold {fg_light} on {bg_color}"
             style = active_style if is_active else "dim"
-            click = _click(f"toggle_{state_key}")
+            click = _click(f"app.toggle_{state_key}")
             if line2.plain:
                 line2.append("  ")
             line2.append(f" {key}", style=Style.parse(active_style if is_active else "dim") + click)
@@ -102,7 +102,7 @@ class StatusFooter(Static):
 
         # Follow mode — prominent when active
         follow_active = bool(state.get("follow", False))
-        follow_click = _click("toggle_follow")
+        follow_click = _click("app.toggle_follow")
         line2.append("  ")
         if follow_active:
             line2.append(" 0", style=Style.parse("bold") + follow_click)
