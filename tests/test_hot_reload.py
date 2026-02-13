@@ -2,17 +2,35 @@
 
 These tests verify that the hot-reload system correctly detects changes to
 source files and reloads modules without crashing the TUI.
+
+PTY integration tests use os.utime() to trigger mtime-based detection —
+no production source files are ever modified.
+
+Error resilience tests run as unit tests with mocked importlib.reload.
 """
 
 import ast
+import importlib
+import os
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from tests.conftest import modify_file, settle
+from tests.conftest import settle
 
 pytestmark = pytest.mark.pty
+
+
+def _touch(path):
+    """Bump a file's mtime to trigger hot-reload detection. Content unchanged."""
+    os.utime(path, None)
+
+
+# ============================================================================
+# PTY INTEGRATION TESTS — process stays alive through reload cycles
+# ============================================================================
 
 
 class TestHotReloadBasics:
@@ -28,158 +46,52 @@ class TestHotReloadBasics:
         assert "cc-dump" in content or "Quit" in content or "headers" in content, \
             f"Expected TUI elements in output. Got:\n{content}"
 
-    def test_hot_reload_detection_comment(self, start_cc_dump, formatting_py):
-        """Test that hot-reload detects a simple modification (added comment)."""
+    def test_hot_reload_detection(self, start_cc_dump, formatting_py):
+        """Test that hot-reload detects an mtime change."""
         proc = start_cc_dump()
 
-        with modify_file(formatting_py, lambda content: f"# Hot-reload test comment\n{content}"):
-            # Hot-reload check every ~1s when idle + margin
-            time.sleep(1.5)
-            assert proc.is_alive(), "Process should still be alive after hot-reload"
-
-        time.sleep(0.5)
-        assert proc.is_alive(), "Process should remain alive after file restoration"
-
-
-class TestHotReloadWithCodeChanges:
-    """Test hot-reload when actual code changes are made."""
-
-    def test_hot_reload_with_marker_in_function(self, start_cc_dump, formatting_py):
-        """Test that hot-reloaded code actually executes (add marker to output)."""
-        proc = start_cc_dump()
-
-        marker = "HOTRELOAD_MARKER_12345"
-
-        def add_marker(content):
-            if 'def _get_timestamp():' in content:
-                return content.replace(
-                    'def _get_timestamp():\n    return datetime.now()',
-                    f'def _get_timestamp():\n    # {marker}\n    return datetime.now()'
-                )
-            return content
-
-        with modify_file(formatting_py, add_marker):
-            time.sleep(1.5)
-            assert proc.is_alive(), "Process should still be alive after code change"
-
-        time.sleep(0.5)
-        assert proc.is_alive(), "Process should remain alive after marker removal"
-
-    def test_hot_reload_formatting_function_change(self, start_cc_dump, formatting_py):
-        """Test that changes to formatting functions are reloaded."""
-        proc = start_cc_dump()
-
-        def modify_separator(content):
-            return content.replace(
-                'style: str = "heavy"  # "heavy" or "thin"',
-                'style: str = "heavy"  # "heavy" or "thin" [MODIFIED]'
-            )
-
-        with modify_file(formatting_py, modify_separator):
-            time.sleep(1.5)
-            assert proc.is_alive(), "Process should survive formatting function changes"
-
-        time.sleep(0.5)
-        assert proc.is_alive(), "Process should remain stable after changes reverted"
-
-
-class TestHotReloadErrorResilience:
-    """Test that hot-reload handles errors gracefully."""
-
-    def test_hot_reload_survives_syntax_error(self, start_cc_dump, formatting_py):
-        """Test that app doesn't crash when a syntax error is introduced."""
-        proc = start_cc_dump()
-
-        def add_syntax_error(content):
-            return f"this is not valid python syntax !!!\n{content}"
-
-        with modify_file(formatting_py, add_syntax_error):
-            time.sleep(1.5)
-            assert proc.is_alive(), "Process should survive syntax errors in hot-reload"
-
-            content = proc.get_content()
-            assert len(content) > 0, "TUI should still be displaying content"
-
-        time.sleep(0.5)
-        assert proc.is_alive(), "Process should recover after syntax error is fixed"
-
-    def test_hot_reload_survives_import_error(self, start_cc_dump, formatting_py):
-        """Test that app doesn't crash when an import error is introduced."""
-        proc = start_cc_dump()
-
-        def add_import_error(content):
-            return f"import this_module_does_not_exist_xyz\n{content}"
-
-        with modify_file(formatting_py, add_import_error):
-            time.sleep(2.0)
-            assert proc.is_alive(), "Process should survive import errors in hot-reload"
-
-        time.sleep(1.0)
-        assert proc.is_alive(), "Process should recover after import error is fixed"
-
-    def test_hot_reload_survives_runtime_error_in_function(self, start_cc_dump, formatting_py):
-        """Test that introducing a runtime error doesn't crash during reload."""
-        proc = start_cc_dump()
-
-        def add_runtime_error(content):
-            return content.replace(
-                'def _get_timestamp():',
-                'def _get_timestamp():\n    x = 1 / 0  # This will fail if called\n    return "error"\n\ndef _get_timestamp_backup():'
-            )
-
-        with modify_file(formatting_py, add_runtime_error):
-            time.sleep(1.5)
-            assert proc.is_alive(), "Process should survive reload with runtime error in code"
-
-        time.sleep(0.5)
-        assert proc.is_alive(), "Process should remain alive after reverting runtime error"
+        _touch(formatting_py)
+        time.sleep(1.5)
+        assert proc.is_alive(), "Process should still be alive after hot-reload trigger"
 
 
 class TestHotReloadExclusions:
     """Test that excluded files are not hot-reloaded."""
 
     def test_proxy_changes_not_reloaded(self, start_cc_dump, proxy_py):
-        """Test that changes to proxy.py do NOT trigger hot-reload."""
+        """Test that mtime changes to proxy.py do NOT trigger hot-reload."""
         proc = start_cc_dump()
 
-        with modify_file(proxy_py, lambda content: f"# Test comment in proxy\n{content}"):
-            time.sleep(2)
-            assert proc.is_alive(), "Process should be running"
-
-        time.sleep(0.5)
-        assert proc.is_alive(), "Process should remain stable"
+        _touch(proxy_py)
+        time.sleep(2)
+        assert proc.is_alive(), "Process should be running"
 
 
 class TestHotReloadMultipleChanges:
     """Test hot-reload with multiple file changes."""
 
-    def test_hot_reload_multiple_modifications(self, start_cc_dump, formatting_py):
-        """Test that hot-reload handles multiple successive changes."""
+    def test_hot_reload_multiple_touches(self, start_cc_dump, formatting_py):
+        """Test that hot-reload handles multiple successive mtime bumps."""
         proc = start_cc_dump()
 
-        with modify_file(formatting_py, lambda c: f"# First comment\n{c}"):
-            time.sleep(1.5)
-            assert proc.is_alive(), "Process should survive first modification"
+        _touch(formatting_py)
+        time.sleep(1.5)
+        assert proc.is_alive(), "Process should survive first touch"
 
-        time.sleep(0.5)
+        _touch(formatting_py)
+        time.sleep(1.5)
+        assert proc.is_alive(), "Process should survive second touch"
 
-        with modify_file(formatting_py, lambda c: f"# Second comment\n{c}"):
-            time.sleep(1.5)
-            assert proc.is_alive(), "Process should survive second modification"
-
-        time.sleep(0.5)
-        assert proc.is_alive(), "Process should remain stable after all changes"
-
-    def test_hot_reload_rapid_changes(self, start_cc_dump, formatting_py):
-        """Test that rapid successive changes don't cause issues."""
+    def test_hot_reload_rapid_touches(self, start_cc_dump, formatting_py):
+        """Test that rapid successive mtime bumps don't cause issues."""
         proc = start_cc_dump()
 
-        for i in range(3):
-            with modify_file(formatting_py, lambda c: f"# Rapid change {i}\n{c}"):
-                time.sleep(0.3)
+        for _ in range(5):
+            _touch(formatting_py)
+            time.sleep(0.1)
 
         time.sleep(2)
-        assert proc.is_alive(), "Process should survive rapid changes"
+        assert proc.is_alive(), "Process should survive rapid touches"
 
 
 class TestHotReloadStability:
@@ -192,15 +104,107 @@ class TestHotReloadStability:
         time.sleep(1)
         assert proc.is_alive(), "Process should be stable initially"
 
-        with modify_file(formatting_py, lambda c: f"# Extended test\n{c}"):
-            time.sleep(1.5)
-            assert proc.is_alive(), "Process should survive hot-reload"
+        _touch(formatting_py)
+        time.sleep(1.5)
+        assert proc.is_alive(), "Process should survive hot-reload"
 
         time.sleep(1)
         assert proc.is_alive(), "Process should remain stable after hot-reload"
 
         proc.send("q", press_enter=False)
         settle(proc, 0.3)
+
+
+# ============================================================================
+# UNIT TESTS — error resilience via mocked importlib.reload
+# ============================================================================
+
+
+class TestHotReloadErrorResilience:
+    """Test that hot-reload handles module errors gracefully.
+
+    Uses mocked importlib.reload to simulate errors without modifying source files.
+    """
+
+    def _setup_and_trigger(self):
+        """Init hot_reload, load all reloadable modules, and fake a file change."""
+        import cc_dump.hot_reload as hr
+
+        # Ensure all reloadable modules are in sys.modules
+        for mod_name in hr._RELOAD_ORDER:
+            importlib.import_module(mod_name)
+
+        test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
+        hr.init(str(test_dir))
+        # Force a mismatch so check_and_get_reloaded() sees a change
+        first_path = next(iter(hr._mtimes))
+        hr._mtimes[first_path] = 0.0
+        return hr
+
+    def test_survives_syntax_error_in_module(self):
+        """Reload continues past a module that raises SyntaxError."""
+        hr = self._setup_and_trigger()
+
+        original_reload = importlib.reload
+
+        def failing_reload(mod):
+            if mod.__name__ == "cc_dump.colors":
+                raise SyntaxError("simulated syntax error")
+            return original_reload(mod)
+
+        with patch.object(importlib, "reload", side_effect=failing_reload):
+            reloaded = hr.check_and_get_reloaded()
+
+        assert "cc_dump.colors" not in reloaded, "Broken module should be skipped"
+        assert len(reloaded) > 0, "Other modules should still reload"
+
+    def test_survives_import_error_in_module(self):
+        """Reload continues past a module that raises ModuleNotFoundError."""
+        hr = self._setup_and_trigger()
+
+        original_reload = importlib.reload
+
+        def failing_reload(mod):
+            if mod.__name__ == "cc_dump.formatting":
+                raise ModuleNotFoundError("No module named 'nonexistent'")
+            return original_reload(mod)
+
+        with patch.object(importlib, "reload", side_effect=failing_reload):
+            reloaded = hr.check_and_get_reloaded()
+
+        assert "cc_dump.formatting" not in reloaded
+        assert len(reloaded) > 0
+
+    def test_survives_runtime_error_in_module(self):
+        """Reload continues past a module that raises an arbitrary exception."""
+        hr = self._setup_and_trigger()
+
+        original_reload = importlib.reload
+
+        def failing_reload(mod):
+            if mod.__name__ == "cc_dump.analysis":
+                raise RuntimeError("simulated runtime error")
+            return original_reload(mod)
+
+        with patch.object(importlib, "reload", side_effect=failing_reload):
+            reloaded = hr.check_and_get_reloaded()
+
+        assert "cc_dump.analysis" not in reloaded
+        assert len(reloaded) > 0
+
+    def test_all_modules_failing_returns_empty(self):
+        """If every module fails to reload, returns empty list."""
+        hr = self._setup_and_trigger()
+
+        with patch.object(importlib, "reload", side_effect=Exception("all broken")):
+            reloaded = hr.check_and_get_reloaded()
+
+        assert reloaded == []
+
+
+# ============================================================================
+# UNIT TESTS — import validation, widget protocols, state, module structure
+# ============================================================================
 
 
 class TestImportValidation:
@@ -268,11 +272,6 @@ class TestImportValidation:
                 f"Stable modules must use 'import module' pattern, not 'from module import ...'.\n"
                 f"See HOT_RELOAD_ARCHITECTURE.md for details."
             )
-
-
-# ============================================================================
-# UNIT TESTS - Fast tests without TUI interaction
-# ============================================================================
 
 
 class TestWidgetProtocolValidation:
@@ -438,7 +437,6 @@ class TestHotReloadFileDetection:
 
     def test_init_sets_watch_dirs(self):
         import cc_dump.hot_reload as hr
-        from pathlib import Path
 
         test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
         hr.init(str(test_dir))
@@ -448,7 +446,6 @@ class TestHotReloadFileDetection:
 
     def test_scan_mtimes_populates_cache(self):
         import cc_dump.hot_reload as hr
-        from pathlib import Path
 
         test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
         hr.init(str(test_dir))
@@ -460,7 +457,6 @@ class TestHotReloadFileDetection:
 
     def test_get_changed_files_returns_empty_initially(self):
         import cc_dump.hot_reload as hr
-        from pathlib import Path
 
         test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
         hr.init(str(test_dir))
@@ -473,7 +469,6 @@ class TestHotReloadFileDetection:
 
     def test_check_returns_false_when_no_changes(self):
         import cc_dump.hot_reload as hr
-        from pathlib import Path
 
         test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
         hr.init(str(test_dir))
@@ -483,9 +478,36 @@ class TestHotReloadFileDetection:
 
         assert result is False, "Should return False when no changes detected"
 
+    def test_has_changes_returns_false_when_no_changes(self):
+        import cc_dump.hot_reload as hr
+
+        test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
+        hr.init(str(test_dir))
+
+        assert hr.has_changes() is False, "Should return False when no changes detected"
+
+    def test_has_changes_does_not_update_mtimes(self):
+        import cc_dump.hot_reload as hr
+
+        test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
+        hr.init(str(test_dir))
+
+        # Capture mtimes snapshot
+        mtimes_before = dict(hr._mtimes)
+
+        # Simulate a change by tampering with the cache
+        first_path = next(iter(hr._mtimes))
+        hr._mtimes[first_path] = 0.0  # Force a mismatch
+
+        assert hr.has_changes() is True, "Should detect the simulated change"
+        # _mtimes should NOT have been updated (has_changes is read-only)
+        assert hr._mtimes[first_path] == 0.0, "has_changes() must not update _mtimes"
+
+        # Restore
+        hr._mtimes.update(mtimes_before)
+
     def test_check_and_get_reloaded_returns_empty_list_when_no_changes(self):
         import cc_dump.hot_reload as hr
-        from pathlib import Path
 
         test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
         hr.init(str(test_dir))

@@ -2,6 +2,7 @@
 
 // [LAW:one-way-deps] Depends on hot_reload, rendering, widget_factory, search. No upward deps.
 // [LAW:locality-or-seam] All reload logic here — app.py keeps thin delegates.
+// [LAW:single-enforcer] Debounce enforced here — callers just call check_hot_reload().
 
 Not hot-reloadable (mutates app widget tree).
 """
@@ -14,21 +15,51 @@ import cc_dump.tui.search
 import cc_dump.tui.widget_factory
 import cc_dump.tui.info_panel
 
+_DEBOUNCE_S = 2.0  # Quiet period before reload fires
+
 
 async def check_hot_reload(app) -> None:
-    """Check for file changes and reload modules if necessary."""
+    """Check for file changes; debounce before reloading.
+
+    Uses has_changes() (cheap mtime scan, no side effects) to detect changes.
+    On detection, resets a debounce timer. The actual reload only fires once
+    no new changes arrive for _DEBOUNCE_S seconds.
+    """
     try:
-        reloaded_modules = cc_dump.hot_reload.check_and_get_reloaded()
+        changed = cc_dump.hot_reload.has_changes()
     except Exception as e:
         app.notify(f"[hot-reload] error checking: {e}", severity="error")
         app._app_log("ERROR", f"Hot-reload error checking: {e}")
         return
 
+    if not changed:
+        return
+
+    # Cancel existing debounce timer if any
+    timer = getattr(app, "_reload_debounce_timer", None)
+    if timer is not None:
+        timer.stop()
+
+    # Schedule reload after quiet period
+    app._reload_debounce_timer = app.set_timer(
+        _DEBOUNCE_S, lambda: app.call_later(_do_hot_reload, app)
+    )
+
+
+async def _do_hot_reload(app) -> None:
+    """Execute the actual reload after debounce settles."""
+    app._reload_debounce_timer = None
+
+    try:
+        reloaded_modules = cc_dump.hot_reload.check_and_get_reloaded()
+    except Exception as e:
+        app.notify(f"[hot-reload] error reloading: {e}", severity="error")
+        app._app_log("ERROR", f"Hot-reload error reloading: {e}")
+        return
+
     if not reloaded_modules:
         return
 
-    # Notify user
-    app.notify("[hot-reload] modules reloaded", severity="information")
     app._app_log("INFO", f"Hot-reload: {', '.join(reloaded_modules)}")
 
     # Cancel any active search on reload (state references may be stale)
@@ -49,6 +80,11 @@ async def check_hot_reload(app) -> None:
     # // [LAW:dataflow-not-control-flow] Unconditional — all reloads take same path
     try:
         await replace_all_widgets(app)
+        # Single consolidated notification
+        app.notify(
+            f"[hot-reload] {len(reloaded_modules)} modules updated",
+            severity="information",
+        )
     except Exception as e:
         app.notify(f"[hot-reload] error applying: {e}", severity="error")
         app._app_log("ERROR", f"Hot-reload error applying: {e}")
@@ -158,5 +194,3 @@ async def _replace_all_widgets_inner(app) -> None:
 
     # 5. Re-render with current filters
     new_conv.rerender(app.active_filters)
-
-    app.notify("[hot-reload] widgets replaced", severity="information")

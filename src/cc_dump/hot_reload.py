@@ -71,6 +71,36 @@ def init(package_dir: str) -> None:
     _scan_mtimes()
 
 
+def has_changes() -> bool:
+    """Check if any watched files have changed mtimes (without updating cache).
+
+    Cheap read-only scan — no module reloads, no side effects on _mtimes.
+    Use this for debounce detection; call check_and_get_reloaded() to actually reload.
+    """
+    for d in _watch_dirs:
+        if not os.path.isdir(d):
+            continue
+        for fname in os.listdir(d):
+            if not fname.endswith(".py"):
+                continue
+            if fname in _EXCLUDED_FILES:
+                continue
+
+            path = os.path.join(d, fname)
+            rel_path = Path(path).relative_to(Path(_watch_dirs[0]))
+            rel_str = str(rel_path).replace(os.sep, "/")
+            if rel_str in _EXCLUDED_MODULES:
+                continue
+
+            try:
+                mtime = os.path.getmtime(path)
+                if path in _mtimes and _mtimes[path] != mtime:
+                    return True
+            except (FileNotFoundError, OSError):
+                pass
+    return False
+
+
 def check() -> bool:
     """Check for file changes and reload if necessary.
 
