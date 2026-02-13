@@ -27,6 +27,80 @@ def _safe_headers(headers):
     return {k: v for k, v in headers.items() if k.lower() not in _EXCLUDED_HEADERS}
 
 
+class StreamSink:
+    """Consumer of an SSE stream. Each method is called in its own error boundary."""
+
+    def on_raw(self, data: bytes) -> None:
+        pass
+
+    def on_event(self, event_type: str, event: dict) -> None:
+        pass
+
+    def on_done(self) -> None:
+        pass
+
+
+class ClientSink(StreamSink):
+    """Writes raw SSE bytes back to the HTTP client."""
+
+    def __init__(self, wfile):
+        self._wfile = wfile
+
+    def on_raw(self, data):
+        self._wfile.write(data)
+        self._wfile.flush()
+
+
+class EventQueueSink(StreamSink):
+    """Emits parsed events to the TUI event queue."""
+
+    def __init__(self, queue):
+        self._queue = queue
+
+    def on_event(self, event_type, event):
+        self._queue.put(("response_event", event_type, event))
+
+    def on_done(self):
+        self._queue.put(("response_done",))
+
+
+def _fan_out_sse(resp, sinks):
+    """Drive an SSE response to multiple sinks with per-sink error isolation."""
+    # [LAW:dataflow-not-control-flow] All sinks called unconditionally
+    try:
+        for raw_line in resp:
+            for sink in sinks:
+                try:
+                    sink.on_raw(raw_line)
+                except Exception:
+                    pass
+
+            line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+            if not line.startswith("data: "):
+                continue
+            json_str = line[6:]
+            if json_str == "[DONE]":
+                break
+
+            try:
+                event = json.loads(json_str)
+            except json.JSONDecodeError:
+                continue
+
+            event_type = event.get("type", "")
+            for sink in sinks:
+                try:
+                    sink.on_event(event_type, event)
+                except Exception:
+                    pass
+    finally:
+        for sink in sinks:
+            try:
+                sink.on_done()
+            except Exception:
+                pass
+
+
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
     target_host = None  # set by cli.py from --target arg before server starts
     event_queue = None  # set by cli.py before server starts
@@ -122,31 +196,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(data)
 
     def _stream_response(self, resp):
-        # Note: response_start event has been replaced by response_headers above
-        # Old code: self.event_queue.put(("response_start",))
-
-        for raw_line in resp:
-            self.wfile.write(raw_line)
-            self.wfile.flush()
-
-            line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
-            if not line.startswith("data: "):
-                continue
-            json_str = line[6:]
-            if json_str == "[DONE]":
-                break
-
-            try:
-                event = json.loads(json_str)
-            except json.JSONDecodeError as e:
-                sys.stderr.write(f"[proxy] malformed SSE JSON: {e}\n")
-                sys.stderr.flush()
-                continue
-
-            event_type = event.get("type", "")
-            self.event_queue.put(("response_event", event_type, event))
-
-        self.event_queue.put(("response_done",))
+        _fan_out_sse(resp, [ClientSink(self.wfile), EventQueueSink(self.event_queue)])
 
     def do_POST(self):
         self._proxy()
