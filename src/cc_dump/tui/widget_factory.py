@@ -478,51 +478,11 @@ class ConversationView(ScrollView):
         """
         self._recalculate_offsets()
 
-    def _handle_text_delta_block(self, block, td):
-        """Handle TextDeltaBlock - buffer and re-render tail."""
-        td._text_delta_buffer.append(block.text)
-        self._refresh_streaming_delta(td)
-
-    def _handle_non_delta_block(self, block, td, filters):
-        """Handle non-delta blocks - flush, render, and append to stable strips."""
-        # Flush delta buffer first
-        self._flush_streaming_delta(td, filters)
-
-        # Render this block
-        rendered = cc_dump.tui.rendering.render_block(block)
-        if rendered is not None:
-            width = self._content_width if self._size_known else self._last_width
-            console = self.app.console
-            new_strips = self._render_single_block_to_strips(rendered, console, width)
-
-            # Add to stable strips
-            td.strips.extend(new_strips)
-            td._widest_strip = _compute_widest(td.strips)
-
-            # Update block_strip_map (track where this block starts)
-            block_idx = len(td.blocks) - 1
-            td.block_strip_map[block_idx] = td._stable_strip_count
-
-            # Advance stable boundary
-            td._stable_strip_count = len(td.strips)
-
-    # [LAW:dataflow-not-control-flow] Streaming block dispatch table
-    # Use string keys for hot-reload safety (isinstance fails across reloads)
-    def _get_streaming_block_handler(self, block_type_name: str):
-        """Get handler for a streaming block type."""
-        if block_type_name == "TextDeltaBlock":
-            return self._handle_text_delta_block
-        else:
-            return self._handle_non_delta_block
-
     def append_streaming_block(self, block, filters: dict = None):
         """Append a block to the streaming turn.
 
-        Handles TextDeltaBlock (buffer + render delta tail) and
-        non-delta blocks (flush + render + stable prefix).
-
-        During streaming, only USER and ASSISTANT category blocks are rendered.
-        All blocks are stored in td.blocks for finalization.
+        Only blocks with show_during_streaming=True are rendered during streaming.
+        All other blocks are stored for rendering at finalization.
         """
         if filters is None:
             filters = self._last_filters
@@ -533,26 +493,20 @@ class ConversationView(ScrollView):
 
         td = self._turns[-1]
 
-        # Add block to blocks list (always store for finalization)
+        # Add block to blocks list (always store)
         td.blocks.append(block)
 
-        # [LAW:dataflow-not-control-flow] Dispatch via handler lookup
-        block_type_name = type(block).__name__
-        handler = self._get_streaming_block_handler(block_type_name)
-
-        # TextDeltaBlock takes (block, td), others take (block, td, filters)
-        if block_type_name == "TextDeltaBlock":
-            handler(block, td)
-        else:
-            handler(block, td, filters)
-
-        # Update virtual size
-        self._update_streaming_size(td)
-
-        # Auto-scroll if follow mode
-        if self._follow_mode:
-            with self._programmatic_scroll():
-                self.scroll_end(animate=False, immediate=False, x_axis=False)
+        # // [LAW:dataflow-not-control-flow] Block declares streaming behavior via property
+        if block.show_during_streaming:
+            # TextDeltaBlock: buffer and progressive display
+            td._text_delta_buffer.append(block.text)
+            self._refresh_streaming_delta(td)
+            # Update virtual size and auto-scroll
+            self._update_streaming_size(td)
+            if self._follow_mode:
+                with self._programmatic_scroll():
+                    self.scroll_end(animate=False, immediate=False, x_axis=False)
+        # Other blocks: stored only, rendered at finalization
 
     def finalize_streaming_turn(self) -> list:
         """Finalize the streaming turn.
@@ -955,29 +909,39 @@ class ConversationView(ScrollView):
             self.scroll_to(y=target_y, animate=False)
 
     def on_click(self, event) -> None:
-        """Toggle expand on truncated blocks or XML sub-blocks."""
-        # event.y is viewport-relative; add scroll offset for content-space
-        content_y = int(event.y + self.scroll_offset.y)
-        turn = self._find_turn_for_line(content_y)
-        if turn is None:
+        """Toggle expand on truncated blocks or XML sub-blocks.
+
+        Uses segment metadata (Style.from_meta) set during rendering to
+        determine what was clicked, following the same pattern as Textual's
+        Tree widget. Only arrow segments carry toggle metadata.
+        """
+        meta = event.style.meta
+
+        # Block-level toggle: arrow segment carries {"toggle_block": True}
+        if meta.get("toggle_block"):
+            content_y = int(event.y + self.scroll_offset.y)
+            turn = self._find_turn_for_line(content_y)
+            if turn is None:
+                return
+            block_idx = self._block_index_at_line(turn, content_y)
+            if block_idx is None or block_idx >= len(turn.blocks):
+                return
+            if self._is_expandable_block(turn.blocks[block_idx]):
+                self._toggle_block_expand(turn, block_idx)
             return
 
-        # Check if click hit a block
-        block_idx = self._block_index_at_line(turn, content_y)
-        if block_idx is None or block_idx >= len(turn.blocks):
-            return
+        # XML sub-block toggle: first strip carries {"toggle_xml": sb_idx}
+        toggle_xml = meta.get("toggle_xml")
+        if toggle_xml is not None:
+            content_y = int(event.y + self.scroll_offset.y)
+            turn = self._find_turn_for_line(content_y)
+            if turn is None:
+                return
+            block_idx = self._block_index_at_line(turn, content_y)
+            if block_idx is None or block_idx >= len(turn.blocks):
+                return
+            self._toggle_xml_sub_block(turn, block_idx, toggle_xml)
 
-        block = turn.blocks[block_idx]
-
-        # Check XML sub-block click first (more specific target)
-        xml_sb_idx = self._xml_sub_block_at_line(turn, block, block_idx, content_y)
-        if xml_sb_idx is not None:
-            self._toggle_xml_sub_block(turn, block_idx, xml_sb_idx)
-            return
-
-        # Fall through to parent block expand
-        if self._is_expandable_block(block):
-            self._toggle_block_expand(turn, block_idx)
 
     def _xml_sub_block_at_line(
         self, turn: TurnData, block, block_idx: int, content_y: int

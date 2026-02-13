@@ -70,6 +70,11 @@ class FormattedBlock:
     # Context-dependent category override. None = use static BLOCK_CATEGORY.
     category: Category | None = None
 
+    # Whether this block should be rendered during streaming.
+    # // [LAW:dataflow-not-control-flow] Block type declares streaming behavior,
+    # // consumer code checks the value, not the type.
+    show_during_streaming: bool = False
+
 
 @dataclass
 class SeparatorBlock(FormattedBlock):
@@ -214,6 +219,7 @@ class TextDeltaBlock(FormattedBlock):
     """A text delta from streaming response."""
 
     text: str = ""
+    show_during_streaming = True
 
 
 @dataclass

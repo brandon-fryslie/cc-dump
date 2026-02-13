@@ -1423,8 +1423,10 @@ def _add_gutter_to_strips(
         left_seg = Segment(symbol, Style(bold=True, color=color))
 
         # First strip: arrow (if expandable) or spaces
+        # // [LAW:single-enforcer] Meta on arrow segment is the sole toggle trigger
         if is_expandable and arrow_char:
-            arrow_seg = Segment(arrow_char + "  ", Style(color=color, bold=True))
+            arrow_style = Style(color=color, bold=True) + Style.from_meta({"toggle_block": True})
+            arrow_seg = Segment(arrow_char + "  ", arrow_style)
         else:
             arrow_seg = Segment("   ", Style())
 
@@ -1634,9 +1636,14 @@ def render_turn_to_strips(
                         ]
                         block_strips.extend(part_strips)
 
-                    # Track XML sub-block strip ranges
+                    # Track XML sub-block strip ranges and apply toggle meta
+                    # // [LAW:single-enforcer] Meta on first strip is the sole XML toggle trigger
                     if xml_sb_idx is not None:
                         xml_strip_ranges[xml_sb_idx] = (part_start, len(block_strips))
+                        if part_start < len(block_strips):
+                            block_strips[part_start] = block_strips[part_start].apply_meta(
+                                {"toggle_xml": xml_sb_idx}
+                            )
 
                 if block_cache is not None:
                     block_cache[cache_key] = (block_strips, xml_strip_ranges)
