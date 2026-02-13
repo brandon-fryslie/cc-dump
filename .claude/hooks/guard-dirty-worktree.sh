@@ -17,12 +17,20 @@ fi
 # Dangerous git subcommands that can destroy uncommitted work
 DANGEROUS="stash checkout restore reset clean rebase"
 
+# Extract just the git commands, not heredoc/string content.
+# Split on && ; || and newlines, keep only lines starting with git (after trimming).
+GIT_LINES=$(echo "$COMMAND" | tr '&;|' '\n' | grep -E '^\s*git\s' || true)
+
+if [ -z "$GIT_LINES" ]; then
+  exit 0
+fi
+
 for word in $DANGEROUS; do
-  if echo "$COMMAND" | grep -qE "\bgit\b.*\b${word}\b"; then
+  if echo "$GIT_LINES" | grep -qE "\bgit\b.*\b${word}\b"; then
     # Check for dirty worktree
     CWD=$(echo "$INPUT" | jq -r '.cwd')
     if cd "$CWD" 2>/dev/null && git status --porcelain 2>/dev/null | grep -q .; then
-      echo "BLOCKED: 'git $word' is not allowed when there are uncommitted changes. Only git add/commit and read-only commands (status/diff/log/show/branch) are permitted. This hook exists because 'git stash' destroyed in-progress work." >&2
+      echo "BLOCKED: 'git $word' is not allowed when there are uncommitted changes. Only git add/commit and read-only commands (status/diff/log/show/branch) are permitted. This hook exists because git stash destroyed in-progress work." >&2
       exit 2
     fi
   fi
