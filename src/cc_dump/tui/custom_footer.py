@@ -32,13 +32,13 @@ class StatusFooter(Static):
     }
 
     _CATEGORY_ITEMS = [
-        ("1", "headers"),
-        ("2", "user"),
-        ("3", "assistant"),
-        ("4", "tools"),
-        ("5", "system"),
-        ("6", "budget"),
-        ("7", "metadata"),
+        ("1", "user"),
+        ("2", "assistant"),
+        ("3", "tools"),
+        ("4", "system"),
+        ("5", "budget"),
+        ("6", "metadata"),
+        ("7", "headers"),
     ]
 
     _ACTION_ITEMS = [

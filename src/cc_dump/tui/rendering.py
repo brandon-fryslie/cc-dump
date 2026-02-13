@@ -40,6 +40,7 @@ from cc_dump.formatting import (
     TrackedContentBlock,
     RoleBlock,
     TextContentBlock,
+    ToolDefinitionsBlock,
     ToolUseBlock,
     ToolResultBlock,
     ToolUseSummaryBlock,
@@ -257,6 +258,7 @@ BLOCK_CATEGORY: dict[str, Category | None] = {
     "TurnBudgetBlock": Category.BUDGET,
     "SystemLabelBlock": Category.SYSTEM,
     "TrackedContentBlock": Category.SYSTEM,
+    "ToolDefinitionsBlock": Category.TOOLS,
     "ToolUseBlock": Category.TOOLS,
     "ToolResultBlock": Category.TOOLS,
     "ToolUseSummaryBlock": Category.TOOLS,
@@ -976,6 +978,142 @@ def _render_tool_use_full(block: ToolUseBlock) -> ConsoleRenderable | None:
     return _render_tool_use_oneliner(block)
 
 
+def _render_tool_use_full_with_desc(block: ToolUseBlock) -> ConsoleRenderable | None:
+    """Full expanded ToolUseBlock: tool-specific rendering + description when available.
+
+    // [LAW:dataflow-not-control-flow] Description is a value; empty string = no extra line.
+    """
+    base = _render_tool_use_full(block)
+    if not block.description or base is None:
+        return base
+    # Append dim italic first line of description (max 120 chars)
+    desc_line = block.description.split("\n", 1)[0]
+    if len(desc_line) > 120:
+        desc_line = desc_line[:117] + "..."
+    desc_text = Text("    ")
+    desc_text.append(desc_line, style="dim italic")
+    return Group(base, desc_text)
+
+
+# ─── ToolDefinitionsBlock renderers ────────────────────────────────────────────
+
+
+def _render_tool_defs_summary_collapsed(block: ToolDefinitionsBlock) -> Text | None:
+    """SUMMARY collapsed: one-line count + token total."""
+    t = Text("  ")
+    t.append(
+        "{} tool{} / {} tokens".format(
+            len(block.tools),
+            "" if len(block.tools) == 1 else "s",
+            _fmt_tokens(block.total_tokens),
+        ),
+        style="dim",
+    )
+    return t
+
+
+def _render_tool_defs_summary_expanded(block: ToolDefinitionsBlock) -> Text | None:
+    """SUMMARY expanded: two-column list of tool name + token count."""
+    tc = get_theme_colors()
+    t = Text("  ")
+    t.append(
+        "Tools ({} / {} tokens):".format(len(block.tools), _fmt_tokens(block.total_tokens)),
+        style=f"bold {tc.info}",
+    )
+    # Find max name length for alignment
+    names = [tool.get("name", "?") for tool in block.tools]
+    max_name = max((len(n) for n in names), default=0)
+    for i, tool in enumerate(block.tools):
+        name = tool.get("name", "?")
+        tokens = block.tool_tokens[i] if i < len(block.tool_tokens) else 0
+        t.append("\n    ")
+        t.append("{:<{}}".format(name, max_name + 2))
+        t.append("{} tokens".format(_fmt_tokens(tokens)), style="dim")
+    return t
+
+
+def _render_tool_defs_full_collapsed(block: ToolDefinitionsBlock) -> Text | None:
+    """FULL collapsed: comma-separated tool names."""
+    names = [tool.get("name", "?") for tool in block.tools]
+    preview = ", ".join(names)
+    if len(preview) > 100:
+        preview = preview[:97] + "..."
+    t = Text("  ")
+    t.append("Tools: ", style="bold")
+    t.append(preview, style="dim")
+    return t
+
+
+def _render_tool_def_region_parts(
+    block: ToolDefinitionsBlock,
+) -> list[tuple[ConsoleRenderable, int | None]]:
+    """FULL expanded: per-tool region parts with expand/collapse arrows.
+
+    Returns (renderable, region_index) tuples for the region rendering pipeline.
+    // [LAW:dataflow-not-control-flow] content_regions controls the data;
+    // region.expanded=None means expanded (default True), False means collapsed.
+    """
+    tc = get_theme_colors()
+    parts: list[tuple[ConsoleRenderable, int | None]] = []
+
+    # Header (non-region)
+    header = Text("  ")
+    header.append(
+        "Tools: {} definitions ({} tokens)".format(
+            len(block.tools), _fmt_tokens(block.total_tokens)
+        ),
+        style=f"bold {tc.info}",
+    )
+    parts.append((header, None))
+
+    # Build region expanded lookup
+    region_expanded = {r.index: r.expanded for r in block.content_regions}
+
+    for i, tool in enumerate(block.tools):
+        name = tool.get("name", "?")
+        tokens = block.tool_tokens[i] if i < len(block.tool_tokens) else 0
+        desc = tool.get("description", "")
+        is_expanded = region_expanded.get(i, None) is not False
+
+        if is_expanded:
+            # Expanded: arrow + name + full description + params
+            t = Text("    ")
+            t.append("\u25bd ", style=f"bold {tc.info}")  # ▽
+            t.append(name, style="bold")
+            t.append(" ({} tok)".format(_fmt_tokens(tokens)), style="dim")
+            if desc:
+                t.append(":\n      ")
+                t.append(desc, style="dim italic")
+            # Show required params from input_schema
+            schema = tool.get("input_schema", {})
+            properties = schema.get("properties", {})
+            required = set(schema.get("required", []))
+            if properties:
+                for pname, pinfo in properties.items():
+                    ptype = pinfo.get("type", "")
+                    req_marker = "*" if pname in required else ""
+                    t.append("\n      ")
+                    t.append("{}{}".format(pname, req_marker), style="bold dim")
+                    if ptype:
+                        t.append(": {}".format(ptype), style="dim")
+            parts.append((t, i))
+        else:
+            # Collapsed: arrow + name + first line of desc
+            t = Text("    ")
+            t.append("\u25b7 ", style=f"bold {tc.info}")  # ▷
+            t.append(name, style="bold")
+            t.append(" ({} tok)".format(_fmt_tokens(tokens)), style="dim")
+            if desc:
+                first_line = desc.split("\n", 1)[0]
+                if len(first_line) > 80:
+                    first_line = first_line[:77] + "..."
+                t.append(": ", style="dim")
+                t.append(first_line, style="dim italic")
+            parts.append((t, i))
+
+    return parts
+
+
 # ─── ToolResultBlock renderers ─────────────────────────────────────────────────
 
 
@@ -1269,6 +1407,7 @@ BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], ConsoleRenderable | None]]
     "TrackedContentBlock": _render_tracked_content_full,
     "RoleBlock": _render_role,
     "TextContentBlock": _render_text_content,
+    "ToolDefinitionsBlock": _render_tool_defs_summary_collapsed,
     "ToolUseBlock": _render_tool_use_full,
     "ToolResultBlock": _render_tool_result_full,
     "ToolUseSummaryBlock": _render_tool_use_summary,
@@ -1299,8 +1438,14 @@ BLOCK_STATE_RENDERERS: dict[
     ("TurnBudgetBlock", True, False, True): _render_turn_budget_oneliner,
     # ToolResultBlock: header-only at full collapsed (no raw content dump)
     ("ToolResultBlock", True, True, False): _render_tool_result_summary,
-    # ToolUseBlock: one-liner at full collapsed (no tool-specific expansion)
+    # ToolUseBlock: one-liner at full collapsed, description at full expanded
     ("ToolUseBlock", True, True, False): _render_tool_use_oneliner,
+    ("ToolUseBlock", True, True, True): _render_tool_use_full_with_desc,
+    # ToolDefinitionsBlock: 3 state-specific renderers (FULL expanded falls through to regions)
+    ("ToolDefinitionsBlock", True, False, False): _render_tool_defs_summary_collapsed,
+    ("ToolDefinitionsBlock", True, False, True): _render_tool_defs_summary_expanded,
+    ("ToolDefinitionsBlock", True, True, False): _render_tool_defs_full_collapsed,
+    # No entry for (True, True, True) → falls through to region rendering
 }
 
 
@@ -1523,6 +1668,14 @@ def _add_gutter_to_strips(
     return result_strips
 
 
+# ─── Region-part renderer dispatch ─────────────────────────────────────────────
+# // [LAW:dataflow-not-control-flow] Dispatch table for block-type-specific region renderers.
+# Blocks not in this table use the default _render_region_parts (XML-based).
+_REGION_PART_RENDERERS: dict[str, Callable] = {
+    "ToolDefinitionsBlock": _render_tool_def_region_parts,
+}
+
+
 # ─── Core rendering ───────────────────────────────────────────────────────────
 
 
@@ -1652,7 +1805,9 @@ def render_turn_to_strips(
 
         # Single unified renderer lookup
         # // [LAW:dataflow-not-control-flow] One lookup replaces conditional dispatch
-        renderer = RENDERERS.get((type_name, vis.visible, vis.full, vis.expanded))
+        state_key = (type_name, vis.visible, vis.full, vis.expanded)
+        renderer = RENDERERS.get(state_key)
+        state_override = state_key in BLOCK_STATE_RENDERERS
 
         # Detect blocks with content regions for per-part rendering
         # // [LAW:dataflow-not-control-flow] Never parse XML on streaming blocks —
@@ -1662,10 +1817,13 @@ def render_turn_to_strips(
             _ensure_content_regions(block)
         has_regions = bool(block.content_regions)
 
-        if has_regions:
+        # Precedence: state-specific renderer > region rendering > default renderer
+        # // [LAW:dataflow-not-control-flow] state_override is a value, not a branch
+        if has_regions and not state_override:
             # Per-part region rendering path: render each segment separately
             # so we can track strip ranges for click-to-collapse
-            region_parts = _render_region_parts(block)
+            region_renderer = _REGION_PART_RENDERERS.get(type_name, _render_region_parts)
+            region_parts = region_renderer(block)
 
             # Include region expanded state in cache key
             region_cache_state = tuple(

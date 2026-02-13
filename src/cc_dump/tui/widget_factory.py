@@ -1432,13 +1432,13 @@ class FilterStatusBar(Static):
 
         p = cc_dump.palette.PALETTE
         categories = [
-            ("1", "Headers", "headers"),
-            ("2", "User", "user"),
-            ("3", "Assistant", "assistant"),
-            ("4", "Tools", "tools"),
-            ("5", "System", "system"),
-            ("6", "Budget", "budget"),
-            ("7", "Metadata", "metadata"),
+            ("1", "User", "user"),
+            ("2", "Assistant", "assistant"),
+            ("3", "Tools", "tools"),
+            ("4", "System", "system"),
+            ("5", "Budget", "budget"),
+            ("6", "Metadata", "metadata"),
+            ("7", "Headers", "headers"),
         ]
 
         text = Text()

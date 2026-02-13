@@ -27,7 +27,7 @@ from cc_dump.event_types import (
     ToolUseBlockStartEvent,
 )
 
-from cc_dump.analysis import TurnBudget, compute_turn_budget, tool_result_breakdown
+from cc_dump.analysis import TurnBudget, compute_turn_budget, estimate_tokens, tool_result_breakdown
 from cc_dump.colors import TAG_COLORS
 
 
@@ -78,13 +78,13 @@ ALWAYS_VISIBLE = VisState(visible=True, full=True, expanded=True)
 class Category(Enum):
     """Block category — groups blocks for visibility control."""
 
-    HEADERS = "headers"
     USER = "user"
     ASSISTANT = "assistant"
     TOOLS = "tools"
     SYSTEM = "system"
-    METADATA = "metadata"
     BUDGET = "budget"
+    METADATA = "metadata"
+    HEADERS = "headers"
 
 
 # ─── Structured IR ────────────────────────────────────────────────────────────
@@ -178,6 +178,15 @@ class MetadataBlock(FormattedBlock):
 
 
 @dataclass
+class ToolDefinitionsBlock(FormattedBlock):
+    """Tool definitions from the request body. Each tool is a collapsible sub-block."""
+
+    tools: list = field(default_factory=list)  # [{name, description, input_schema}, ...]
+    tool_tokens: list = field(default_factory=list)  # per-tool token estimates
+    total_tokens: int = 0  # sum of all tool token estimates
+
+
+@dataclass
 class NewSessionBlock(FormattedBlock):
     """Indicates a new Claude Code session started."""
 
@@ -233,6 +242,7 @@ class ToolUseBlock(FormattedBlock):
     )
     tool_use_id: str = ""  # Tool use ID for correlation
     tool_input: dict = field(default_factory=dict)  # Raw input for rendering
+    description: str = ""  # From tool definitions, populated via state
 
 
 @dataclass
@@ -540,6 +550,7 @@ def _format_tool_use_content(cblock, ctx: _ContentContext) -> list:
     input_size = len(json.dumps(tool_input))
     tool_use_id = cblock.get("id", "")
     detail = _tool_detail(name, tool_input)
+    description = ctx.state.get("tool_descriptions", {}).get(name, "")
     # Assign correlation color
     tool_color_idx = ctx.tool_color_counter % MSG_COLOR_CYCLE
     ctx.tool_color_counter += 1
@@ -553,6 +564,7 @@ def _format_tool_use_content(cblock, ctx: _ContentContext) -> list:
             detail=detail,
             tool_use_id=tool_use_id,
             tool_input=tool_input,
+            description=description,
         )
     ]
 
@@ -685,11 +697,31 @@ def format_request(body, state, request_headers: dict | None = None):
     # format_request_headers({}) returns [], so extend is always safe
     blocks.extend(format_request_headers(request_headers or {}))
 
+    # Store tool descriptions in state for ToolUseBlock enrichment
+    # // [LAW:one-source-of-truth] tool_descriptions populated here, consumed by _format_tool_use_content
+    state["tool_descriptions"] = {
+        t.get("name", ""): t.get("description", "") for t in tools
+    }
+
     # Context budget breakdown
     budget = compute_turn_budget(body)
     messages = body.get("messages", [])
     breakdown = tool_result_breakdown(messages)
     blocks.append(TurnBudgetBlock(budget=budget, tool_result_by_name=breakdown))
+
+    # Tool definitions block (when tools are present)
+    # // [LAW:dataflow-not-control-flow] Always evaluate; empty tools → no block appended
+    if tools:
+        per_tool_tokens = [estimate_tokens(json.dumps(t)) for t in tools]
+        tool_def_block = ToolDefinitionsBlock(
+            tools=tools,
+            tool_tokens=per_tool_tokens,
+            total_tokens=sum(per_tool_tokens),
+        )
+        tool_def_block.content_regions = [
+            ContentRegion(index=i, expanded=False) for i in range(len(tools))
+        ]
+        blocks.append(tool_def_block)
 
     blocks.append(SeparatorBlock(style="thin"))
 

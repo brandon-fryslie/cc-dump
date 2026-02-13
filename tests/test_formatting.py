@@ -3,6 +3,7 @@
 import pytest
 
 from cc_dump.formatting import (
+    ContentRegion,
     ErrorBlock,
     FormattedBlock,
     HeaderBlock,
@@ -19,6 +20,7 @@ from cc_dump.formatting import (
     SystemLabelBlock,
     TextContentBlock,
     TextDeltaBlock,
+    ToolDefinitionsBlock,
     ToolResultBlock,
     ToolUseBlock,
     TrackedContentBlock,
@@ -1047,9 +1049,188 @@ class TestToolCorrelation:
         # ToolUseBlock without tool_use_id
         block1 = ToolUseBlock(name="Read", input_size=100, msg_color_idx=0)
         assert block1.tool_use_id == ""
+        assert block1.description == ""
 
         # ToolResultBlock without new fields
         block2 = ToolResultBlock(size=500, is_error=False, msg_color_idx=0)
         assert block2.tool_use_id == ""
         assert block2.tool_name == ""
         assert block2.detail == ""
+
+
+# ─── ToolDefinitionsBlock Tests ──────────────────────────────────────────────
+
+
+def _make_body_with_tools(tools):
+    """Helper: build a request body with the given tool definitions."""
+    return {
+        "model": "claude-3-opus",
+        "max_tokens": 4096,
+        "tools": tools,
+        "messages": [],
+    }
+
+
+SAMPLE_TOOLS = [
+    {
+        "name": "Read",
+        "description": "Read a file from disk",
+        "input_schema": {
+            "type": "object",
+            "properties": {"file_path": {"type": "string"}},
+            "required": ["file_path"],
+        },
+    },
+    {
+        "name": "Write",
+        "description": "Write content to a file",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string"},
+                "content": {"type": "string"},
+            },
+            "required": ["file_path", "content"],
+        },
+    },
+]
+
+
+class TestToolDefinitionsBlock:
+    """Tests for ToolDefinitionsBlock creation and fields."""
+
+    def test_tool_definitions_block_created(self, fresh_state):
+        """ToolDefinitionsBlock created when tools present."""
+        body = _make_body_with_tools(SAMPLE_TOOLS)
+        blocks = format_request(body, fresh_state)
+        tool_def_blocks = [b for b in blocks if isinstance(b, ToolDefinitionsBlock)]
+        assert len(tool_def_blocks) == 1
+        tdb = tool_def_blocks[0]
+        assert len(tdb.tools) == 2
+        assert tdb.tools[0]["name"] == "Read"
+        assert tdb.tools[1]["name"] == "Write"
+
+    def test_tool_definitions_block_token_estimates(self, fresh_state):
+        """ToolDefinitionsBlock has per-tool token estimates."""
+        body = _make_body_with_tools(SAMPLE_TOOLS)
+        blocks = format_request(body, fresh_state)
+        tdb = [b for b in blocks if isinstance(b, ToolDefinitionsBlock)][0]
+        assert len(tdb.tool_tokens) == 2
+        assert all(t > 0 for t in tdb.tool_tokens)
+        assert tdb.total_tokens == sum(tdb.tool_tokens)
+
+    def test_tool_definitions_block_content_regions(self, fresh_state):
+        """ToolDefinitionsBlock has pre-populated content_regions."""
+        body = _make_body_with_tools(SAMPLE_TOOLS)
+        blocks = format_request(body, fresh_state)
+        tdb = [b for b in blocks if isinstance(b, ToolDefinitionsBlock)][0]
+        assert len(tdb.content_regions) == 2
+        assert all(isinstance(r, ContentRegion) for r in tdb.content_regions)
+        # Default collapsed
+        assert all(r.expanded is False for r in tdb.content_regions)
+        assert tdb.content_regions[0].index == 0
+        assert tdb.content_regions[1].index == 1
+
+    def test_no_tool_definitions_block_without_tools(self, fresh_state):
+        """No ToolDefinitionsBlock when tools is empty."""
+        body = _make_body_with_tools([])
+        blocks = format_request(body, fresh_state)
+        tool_def_blocks = [b for b in blocks if isinstance(b, ToolDefinitionsBlock)]
+        assert len(tool_def_blocks) == 0
+
+    def test_tool_descriptions_stored_in_state(self, fresh_state):
+        """state['tool_descriptions'] populated after format_request."""
+        body = _make_body_with_tools(SAMPLE_TOOLS)
+        format_request(body, fresh_state)
+        assert "tool_descriptions" in fresh_state
+        assert fresh_state["tool_descriptions"]["Read"] == "Read a file from disk"
+        assert fresh_state["tool_descriptions"]["Write"] == "Write content to a file"
+
+    def test_tool_definitions_block_instantiation(self):
+        """ToolDefinitionsBlock can be instantiated with expected fields."""
+        block = ToolDefinitionsBlock(
+            tools=[{"name": "Foo"}],
+            tool_tokens=[100],
+            total_tokens=100,
+        )
+        assert isinstance(block, FormattedBlock)
+        assert len(block.tools) == 1
+        assert block.total_tokens == 100
+
+
+class TestToolUseBlockDescription:
+    """Tests for ToolUseBlock.description field population."""
+
+    def test_tool_use_description_from_state(self, fresh_state):
+        """ToolUseBlock.description populated from tool definitions."""
+        body = {
+            "model": "claude-3-opus",
+            "max_tokens": 4096,
+            "tools": SAMPLE_TOOLS,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "1",
+                            "name": "Read",
+                            "input": {"file_path": "/a.txt"},
+                        },
+                    ],
+                },
+            ],
+        }
+        blocks = format_request(body, fresh_state)
+        tool_uses = [b for b in blocks if isinstance(b, ToolUseBlock)]
+        assert len(tool_uses) == 1
+        assert tool_uses[0].description == "Read a file from disk"
+
+    def test_tool_use_description_empty_without_tools(self, fresh_state):
+        """ToolUseBlock.description defaults to '' when no tool definitions."""
+        body = {
+            "model": "claude-3-opus",
+            "max_tokens": 4096,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "1",
+                            "name": "Read",
+                            "input": {"file_path": "/a.txt"},
+                        },
+                    ],
+                },
+            ],
+        }
+        blocks = format_request(body, fresh_state)
+        tool_uses = [b for b in blocks if isinstance(b, ToolUseBlock)]
+        assert len(tool_uses) == 1
+        assert tool_uses[0].description == ""
+
+    def test_tool_use_description_unknown_tool(self, fresh_state):
+        """ToolUseBlock.description empty for tool not in definitions."""
+        body = {
+            "model": "claude-3-opus",
+            "max_tokens": 4096,
+            "tools": SAMPLE_TOOLS,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "1",
+                            "name": "UnknownTool",
+                            "input": {},
+                        },
+                    ],
+                },
+            ],
+        }
+        blocks = format_request(body, fresh_state)
+        tool_uses = [b for b in blocks if isinstance(b, ToolUseBlock)]
+        assert len(tool_uses) == 1
+        assert tool_uses[0].description == ""

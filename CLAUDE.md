@@ -118,8 +118,8 @@ When adding new modules, classify them as stable or reloadable and follow the co
 **Keyboard cycling:** `action_cycle_*()` in `app.py` cycles reactive `vis_*` (1→2→3→1) and clears per-block overrides via `_clear_overrides()`.
 
 **Key mappings:**
-- Number keys: `1` headers, `2` user, `3` assistant, `4` tools, `5` system, `6` budget, `7` metadata
-- Shift+number toggles detail (e.g., `!` for headers detail toggle)
+- Number keys: `1` user, `2` assistant, `3` tools, `4` system, `5` budget, `6` metadata, `7` headers
+- Shift+number toggles detail (e.g., `!` for user detail toggle)
 - Panels: `8` cost, `9` timeline, `0` follow mode
 - Vim navigation: `g`/`G` top/bottom, `j`/`k` line scroll, `h`/`l` column scroll, `ctrl+d`/`ctrl+u` half-page, `ctrl+f`/`ctrl+b` full-page
 - Default levels: headers/metadata/budget=EXISTENCE, user/assistant=FULL, tools/system=SUMMARY

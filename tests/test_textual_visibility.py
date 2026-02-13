@@ -33,52 +33,52 @@ async def test_default_visibility_levels():
 
 
 async def test_toggle_headers_off_on():
-    """Press '1' toggles headers visibility: hidden -> visible -> hidden."""
+    """Press '7' toggles headers visibility: hidden -> visible -> hidden."""
     async with run_app() as (pilot, app):
         # Headers start hidden
         assert get_vis_state(app, "headers") == HIDDEN
 
         # Toggle visible: should show at summary-collapsed
-        await press_and_settle(pilot, "1")
+        await press_and_settle(pilot, "7")
         assert get_vis_state(app, "headers") == SUMMARY_COLLAPSED
 
         # Toggle hidden: back to hidden
-        await press_and_settle(pilot, "1")
+        await press_and_settle(pilot, "7")
         assert get_vis_state(app, "headers") == HIDDEN
 
 
 async def test_toggle_user_off_on():
-    """Press '2' toggles user visibility: visible -> hidden -> visible."""
+    """Press '1' toggles user visibility: visible -> hidden -> visible."""
     async with run_app() as (pilot, app):
         # User starts visible at full-expanded
         assert get_vis_state(app, "user") == FULL_EXPANDED
 
         # Toggle hidden (preserves full and expanded state)
-        await press_and_settle(pilot, "2")
+        await press_and_settle(pilot, "1")
         assert get_vis_state(app, "user") == VisState(False, True, True)
 
         # Toggle visible: restored to full-expanded
-        await press_and_settle(pilot, "2")
+        await press_and_settle(pilot, "1")
         assert get_vis_state(app, "user") == FULL_EXPANDED
 
 
 async def test_detail_toggle_shifts_summary_full():
-    """Shift+1 (!) toggles detail between SUMMARY and FULL. Need to show headers first."""
+    """Shift+7 (&) toggles detail between SUMMARY and FULL. Need to show headers first."""
     async with run_app() as (pilot, app):
-        # Headers start hidden. Show them first with '1'
-        await press_and_settle(pilot, "1")
+        # Headers start hidden. Show them first with '7'
+        await press_and_settle(pilot, "7")
         assert get_vis_state(app, "headers") == SUMMARY_COLLAPSED
 
-        # Press !: toggle to FULL (preserves collapsed state)
-        await press_and_settle(pilot, "!")
+        # Press &: toggle to FULL (preserves collapsed state)
+        await press_and_settle(pilot, "&")
         assert get_vis_state(app, "headers") == FULL_COLLAPSED
 
-        # Press ! again: toggle to SUMMARY (preserves collapsed state)
-        await press_and_settle(pilot, "!")
+        # Press & again: toggle to SUMMARY (preserves collapsed state)
+        await press_and_settle(pilot, "&")
         assert get_vis_state(app, "headers") == SUMMARY_COLLAPSED
 
-        # Press ! again: toggle to FULL (preserves collapsed state)
-        await press_and_settle(pilot, "!")
+        # Press & again: toggle to FULL (preserves collapsed state)
+        await press_and_settle(pilot, "&")
         assert get_vis_state(app, "headers") == FULL_COLLAPSED
 
 
@@ -88,29 +88,29 @@ async def test_toggle_remembers_detail_level():
         # Tools start at summary-collapsed
         assert get_vis_state(app, "tools") == SUMMARY_COLLAPSED
 
-        # Toggle detail to FULL with '$' (shift+4) - preserves collapsed
-        await press_and_settle(pilot, "$")
+        # Toggle detail to FULL with '#' (shift+3) - preserves collapsed
+        await press_and_settle(pilot, "#")
         assert get_vis_state(app, "tools") == FULL_COLLAPSED
 
-        # Hide with '4' (preserves full and collapsed)
-        await press_and_settle(pilot, "4")
+        # Hide with '3' (preserves full and collapsed)
+        await press_and_settle(pilot, "3")
         assert get_vis_state(app, "tools") == VisState(False, True, False)
 
-        # Show again with '4' — detail state preserved
-        await press_and_settle(pilot, "4")
+        # Show again with '3' — detail state preserved
+        await press_and_settle(pilot, "3")
         assert get_vis_state(app, "tools") == FULL_COLLAPSED
 
 
 @pytest.mark.parametrize(
     "key,category",
     [
-        ("1", "headers"),
-        ("2", "user"),
-        ("3", "assistant"),
-        ("4", "tools"),
-        ("5", "system"),
-        ("6", "budget"),
-        ("7", "metadata"),
+        ("1", "user"),
+        ("2", "assistant"),
+        ("3", "tools"),
+        ("4", "system"),
+        ("5", "budget"),
+        ("6", "metadata"),
+        ("7", "headers"),
     ],
 )
 async def test_category_toggle(key, category):

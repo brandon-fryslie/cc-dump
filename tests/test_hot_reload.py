@@ -43,7 +43,7 @@ class TestHotReloadBasics:
         assert proc.is_alive(), "cc-dump process should be running"
 
         content = proc.get_content()
-        assert "cc-dump" in content or "Quit" in content or "headers" in content, \
+        assert "cc-dump" in content or "Quit" in content or "user" in content, \
             f"Expected TUI elements in output. Got:\n{content}"
 
     def test_hot_reload_detection(self, start_cc_dump, formatting_py):

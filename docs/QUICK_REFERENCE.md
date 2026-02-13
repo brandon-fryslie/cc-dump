@@ -6,13 +6,13 @@
 
 | Key | Category | Action |
 |-----|----------|--------|
-| `1` | Headers | Toggle visibility (hidden ↔ remembered level) |
-| `2` | User | Toggle visibility |
-| `3` | Assistant | Toggle visibility |
-| `4` | Tools | Toggle visibility |
-| `5` | System | Toggle visibility |
-| `6` | Budget | Toggle visibility |
-| `7` | Metadata | Toggle visibility |
+| `1` | User | Toggle visibility |
+| `2` | Assistant | Toggle visibility |
+| `3` | Tools | Toggle visibility |
+| `4` | System | Toggle visibility |
+| `5` | Budget | Toggle visibility |
+| `6` | Metadata | Toggle visibility |
+| `7` | Headers | Toggle visibility (hidden ↔ remembered level) |
 
 | Key | Action | Description |
 |-----|--------|-------------|
@@ -21,9 +21,9 @@
 | Click | Expand/collapse block | Toggle individual block within current level |
 
 **Examples:**
-- `1` hides/shows headers
-- `!` (Shift+1) toggles headers between SUMMARY and FULL
-- `Ctrl+Shift+1` expands/collapses all header blocks
+- `1` hides/shows user messages
+- `!` (Shift+1) toggles user between SUMMARY and FULL
+- `7` hides/shows headers
 
 ### Panels & Modes
 
@@ -53,13 +53,13 @@
 
 ## Visual Examples at Each Level
 
-### Example: System Prompts (5 key)
+### Example: System Prompts (4 key)
 
 #### Level 1: EXISTENCE `·` (fully hidden)
 ```
 (No output - category completely hidden)
 ```
-**What you see:** Nothing. Press `5` again to show at SUMMARY level.
+**What you see:** Nothing. Press `4` again to show at SUMMARY level.
 
 ---
 
@@ -124,26 +124,26 @@
                         ·                 ◐                ●
                       (hidden)         (3-12 lines)    (5-∞ lines)
 
-Headers (1)        Hidden            Basic headers    All HTTP headers
-Tools (4)          Hidden            Tool counts      Full use/results
-System (5)         Hidden            First lines      Complete diffs
-User (2)           Hidden            3-12 lines       Full message
-Assistant (3)      Hidden            3-12 lines       Full message
-Metadata (7)       Hidden            Breakdown        All fields
-Budget (6)         Hidden            Category split   Full accounting
+User (1)           Hidden            3-12 lines       Full message
+Assistant (2)      Hidden            3-12 lines       Full message
+Tools (3)          Hidden            Tool counts      Full use/results
+System (4)         Hidden            First lines      Complete diffs
+Budget (5)         Hidden            Category split   Full accounting
+Metadata (6)       Hidden            Breakdown        All fields
+Headers (7)        Hidden            Basic headers    All HTTP headers
 ```
 
 ## Default Configuration
 
 When cc-dump starts:
 ```
-1 · headers      EXISTENCE  — hidden (clean view)
-2 ● user         FULL       — see all user input
-3 ● assistant    FULL       — see all responses
-4 ◐ tools        SUMMARY    — compact tool view
-5 ◐ system       SUMMARY    — system prompts with preview
-7 · metadata     EXISTENCE  — hidden
-6 · budget       EXISTENCE  — hidden
+1 ● user         FULL       — see all user input
+2 ● assistant    FULL       — see all responses
+3 ◐ tools        SUMMARY    — compact tool view
+4 ◐ system       SUMMARY    — system prompts with preview
+5 · budget       EXISTENCE  — hidden
+6 · metadata     EXISTENCE  — hidden
+7 · headers      EXISTENCE  — hidden (clean view)
 ```
 
 **Result:** A clean conversation view focused on user/assistant messages, with tool/system context available but not overwhelming.
@@ -153,32 +153,31 @@ When cc-dump starts:
 ### "I want to see EVERYTHING"
 ```bash
 # Show all hidden categories:
-1        # show headers (toggles to remembered SUMMARY)
-7        # show metadata (toggles to remembered SUMMARY)
-6        # show budget (toggles to remembered SUMMARY)
+5        # show budget (toggles to remembered SUMMARY)
+6        # show metadata (toggles to remembered SUMMARY)
+7        # show headers (toggles to remembered SUMMARY)
 
 # Then upgrade detail levels to FULL:
-!        # headers SUMMARY → FULL
-$        # tools SUMMARY → FULL
-%        # system SUMMARY → FULL
-&        # metadata SUMMARY → FULL
-^        # budget SUMMARY → FULL
+#        # tools SUMMARY → FULL
+$        # system SUMMARY → FULL
+%        # budget SUMMARY → FULL
+^        # metadata SUMMARY → FULL
+&        # headers SUMMARY → FULL
 ```
 
 ### "Hide ALL the noise"
 ```bash
 # Hide everything except user/assistant:
-1        # hide headers (EXISTENCE → hidden)
-4        # hide tools (press until hidden)
-5        # hide system (press until hidden)
-# 7 and 6 already hidden at EXISTENCE
+3        # hide tools (press until hidden)
+4        # hide system (press until hidden)
+# 5, 6, 7 already hidden at EXISTENCE
 ```
 Result: Ultra-compact view, just user/assistant messages.
 
 ### "Debug this tool call"
 ```bash
-4        # If hidden, press to show at SUMMARY
-$        # Press Shift+4 to toggle to FULL (●)
+3        # If hidden, press to show at SUMMARY
+#        # Press Shift+3 to toggle to FULL (●)
          # Individual tool blocks appear
          # Click ▶ on long result to expand
          # Click ▼ to collapse when done
@@ -186,10 +185,10 @@ $        # Press Shift+4 to toggle to FULL (●)
 
 ### "What changed in the system prompt?"
 ```bash
-5        # Press to show at SUMMARY (◐) if hidden
+4        # Press to show at SUMMARY (◐) if hidden
          # See first lines of diff
          # Click ▶ on the changed item to see more
-%        # Press Shift+5 to toggle to FULL (●)
+$        # Press Shift+4 to toggle to FULL (●)
          # Complete diff visible
 ```
 
@@ -210,14 +209,14 @@ Clicking a block **only works within the current level**:
 The footer shows current level for each category with key number and icon:
 
 ```
-1·headers  2●user  3●assistant  4◐tools  5◐system  6·budget  7·metadata
-│          │       │            │        │          │         └─ metadata: EXISTENCE
-│          │       │            │        │          └─────────── budget: EXISTENCE
-│          │       │            │        └──────────────────────  system: SUMMARY
-│          │       │            └───────────────────────────────  tools: SUMMARY
-│          │       └────────────────────────────────────────────  assistant: FULL
-│          └────────────────────────────────────────────────────  user: FULL
-└───────────────────────────────────────────────────────────────  headers: EXISTENCE
+1●user  2●assistant  3◐tools  4◐system  5·budget  6·metadata  7·headers
+│       │            │        │         │         │            └─ headers: EXISTENCE
+│       │            │        │         │         └─────────────  metadata: EXISTENCE
+│       │            │        │         └───────────────────────  budget: EXISTENCE
+│       │            │        └─────────────────────────────────  system: SUMMARY
+│       │            └──────────────────────────────────────────  tools: SUMMARY
+│       └───────────────────────────────────────────────────────  assistant: FULL
+└───────────────────────────────────────────────────────────────  user: FULL
 ```
 
 Active categories (level > EXISTENCE) have colored backgrounds matching their indicator bars.

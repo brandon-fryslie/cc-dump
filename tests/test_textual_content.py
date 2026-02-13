@@ -55,7 +55,7 @@ async def test_filter_hides_content():
         assert "Hello world test message" in text_before
 
         # Toggle user off (visible -> hidden)
-        await press_and_settle(pilot, "2")
+        await press_and_settle(pilot, "1")
         assert get_vis_state(app, "user").visible == False
 
         text_after = all_turns_text(app)
@@ -66,10 +66,10 @@ async def test_filter_restore_shows_content():
     """Toggling a category back restores its content."""
     async with run_app(replay_data=_REPLAY_DATA) as (pilot, app):
         # Toggle user off then back on
-        await press_and_settle(pilot, "2")
+        await press_and_settle(pilot, "1")
         assert get_vis_state(app, "user").visible == False
 
-        await press_and_settle(pilot, "2")
+        await press_and_settle(pilot, "1")
         assert get_vis_state(app, "user") == FULL_EXPANDED
 
         text = all_turns_text(app)
