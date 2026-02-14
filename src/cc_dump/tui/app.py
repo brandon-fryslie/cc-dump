@@ -134,6 +134,9 @@ class CcDumpApp(App):
         self._settings_fields: list[dict] = []  # [{key, value, cursor_pos}, ...]
         self._settings_active_field: int = 0
 
+        # Exception tracking for error indicator
+        self._exception_items: list = []
+
         self._conv_id = "conversation-view"
         self._search_bar_id = "search-bar"
         self._stats_id = "stats-panel"
@@ -340,6 +343,35 @@ class CcDumpApp(App):
         self._closing = True
         self._router.stop()
 
+    def _handle_exception(self, error: Exception) -> None:
+        """// [LAW:single-enforcer] Top-level exception handler - keeps proxy running.
+
+        Logs unhandled exceptions with normal Python traceback. Adds exception
+        to error indicator. Does NOT crash to keep proxy server running.
+        """
+        import traceback
+        import cc_dump.tui.error_indicator
+
+        # Get normal Python traceback (not Textual's verbose one)
+        tb = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+
+        # Log to LogsPanel
+        self._app_log("ERROR", f"Unhandled exception: {error}")
+        for line in tb.split("\n"):
+            if line:
+                self._app_log("ERROR", line)
+
+        # Add to error indicator (top-right overlay)
+        exc_item = cc_dump.tui.error_indicator.ErrorItem(
+            id=f"exc-{id(error)}",
+            icon="💥",
+            summary=f"{type(error).__name__}: {error}"
+        )
+        self._exception_items.append(exc_item)
+        self._update_error_indicator()
+
+        # DON'T call super() - keep running, hot reload will fix it
+
     # ─── Mouse / tmux coordination ────────────────────────────────────
     # // [LAW:single-enforcer] _on_mouse_activity is the sole mouse→tmux bridge.
 
@@ -403,7 +435,7 @@ class CcDumpApp(App):
             self._update_error_indicator()
 
     def _update_error_indicator(self):
-        """Push stale-file errors to ConversationView's overlay indicator."""
+        """Push stale-file and exception errors to ConversationView's overlay indicator."""
         conv = self._get_conv()
         if conv is None:
             return
@@ -415,6 +447,8 @@ class CcDumpApp(App):
             ErrorItem("stale", "\u274c", s.split("/")[-1])
             for s in stale
         ]
+        # Add caught exceptions
+        items.extend(self._exception_items)
         conv.update_error_items(items)
 
     def _build_server_info(self) -> dict:
