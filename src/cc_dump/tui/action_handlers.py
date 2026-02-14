@@ -151,6 +151,21 @@ def toggle_keys(app) -> None:
         app.screen.mount(cc_dump.tui.keys_panel.create_keys_panel())
 
 
+def toggle_settings(app) -> None:
+    """Toggle the settings panel via mount/remove.
+
+    On open: loads current values from settings.json into app editing state.
+    """
+    import cc_dump.tui.settings_panel
+
+    panel_class = cc_dump.tui.settings_panel.SettingsPanel
+    existing = app.screen.query(panel_class)
+    if existing:
+        app._close_settings(save=False)
+    else:
+        app._open_settings()
+
+
 # ─── Filterset actions ─────────────────────────────────────────────────
 
 

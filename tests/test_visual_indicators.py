@@ -229,28 +229,28 @@ class TestIndicatorHelperFunction:
         assert callable(_add_filter_indicator)
 
     def test_filter_indicators_mapping_exists(self):
-        from cc_dump.tui.rendering import FILTER_INDICATORS
-        assert isinstance(FILTER_INDICATORS, dict)
+        from cc_dump.tui import rendering
+        assert isinstance(rendering.FILTER_INDICATORS, dict)
 
         expected_filters = ["headers", "tools", "system", "budget", "metadata"]
         for filter_name in expected_filters:
-            assert filter_name in FILTER_INDICATORS
+            assert filter_name in rendering.FILTER_INDICATORS
 
     def test_filter_indicators_have_symbol_and_color(self):
-        from cc_dump.tui.rendering import FILTER_INDICATORS
+        from cc_dump.tui import rendering
 
-        for filter_name, (symbol, color) in FILTER_INDICATORS.items():
+        for filter_name, (symbol, color) in rendering.FILTER_INDICATORS.items():
             assert isinstance(symbol, str)
             assert len(symbol) > 0
             assert isinstance(color, str)
             assert len(color) > 0
 
     def test_add_filter_indicator_with_text(self):
-        from cc_dump.tui.rendering import _add_filter_indicator
+        from cc_dump.tui import rendering
         from rich.text import Text
 
         text = Text("Hello World")
-        result = _add_filter_indicator(text, "headers")
+        result = rendering._add_filter_indicator(text, "headers")
 
         assert isinstance(result, Text)
         assert "Hello" in str(result.plain)

@@ -16,7 +16,6 @@ from textual.cache import LRUCache
 from textual.geometry import Size
 from rich.segment import Segment
 from rich.text import Text
-from rich.markdown import Markdown
 
 # Use module-level imports for hot-reload
 import cc_dump.formatting
@@ -465,35 +464,12 @@ class ConversationView(ScrollView):
         self._turns.append(td)
         self._recalculate_offsets()
 
-    def _render_single_block_to_strips(
-        self, renderable, console, width: int
-    ) -> list:
-        """Render a single Rich renderable (Text, Markdown, etc.) to Strip list.
-
-        Helper for rendering individual blocks during streaming.
-        """
-        from rich.segment import Segment
-        from textual.strip import Strip
-
-        render_options = console.options.update_width(width)
-        segments = console.render(renderable, render_options)
-        lines = list(Segment.split_lines(segments))
-        if not lines:
-            return []
-
-        block_strips = Strip.from_lines(lines)
-        for strip in block_strips:
-            strip.adjust_cell_length(width)
-        return block_strips
-
     def _refresh_streaming_delta(self, td: TurnData):
-        """Re-render delta buffer portion only.
+        """Re-render delta buffer through canonical rendering path.
 
-        Replaces strips[_stable_strip_count:] with freshly rendered delta text.
-        Streaming deltas are always ASSISTANT category, so render as Markdown.
+        # [LAW:one-source-of-truth] Uses render_turn_to_strips() — same as completed turns.
         """
         if not td._text_delta_buffer:
-            # No delta text - trim to stable strips only
             td.strips = td.strips[: td._stable_strip_count]
             td._widest_strip = _compute_widest(td.strips)
             return
@@ -501,23 +477,24 @@ class ConversationView(ScrollView):
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
 
-        # Combine delta buffer into Markdown (streaming deltas are ASSISTANT)
+        # Synthetic block from accumulated delta buffer
         combined_text = "".join(td._text_delta_buffer)
-        code_theme = cc_dump.tui.rendering.get_theme_colors().code_theme
-        renderable = Markdown(combined_text, code_theme=code_theme)
+        synthetic = cc_dump.formatting.TextContentBlock(
+            content=combined_text, category=cc_dump.formatting.Category.ASSISTANT
+        )
 
-        # Render to strips
-        delta_strips = self._render_single_block_to_strips(renderable, console, width)
+        # Canonical rendering path — same as completed turns
+        delta_strips, _ = cc_dump.tui.rendering.render_turn_to_strips(
+            [synthetic], self._last_filters, console, width, is_streaming=True
+        )
 
-        # Replace delta tail
         td.strips = td.strips[: td._stable_strip_count] + delta_strips
         td._widest_strip = _compute_widest(td.strips)
 
     def _flush_streaming_delta(self, td: TurnData, filters: dict):
-        """Convert delta buffer to stable strips.
+        """Convert delta buffer to stable strips via canonical rendering path.
 
-        If delta buffer has content, consolidate it into stable strips
-        and advance _stable_strip_count. Streaming deltas are ASSISTANT, use Markdown.
+        # [LAW:one-source-of-truth] Uses render_turn_to_strips() — same as completed turns.
         """
         if not td._text_delta_buffer:
             return
@@ -525,13 +502,17 @@ class ConversationView(ScrollView):
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
 
-        # Render delta buffer to strips as Markdown (streaming deltas are ASSISTANT)
+        # Synthetic block from accumulated delta buffer
         combined_text = "".join(td._text_delta_buffer)
-        code_theme = cc_dump.tui.rendering.get_theme_colors().code_theme
-        renderable = Markdown(combined_text, code_theme=code_theme)
-        delta_strips = self._render_single_block_to_strips(renderable, console, width)
+        synthetic = cc_dump.formatting.TextContentBlock(
+            content=combined_text, category=cc_dump.formatting.Category.ASSISTANT
+        )
 
-        # Replace delta tail with stable strips
+        # Canonical rendering path
+        delta_strips, _ = cc_dump.tui.rendering.render_turn_to_strips(
+            [synthetic], filters, console, width, is_streaming=True
+        )
+
         td.strips = td.strips[: td._stable_strip_count] + delta_strips
         td._widest_strip = _compute_widest(td.strips)
 

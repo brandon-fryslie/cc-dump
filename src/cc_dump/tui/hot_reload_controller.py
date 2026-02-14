@@ -15,6 +15,7 @@ import cc_dump.tui.search
 import cc_dump.tui.widget_factory
 import cc_dump.tui.info_panel
 import cc_dump.tui.keys_panel
+import cc_dump.tui.settings_panel
 import cc_dump.tui.custom_footer
 
 _DEBOUNCE_S = 2.0  # Quiet period before reload fires
@@ -212,6 +213,11 @@ async def _replace_all_widgets_inner(app) -> None:
     # Remove keys panel if mounted (stateless, no state transfer needed)
     for panel in app.screen.query(cc_dump.tui.keys_panel.KeysPanel):
         await panel.remove()
+
+    # Remove settings panel if mounted (stateless, no state transfer needed)
+    for panel in app.screen.query(cc_dump.tui.settings_panel.SettingsPanel):
+        await panel.remove()
+    app._settings_panel_open = False
 
     # 3. Remove old widgets
     await old_conv.remove()

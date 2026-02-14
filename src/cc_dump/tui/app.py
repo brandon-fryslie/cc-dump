@@ -129,6 +129,11 @@ class CcDumpApp(App):
         self._search_state = cc_dump.tui.search.SearchState()
         self._active_filterset_slot = None
 
+        # Settings panel state
+        self._settings_panel_open: bool = False
+        self._settings_fields: list[dict] = []  # [{key, value, cursor_pos}, ...]
+        self._settings_active_field: int = 0
+
         self._conv_id = "conversation-view"
         self._search_bar_id = "search-bar"
         self._stats_id = "stats-panel"
@@ -141,8 +146,10 @@ class CcDumpApp(App):
 
     @property
     def _input_mode(self):
-        """// [LAW:one-source-of-truth] InputMode derived from search phase."""
+        """// [LAW:one-source-of-truth] InputMode derived from app state."""
         InputMode = cc_dump.tui.input_modes.InputMode
+        if self._settings_panel_open:
+            return InputMode.SETTINGS
         SearchPhase = cc_dump.tui.search.SearchPhase
         phase = self._search_state.phase
         if phase == SearchPhase.EDITING:
@@ -632,6 +639,115 @@ class CcDumpApp(App):
         self.notify("Auto-zoom: {}".format(label))
         self._update_footer_state()
 
+    # Settings
+    def action_toggle_settings(self):
+        _actions.toggle_settings(self)
+
+    def _open_settings(self):
+        """Open settings panel, populating editing state from saved settings."""
+        import cc_dump.tui.settings_panel
+
+        fields = []
+        for field_def in cc_dump.tui.settings_panel.SETTINGS_FIELDS:
+            value = cc_dump.settings.load_setting(field_def["key"], field_def["default"])
+            fields.append({
+                "key": field_def["key"],
+                "value": str(value),
+                "cursor_pos": len(str(value)),
+            })
+        self._settings_fields = fields
+        self._settings_active_field = 0
+        self._settings_panel_open = True
+
+        panel = cc_dump.tui.settings_panel.create_settings_panel()
+        self.screen.mount(panel)
+        self._update_settings_panel_display()
+        self._update_footer_state()
+
+    def _close_settings(self, save: bool) -> None:
+        """Close settings panel, optionally saving changes."""
+        import cc_dump.tui.settings_panel
+
+        if save:
+            for field_data in self._settings_fields:
+                cc_dump.settings.save_setting(field_data["key"], field_data["value"])
+            # Update tmux controller if claude_command changed
+            tmux = self._tmux_controller
+            if tmux is not None:
+                for field_data in self._settings_fields:
+                    if field_data["key"] == "claude_command":
+                        tmux.set_claude_command(field_data["value"])
+
+        # Remove panel widget
+        for panel in self.screen.query(cc_dump.tui.settings_panel.SettingsPanel):
+            panel.remove()
+        self._settings_panel_open = False
+        self._settings_fields = []
+        self._update_footer_state()
+
+    def _handle_settings_key(self, event) -> None:
+        """Handle key events in SETTINGS mode."""
+        key = event.key
+        fields = self._settings_fields
+        idx = self._settings_active_field
+
+        # Navigation between fields
+        if key == "tab":
+            self._settings_active_field = (idx + 1) % len(fields)
+            self._update_settings_panel_display()
+            return
+        if key == "shift+tab":
+            self._settings_active_field = (idx - 1) % len(fields)
+            self._update_settings_panel_display()
+            return
+
+        # Save and close
+        if key == "enter":
+            self._close_settings(save=True)
+            self.notify("Settings saved")
+            return
+
+        # Cancel and close
+        if key == "escape":
+            self._close_settings(save=False)
+            return
+
+        # Text editing on active field
+        field = fields[idx]
+        value = field["value"]
+        pos = field["cursor_pos"]
+
+        if key == "backspace":
+            if pos > 0:
+                field["value"] = value[:pos - 1] + value[pos:]
+                field["cursor_pos"] = pos - 1
+        elif key == "delete":
+            if pos < len(value):
+                field["value"] = value[:pos] + value[pos + 1:]
+        elif key == "left":
+            field["cursor_pos"] = max(0, pos - 1)
+        elif key == "right":
+            field["cursor_pos"] = min(len(value), pos + 1)
+        elif key == "home":
+            field["cursor_pos"] = 0
+        elif key == "end":
+            field["cursor_pos"] = len(value)
+        elif event.character and event.character.isprintable():
+            field["value"] = value[:pos] + event.character + value[pos:]
+            field["cursor_pos"] = pos + 1
+
+        self._update_settings_panel_display()
+
+    def _update_settings_panel_display(self) -> None:
+        """Push current editing state to the settings panel widget."""
+        import cc_dump.tui.settings_panel
+
+        panels = self.screen.query(cc_dump.tui.settings_panel.SettingsPanel)
+        if panels:
+            panels.first().update_display(
+                self._settings_fields, self._settings_active_field
+            )
+
     # Navigation
     def action_toggle_follow(self):
         _actions.toggle_follow(self)
@@ -743,7 +859,11 @@ class CcDumpApp(App):
         MODE_KEYMAP = cc_dump.tui.input_modes.MODE_KEYMAP
         InputMode = cc_dump.tui.input_modes.InputMode
 
-        if mode == InputMode.NORMAL:
+        if mode == InputMode.SETTINGS:
+            event.prevent_default()
+            self._handle_settings_key(event)
+            return
+        elif mode == InputMode.NORMAL:
             if event.character == "/":
                 event.prevent_default()
                 self._start_search()

@@ -34,7 +34,7 @@ from cc_dump.tmux_controller import (
 
 _VALID_ATTRS = frozenset({
     "state", "auto_zoom", "_is_zoomed", "_port",
-    "_original_mouse", "_mouse_is_on",
+    "_claude_command", "_original_mouse", "_mouse_is_on",
     "_server", "_session", "_our_pane", "_claude_pane",
 })
 
@@ -422,3 +422,249 @@ class TestCleanup:
         )
         # Not unzoomed (wasn't zoomed)
         ctrl._our_pane.resize.assert_not_called()
+
+
+# ─── _validate_claude_pane ─────────────────────────────────────────────────
+
+
+class TestValidateClaudePane:
+    def test_alive_pane_returns_true(self, make_controller):
+        pane = MagicMock()
+        ctrl = make_controller(
+            state=TmuxState.CLAUDE_RUNNING,
+            _claude_pane=pane,
+            _our_pane=MagicMock(),
+        )
+        assert ctrl._validate_claude_pane() is True
+        pane.refresh.assert_called_once()
+
+    def test_dead_pane_transitions_to_ready(self, make_controller):
+        pane = MagicMock()
+        pane.refresh.side_effect = Exception("pane is dead")
+        ctrl = make_controller(
+            state=TmuxState.CLAUDE_RUNNING,
+            _claude_pane=pane,
+            _our_pane=MagicMock(),
+        )
+        assert ctrl._validate_claude_pane() is False
+        assert ctrl._claude_pane is None
+        assert ctrl.state == TmuxState.READY
+
+    def test_absent_pane_returns_false(self, make_controller):
+        ctrl = make_controller(state=TmuxState.READY, _our_pane=MagicMock())
+        assert ctrl._validate_claude_pane() is False
+
+
+# ─── _find_claude_pane ────────────────────────────────────────────────────
+
+
+class TestFindClaudePane:
+    def test_finds_claude_pane(self, make_controller):
+        our_pane = MagicMock()
+        our_pane.pane_id = "%0"
+        claude_pane = MagicMock()
+        claude_pane.pane_id = "%1"
+        claude_pane.pane_current_command = "claude"
+        window = MagicMock()
+        window.panes = [our_pane, claude_pane]
+        our_pane.window = window
+        ctrl = make_controller(
+            state=TmuxState.READY,
+            _our_pane=our_pane,
+        )
+        assert ctrl._find_claude_pane() is claude_pane
+
+    def test_no_claude_returns_none(self, make_controller):
+        our_pane = MagicMock()
+        our_pane.pane_id = "%0"
+        other_pane = MagicMock()
+        other_pane.pane_id = "%1"
+        other_pane.pane_current_command = "bash"
+        window = MagicMock()
+        window.panes = [our_pane, other_pane]
+        our_pane.window = window
+        ctrl = make_controller(
+            state=TmuxState.READY,
+            _our_pane=our_pane,
+        )
+        assert ctrl._find_claude_pane() is None
+
+    def test_skips_own_pane(self, make_controller):
+        """Even if our own pane runs 'claude', it should not be adopted."""
+        our_pane = MagicMock()
+        our_pane.pane_id = "%0"
+        our_pane.pane_current_command = "claude"
+        window = MagicMock()
+        window.panes = [our_pane]
+        our_pane.window = window
+        ctrl = make_controller(
+            state=TmuxState.READY,
+            _our_pane=our_pane,
+        )
+        assert ctrl._find_claude_pane() is None
+
+    def test_matches_custom_command(self, make_controller):
+        our_pane = MagicMock()
+        our_pane.pane_id = "%0"
+        custom_pane = MagicMock()
+        custom_pane.pane_id = "%1"
+        custom_pane.pane_current_command = "my-claude"
+        window = MagicMock()
+        window.panes = [our_pane, custom_pane]
+        our_pane.window = window
+        ctrl = make_controller(
+            state=TmuxState.READY,
+            _our_pane=our_pane,
+            _claude_command="my-claude",
+        )
+        assert ctrl._find_claude_pane() is custom_pane
+
+    def test_matches_basename_of_full_path(self, make_controller):
+        """Command '/usr/bin/claude' should match pane running 'claude'."""
+        our_pane = MagicMock()
+        our_pane.pane_id = "%0"
+        claude_pane = MagicMock()
+        claude_pane.pane_id = "%1"
+        claude_pane.pane_current_command = "claude"
+        window = MagicMock()
+        window.panes = [our_pane, claude_pane]
+        our_pane.window = window
+        ctrl = make_controller(
+            state=TmuxState.READY,
+            _our_pane=our_pane,
+            _claude_command="/usr/bin/claude",
+        )
+        assert ctrl._find_claude_pane() is claude_pane
+
+
+# ─── _try_adopt_existing ──────────────────────────────────────────────────
+
+
+class TestTryAdoptExisting:
+    def test_adopts_existing_claude_pane(self, make_controller):
+        our_pane = MagicMock()
+        our_pane.pane_id = "%0"
+        claude_pane = MagicMock()
+        claude_pane.pane_id = "%1"
+        claude_pane.pane_current_command = "claude"
+        window = MagicMock()
+        window.panes = [our_pane, claude_pane]
+        our_pane.window = window
+        ctrl = make_controller(
+            state=TmuxState.READY,
+            _our_pane=our_pane,
+        )
+        ctrl._try_adopt_existing()
+        assert ctrl._claude_pane is claude_pane
+        assert ctrl.state == TmuxState.CLAUDE_RUNNING
+
+    def test_no_existing_stays_ready(self, make_controller):
+        our_pane = MagicMock()
+        our_pane.pane_id = "%0"
+        window = MagicMock()
+        window.panes = [our_pane]
+        our_pane.window = window
+        ctrl = make_controller(
+            state=TmuxState.READY,
+            _our_pane=our_pane,
+        )
+        ctrl._try_adopt_existing()
+        assert ctrl._claude_pane is None
+        assert ctrl.state == TmuxState.READY
+
+
+# ─── Configurable command ─────────────────────────────────────────────────
+
+
+class TestConfigurableCommand:
+    def test_default_command(self, make_controller):
+        ctrl = make_controller()
+        assert ctrl._claude_command == "claude"
+
+    def test_custom_command_via_override(self, make_controller):
+        ctrl = make_controller(_claude_command="my-claude")
+        assert ctrl._claude_command == "my-claude"
+
+    def test_set_claude_command(self, make_controller):
+        ctrl = make_controller()
+        ctrl.set_claude_command("custom-claude")
+        assert ctrl._claude_command == "custom-claude"
+
+
+# ─── launch_claude with dead pane ──────────────────────────────────────────
+
+
+class TestLaunchWithDeadPane:
+    def test_dead_pane_triggers_relaunch(self, make_controller):
+        """launch_claude with a dead pane reference should try to adopt or relaunch."""
+        dead_pane = MagicMock()
+        dead_pane.refresh.side_effect = Exception("pane dead")
+        our_pane = MagicMock()
+        our_pane.pane_id = "%0"
+        window = MagicMock()
+        window.panes = [our_pane]
+        our_pane.window = window
+
+        ctrl = make_controller(
+            state=TmuxState.CLAUDE_RUNNING,
+            _our_pane=our_pane,
+            _claude_pane=dead_pane,
+            _port=8080,
+        )
+
+        # After dead pane detection: no sibling claude, should split new pane
+        new_pane = MagicMock()
+        window.split.return_value = new_pane
+
+        import libtmux.constants
+        result = ctrl.launch_claude()
+
+        assert result is True
+        assert ctrl._claude_pane is new_pane
+        assert ctrl.state == TmuxState.CLAUDE_RUNNING
+
+    def test_dead_pane_adopts_existing(self, make_controller):
+        """launch_claude with dead pane should adopt if another claude exists."""
+        dead_pane = MagicMock()
+        dead_pane.refresh.side_effect = Exception("pane dead")
+        our_pane = MagicMock()
+        our_pane.pane_id = "%0"
+        existing_claude = MagicMock()
+        existing_claude.pane_id = "%2"
+        existing_claude.pane_current_command = "claude"
+        window = MagicMock()
+        window.panes = [our_pane, existing_claude]
+        our_pane.window = window
+
+        ctrl = make_controller(
+            state=TmuxState.CLAUDE_RUNNING,
+            _our_pane=our_pane,
+            _claude_pane=dead_pane,
+            _port=8080,
+        )
+
+        result = ctrl.launch_claude()
+        assert result is True
+        assert ctrl._claude_pane is existing_claude
+        assert ctrl.state == TmuxState.CLAUDE_RUNNING
+        existing_claude.select.assert_called_once()
+
+
+# ─── on_event with dead pane ─────────────────────────────────────────────
+
+
+class TestOnEventWithDeadPane:
+    def test_dead_pane_skips_zoom(self, make_controller):
+        """on_event with dead claude pane should not attempt zoom."""
+        dead_pane = MagicMock()
+        dead_pane.refresh.side_effect = Exception("pane dead")
+        ctrl = make_controller(
+            state=TmuxState.CLAUDE_RUNNING,
+            _our_pane=MagicMock(),
+            _claude_pane=dead_pane,
+        )
+        event = RequestBodyEvent(body={})
+        ctrl.on_event(event)
+        # Pane was dead, so state transitioned to READY
+        assert ctrl.state == TmuxState.READY
+        assert ctrl._is_zoomed is False

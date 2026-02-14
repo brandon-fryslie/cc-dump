@@ -17,6 +17,7 @@ class InputMode(Enum):
     NORMAL = auto()
     SEARCH_EDIT = auto()
     SEARCH_NAV = auto()
+    SETTINGS = auto()
 
 
 # [LAW:one-source-of-truth] Key→action mapping per mode.
@@ -124,6 +125,9 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         "shift+f8": "save_filterset('8')",
         "shift+f9": "save_filterset('9')",
 
+        # Settings panel
+        "S": "toggle_settings",
+
         # Theme (try both key names - Textual might use descriptive names)
         "[": "prev_theme",
         "left_square_bracket": "prev_theme",
@@ -147,6 +151,10 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
 
     InputMode.SEARCH_EDIT: {
         # Empty - all keys handled specially for text input
+    },
+
+    InputMode.SETTINGS: {
+        # Empty - all keys consumed for field editing
     },
 }
 
@@ -182,6 +190,11 @@ FOOTER_KEYS: dict[InputMode, list[tuple[str, str]]] = {
         ("esc", "keep"),
         ("q", "cancel"),
         ("jk", "scroll"),
+    ],
+    InputMode.SETTINGS: [
+        ("tab", "next"),
+        ("enter", "save"),
+        ("esc", "cancel"),
     ],
 }
 
@@ -219,5 +232,6 @@ KEY_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("[/]", "Cycle theme"),
         ("c", "Claude (tmux)"),
         ("z/Z", "Zoom (tmux)"),
+        ("S", "Settings"),
     ]),
 ]

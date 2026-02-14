@@ -1,7 +1,7 @@
 """Pytest configuration and shared fixtures for cc-dump hot-reload tests."""
 
 import os
-import random
+import re
 import shutil
 import tempfile
 import time
@@ -10,6 +10,18 @@ from pathlib import Path
 
 import pytest
 from ptydriver import PtyProcess
+
+
+# ---------------------------------------------------------------------------
+# Theme initialization — populate rendering globals before any tests run
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session", autouse=True)
+def _init_theme():
+    """Initialize rendering module globals so unit tests see populated dicts."""
+    from textual.theme import BUILTIN_THEMES
+    from cc_dump.tui.rendering import set_theme
+    set_theme(BUILTIN_THEMES["textual-dark"])
 
 
 # ---------------------------------------------------------------------------
@@ -135,11 +147,12 @@ def modify_file(filepath, modification_fn):
 # Internal process launcher (shared by function- and class-scoped fixtures)
 # ---------------------------------------------------------------------------
 
-def _launch_cc_dump(port=None, timeout=10):
-    """Launch cc-dump and wait for TUI to be ready. Returns (proc, port)."""
-    if port is None:
-        port = random.randint(10000, 60000)
+def _launch_cc_dump(port=0, timeout=10):
+    """Launch cc-dump and wait for TUI to be ready. Returns (proc, port).
 
+    Uses port 0 by default — the OS assigns a free port, eliminating
+    collisions when xdist runs multiple workers in parallel.
+    """
     cmd = ["uv", "run", "cc-dump", "--port", str(port)]
 
     proc = PtyProcess(cmd, timeout=timeout)
@@ -172,6 +185,11 @@ def _launch_cc_dump(port=None, timeout=10):
         if proc.is_alive():
             proc.terminate()
         raise
+
+    # Extract actual port from startup output (handles port 0 → OS-assigned)
+    match = re.search(r"Listening on: http://[\w.]+:(\d+)", content)
+    if match:
+        port = int(match.group(1))
 
     return proc, port
 
@@ -223,8 +241,7 @@ def class_proc():
 @pytest.fixture(scope="class")
 def class_proc_with_port():
     """Class-scoped process with known port for HTTP tests."""
-    port = random.randint(10000, 60000)
-    proc, port = _launch_cc_dump(port=port)
+    proc, port = _launch_cc_dump()
     yield proc, port
     _teardown_proc(proc)
 

@@ -83,13 +83,15 @@ class TmuxController:
     """Manages tmux pane splitting, zoom, and claude lifecycle.
 
     // [LAW:single-enforcer] on_event() is the sole zoom decision point.
+    // [LAW:single-enforcer] _validate_claude_pane() is the sole pane liveness check.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, claude_command: str = "claude") -> None:
         self.state = TmuxState.NOT_IN_TMUX
         self.auto_zoom = True
         self._is_zoomed = False
         self._port: int | None = None
+        self._claude_command = claude_command
         self._original_mouse: str | None = None  # saved setting for restore
         self._mouse_is_on: bool | None = None  # idempotency guard
         self._server: libtmux.Server | None = None
@@ -124,6 +126,7 @@ class TmuxController:
                 return
 
             self.state = TmuxState.READY
+            self._try_adopt_existing()
 
         except ImportError:
             self.state = TmuxState.NO_LIBTMUX
@@ -135,16 +138,70 @@ class TmuxController:
         """Set the proxy port (called from cli.py after server starts)."""
         self._port = port
 
+    def set_claude_command(self, command: str) -> None:
+        """Update the Claude command at runtime."""
+        self._claude_command = command
+
+    def _validate_claude_pane(self) -> bool:
+        """// [LAW:single-enforcer] Sole pane liveness check.
+
+        Returns True if claude pane is alive, False if dead/absent.
+        On dead pane: clears reference and transitions to READY.
+        """
+        if self._claude_pane is None:
+            return False
+        try:
+            # libtmux refresh fetches fresh state from tmux server
+            self._claude_pane.refresh()
+            return True
+        except Exception:
+            self._claude_pane = None
+            self.state = TmuxState.READY
+            return False
+
+    def _find_claude_pane(self) -> "libtmux.Pane | None":
+        """Scan sibling panes for a running Claude process."""
+        if self._our_pane is None:
+            return None
+        try:
+            # Extract binary name from command (e.g. "/usr/bin/claude" -> "claude")
+            target = os.path.basename(self._claude_command)
+            window = self._our_pane.window
+            for pane in window.panes:
+                if pane.pane_id == self._our_pane.pane_id:
+                    continue
+                current_cmd = getattr(pane, "pane_current_command", None) or ""
+                if os.path.basename(current_cmd) == target:
+                    return pane
+        except Exception as e:
+            _log("_find_claude_pane error: {}".format(e))
+        return None
+
+    def _try_adopt_existing(self) -> None:
+        """Adopt an existing Claude pane if found. Transitions to CLAUDE_RUNNING."""
+        found = self._find_claude_pane()
+        if found is not None:
+            self._claude_pane = found
+            self.state = TmuxState.CLAUDE_RUNNING
+
     def launch_claude(self) -> bool:
         """Split pane and launch claude with ANTHROPIC_BASE_URL pointing at our proxy.
 
         Idempotent: if claude pane already exists, focuses it instead.
+        Resilient: detects dead panes and pre-existing Claude processes.
         Returns True on success.
         """
         if self.state not in (TmuxState.READY, TmuxState.CLAUDE_RUNNING):
             return False
 
-        # If claude pane exists, just focus it
+        # Validate existing reference (detect death)
+        if self._claude_pane is not None:
+            if self._validate_claude_pane():
+                return self.focus_claude()
+            # Dead pane — fall through to re-detect or re-launch
+
+        # Check for pre-existing Claude in sibling panes
+        self._try_adopt_existing()
         if self._claude_pane is not None:
             return self.focus_claude()
 
@@ -158,8 +215,8 @@ class TmuxController:
             window = self._our_pane.window
             self._claude_pane = window.split(
                 direction=libtmux.constants.PaneDirection.Right,
-                shell="ANTHROPIC_BASE_URL=http://127.0.0.1:{} claude".format(
-                    self._port
+                shell="ANTHROPIC_BASE_URL=http://127.0.0.1:{} {}".format(
+                    self._port, self._claude_command
                 ),
             )
             self.state = TmuxState.CLAUDE_RUNNING
@@ -170,7 +227,7 @@ class TmuxController:
 
     def focus_claude(self) -> bool:
         """Select the claude pane (bring it to foreground)."""
-        if self._claude_pane is None:
+        if not self._validate_claude_pane():
             return False
         try:
             self._claude_pane.select()
@@ -217,6 +274,10 @@ class TmuxController:
         Guards: only act when CLAUDE_RUNNING and auto_zoom is on.
         """
         if self.state != TmuxState.CLAUDE_RUNNING or not self.auto_zoom:
+            return
+
+        # Validate pane is still alive before zoom logic
+        if not self._validate_claude_pane():
             return
 
         key = _extract_decision_key(event)

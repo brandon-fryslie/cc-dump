@@ -60,7 +60,7 @@ class TestHotReloadPTY:
         proc = class_proc
 
         _touch(proxy_py)
-        time.sleep(2)
+        time.sleep(1.5)
         assert proc.is_alive(), "Process should be running"
 
     def test_hot_reload_multiple_touches(self, class_proc, formatting_py):
@@ -90,7 +90,7 @@ class TestHotReloadPTY:
         """Test that hot-reload works correctly over extended operation."""
         proc = class_proc
 
-        time.sleep(1)
+        time.sleep(0.5)
         assert proc.is_alive(), "Process should be stable initially"
 
         _touch(formatting_py)

@@ -170,14 +170,17 @@ def main():
         print("   Recording: disabled (--no-record)")
 
     # Tmux integration (optional — no-op when not in tmux or libtmux missing)
+    import cc_dump.settings
     import cc_dump.tmux_controller
 
     tmux_ctrl = None
     TmuxState = cc_dump.tmux_controller.TmuxState
     if cc_dump.tmux_controller.is_available():
-        tmux_ctrl = cc_dump.tmux_controller.TmuxController()
+        claude_cmd = cc_dump.settings.load_claude_command()
+        tmux_ctrl = cc_dump.tmux_controller.TmuxController(claude_command=claude_cmd)
         tmux_ctrl.set_port(actual_port)
-        if tmux_ctrl.state == TmuxState.READY:
+        # Subscribe for both READY and CLAUDE_RUNNING (adoption case)
+        if tmux_ctrl.state in (TmuxState.READY, TmuxState.CLAUDE_RUNNING):
             router.add_subscriber(DirectSubscriber(tmux_ctrl.on_event))
     # [LAW:dataflow-not-control-flow] Status message from state, not branching
     _TMUX_STATUS = {

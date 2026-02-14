@@ -59,6 +59,28 @@ def save_settings(data: dict) -> None:
         raise
 
 
+def load_setting(key: str, default=None):
+    """Load a single setting by key. Returns default if absent."""
+    return load_settings().get(key, default)
+
+
+def save_setting(key: str, value) -> None:
+    """Save a single setting by key (merge into existing settings)."""
+    data = load_settings()
+    data[key] = value
+    save_settings(data)
+
+
+def load_claude_command() -> str:
+    """Load the configured Claude command for tmux integration."""
+    return load_setting("claude_command", "claude")
+
+
+def save_claude_command(command: str) -> None:
+    """Save the Claude command for tmux integration."""
+    save_setting("claude_command", command)
+
+
 def load_filtersets() -> dict[str, dict[str, list[bool]]]:
     """Extract filtersets key from settings. Returns empty dict if absent."""
     return load_settings().get("filtersets", {})
