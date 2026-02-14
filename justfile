@@ -21,15 +21,15 @@ run-module *args:
 
 # Check code with ruff and mypy
 lint: check
-    uvx ruff check src/
+    uv run ruff check src/
 
 # Type-check with mypy
 check:
-    uvx mypy src/cc_dump/
+    uv run mypy src/
 
 # Format code with ruff
 fmt:
-    uvx ruff format src/
+    uv run ruff format src/
 
 # Run in browser via textual-serve
 web:
