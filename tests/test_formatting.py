@@ -31,6 +31,7 @@ from cc_dump.formatting import (
     format_response_event,
     format_response_headers,
     make_diff_lines,
+    populate_content_regions,
     track_content,
     _tool_detail,
     _front_ellipse_path,
@@ -1120,7 +1121,7 @@ class TestToolDefinitionsBlock:
         assert tdb.total_tokens == sum(tdb.tool_tokens)
 
     def test_tool_definitions_block_content_regions(self, fresh_state):
-        """ToolDefinitionsBlock has pre-populated content_regions."""
+        """ToolDefinitionsBlock has pre-populated content_regions with kind and tags."""
         body = _make_body_with_tools(SAMPLE_TOOLS)
         blocks = format_request(body, fresh_state)
         tdb = [b for b in blocks if isinstance(b, ToolDefinitionsBlock)][0]
@@ -1130,6 +1131,10 @@ class TestToolDefinitionsBlock:
         assert all(r.expanded is False for r in tdb.content_regions)
         assert tdb.content_regions[0].index == 0
         assert tdb.content_regions[1].index == 1
+        # kind and tags
+        assert all(r.kind == "tool_def" for r in tdb.content_regions)
+        assert tdb.content_regions[0].tags == ["Read"]
+        assert tdb.content_regions[1].tags == ["Write"]
 
     def test_no_tool_definitions_block_without_tools(self, fresh_state):
         """No ToolDefinitionsBlock when tools is empty."""

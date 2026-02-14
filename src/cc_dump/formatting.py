@@ -96,11 +96,61 @@ class ContentRegion:
 
     // [LAW:one-source-of-truth] Replaces _xml_expanded shadow dict, _xml_strip_ranges,
     // and _xml_expandable bool — all region state lives here.
+
+    kind: structural discriminator — determines rendering behavior.
+        Values: "xml_block", "md", "code_fence", "md_fence", "tool_def"
+    tags: semantic labels for navigation/search (e.g., XML tag name, tool name).
+        Empty list = not navigable.
     """
 
     index: int  # Position in parent's content_regions list
+    kind: str = ""  # "xml_block", "md", "code_fence", "md_fence", "tool_def"
+    tags: list[str] = field(default_factory=list)  # Semantic labels for navigation
     expanded: bool | None = None  # None = default (expanded). False = collapsed.
     _strip_range: tuple[int, int] | None = None  # Set by renderer: (start, end) in block strips
+
+
+def populate_content_regions(block: "FormattedBlock") -> None:
+    """Eagerly populate content_regions from text segmentation.
+
+    Idempotent. Creates one ContentRegion per SubBlock segment
+    (MD, CODE_FENCE, MD_FENCE, XML_BLOCK) — not just XML.
+
+    // [LAW:single-enforcer] Single place that creates text-based ContentRegion instances.
+    // [LAW:dataflow-not-control-flow] Pure data population, not control flow.
+
+    FUTURE: content-derived tags — scan region text for identifiable content
+    (e.g., "CLAUDE.md" in system-reminder text) and add to tags list.
+    """
+    from cc_dump.segmentation import segment, SubBlockKind
+
+    # Already populated — idempotent (preserves ToolDefinitionsBlock's inline creation)
+    if block.content_regions:
+        return
+
+    # Get text from the block — TextContentBlock has .text, TrackedContentBlock has .content
+    text = getattr(block, "text", None) or getattr(block, "content", None) or ""
+    if not text:
+        return
+
+    seg = segment(text)
+    if not seg.sub_blocks:
+        return
+
+    regions: list[ContentRegion] = []
+    for i, sb in enumerate(seg.sub_blocks):
+        kind = sb.kind.value  # "md", "code_fence", "md_fence", "xml_block"
+
+        tags: list[str] = []
+        if sb.kind == SubBlockKind.XML_BLOCK:
+            tags = [sb.meta.tag_name]
+        elif sb.kind == SubBlockKind.CODE_FENCE and sb.meta.info:
+            tags = [sb.meta.info]
+        # MD and MD_FENCE: no tags (not navigable)
+
+        regions.append(ContentRegion(index=i, kind=kind, tags=tags))
+
+    block.content_regions = regions
 
 
 @dataclass
@@ -717,7 +767,8 @@ def format_request(body, state, request_headers: dict | None = None):
             total_tokens=sum(per_tool_tokens),
         )
         tool_def_block.content_regions = [
-            ContentRegion(index=i, expanded=False) for i in range(len(tools))
+            ContentRegion(index=i, kind="tool_def", tags=[tool.get("name", "?")], expanded=False)
+            for i, tool in enumerate(tools)
         ]
         blocks.append(tool_def_block)
 
@@ -797,6 +848,13 @@ def format_request(body, state, request_headers: dict | None = None):
         tool_color_counter = ctx.tool_color_counter
 
     blocks.append(NewlineBlock())
+
+    # Eagerly populate content_regions for all text blocks
+    # // [LAW:single-enforcer] populate_content_regions is idempotent —
+    # ToolDefinitionsBlock regions (created inline above) are preserved.
+    for block in blocks:
+        populate_content_regions(block)
+
     return blocks
 
 

@@ -1,12 +1,18 @@
 """Tests for collapsible XML sub-blocks within TextContentBlock."""
 
-from cc_dump.formatting import TextContentBlock, ContentRegion, Category, ALWAYS_VISIBLE
+from cc_dump.formatting import (
+    TextContentBlock,
+    ContentRegion,
+    Category,
+    ALWAYS_VISIBLE,
+    populate_content_regions,
+)
 from cc_dump.tui.rendering import (
     render_turn_to_strips,
     set_theme,
     _render_xml_collapsed,
     _render_region_parts,
-    _ensure_content_regions,
+    COLLAPSIBLE_REGION_KINDS,
 )
 from cc_dump.segmentation import segment, SubBlockKind
 from rich.console import Console
@@ -161,105 +167,150 @@ def test_segment_end_tag_span_covers_just_tag():
     assert end_tag == "</thinking>"
 
 
-# ─── _ensure_content_regions ───────────────────────────────────────────────
+# ─── populate_content_regions ────────────────────────────────────────────
 
 
-def test_ensure_content_regions_with_xml_content():
-    """Block with XML tags gets content_regions populated."""
-    _setup_theme()
+def test_populate_content_regions_with_xml_content():
+    """Block with XML tags gets content_regions populated for ALL segments."""
     text = "Some text\n<thinking>\ninner content\n</thinking>\nmore text"
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
-    _ensure_content_regions(block)
-    assert len(block.content_regions) == 1
-    assert block.content_regions[0].index == 0
+    populate_content_regions(block)
+    # 3 segments: MD, XML, MD
+    assert len(block.content_regions) == 3
+    assert block.content_regions[0].kind == "md"
+    assert block.content_regions[1].kind == "xml_block"
+    assert block.content_regions[1].tags == ["thinking"]
+    assert block.content_regions[2].kind == "md"
 
 
-def test_ensure_content_regions_form_a():
+def test_populate_content_regions_form_a():
     """Block with Form A XML gets content_regions populated."""
-    _setup_theme()
     text = "Some text\n<thinking>content after tag\nmore\n</thinking>\nend"
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
-    _ensure_content_regions(block)
-    assert len(block.content_regions) == 1
+    populate_content_regions(block)
+    # 3 segments: MD, XML, MD
+    assert len(block.content_regions) == 3
+    assert block.content_regions[1].kind == "xml_block"
 
 
-def test_ensure_content_regions_form_c():
+def test_populate_content_regions_form_c():
     """Block with Form C single-line XML gets content_regions populated."""
-    _setup_theme()
     text = "Some text\n<note>inline note</note>\nend"
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
-    _ensure_content_regions(block)
-    assert len(block.content_regions) == 1
+    populate_content_regions(block)
+    # 3 segments: MD, XML, MD
+    assert len(block.content_regions) == 3
+    assert block.content_regions[1].kind == "xml_block"
+    assert block.content_regions[1].tags == ["note"]
 
 
-def test_ensure_content_regions_without_xml():
-    """Block without XML tags gets no content_regions."""
-    _setup_theme()
+def test_populate_content_regions_plain_text():
+    """Block without XML gets regions for MD segments."""
     block = TextContentBlock(text="Just plain text", category=Category.ASSISTANT)
-    _ensure_content_regions(block)
-    assert block.content_regions == []
+    populate_content_regions(block)
+    # 1 segment: MD
+    assert len(block.content_regions) == 1
+    assert block.content_regions[0].kind == "md"
+    assert block.content_regions[0].tags == []
 
 
-def test_ensure_content_regions_wrong_category():
-    """Block with XML but non-markdown category gets no content_regions."""
-    _setup_theme()
+def test_populate_content_regions_any_category():
+    """populate_content_regions works for any category (no category gate)."""
     text = "Some text\n<thinking>\ninner content\n</thinking>\nmore text"
     block = TextContentBlock(text=text, category=Category.TOOLS)
-    _ensure_content_regions(block)
-    assert block.content_regions == []
+    populate_content_regions(block)
+    # Should still populate — no category gate in populate_content_regions
+    assert len(block.content_regions) == 3
+    assert block.content_regions[1].kind == "xml_block"
 
 
-def test_ensure_content_regions_no_text():
+def test_populate_content_regions_no_text():
     """Block with empty text gets no content_regions."""
-    _setup_theme()
     block = TextContentBlock(text="", category=Category.ASSISTANT)
-    _ensure_content_regions(block)
+    populate_content_regions(block)
     assert block.content_regions == []
 
 
-def test_ensure_content_regions_idempotent():
-    """Calling _ensure_content_regions twice preserves existing regions."""
-    _setup_theme()
+def test_populate_content_regions_idempotent():
+    """Calling populate_content_regions twice preserves existing regions."""
     text = "Some text\n<thinking>\ninner content\n</thinking>\nmore text"
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
-    _ensure_content_regions(block)
+    populate_content_regions(block)
     # Modify a region's state
-    block.content_regions[0].expanded = False
+    block.content_regions[1].expanded = False
     # Call again — should not overwrite
-    _ensure_content_regions(block)
-    assert block.content_regions[0].expanded is False
+    populate_content_regions(block)
+    assert block.content_regions[1].expanded is False
+
+
+def test_populate_all_segments():
+    """Text with MD + XML + CODE_FENCE → correct kinds and tags."""
+    text = "Intro\n<thinking>\nthought\n</thinking>\n```python\nprint('hi')\n```\nEnd"
+    block = TextContentBlock(text=text, category=Category.ASSISTANT)
+    populate_content_regions(block)
+    kinds = [r.kind for r in block.content_regions]
+    assert "md" in kinds
+    assert "xml_block" in kinds
+    assert "code_fence" in kinds
+    # XML region should have tag name
+    xml_regions = [r for r in block.content_regions if r.kind == "xml_block"]
+    assert xml_regions[0].tags == ["thinking"]
+    # Code fence region should have language tag
+    code_regions = [r for r in block.content_regions if r.kind == "code_fence"]
+    assert code_regions[0].tags == ["python"]
+
+
+def test_populate_tag_values():
+    """XML tag names and code fence info are extracted correctly."""
+    text = "<system-reminder>\nHello\n</system-reminder>\n```javascript\nconsole.log();\n```"
+    block = TextContentBlock(text=text, category=Category.ASSISTANT)
+    populate_content_regions(block)
+    xml_regions = [r for r in block.content_regions if r.kind == "xml_block"]
+    code_regions = [r for r in block.content_regions if r.kind == "code_fence"]
+    assert xml_regions[0].tags == ["system-reminder"]
+    assert code_regions[0].tags == ["javascript"]
 
 
 # ─── _render_region_parts ─────────────────────────────────────────────────
 
 
 def test_region_parts_no_xml():
-    """Text without XML returns single part with None index."""
+    """Text without XML returns single part with region index (MD region)."""
     _setup_theme()
     block = TextContentBlock(text="Hello world", category=Category.ASSISTANT)
-    block.content_regions = []  # no regions
+    populate_content_regions(block)
     parts = _render_region_parts(block)
     assert len(parts) == 1
     renderable, idx = parts[0]
-    assert idx is None
+    # MD region gets index 0 (not None — all segments have region_idx)
+    assert idx == 0
+
+
+def test_region_parts_no_regions_fallback():
+    """Text with no regions at all returns fallback with None index."""
+    _setup_theme()
+    block = TextContentBlock(text="Hello world", category=Category.ASSISTANT)
+    block.content_regions = []  # explicitly empty
+    parts = _render_region_parts(block)
+    assert len(parts) == 1
+    renderable, idx = parts[0]
+    assert idx is None  # fallback path
 
 
 def test_region_parts_with_xml_expanded():
-    """Text with XML returns parts including XML with index, all expanded by default."""
+    """Text with XML returns parts including XML with correct index, all expanded by default."""
     _setup_theme()
     text = "Intro text\n<thinking>\nI need to think about this\n</thinking>\nConclusion"
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
-    _ensure_content_regions(block)
+    populate_content_regions(block)
     parts = _render_region_parts(block)
 
-    # Should have multiple parts: MD before, XML block, MD after
+    # Should have 3 parts: MD before (idx=0), XML block (idx=1), MD after (idx=2)
     assert len(parts) >= 2  # at least intro+xml or xml+conclusion
 
-    # Find the XML part
-    xml_parts = [(r, idx) for r, idx in parts if idx is not None]
-    assert len(xml_parts) == 1, f"Expected 1 XML part, got {len(xml_parts)}"
-    _, xml_idx = xml_parts[0]
-    assert xml_idx == 0  # first XML block
+    # Find the XML part — it's at index 1 in the segment sequence
+    xml_parts = [(r, idx) for r, idx in parts if idx == 1]
+    assert len(xml_parts) == 1, f"Expected 1 XML part at index 1, got {len(xml_parts)}"
 
 
 def test_region_parts_xml_collapsed():
@@ -267,11 +318,13 @@ def test_region_parts_xml_collapsed():
     _setup_theme()
     text = "Intro text\n<thinking>\nLine 1\nLine 2\nLine 3\n</thinking>\nConclusion"
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
-    block.content_regions = [ContentRegion(index=0, expanded=False)]
+    populate_content_regions(block)
+    # Collapse the XML region (index 1)
+    block.content_regions[1].expanded = False
     parts = _render_region_parts(block)
 
-    # Find the XML part
-    xml_parts = [(r, idx) for r, idx in parts if idx is not None]
+    # Find the XML part at segment index 1
+    xml_parts = [(r, idx) for r, idx in parts if idx == 1]
     assert len(xml_parts) == 1
     renderable, _ = xml_parts[0]
 
@@ -288,10 +341,11 @@ def test_region_parts_form_a_collapsed():
     _setup_theme()
     text = "Intro\n<thinking>I need to think\nabout something\n</thinking>\nEnd"
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
-    block.content_regions = [ContentRegion(index=0, expanded=False)]
+    populate_content_regions(block)
+    block.content_regions[1].expanded = False
     parts = _render_region_parts(block)
 
-    xml_parts = [(r, idx) for r, idx in parts if idx is not None]
+    xml_parts = [(r, idx) for r, idx in parts if idx == 1]
     assert len(xml_parts) == 1
     plain = _render_to_text(xml_parts[0][0])
     assert "▷" in plain
@@ -303,10 +357,11 @@ def test_region_parts_form_c_collapsed():
     _setup_theme()
     text = "Intro\n<note>short note</note>\nEnd"
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
-    block.content_regions = [ContentRegion(index=0, expanded=False)]
+    populate_content_regions(block)
+    block.content_regions[1].expanded = False
     parts = _render_region_parts(block)
 
-    xml_parts = [(r, idx) for r, idx in parts if idx is not None]
+    xml_parts = [(r, idx) for r, idx in parts if idx == 1]
     assert len(xml_parts) == 1
     plain = _render_to_text(xml_parts[0][0])
     assert "▷" in plain
@@ -314,7 +369,7 @@ def test_region_parts_form_c_collapsed():
 
 
 def test_region_parts_multiple_xml_blocks():
-    """Multiple XML blocks get sequential indices."""
+    """Multiple XML blocks get their actual segment indices."""
     _setup_theme()
     text = (
         "Before\n"
@@ -324,13 +379,15 @@ def test_region_parts_multiple_xml_blocks():
         "After"
     )
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
-    _ensure_content_regions(block)
+    populate_content_regions(block)
     parts = _render_region_parts(block)
 
-    xml_parts = [(r, idx) for r, idx in parts if idx is not None]
+    # All parts have region indices now
+    xml_parts = [(r, idx) for r, idx in parts if idx is not None and block.content_regions[idx].kind == "xml_block"]
     assert len(xml_parts) == 2
-    assert xml_parts[0][1] == 0
-    assert xml_parts[1][1] == 1
+    # First XML at segment index 1, second at segment index 3
+    assert xml_parts[0][1] == 1
+    assert xml_parts[1][1] == 3
 
 
 def test_region_parts_mixed_collapse():
@@ -344,13 +401,13 @@ def test_region_parts_mixed_collapse():
         "After"
     )
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
-    block.content_regions = [
-        ContentRegion(index=0, expanded=False),  # thinking collapsed
-        ContentRegion(index=1, expanded=None),    # search expanded (default)
-    ]
+    populate_content_regions(block)
+    # Collapse thinking (index 1), leave search expanded (index 3)
+    block.content_regions[1].expanded = False
+    # content_regions[3] stays default (None = expanded)
     parts = _render_region_parts(block)
 
-    xml_parts = [(r, idx) for r, idx in parts if idx is not None]
+    xml_parts = [(r, idx) for r, idx in parts if idx is not None and block.content_regions[idx].kind == "xml_block"]
     assert len(xml_parts) == 2
 
     # First XML (thinking) should be collapsed (renderable with ▷)
@@ -366,10 +423,11 @@ def test_region_parts_mixed_collapse():
 
 
 def test_xml_block_renders_with_content_regions():
-    """TextContentBlock with XML sets content_regions with _strip_range on each."""
+    """TextContentBlock with XML sets content_regions with _strip_range on XML region."""
     _setup_theme()
     text = "Intro\n<thinking>\nLine 1\nLine 2\nLine 3\n</thinking>\nEnd"
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
+    populate_content_regions(block)
 
     console = Console()
     filters = {"assistant": ALWAYS_VISIBLE}
@@ -381,13 +439,15 @@ def test_xml_block_renders_with_content_regions():
         width=80,
     )
 
-    # Block should have content_regions populated
-    assert len(block.content_regions) == 1
-    region = block.content_regions[0]
-    assert region._strip_range is not None, "Region should have strip range set"
+    # Block should have content_regions populated (3 segments: MD, XML, MD)
+    assert len(block.content_regions) == 3
+    # XML region at index 1 should have strip range set
+    xml_region = block.content_regions[1]
+    assert xml_region.kind == "xml_block"
+    assert xml_region._strip_range is not None, "XML region should have strip range set"
 
     # Range should be valid
-    start, end = region._strip_range
+    start, end = xml_region._strip_range
     assert start >= 0
     assert end > start
 
@@ -408,6 +468,7 @@ def test_xml_collapsed_fewer_strips():
 
     # Expanded (default)
     block_expanded = TextContentBlock(text=text, category=Category.ASSISTANT)
+    populate_content_regions(block_expanded)
     strips_expanded, _ = render_turn_to_strips(
         blocks=[block_expanded],
         filters=filters,
@@ -415,9 +476,12 @@ def test_xml_collapsed_fewer_strips():
         width=80,
     )
 
-    # Collapsed
+    # Collapsed — populate regions then collapse XML
     block_collapsed = TextContentBlock(text=text, category=Category.ASSISTANT)
-    block_collapsed.content_regions = [ContentRegion(index=0, expanded=False)]
+    populate_content_regions(block_collapsed)
+    # Find the XML region and collapse it
+    xml_idx = next(i for i, r in enumerate(block_collapsed.content_regions) if r.kind == "xml_block")
+    block_collapsed.content_regions[xml_idx].expanded = False
     strips_collapsed, _ = render_turn_to_strips(
         blocks=[block_collapsed],
         filters=filters,
@@ -432,23 +496,14 @@ def test_xml_collapsed_fewer_strips():
     )
 
 
-def test_xml_no_content_regions_for_plain_text():
-    """TextContentBlock without XML has empty content_regions."""
-    _setup_theme()
+def test_plain_text_gets_md_regions():
+    """TextContentBlock without XML gets MD regions from populate_content_regions."""
     block = TextContentBlock(text="Just plain text", category=Category.ASSISTANT)
+    populate_content_regions(block)
 
-    console = Console()
-    filters = {"assistant": ALWAYS_VISIBLE}
-
-    render_turn_to_strips(
-        blocks=[block],
-        filters=filters,
-        console=console,
-        width=80,
-    )
-
-    # Should have empty content_regions
-    assert block.content_regions == []
+    # Should have 1 MD region
+    assert len(block.content_regions) == 1
+    assert block.content_regions[0].kind == "md"
 
 
 def test_xml_expanded_survives_rerender():
@@ -456,7 +511,8 @@ def test_xml_expanded_survives_rerender():
     _setup_theme()
     text = "Intro\n<thinking>\nLine 1\nLine 2\n</thinking>\nEnd"
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
-    block.content_regions = [ContentRegion(index=0, expanded=False)]
+    populate_content_regions(block)
+    block.content_regions[1].expanded = False
 
     console = Console()
     filters = {"assistant": ALWAYS_VISIBLE}
@@ -470,7 +526,7 @@ def test_xml_expanded_survives_rerender():
     )
 
     # Verify state preserved
-    assert block.content_regions[0].expanded is False
+    assert block.content_regions[1].expanded is False
 
     # Second render (same block, should use same state)
     strips2, _ = render_turn_to_strips(
@@ -492,6 +548,7 @@ def test_xml_strips_have_gutter():
     _setup_theme()
     text = "Intro\n<thinking>\nThought\n</thinking>\nEnd"
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
+    populate_content_regions(block)
 
     console = Console()
     filters = {"assistant": ALWAYS_VISIBLE}
@@ -518,6 +575,7 @@ def test_form_a_renders_as_xml_block():
     _setup_theme()
     text = "<thinking>I need to think\nabout this problem\n</thinking>"
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
+    populate_content_regions(block)
 
     console = Console()
     filters = {"assistant": ALWAYS_VISIBLE}
@@ -529,8 +587,9 @@ def test_form_a_renders_as_xml_block():
         width=80,
     )
 
-    # Should have content_regions (detected as XML)
-    assert len(block.content_regions) == 1
+    # Should have content_regions with XML detected
+    xml_regions = [r for r in block.content_regions if r.kind == "xml_block"]
+    assert len(xml_regions) == 1
 
 
 def test_form_c_renders_as_xml_block():
@@ -538,6 +597,7 @@ def test_form_c_renders_as_xml_block():
     _setup_theme()
     text = "<note>short note</note>"
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
+    populate_content_regions(block)
 
     console = Console()
     filters = {"assistant": ALWAYS_VISIBLE}
@@ -549,5 +609,44 @@ def test_form_c_renders_as_xml_block():
         width=80,
     )
 
-    # Should have content_regions (detected as XML)
-    assert len(block.content_regions) == 1
+    # Should have content_regions with XML detected
+    xml_regions = [r for r in block.content_regions if r.kind == "xml_block"]
+    assert len(xml_regions) == 1
+
+
+# ─── Collapsibility guard ─────────────────────────────────────────────────
+
+
+def test_collapsibility_guard_xml_is_collapsible():
+    """xml_block kind is in COLLAPSIBLE_REGION_KINDS."""
+    assert "xml_block" in COLLAPSIBLE_REGION_KINDS
+
+
+def test_collapsibility_guard_tool_def_is_collapsible():
+    """tool_def kind is in COLLAPSIBLE_REGION_KINDS."""
+    assert "tool_def" in COLLAPSIBLE_REGION_KINDS
+
+
+def test_collapsibility_guard_md_not_collapsible():
+    """md kind is NOT in COLLAPSIBLE_REGION_KINDS."""
+    assert "md" not in COLLAPSIBLE_REGION_KINDS
+
+
+def test_collapsibility_guard_code_fence_not_collapsible():
+    """code_fence kind is NOT in COLLAPSIBLE_REGION_KINDS (yet)."""
+    assert "code_fence" not in COLLAPSIBLE_REGION_KINDS
+
+
+# ─── Transform hook ──────────────────────────────────────────────────────
+
+
+def test_transform_hook_identity():
+    """Empty transform list is identity — blocks pass through unchanged."""
+    _setup_theme()
+    from cc_dump.tui.rendering import _apply_block_transforms
+
+    text = "Hello world"
+    block = TextContentBlock(text=text, category=Category.ASSISTANT)
+    prepared = [(0, block)]
+    result = _apply_block_transforms(prepared, {"assistant": ALWAYS_VISIBLE})
+    assert result == prepared

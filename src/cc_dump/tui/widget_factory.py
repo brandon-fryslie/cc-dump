@@ -23,6 +23,7 @@ from rich.text import Text
 from rich.markdown import Markdown
 
 # Use module-level imports for hot-reload
+import cc_dump.formatting
 import cc_dump.palette
 import cc_dump.analysis
 import cc_dump.tui.rendering
@@ -625,6 +626,11 @@ class ConversationView(ScrollView):
                 TextContentBlock(text=combined_text, category=Category.ASSISTANT)
             )
 
+        # Eagerly populate content_regions for consolidated text blocks
+        # // [LAW:single-enforcer] Uses module-level import for hot-reload safety
+        for block in consolidated:
+            cc_dump.formatting.populate_content_regions(block)
+
         # Full re-render from consolidated blocks
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
@@ -1074,6 +1080,9 @@ class ConversationView(ScrollView):
         elif meta_type == cc_dump.tui.rendering.META_TOGGLE_REGION:
             self._toggle_region(turn, block_idx, meta_value)
 
+    # FUTURE: region navigation — scan all turns' blocks' content_regions
+    # for matching tags to support "go to <tag>" navigation
+
     def _region_at_line(
         self, turn: TurnData, block, block_idx: int, content_y: int
     ) -> int | None:
@@ -1136,6 +1145,9 @@ class ConversationView(ScrollView):
             return
 
         region = block.content_regions[region_idx]
+        # Only collapsible region kinds can be toggled
+        if region.kind not in cc_dump.tui.rendering.COLLAPSIBLE_REGION_KINDS:
+            return
         # Toggle: None/True → False, False → None (restore default)
         region.expanded = None if region.expanded is False else False
 

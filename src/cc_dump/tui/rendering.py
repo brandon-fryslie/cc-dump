@@ -23,13 +23,7 @@ from rich.theme import Theme as RichTheme
 
 from collections import Counter
 
-# Click-target meta keys — the sole identifiers for interactive segments.
-# // [LAW:one-source-of-truth] Canonical constants; widget_factory reads these via module import.
-META_TOGGLE_BLOCK = "toggle_block"
-META_TOGGLE_REGION = "toggle_region"
-
 from cc_dump.formatting import (
-    ContentRegion,
     FormattedBlock,
     SeparatorBlock,
     HeaderBlock,
@@ -57,11 +51,19 @@ from cc_dump.formatting import (
     make_diff_lines,
     Category,
     VisState,
-    HIDDEN,
     ALWAYS_VISIBLE,
 )
 
 import cc_dump.palette
+
+# Click-target meta keys — the sole identifiers for interactive segments.
+# // [LAW:one-source-of-truth] Canonical constants; widget_factory reads these via module import.
+META_TOGGLE_BLOCK = "toggle_block"
+META_TOGGLE_REGION = "toggle_region"
+
+# Region kinds that support click-to-collapse/expand.
+# FUTURE: make code_fence and md regions collapsible for large content
+COLLAPSIBLE_REGION_KINDS = frozenset({"xml_block", "tool_def"})
 
 
 # ─── Theme Colors ────────────────────────────────────────────────────────────
@@ -676,19 +678,18 @@ def _render_region_parts(
 ) -> list[tuple[ConsoleRenderable, int | None]]:
     """Render text into per-part renderables using block.content_regions for state.
 
-    Like _render_text_as_markdown() but returns (renderable, region_index)
-    tuples. Non-XML parts have region_index=None. XML sub-blocks have
-    their index from the content_regions list.
+    Returns (renderable, region_index) tuples. 1:1 correspondence between
+    block.content_regions and seg.sub_blocks — every part gets its region_idx.
 
     // [LAW:dataflow-not-control-flow] content_regions controls the data;
     // region.expanded=None means expanded (default True).
 
     Args:
         block: A block with .text and .content_regions already populated
-            by _ensure_content_regions().
+            by populate_content_regions().
 
     Returns:
-        List of (renderable, region_idx_or_None) tuples.
+        List of (renderable, region_idx) tuples.
     """
     from cc_dump.segmentation import (
         SubBlockKind,
@@ -702,42 +703,38 @@ def _render_region_parts(
     tc = get_theme_colors()
     seg = _get_or_segment(block)
 
-    # Build lookup: region index → expanded state
-    # // [LAW:dataflow-not-control-flow] Value lookup, not branch
-    region_expanded = {r.index: r.expanded for r in regions}
-
     parts: list[tuple[ConsoleRenderable, int | None]] = []
-    xml_sb_idx = 0
 
-    for sb in seg.sub_blocks:
+    # 1:1 correspondence: regions[i] <-> seg.sub_blocks[i]
+    for i, sb in enumerate(seg.sub_blocks):
+        region = regions[i] if i < len(regions) else None
+        region_idx = region.index if region else None
         text_slice = text[sb.span.start : sb.span.end]
 
         if sb.kind == SubBlockKind.MD:
             wrapped = wrap_tags_in_backticks(text_slice)
             if wrapped.strip():
-                parts.append((Markdown(wrapped, code_theme=tc.code_theme), None))
+                parts.append((Markdown(wrapped, code_theme=tc.code_theme), region_idx))
 
         elif sb.kind == SubBlockKind.MD_FENCE:
             inner = text[sb.meta.inner_span.start : sb.meta.inner_span.end]
             wrapped = wrap_tags_in_backticks(inner)
             if wrapped.strip():
-                parts.append((Markdown(wrapped, code_theme=tc.code_theme), None))
+                parts.append((Markdown(wrapped, code_theme=tc.code_theme), region_idx))
 
         elif sb.kind == SubBlockKind.CODE_FENCE:
             inner = text[sb.meta.inner_span.start : sb.meta.inner_span.end]
+            # FUTURE: collapsible code fences — add "code_fence" to COLLAPSIBLE_REGION_KINDS
             parts.append(
                 (
                     Syntax(inner, sb.meta.info or "", theme=tc.code_theme),
-                    None,
+                    region_idx,
                 )
             )
 
         elif sb.kind == SubBlockKind.XML_BLOCK:
-            current_xml_idx = xml_sb_idx
-            xml_sb_idx += 1
-
             # expanded=None or True means expanded; False means collapsed
-            is_expanded = region_expanded.get(current_xml_idx, None) is not False
+            is_expanded = (region is None) or (region.expanded is not False)
 
             m = sb.meta
             inner = text[m.inner_span.start : m.inner_span.end]
@@ -763,11 +760,11 @@ def _render_region_parts(
                         )
                     )
                 xml_parts_with_header.append(_render_xml_tag(end_tag))
-                parts.append((Group(*xml_parts_with_header), current_xml_idx))
+                parts.append((Group(*xml_parts_with_header), region_idx))
             else:
                 # Collapsed: content preview indicator
                 collapsed = _render_xml_collapsed(m.tag_name, inner)
-                parts.append((collapsed, current_xml_idx))
+                parts.append((collapsed, region_idx))
 
     if not parts:
         # Fallback: render as plain markdown
@@ -775,35 +772,6 @@ def _render_region_parts(
         return [(md, None)]
 
     return parts
-
-
-def _ensure_content_regions(block) -> None:
-    """Lazily populate block.content_regions from segmentation if applicable.
-
-    Returns early if content_regions is already populated. Only populates
-    for text blocks in markdown categories that contain XML sub-blocks.
-
-    // [LAW:one-source-of-truth] Single place that creates ContentRegion instances.
-    // [LAW:dataflow-not-control-flow] Pure data population, not control flow.
-    """
-    from cc_dump.segmentation import SubBlockKind
-
-    # Already populated — idempotent
-    if block.content_regions:
-        return
-
-    if not hasattr(block, "text") or not block.text:
-        return
-    cat = getattr(block, "category", None)
-    if cat not in _MARKDOWN_CATEGORIES:
-        return
-    seg = _get_or_segment(block)
-    xml_count = sum(1 for sb in seg.sub_blocks if sb.kind == SubBlockKind.XML_BLOCK)
-    if xml_count == 0:
-        return
-
-    # Populate content_regions — one per XML sub-block
-    block.content_regions = [ContentRegion(index=i) for i in range(xml_count)]
 
 
 def _render_text_content(block: TextContentBlock) -> ConsoleRenderable | None:
@@ -1546,6 +1514,28 @@ def _prepare_blocks(blocks: list, filters: dict) -> list[tuple[int, FormattedBlo
     return collapse_tool_runs(blocks, tools_on)
 
 
+# FUTURE: register transforms for:
+# - hide-empty-blocks: skip blocks with no visible content
+# - coalesce-same-category: merge consecutive blocks with same category
+#   into a single display group with one header and concatenated regions
+_BLOCK_TRANSFORMS: list[Callable] = []
+
+
+def _apply_block_transforms(
+    prepared: list[tuple[int, FormattedBlock]],
+    filters: dict,
+) -> list[tuple[int, FormattedBlock]]:
+    """Apply registered block transforms in pipeline order.
+
+    Currently empty — transforms are applied in list order.
+    // [LAW:pipelines-compilers] Staged with explicit I/O. No back-edges.
+    """
+    result = prepared
+    for transform in _BLOCK_TRANSFORMS:
+        result = transform(result, filters)
+    return result
+
+
 # ─── Truncation and collapse indicator ─────────────────────────────────────────
 
 
@@ -1706,6 +1696,7 @@ def render_blocks(
         List of (block_index, Text) pairs.
     """
     prepared = _prepare_blocks(blocks, filters)
+    prepared = _apply_block_transforms(prepared, filters)
 
     rendered: list[tuple[int, Text]] = []
     for orig_idx, block in prepared:
@@ -1781,6 +1772,7 @@ def render_turn_to_strips(
     block_strip_map: dict[int, int] = {}
 
     prepared = _prepare_blocks(blocks, filters)
+    prepared = _apply_block_transforms(prepared, filters)
 
     for orig_idx, block in prepared:
         vis = _resolve_visibility(block, filters)
@@ -1811,11 +1803,9 @@ def render_turn_to_strips(
         state_override = state_key in BLOCK_STATE_RENDERERS
 
         # Detect blocks with content regions for per-part rendering
-        # // [LAW:dataflow-not-control-flow] Never parse XML on streaming blocks —
-        # TextDeltaBlock text is incomplete fragments, segmentation would break.
-        # // [LAW:one-source-of-truth] _ensure_content_regions populates block.content_regions
-        if not is_streaming and not block_has_matches:
-            _ensure_content_regions(block)
+        # // [LAW:dataflow-not-control-flow] content_regions are eagerly populated
+        # by populate_content_regions() in formatting.py. Streaming blocks
+        # (TextDeltaBlock) won't have regions — their text is incomplete fragments.
         has_regions = bool(block.content_regions)
 
         # Precedence: state-specific renderer > region rendering > default renderer
@@ -1860,8 +1850,9 @@ def render_turn_to_strips(
                     if region_idx is not None:
                         region = block.content_regions[region_idx]
                         region._strip_range = (part_start, len(block_strips))
-                        region_meta = {META_TOGGLE_REGION: region_idx}
-                        if part_start < len(block_strips):
+                        # Only apply toggle meta to collapsible region kinds
+                        if region.kind in COLLAPSIBLE_REGION_KINDS and part_start < len(block_strips):
+                            region_meta = {META_TOGGLE_REGION: region_idx}
                             # First strip: start tag or collapsed indicator
                             block_strips[part_start] = block_strips[
                                 part_start
