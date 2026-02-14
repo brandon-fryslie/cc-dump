@@ -10,7 +10,7 @@ ConversationView {
 ToolEconomicsPanel {
     height: auto;
     max-height: 12;
-    dock: bottom;
+    dock: top;
     background: $surface;
     padding: 0 1;
     border: solid $accent;
@@ -19,7 +19,7 @@ ToolEconomicsPanel {
 TimelinePanel {
     height: auto;
     max-height: 12;
-    dock: bottom;
+    dock: top;
     background: $surface;
     padding: 0 1;
     border: solid $accent;

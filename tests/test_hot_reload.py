@@ -33,12 +33,13 @@ def _touch(path):
 # ============================================================================
 
 
-class TestHotReloadBasics:
-    """Test basic hot-reload functionality."""
+@pytest.mark.xdist_group("hot_reload_pty")
+class TestHotReloadPTY:
+    """PTY integration tests for hot-reload — one shared process."""
 
-    def test_tui_starts_successfully(self, start_cc_dump):
+    def test_tui_starts_successfully(self, class_proc, formatting_py):
         """Verify that cc-dump TUI starts and displays the header."""
-        proc = start_cc_dump()
+        proc = class_proc
 
         assert proc.is_alive(), "cc-dump process should be running"
 
@@ -46,33 +47,25 @@ class TestHotReloadBasics:
         assert "cc-dump" in content or "Quit" in content or "user" in content, \
             f"Expected TUI elements in output. Got:\n{content}"
 
-    def test_hot_reload_detection(self, start_cc_dump, formatting_py):
+    def test_hot_reload_detection(self, class_proc, formatting_py):
         """Test that hot-reload detects an mtime change."""
-        proc = start_cc_dump()
+        proc = class_proc
 
         _touch(formatting_py)
         time.sleep(1.5)
         assert proc.is_alive(), "Process should still be alive after hot-reload trigger"
 
-
-class TestHotReloadExclusions:
-    """Test that excluded files are not hot-reloaded."""
-
-    def test_proxy_changes_not_reloaded(self, start_cc_dump, proxy_py):
+    def test_proxy_changes_not_reloaded(self, class_proc, proxy_py):
         """Test that mtime changes to proxy.py do NOT trigger hot-reload."""
-        proc = start_cc_dump()
+        proc = class_proc
 
         _touch(proxy_py)
         time.sleep(2)
         assert proc.is_alive(), "Process should be running"
 
-
-class TestHotReloadMultipleChanges:
-    """Test hot-reload with multiple file changes."""
-
-    def test_hot_reload_multiple_touches(self, start_cc_dump, formatting_py):
+    def test_hot_reload_multiple_touches(self, class_proc, formatting_py):
         """Test that hot-reload handles multiple successive mtime bumps."""
-        proc = start_cc_dump()
+        proc = class_proc
 
         _touch(formatting_py)
         time.sleep(1.5)
@@ -82,9 +75,9 @@ class TestHotReloadMultipleChanges:
         time.sleep(1.5)
         assert proc.is_alive(), "Process should survive second touch"
 
-    def test_hot_reload_rapid_touches(self, start_cc_dump, formatting_py):
+    def test_hot_reload_rapid_touches(self, class_proc, formatting_py):
         """Test that rapid successive mtime bumps don't cause issues."""
-        proc = start_cc_dump()
+        proc = class_proc
 
         for _ in range(5):
             _touch(formatting_py)
@@ -93,13 +86,9 @@ class TestHotReloadMultipleChanges:
         time.sleep(2)
         assert proc.is_alive(), "Process should survive rapid touches"
 
-
-class TestHotReloadStability:
-    """Test hot-reload stability over time."""
-
-    def test_hot_reload_extended_operation(self, start_cc_dump, formatting_py):
+    def test_hot_reload_extended_operation(self, class_proc, formatting_py):
         """Test that hot-reload works correctly over extended operation."""
-        proc = start_cc_dump()
+        proc = class_proc
 
         time.sleep(1)
         assert proc.is_alive(), "Process should be stable initially"
@@ -110,9 +99,6 @@ class TestHotReloadStability:
 
         time.sleep(1)
         assert proc.is_alive(), "Process should remain stable after hot-reload"
-
-        proc.send("q", press_enter=False)
-        settle(proc, 0.3)
 
 
 # ============================================================================

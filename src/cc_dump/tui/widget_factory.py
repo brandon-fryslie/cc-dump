@@ -1415,6 +1415,9 @@ class StatsPanel(Static):
         )
         self.update(rich_text)
 
+    def cycle_mode(self):
+        """No-op — StatsPanel has no sub-modes."""
+
     def get_state(self) -> dict:
         """Extract state for transfer to a new instance."""
         return {
@@ -1468,6 +1471,10 @@ class ToolEconomicsPanel(Static):
         # Re-query with new mode
         if self._store is not None:
             self.refresh_from_store(self._store)
+
+    def cycle_mode(self):
+        """Cycle intra-panel mode — delegates to toggle_breakdown."""
+        self.toggle_breakdown()
 
     def _refresh_display(self, rows):
         """Rebuild the economics table."""
@@ -1531,6 +1538,9 @@ class TimelinePanel(Static):
         """Rebuild the timeline table."""
         text = cc_dump.tui.panel_renderers.render_timeline_panel(budgets)
         self.update(text)
+
+    def cycle_mode(self):
+        """No-op — TimelinePanel has no sub-modes."""
 
     def get_state(self) -> dict:
         """Extract state for transfer to a new instance."""

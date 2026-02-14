@@ -48,6 +48,7 @@ dev = [
     "ptydriver>=0.2.0",
     "pytest>=9.0.2",
     "pytest-asyncio>=0.24.0",
+    "pytest-xdist>=3.5.0",
     "requests>=2.31.0",
 ]
 

@@ -186,9 +186,7 @@ async def _replace_all_widgets_inner(app) -> None:
     logs_state = old_logs.get_state() if old_logs else {}
     info_state = old_info.get_state() if old_info else {}
 
-    stats_visible = True  # stats always visible
-    economics_visible = old_economics.display if old_economics else app.show_economics
-    timeline_visible = old_timeline.display if old_timeline else app.show_timeline
+    active_panel = app.active_panel
     logs_visible = old_logs.display if old_logs else app.show_logs
     info_visible = old_info.display if old_info else app.show_info
 
@@ -238,18 +236,19 @@ async def _replace_all_widgets_inner(app) -> None:
     new_logs.id = app._logs_id
     new_info.id = app._info_id
 
-    new_stats.display = stats_visible
-    new_economics.display = economics_visible
-    new_timeline.display = timeline_visible
+    from cc_dump.tui.action_handlers import PANEL_ORDER
+    new_stats.display = (active_panel == "stats")
+    new_economics.display = (active_panel == "economics")
+    new_timeline.display = (active_panel == "timeline")
     new_logs.display = logs_visible
     new_info.display = info_visible
 
     header = app.query_one(Header)
     await app.mount(new_stats, after=header)
-    await app.mount(new_conv, after=new_stats)
-    await app.mount(new_economics, after=new_conv)
+    await app.mount(new_economics, after=new_stats)
     await app.mount(new_timeline, after=new_economics)
-    await app.mount(new_logs, after=new_timeline)
+    await app.mount(new_conv, after=new_timeline)
+    await app.mount(new_logs, after=new_conv)
     await app.mount(new_info, after=new_logs)
 
     # StatusFooter is stateless — create fresh and push current visibility state

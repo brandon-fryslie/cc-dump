@@ -16,6 +16,19 @@ from cc_dump.event_types import (
 )
 
 
+# ─── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def _wait_for(condition, timeout=2.0, interval=0.01):
+    """Poll until condition() is truthy or timeout."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(interval)
+    return condition()
+
+
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 
@@ -128,14 +141,12 @@ def test_router_fanout(router, source_queue):
     router.add_subscriber(DirectSubscriber(collector2))
     router.start()
 
-    # Give router time to start
-    time.sleep(0.1)
+    _wait_for(lambda: router._thread and router._thread.is_alive())
 
     event = RequestBodyEvent(body={"test": "data"})
     source_queue.put(event)
 
-    # Wait for router to process
-    time.sleep(0.2)
+    _wait_for(lambda: len(received1) >= 1 and len(received2) >= 1)
 
     # Both subscribers should receive the event
     assert event in received1
@@ -152,7 +163,7 @@ def test_router_multiple_events(router, source_queue):
     router.add_subscriber(DirectSubscriber(collector))
     router.start()
 
-    time.sleep(0.1)
+    _wait_for(lambda: router._thread and router._thread.is_alive())
 
     events: list[PipelineEvent] = [
         RequestBodyEvent(body={"n": 1}),
@@ -162,8 +173,7 @@ def test_router_multiple_events(router, source_queue):
     for event in events:
         source_queue.put(event)
 
-    # Wait for processing
-    time.sleep(0.3)
+    _wait_for(lambda: len(received) >= len(events))
 
     # Should have received all events
     assert len(received) >= len(events)
@@ -185,13 +195,12 @@ def test_router_error_isolation(router, source_queue):
     router.add_subscriber(DirectSubscriber(good_subscriber))
     router.start()
 
-    time.sleep(0.1)
+    _wait_for(lambda: router._thread and router._thread.is_alive())
 
     event = RequestBodyEvent(body={"test": "data"})
     source_queue.put(event)
 
-    # Wait for processing
-    time.sleep(0.2)
+    _wait_for(lambda: len(received_good) >= 1)
 
     # Good subscriber should still receive event despite failing subscriber
     assert event in received_good
@@ -204,15 +213,14 @@ def test_router_start_stop(source_queue):
     # Should start without error
     router.start()
     assert router._thread is not None
+    _wait_for(lambda: router._thread.is_alive())
     assert router._thread.is_alive()
-
-    time.sleep(0.1)
 
     # Should stop without error
     router.stop()
 
     # Wait for thread to finish
-    time.sleep(0.3)
+    router._thread.join(timeout=2)
 
     # Thread should be stopped
     assert not router._thread.is_alive()
@@ -229,11 +237,11 @@ def test_router_stop_before_start(source_queue):
 def test_router_multiple_stops(router, source_queue):
     """Multiple stops are idempotent."""
     router.start()
-    time.sleep(0.1)
+    _wait_for(lambda: router._thread and router._thread.is_alive())
 
     # First stop
     router.stop()
-    time.sleep(0.2)
+    router._thread.join(timeout=2)
 
     # Second stop should not crash
     router.stop()
@@ -245,16 +253,13 @@ def test_router_queue_subscriber_integration(router, source_queue):
     router.add_subscriber(sub)
     router.start()
 
-    time.sleep(0.1)
+    _wait_for(lambda: router._thread and router._thread.is_alive())
 
     event = RequestBodyEvent(body={"test": "data"})
     source_queue.put(event)
 
-    # Wait for router to process and forward
-    time.sleep(0.2)
-
     # Event should be in subscriber's queue
-    received = sub.queue.get(timeout=1)
+    received = sub.queue.get(timeout=2)
     assert received == event
 
 
@@ -262,12 +267,13 @@ def test_router_empty_subscribers(router, source_queue):
     """Router with no subscribers doesn't crash."""
     router.start()
 
-    time.sleep(0.1)
+    _wait_for(lambda: router._thread and router._thread.is_alive())
 
     # Send event with no subscribers
     source_queue.put(RequestBodyEvent(body={"test": "data"}))
 
-    time.sleep(0.2)
+    # Give a moment for processing, then stop
+    time.sleep(0.05)
 
     # Should not crash
     router.stop()
@@ -275,19 +281,23 @@ def test_router_empty_subscribers(router, source_queue):
 
 def test_router_subscriber_exception_logged(router, source_queue, capsys):
     """Subscriber exceptions are logged to stderr."""
+    received_flag = []
 
     def failing_subscriber(event):
+        received_flag.append(True)
         raise ValueError("Test error")
 
     router.add_subscriber(DirectSubscriber(failing_subscriber))
     router.start()
 
-    time.sleep(0.1)
+    _wait_for(lambda: router._thread and router._thread.is_alive())
 
     source_queue.put(RequestBodyEvent(body={"test": "data"}))
 
-    # Wait for processing
-    time.sleep(0.2)
+    # Wait for the subscriber to be called
+    _wait_for(lambda: len(received_flag) >= 1)
+    # Small extra wait for stderr to be flushed
+    time.sleep(0.05)
 
     # Check that error was written to stderr
     captured = capsys.readouterr()
@@ -309,7 +319,7 @@ def test_router_thread_safety(router, source_queue):
     router.add_subscriber(DirectSubscriber(collector))
     router.start()
 
-    time.sleep(0.1)
+    _wait_for(lambda: router._thread and router._thread.is_alive())
 
     # Submit events from multiple threads
     def submit_events(start_idx):
@@ -325,8 +335,8 @@ def test_router_thread_safety(router, source_queue):
     for t in threads:
         t.join()
 
-    # Wait for router to process all events
-    time.sleep(0.5)
+    # Wait for router to process all events (15 total from 3 threads × 5 events)
+    _wait_for(lambda: len(received) >= 15)
 
     # Should have received events from all threads
     assert len(received) >= 10  # Some events should have arrived
@@ -345,7 +355,7 @@ def test_router_graceful_shutdown_with_pending_events(source_queue):
     router.add_subscriber(DirectSubscriber(collector))
     router.start()
 
-    time.sleep(0.1)
+    _wait_for(lambda: router._thread and router._thread.is_alive())
 
     # Queue multiple events
     for i in range(5):

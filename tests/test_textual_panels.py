@@ -12,27 +12,26 @@ from tests.harness import (
 pytestmark = pytest.mark.textual
 
 
-async def test_economics_panel_toggle():
-    """Press '8' toggles economics panel visibility."""
+async def test_panel_cycling_dot():
+    """Press '.' cycles active panel: stats → economics → timeline → stats."""
     async with run_app() as (pilot, app):
+        assert is_panel_visible(app, "stats")
         assert not is_panel_visible(app, "economics")
-
-        await press_and_settle(pilot, "8")
-        assert is_panel_visible(app, "economics")
-
-        await press_and_settle(pilot, "8")
-        assert not is_panel_visible(app, "economics")
-
-
-async def test_timeline_panel_toggle():
-    """Press '9' toggles timeline panel visibility."""
-    async with run_app() as (pilot, app):
         assert not is_panel_visible(app, "timeline")
 
-        await press_and_settle(pilot, "9")
+        await press_and_settle(pilot, ".")
+        assert not is_panel_visible(app, "stats")
+        assert is_panel_visible(app, "economics")
+        assert not is_panel_visible(app, "timeline")
+
+        await press_and_settle(pilot, ".")
+        assert not is_panel_visible(app, "stats")
+        assert not is_panel_visible(app, "economics")
         assert is_panel_visible(app, "timeline")
 
-        await press_and_settle(pilot, "9")
+        await press_and_settle(pilot, ".")
+        assert is_panel_visible(app, "stats")
+        assert not is_panel_visible(app, "economics")
         assert not is_panel_visible(app, "timeline")
 
 
@@ -48,9 +47,10 @@ async def test_follow_mode_toggle():
         assert is_follow_mode(app)
 
 
-async def test_panels_start_hidden():
-    """All optional panels start hidden."""
+async def test_panels_initial_state():
+    """Stats panel starts visible, economics/timeline hidden, logs hidden."""
     async with run_app() as (pilot, app):
+        assert is_panel_visible(app, "stats")
         assert not is_panel_visible(app, "economics")
         assert not is_panel_visible(app, "timeline")
         assert not is_panel_visible(app, "logs")

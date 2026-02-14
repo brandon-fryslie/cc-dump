@@ -11,7 +11,6 @@ Tests all user-facing features including:
 
 import json
 import os
-import random
 import re
 import sqlite3
 import tempfile
@@ -26,28 +25,20 @@ from tests.conftest import settle, wait_for_content, _send_request
 pytestmark = pytest.mark.pty
 
 
-class TestTUIStartupShutdown:
-    """Test basic TUI startup and shutdown."""
+class TestTUIStartup:
+    """Test basic TUI startup — shared process."""
 
-    def test_tui_starts_and_displays_header(self, start_cc_dump):
+    def test_tui_starts_and_displays_header(self, class_proc):
         """Verify TUI starts successfully and shows expected elements."""
-        proc = start_cc_dump()
+        proc = class_proc
         assert proc.is_alive()
 
         content = proc.get_content()
         assert any(x in content for x in ["cc-dump", "Quit", "headers", "tools"])
 
-    def test_tui_quits_cleanly_with_q_key(self, start_cc_dump):
-        """Verify pressing 'q' exits the application cleanly."""
-        proc = start_cc_dump()
-        assert proc.is_alive()
-
-        proc.send("q", press_enter=False)
-        settle(proc, 0.3)
-
-    def test_tui_shows_startup_logs(self, start_cc_dump):
+    def test_tui_shows_startup_logs(self, class_proc):
         """Verify startup logs are visible when logs panel is toggled."""
-        proc = start_cc_dump()
+        proc = class_proc
         assert proc.is_alive()
 
         # Toggle logs panel (ctrl+l)
@@ -60,6 +51,22 @@ class TestTUIStartupShutdown:
             timeout=3,
         )
         assert "started" in content.lower() or "listening" in content.lower()
+
+        # Restore: toggle logs panel back off
+        proc.send("\x0c", press_enter=False)
+        settle(proc)
+
+
+class TestTUIShutdown:
+    """Test TUI shutdown — needs its own process since it sends 'q'."""
+
+    def test_tui_quits_cleanly_with_q_key(self, start_cc_dump):
+        """Verify pressing 'q' exits the application cleanly."""
+        proc = start_cc_dump()
+        assert proc.is_alive()
+
+        proc.send("q", press_enter=False)
+        settle(proc, 0.3)
 
 
 class TestLogsPanel:
@@ -112,11 +119,10 @@ class TestRequestHandling:
 
 
 class TestVisualIndicators:
-    """Test visual indicators for active filters."""
+    """Test visual indicators for active filters — shared process+port."""
 
-    def test_content_shows_filter_indicators(self, start_cc_dump):
-        port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+    def test_content_shows_filter_indicators(self, class_proc_with_port):
+        proc, port = class_proc_with_port
         assert proc.is_alive()
 
         proc.send("1", press_enter=False)
@@ -128,6 +134,16 @@ class TestVisualIndicators:
 
         wait_for_content(proc, timeout=2)
         assert proc.is_alive()
+
+        # Restore: cycle back to original state
+        proc.send("1", press_enter=False)
+        settle(proc)
+        proc.send("1", press_enter=False)
+        settle(proc)
+        proc.send("7", press_enter=False)
+        settle(proc)
+        proc.send("7", press_enter=False)
+        settle(proc)
 
 
 class TestContentFiltering:

@@ -45,7 +45,14 @@ def get_filters(app: CcDumpApp) -> dict:
 
 
 def is_panel_visible(app: CcDumpApp, panel: str) -> bool:
-    """Check if a panel reactive is True (economics, timeline, logs)."""
+    """Check if a panel is visible.
+
+    For cycling panels (stats, economics, timeline): checks active_panel.
+    For toggle panels (logs, info): checks show_<panel> reactive.
+    """
+    from cc_dump.tui.action_handlers import PANEL_ORDER
+    if panel in PANEL_ORDER:
+        return app.active_panel == panel
     return getattr(app, f"show_{panel}")
 
 

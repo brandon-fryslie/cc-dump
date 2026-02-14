@@ -4,7 +4,6 @@ These tests verify that the colored bar indicators appear correctly
 for filtered content and that the rendering system works properly.
 """
 
-import random
 import time
 
 import pytest
@@ -198,11 +197,10 @@ class TestBlockRendering:
 
 
 class TestColorScheme:
-    """Test color scheme consistency."""
+    """Test color scheme consistency — shared process+port."""
 
-    def test_consistent_colors_for_same_filter(self, start_cc_dump):
-        port = random.randint(10000, 60000)
-        proc = start_cc_dump(port=port)
+    def test_consistent_colors_for_same_filter(self, class_proc_with_port):
+        proc, port = class_proc_with_port
         assert proc.is_alive()
 
         proc.send("1", press_enter=False)
@@ -215,6 +213,12 @@ class TestColorScheme:
         wait_for_content(proc, timeout=2)
 
         assert proc.is_alive()
+
+        # Restore: cycle back to original state
+        proc.send("1", press_enter=False)
+        settle(proc)
+        proc.send("1", press_enter=False)
+        settle(proc)
 
 
 class TestIndicatorHelperFunction:

@@ -71,8 +71,8 @@ class CcDumpApp(App):
     _is_expanded: reactive[dict[str, bool]] = reactive({})
 
     # Panel visibility
-    show_economics = reactive(False)
-    show_timeline = reactive(False)
+    # [LAW:one-source-of-truth] active_panel cycles through stats/economics/timeline
+    active_panel = reactive("stats")
     show_logs = reactive(False)
     show_info = reactive(False)
 
@@ -207,10 +207,7 @@ class CcDumpApp(App):
             "Keys", "Show keyboard shortcuts", self.action_toggle_keys
         )
         yield SystemCommand(
-            "Toggle cost panel", "Economics panel", self.action_toggle_economics
-        )
-        yield SystemCommand(
-            "Toggle timeline", "Timeline panel", self.action_toggle_timeline
+            "Cycle panel", "Cycle stats/economics/timeline", self.action_cycle_panel
         )
         yield SystemCommand("Toggle logs", "Debug logs", self.action_toggle_logs)
         yield SystemCommand("Toggle info", "Server info panel", self.action_toggle_info)
@@ -238,10 +235,6 @@ class CcDumpApp(App):
         stats.id = self._stats_id
         yield stats
 
-        conv = cc_dump.tui.widget_factory.create_conversation_view()
-        conv.id = self._conv_id
-        yield conv
-
         economics = cc_dump.tui.widget_factory.create_economics_panel()
         economics.id = self._economics_id
         yield economics
@@ -249,6 +242,10 @@ class CcDumpApp(App):
         timeline = cc_dump.tui.widget_factory.create_timeline_panel()
         timeline.id = self._timeline_id
         yield timeline
+
+        conv = cc_dump.tui.widget_factory.create_conversation_view()
+        conv.id = self._conv_id
+        yield conv
 
         logs = cc_dump.tui.widget_factory.create_logs_panel()
         logs.id = self._logs_id
@@ -297,13 +294,8 @@ class CcDumpApp(App):
 
         self.run_worker(self._drain_events, thread=True, exclusive=False)
 
-        # Set initial panel visibility
-        economics = self._get_economics()
-        if economics is not None:
-            economics.display = self.show_economics
-        timeline = self._get_timeline()
-        if timeline is not None:
-            timeline.display = self.show_timeline
+        # Set initial panel visibility — cycle panels via active_panel
+        self._sync_panel_display(self.active_panel)
         logs = self._get_logs()
         if logs is not None:
             logs.display = self.show_logs
@@ -375,8 +367,7 @@ class CcDumpApp(App):
                 }
                 state = {
                     **self.active_filters,
-                    "economics": self.show_economics,
-                    "timeline": self.show_timeline,
+                    "active_panel": self.active_panel,
                     "follow": conv._follow_mode if conv is not None else True,
                     "active_filterset": self._active_filterset_slot,
                     "tmux_available": tmux is not None and tmux.state in _TMUX_ACTIVE,
@@ -579,12 +570,12 @@ class CcDumpApp(App):
     def action_prev_filterset(self):
         _actions.prev_filterset(self)
 
-    # Panel toggles
-    def action_toggle_economics(self):
-        _actions.toggle_economics(self)
+    # Panel cycling
+    def action_cycle_panel(self):
+        _actions.cycle_panel(self)
 
-    def action_toggle_timeline(self):
-        _actions.toggle_timeline(self)
+    def action_cycle_panel_mode(self):
+        _actions.cycle_panel_mode(self)
 
     def action_toggle_logs(self):
         _actions.toggle_logs(self)
@@ -601,9 +592,6 @@ class CcDumpApp(App):
 
     def action_hide_help_panel(self):
         _actions.toggle_keys(self)
-
-    def action_toggle_economics_breakdown(self):
-        _actions.toggle_economics_breakdown(self)
 
     # Tmux integration
     def action_launch_claude(self):
@@ -711,11 +699,23 @@ class CcDumpApp(App):
     def watch__is_expanded(self, value):
         self._on_vis_state_changed()
 
-    def watch_show_economics(self, value):
+    def watch_active_panel(self, value):
+        self._sync_panel_display(value)
+        _actions.refresh_active_panel(self, value)
         self._update_footer_state()
 
-    def watch_show_timeline(self, value):
-        self._update_footer_state()
+    def _sync_panel_display(self, active: str):
+        """Set display on all 3 cycling panels based on active_panel value."""
+        from cc_dump.tui.action_handlers import PANEL_ORDER
+        _PANEL_GETTERS = {
+            "stats": self._get_stats,
+            "economics": self._get_economics,
+            "timeline": self._get_timeline,
+        }
+        for name in PANEL_ORDER:
+            widget = _PANEL_GETTERS[name]()
+            if widget is not None:
+                widget.display = (name == active)
 
     def watch_show_logs(self, value):
         pass

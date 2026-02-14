@@ -81,10 +81,11 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         "u": "toggle_expand('headers')",
 
         # Panels
-        "8": "toggle_economics",
-        "9": "toggle_timeline",
+        ".": "cycle_panel",
+        "full_stop": "cycle_panel",
+        ",": "cycle_panel_mode",
+        "comma": "cycle_panel_mode",
         "0": "toggle_follow",
-        "*": "toggle_economics_breakdown",
         "ctrl+l": "toggle_logs",
 
         # Info panel
@@ -158,8 +159,8 @@ FOOTER_KEYS: dict[InputMode, list[tuple[str, str]]] = {
         ("1-7", "filters"),
         ("qwertyu", "expand"),
         ("QWERTYU", "detail"),
-        ("8", "cost"),
-        ("9", "timeline"),
+        (".", "panel"),
+        (",", "mode"),
         ("0", "follow"),
         ("[]", "theme"),
         ("i", "info"),
@@ -201,8 +202,8 @@ KEY_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("q-u", "Expand all"),
     ]),
     ("Panels", [
-        ("8", "Cost"),
-        ("9", "Timeline"),
+        (".", "Cycle panel"),
+        (",", "Panel mode"),
         ("0", "Follow mode"),
         ("^L", "Debug logs"),
         ("i", "Server info"),

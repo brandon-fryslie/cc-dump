@@ -48,9 +48,11 @@ class StatusFooter(Static):
         ("7", "headers"),
     ]
 
-    _ACTION_ITEMS = [
-        ("8", "cost", "economics"),
-        ("9", "timeline", "timeline"),
+    # [LAW:one-source-of-truth] Panel names and display labels for cycling indicator
+    _PANEL_ITEMS = [
+        ("stats", "stats"),
+        ("economics", "cost"),
+        ("timeline", "timeline"),
     ]
 
     _COMMAND_ITEMS = [("/", "search")]
@@ -82,20 +84,19 @@ class StatusFooter(Static):
             line1.append(name, style=Style.parse(style) + click)
             line1.append(f" {icon} ", style=Style.parse(style) + click)
 
-        # Line 2: actions + follow + commands
+        # Line 2: panel indicator + follow + commands
         line2 = Text(no_wrap=True)
-        for i, (key, label, state_key) in enumerate(self._ACTION_ITEMS):
-            is_active = bool(state.get(state_key, False))
+        active_panel = state.get("active_panel", "stats")
+        click = _click("app.cycle_panel")
+        for i, (panel_name, label) in enumerate(self._PANEL_ITEMS):
+            is_active = (panel_name == active_panel)
             # // [LAW:dataflow-not-control-flow] Style derived from is_active value
             color = tc.action_colors[i % len(tc.action_colors)]
-            active_style = f"bold reverse {color}"
+            active_style = f"bold {color} reverse"
             style = active_style if is_active else "dim"
-            click = _click(f"app.toggle_{state_key}")
             if line2.plain:
                 line2.append("  ")
-            line2.append(f" {key}", style=Style.parse("bold" if is_active else "dim") + click)
-            line2.append(" ", style=click)
-            line2.append(label, style=Style.parse(style) + click)
+            line2.append(f" {label} ", style=Style.parse(style) + click)
 
         # Follow mode — prominent when active
         follow_active = bool(state.get("follow", False))

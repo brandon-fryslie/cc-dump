@@ -77,15 +77,46 @@ def toggle_expand(app, category: str) -> None:
     _toggle_vis_dicts(app, category, "expand")
 
 
-# ─── Panel toggles ─────────────────────────────────────────────────────
+# ─── Panel cycling ─────────────────────────────────────────────────────
 
-# [LAW:one-type-per-behavior] Panel toggle config — (reactive_attr, getter, on_show_fn)
+# [LAW:one-source-of-truth] Ordered panel names for cycling
+PANEL_ORDER = ["stats", "economics", "timeline"]
+
+# [LAW:one-type-per-behavior] Panel config — (getter, refresh_fn_name_or_None)
+_PANEL_CONFIG = {
+    "stats": ("_get_stats", "refresh_stats"),
+    "economics": ("_get_economics", "refresh_economics"),
+    "timeline": ("_get_timeline", "refresh_timeline"),
+}
+
+# [LAW:one-type-per-behavior] Toggle config for non-cycling panels
 _PANEL_TOGGLE_CONFIG = {
-    "economics": ("show_economics", "_get_economics", "refresh_economics"),
-    "timeline": ("show_timeline", "_get_timeline", "refresh_timeline"),
     "logs": ("show_logs", "_get_logs", None),
     "info": ("show_info", "_get_info", None),
 }
+
+
+def cycle_panel(app) -> None:
+    """Cycle active_panel through PANEL_ORDER."""
+    current = app.active_panel
+    idx = PANEL_ORDER.index(current) if current in PANEL_ORDER else -1
+    next_idx = (idx + 1) % len(PANEL_ORDER)
+    app.active_panel = PANEL_ORDER[next_idx]
+
+
+def cycle_panel_mode(app) -> None:
+    """Cycle intra-panel mode for the active panel."""
+    getter_name, _ = _PANEL_CONFIG[app.active_panel]
+    panel = getattr(app, getter_name)()
+    if panel is not None:
+        panel.cycle_mode()
+
+
+def refresh_active_panel(app, panel_name: str) -> None:
+    """Refresh data for the named panel (reuses existing refresh fns)."""
+    _, refresh_name = _PANEL_CONFIG.get(panel_name, (None, None))
+    if refresh_name is not None:
+        globals()[refresh_name](app)
 
 
 def _toggle_panel(app, panel_key: str) -> None:
@@ -99,14 +130,6 @@ def _toggle_panel(app, panel_key: str) -> None:
     # [LAW:dataflow-not-control-flow] refresh_name is None for panels without db refresh
     if new_val and refresh_name is not None:
         globals()[refresh_name](app)
-
-
-def toggle_economics(app) -> None:
-    _toggle_panel(app, "economics")
-
-
-def toggle_timeline(app) -> None:
-    _toggle_panel(app, "timeline")
 
 
 def toggle_logs(app) -> None:
@@ -170,13 +193,6 @@ def apply_filterset(app, slot: str) -> None:
     name = _FILTERSET_NAMES.get(slot, "")
     label = f"F{slot} {name}" if name else f"F{slot}"
     app.notify(label)
-
-
-def toggle_economics_breakdown(app) -> None:
-    """Toggle between aggregate and per-model breakdown in economics panel."""
-    economics = app._get_economics()
-    if economics is not None:
-        economics.toggle_breakdown()
 
 
 # ─── Navigation actions ────────────────────────────────────────────────
@@ -255,6 +271,15 @@ def _refresh_panel(app, getter_name: str) -> None:
     panel = getattr(app, getter_name)()
     if panel is not None:
         panel.refresh_from_store(app._analytics_store)
+
+
+def refresh_stats(app) -> None:
+    """Refresh stats panel from analytics store."""
+    if not app.is_running or app._analytics_store is None:
+        return
+    stats = app._get_stats()
+    if stats is not None:
+        stats.refresh_from_store(app._analytics_store)
 
 
 def refresh_economics(app) -> None:

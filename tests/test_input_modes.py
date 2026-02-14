@@ -97,15 +97,22 @@ class TestNormalModeKeyDispatch:
         # Panel should be removed
         assert not app.screen.query(KeysPanel)
 
-    async def test_panel_toggle_8_shows_economics(self, app_and_pilot):
-        """Pressing '8' toggles economics panel."""
+    async def test_dot_cycles_active_panel(self, app_and_pilot):
+        """Pressing '.' cycles active_panel through stats → economics → timeline → stats."""
         pilot, app = app_and_pilot
-        initial = app.show_economics
+        assert app.active_panel == "stats"
 
-        await pilot.press("8")
+        await pilot.press(".")
         await pilot.pause()
+        assert app.active_panel == "economics"
 
-        assert app.show_economics != initial
+        await pilot.press(".")
+        await pilot.pause()
+        assert app.active_panel == "timeline"
+
+        await pilot.press(".")
+        await pilot.pause()
+        assert app.active_panel == "stats"
 
 class TestSearchModeGating:
     """Test that non-navigation keys are blocked during search modes."""
@@ -267,8 +274,8 @@ class TestKeymapCompleteness:
             "scroll_up_line",
             "toggle_vis",
             "toggle_detail",
-            "toggle_economics",
-            "toggle_timeline",
+            "cycle_panel",
+            "cycle_panel_mode",
             "toggle_follow",
             "toggle_keys",
             "next_theme",

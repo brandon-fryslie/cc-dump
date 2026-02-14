@@ -27,8 +27,12 @@ lint: check
 check:
     uv run mypy src/
 
-# Run tests
+# Run tests in parallel
 test *args:
+    uv run pytest -n auto --dist loadgroup {{args}}
+
+# Run tests sequentially
+test-seq *args:
     uv run pytest {{args}}
 
 # Format code with ruff
