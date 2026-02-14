@@ -27,6 +27,10 @@ lint: check
 check:
     uv run mypy src/
 
+# Run tests
+test *args:
+    uv run pytest {{args}}
+
 # Format code with ruff
 fmt:
     uv run ruff format src/
