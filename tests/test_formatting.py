@@ -310,7 +310,7 @@ def test_format_response_event_content_block_delta():
 
     assert len(blocks) == 1
     assert isinstance(blocks[0], TextDeltaBlock)
-    assert blocks[0].text == "Hello"
+    assert blocks[0].content == "Hello"
 
 
 def test_format_response_event_content_block_delta_empty():
@@ -570,14 +570,14 @@ def test_block_types_can_be_instantiated():
     assert isinstance(MetadataBlock(model="claude"), FormattedBlock)
     assert isinstance(SystemLabelBlock(), FormattedBlock)
     assert isinstance(RoleBlock(role="user"), FormattedBlock)
-    assert isinstance(TextContentBlock(text="Hello"), FormattedBlock)
+    assert isinstance(TextContentBlock(content="Hello"), FormattedBlock)
     assert isinstance(ToolUseBlock(name="tool"), FormattedBlock)
     assert isinstance(ToolResultBlock(size=100), FormattedBlock)
     assert isinstance(ImageBlock(media_type="image/png"), FormattedBlock)
     assert isinstance(UnknownTypeBlock(block_type="unknown"), FormattedBlock)
     assert isinstance(StreamInfoBlock(model="claude"), FormattedBlock)
     assert isinstance(StreamToolUseBlock(name="tool"), FormattedBlock)
-    assert isinstance(TextDeltaBlock(text="delta"), FormattedBlock)
+    assert isinstance(TextDeltaBlock(content="delta"), FormattedBlock)
     assert isinstance(StopReasonBlock(reason="end_turn"), FormattedBlock)
     assert isinstance(ErrorBlock(code=500), FormattedBlock)
     assert isinstance(ProxyErrorBlock(error="error"), FormattedBlock)

@@ -583,7 +583,7 @@ def _get_or_segment(block):
     if not hasattr(block, "_segment_result"):
         from cc_dump.segmentation import segment
 
-        block._segment_result = segment(block.text)
+        block._segment_result = segment(block.content)
     return block._segment_result
 
 
@@ -657,7 +657,7 @@ def _render_segmented_block(block) -> ConsoleRenderable:
     """
     # Use cached segmentation on the block object for efficiency
     seg = _get_or_segment(block)
-    return _render_text_as_markdown(block.text)
+    return _render_text_as_markdown(block.content)
 
 
 def _render_xml_collapsed(tag_name: str, inner_text: str) -> ConsoleRenderable:
@@ -685,7 +685,7 @@ def _render_region_parts(
     // region.expanded=None means expanded (default True).
 
     Args:
-        block: A block with .text and .content_regions already populated
+        block: A block with .content and .content_regions already populated
             by populate_content_regions().
 
     Returns:
@@ -697,7 +697,7 @@ def _render_region_parts(
         wrap_tags_outside_fences,
     )
 
-    text = block.text
+    text = block.content
     regions = block.content_regions
 
     tc = get_theme_colors()
@@ -775,12 +775,12 @@ def _render_region_parts(
 
 
 def _render_text_content(block: TextContentBlock) -> ConsoleRenderable | None:
-    if not block.text:
+    if not block.content:
         return None
     # Render as segmented Markdown for USER and ASSISTANT categories
     if block.category in _MARKDOWN_CATEGORIES:
         return _render_segmented_block(block)
-    return _indent_text(block.text, block.indent)
+    return _indent_text(block.content, block.indent)
 
 
 # ─── Language inference helper ─────────────────────────────────────────────────
@@ -1206,7 +1206,7 @@ def _render_text_delta(block: TextDeltaBlock) -> ConsoleRenderable | None:
     # TextDeltaBlock is always ASSISTANT category during streaming
     if block.category in _MARKDOWN_CATEGORIES:
         return _render_segmented_block(block)
-    return Text(block.text)
+    return Text(block.content)
 
 
 def _render_stop_reason(block: StopReasonBlock) -> Text | None:
@@ -1876,8 +1876,8 @@ def render_turn_to_strips(
             if block_has_matches and isinstance(renderer(block), Markdown):
                 # Re-render as plain Text for search highlighting
                 plain_text = ""
-                if hasattr(block, "text"):
-                    plain_text = block.text
+                if hasattr(block, "content"):
+                    plain_text = block.content
                 text = Text(plain_text)
             else:
                 text = renderer(block)

@@ -194,6 +194,11 @@ dependencies = [
     { name = "tiktoken" },
 ]
 
+[package.optional-dependencies]
+tmux = [
+    { name = "libtmux" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "mypy" },
@@ -205,10 +210,12 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "libtmux", marker = "extra == 'tmux'", specifier = ">=0.30.0" },
     { name = "textual", specifier = ">=0.80.0" },
     { name = "textual-serve", specifier = ">=1.0.0" },
     { name = "tiktoken", specifier = ">=0.5.0" },
 ]
+provides-extras = ["tmux"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -572,6 +579,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/09/7f/6bbbe9dcda649684773aaea78b87fff4d7e59550fbc2877faa83612087a3/librt-0.8.0-cp314-cp314t-win32.whl", hash = "sha256:2ccdd20d9a72c562ffb73098ac411de351b53a6fbb3390903b2d33078ef90447", size = 51328, upload-time = "2026-02-12T14:53:36.15Z" },
     { url = "https://files.pythonhosted.org/packages/bb/f3/e1981ab6fa9b41be0396648b5850267888a752d025313a9e929c4856208e/librt-0.8.0-cp314-cp314t-win_amd64.whl", hash = "sha256:25e82d920d4d62ad741592fcf8d0f3bda0e3fc388a184cb7d2f566c681c5f7b9", size = 58719, upload-time = "2026-02-12T14:53:37.183Z" },
     { url = "https://files.pythonhosted.org/packages/94/d1/433b3c06e78f23486fe4fdd19bc134657eb30997d2054b0dbf52bbf3382e/librt-0.8.0-cp314-cp314t-win_arm64.whl", hash = "sha256:92249938ab744a5890580d3cb2b22042f0dce71cdaa7c1369823df62bedf7cbc", size = 48753, upload-time = "2026-02-12T14:53:38.539Z" },
+]
+
+[[package]]
+name = "libtmux"
+version = "0.53.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e7/28/e2b252817cb181aec2f42fe2d1d7fac5ec9c4d15bfb2b8ea4bd1179e4244/libtmux-0.53.0.tar.gz", hash = "sha256:1d19af4cea0c19543954d7e7317c7025c0739b029cccbe3b843212fae238f1bd", size = 405001, upload-time = "2025-12-14T11:59:11.337Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0e/d0/2e8bc5caa639ebb9f8801ba0be7070a28d48d8ed60e2a428d40f71fb88b8/libtmux-0.53.0-py3-none-any.whl", hash = "sha256:024b7ae6a12aae55358e8feb914c8632b3ab9bd61c0987c53559643c6a58ee4f", size = 77582, upload-time = "2025-12-14T11:59:09.739Z" },
 ]
 
 [[package]]

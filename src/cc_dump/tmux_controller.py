@@ -1,0 +1,234 @@
+"""Tmux integration for cc-dump — split panes, auto-zoom on API activity.
+
+This module is STABLE — holds live pane references, never hot-reloaded.
+All libtmux usage is lazy-imported and wrapped in try/except.
+
+// [LAW:locality-or-seam] All tmux logic isolated here; rest of app uses is_available() + TmuxController.
+// [LAW:dataflow-not-control-flow] Zoom decisions via _ZOOM_DECISIONS lookup table.
+"""
+
+import os
+import sys
+from enum import Enum, auto
+
+from cc_dump.event_types import (
+    MessageDeltaEvent,
+    PipelineEvent,
+    PipelineEventKind,
+    ResponseSSEEvent,
+    StopReason,
+)
+
+
+class TmuxState(Enum):
+    """Controller state machine."""
+
+    NOT_IN_TMUX = auto()
+    NO_LIBTMUX = auto()
+    READY = auto()
+    CLAUDE_RUNNING = auto()
+
+
+# ─── Zoom decision table ─────────────────────────────────────────────────────
+# Key: (PipelineEventKind, StopReason | None)
+# Value: True = zoom, False = unzoom, None = no-op
+# // [LAW:dataflow-not-control-flow] Table lookup, not if/elif chains.
+
+_ZOOM_DECISIONS: dict[tuple[PipelineEventKind, StopReason | None], bool | None] = {
+    (PipelineEventKind.REQUEST, None): True,
+    (PipelineEventKind.RESPONSE_EVENT, StopReason.END_TURN): False,
+    (PipelineEventKind.RESPONSE_EVENT, StopReason.MAX_TOKENS): False,
+    (PipelineEventKind.RESPONSE_EVENT, StopReason.TOOL_USE): None,
+    (PipelineEventKind.ERROR, None): False,
+    (PipelineEventKind.PROXY_ERROR, None): False,
+}
+
+
+def _extract_decision_key(
+    event: PipelineEvent,
+) -> tuple[PipelineEventKind, StopReason | None]:
+    """Extract the lookup key from a pipeline event.
+
+    For ResponseSSEEvent wrapping MessageDeltaEvent, use the stop_reason.
+    For all other events, stop_reason is None.
+    """
+    stop_reason: StopReason | None = None
+    if isinstance(event, ResponseSSEEvent) and isinstance(
+        event.sse_event, MessageDeltaEvent
+    ):
+        stop_reason = event.sse_event.stop_reason
+    return (event.kind, stop_reason)
+
+
+def is_available() -> bool:
+    """Check if tmux integration is possible ($TMUX set + libtmux importable)."""
+    if not os.environ.get("TMUX"):
+        return False
+    try:
+        import libtmux  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+class TmuxController:
+    """Manages tmux pane splitting, zoom, and claude lifecycle.
+
+    // [LAW:single-enforcer] on_event() is the sole zoom decision point.
+    """
+
+    def __init__(self) -> None:
+        self.state = TmuxState.NOT_IN_TMUX
+        self.auto_zoom = True
+        self._is_zoomed = False
+        self._port: int | None = None
+        self._server = None
+        self._session = None
+        self._our_pane = None
+        self._claude_pane = None
+
+        if not os.environ.get("TMUX"):
+            self.state = TmuxState.NOT_IN_TMUX
+            return
+
+        try:
+            import libtmux
+
+            self._server = libtmux.Server()
+            pane_id = os.environ.get("TMUX_PANE")
+            if not pane_id:
+                self.state = TmuxState.NOT_IN_TMUX
+                return
+
+            # Find our pane by $TMUX_PANE
+            for session in self._server.sessions:
+                for window in session.windows:
+                    for pane in window.panes:
+                        if pane.pane_id == pane_id:
+                            self._our_pane = pane
+                            self._session = session
+
+            if self._our_pane is None:
+                _log("could not find pane with id {}".format(pane_id))
+                self.state = TmuxState.NOT_IN_TMUX
+                return
+
+            self.state = TmuxState.READY
+
+        except ImportError:
+            self.state = TmuxState.NO_LIBTMUX
+        except Exception as e:
+            _log("init error: {}".format(e))
+            self.state = TmuxState.NOT_IN_TMUX
+
+    def set_port(self, port: int) -> None:
+        """Set the proxy port (called from cli.py after server starts)."""
+        self._port = port
+
+    def launch_claude(self) -> bool:
+        """Split pane and launch claude with ANTHROPIC_BASE_URL pointing at our proxy.
+
+        Idempotent: if claude pane already exists, focuses it instead.
+        Returns True on success.
+        """
+        if self.state not in (TmuxState.READY, TmuxState.CLAUDE_RUNNING):
+            return False
+
+        # If claude pane exists, just focus it
+        if self._claude_pane is not None:
+            return self.focus_claude()
+
+        if self._port is None:
+            _log("port not set, cannot launch claude")
+            return False
+
+        try:
+            import libtmux
+
+            window = self._our_pane.window
+            self._claude_pane = window.split(
+                direction=libtmux.constants.PaneDirection.Right,
+                shell="ANTHROPIC_BASE_URL=http://127.0.0.1:{} claude".format(
+                    self._port
+                ),
+            )
+            self.state = TmuxState.CLAUDE_RUNNING
+            return True
+        except Exception as e:
+            _log("launch_claude error: {}".format(e))
+            return False
+
+    def focus_claude(self) -> bool:
+        """Select the claude pane (bring it to foreground)."""
+        if self._claude_pane is None:
+            return False
+        try:
+            self._claude_pane.select()
+            return True
+        except Exception as e:
+            _log("focus_claude error: {}".format(e))
+            return False
+
+    def zoom(self) -> None:
+        """Zoom cc-dump pane to full screen. Idempotent."""
+        if self._is_zoomed or self._our_pane is None:
+            return
+        try:
+            self._our_pane.resize(zoom=True)
+            self._is_zoomed = True
+        except Exception as e:
+            _log("zoom error: {}".format(e))
+
+    def unzoom(self) -> None:
+        """Unzoom cc-dump pane (restore split). Idempotent."""
+        if not self._is_zoomed or self._our_pane is None:
+            return
+        try:
+            self._our_pane.resize(zoom=True)
+            self._is_zoomed = False
+        except Exception as e:
+            _log("unzoom error: {}".format(e))
+
+    def toggle_zoom(self) -> None:
+        """Manual zoom toggle."""
+        if self._is_zoomed:
+            self.unzoom()
+        else:
+            self.zoom()
+
+    def toggle_auto_zoom(self) -> None:
+        """Toggle automatic zoom on API activity."""
+        self.auto_zoom = not self.auto_zoom
+
+    def on_event(self, event: PipelineEvent) -> None:
+        """Subscriber callback — table lookup determines zoom/unzoom.
+
+        // [LAW:dataflow-not-control-flow] Decision from _ZOOM_DECISIONS table.
+        Guards: only act when CLAUDE_RUNNING and auto_zoom is on.
+        """
+        if self.state != TmuxState.CLAUDE_RUNNING or not self.auto_zoom:
+            return
+
+        key = _extract_decision_key(event)
+        decision = _ZOOM_DECISIONS.get(key)
+
+        # // [LAW:dataflow-not-control-flow] decision is True/False/None
+        # None = no-op, True = zoom, False = unzoom
+        _ZOOM_ACTIONS = {
+            True: self.zoom,
+            False: self.unzoom,
+        }
+        action = _ZOOM_ACTIONS.get(decision)
+        if action is not None:
+            action()
+
+    def cleanup(self) -> None:
+        """Unzoom on shutdown. Does NOT kill the claude pane."""
+        self.unzoom()
+
+
+def _log(msg: str) -> None:
+    """Log to stderr (matches har_recorder.py pattern)."""
+    sys.stderr.write("[tmux] {}\n".format(msg))
+    sys.stderr.flush()

@@ -185,17 +185,6 @@ class CcDumpApp(App):
 
     def get_system_commands(self, screen):
         yield from super().get_system_commands(screen)
-        for _key, name, _desc, _ in CATEGORY_CONFIG:
-            yield SystemCommand(
-                f"Toggle {name}",
-                f"Show/hide {name}",
-                lambda n=name: self.action_toggle_vis(n),
-            )
-            yield SystemCommand(
-                f"Cycle {name} detail",
-                "SUMMARY <-> FULL",
-                lambda n=name: self.action_toggle_detail(n),
-            )
         yield SystemCommand(
             "Toggle cost panel", "Economics panel", self.action_toggle_economics
         )

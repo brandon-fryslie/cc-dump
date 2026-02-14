@@ -25,6 +25,9 @@ classifiers = [
     "Topic :: Utilities",
 ]
 
+[project.optional-dependencies]
+tmux = ["libtmux>=0.30.0"]
+
 [project.urls]
 Homepage = "https://github.com/brandon-fryslie/cc-dump"
 Repository = "https://github.com/brandon-fryslie/cc-dump"

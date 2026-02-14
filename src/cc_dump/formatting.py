@@ -128,8 +128,7 @@ def populate_content_regions(block: "FormattedBlock") -> None:
     if block.content_regions:
         return
 
-    # Get text from the block — TextContentBlock has .text, TrackedContentBlock has .content
-    text = getattr(block, "text", None) or getattr(block, "content", None) or ""
+    text = getattr(block, "content", "") or ""
     if not text:
         return
 
@@ -276,7 +275,7 @@ class RoleBlock(FormattedBlock):
 class TextContentBlock(FormattedBlock):
     """Plain text content."""
 
-    text: str = ""
+    content: str = ""
     indent: str = "    "
 
 
@@ -350,7 +349,7 @@ class StreamToolUseBlock(FormattedBlock):
 class TextDeltaBlock(FormattedBlock):
     """A text delta from streaming response."""
 
-    text: str = ""
+    content: str = ""
     show_during_streaming = True
 
 
@@ -590,7 +589,7 @@ def _format_text_content(cblock, ctx: _ContentContext) -> list:
             )
         ]
     else:
-        return [TextContentBlock(text=text, indent=ctx.indent, category=ctx.role_cat)]
+        return [TextContentBlock(content=text, indent=ctx.indent, category=ctx.role_cat)]
 
 
 def _format_tool_use_content(cblock, ctx: _ContentContext) -> list:
@@ -829,14 +828,14 @@ def format_request(body, state, request_headers: dict | None = None):
         if isinstance(content, str):
             if content:
                 blocks.append(
-                    TextContentBlock(text=content, indent="    ", category=role_cat)
+                    TextContentBlock(content=content, indent="    ", category=role_cat)
                 )
         elif isinstance(content, list):
             for cblock in content:
                 if isinstance(cblock, str):
                     blocks.append(
                         TextContentBlock(
-                            text=cblock[:200], indent="    ", category=role_cat
+                            content=cblock[:200], indent="    ", category=role_cat
                         )
                     )
                     continue
@@ -871,7 +870,7 @@ def _fmt_tool_use_block_start(event: ToolUseBlockStartEvent) -> list[FormattedBl
 def _fmt_text_delta(event: TextDeltaEvent) -> list[FormattedBlock]:
     """Handle content_block_delta with type=text_delta."""
     if event.text:
-        return [TextDeltaBlock(text=event.text, category=Category.ASSISTANT)]
+        return [TextDeltaBlock(content=event.text, category=Category.ASSISTANT)]
     return []
 
 
@@ -909,7 +908,7 @@ def _complete_text_block(block: dict) -> list:
     """Create blocks for text content."""
     text = block.get("text", "")
     if text:
-        return [TextDeltaBlock(text=text, category=Category.ASSISTANT)]
+        return [TextDeltaBlock(content=text, category=Category.ASSISTANT)]
     return []
 
 

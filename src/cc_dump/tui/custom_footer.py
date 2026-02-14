@@ -130,4 +130,30 @@ class StatusFooter(Static):
         else:
             line2.append(" F- ", style="dim")
 
+        # Tmux indicators — only shown when tmux is available
+        # // [LAW:dataflow-not-control-flow] Always run; style varies by state values.
+        tmux_available = state.get("tmux_available", False)
+        tmux_auto = state.get("tmux_auto_zoom", False)
+        tmux_zoomed = state.get("tmux_zoomed", False)
+        if tmux_available:
+            line2.append("  ")
+            claude_click = _click("app.launch_claude")
+            line2.append(" c", style=Style.parse("bold") + claude_click)
+            line2.append(" ", style=claude_click)
+            line2.append("claude", style=Style.parse("") + claude_click)
+
+            zoom_click = _click("app.toggle_tmux_zoom")
+            line2.append("  ")
+            zoom_style = "bold reverse" if tmux_zoomed else "dim"
+            line2.append(" z", style=Style.parse("bold" if tmux_zoomed else "dim") + zoom_click)
+            line2.append(" ", style=zoom_click)
+            line2.append("zoom", style=Style.parse(zoom_style) + zoom_click)
+
+            auto_click = _click("app.toggle_auto_zoom")
+            line2.append("  ")
+            auto_style = "bold reverse" if tmux_auto else "dim"
+            line2.append(" Z", style=Style.parse("bold" if tmux_auto else "dim") + auto_click)
+            line2.append(" ", style=auto_click)
+            line2.append("auto", style=Style.parse(auto_style) + auto_click)
+
         return Text("\n").join([line1, line2])

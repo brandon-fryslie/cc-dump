@@ -275,7 +275,7 @@ class TestRenderBlockFunction:
             HeaderBlock(label="TEST", header_type="request"),
             MetadataBlock(model="test-model", max_tokens="100"),
             RoleBlock(role="user"),
-            TextContentBlock(text="Test text"),
+            TextContentBlock(content="Test text"),
             NewlineBlock(),
         ]
 

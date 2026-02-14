@@ -86,7 +86,7 @@ SEARCHABLE_TEXT_CASES = [
         id="role",
     ),
     pytest.param(
-        TextContentBlock(text="Hello, how can I help?"),
+        TextContentBlock(content="Hello, how can I help?"),
         ["Hello, how can I help?"],
         id="text_content",
     ),
@@ -121,7 +121,7 @@ SEARCHABLE_TEXT_CASES = [
         id="stream_tool_use",
     ),
     pytest.param(
-        TextDeltaBlock(text="streaming text"),
+        TextDeltaBlock(content="streaming text"),
         ["streaming text"],
         id="text_delta",
     ),
@@ -271,7 +271,7 @@ class TestFindAllMatches:
         assert find_all_matches([], pattern) == []
 
     def test_single_match(self):
-        blocks = [TextContentBlock(text="hello test world")]
+        blocks = [TextContentBlock(content="hello test world")]
         turns = [_FakeTurnData(0, blocks)]
         pattern = re.compile("test")
         matches = find_all_matches(turns, pattern)
@@ -282,7 +282,7 @@ class TestFindAllMatches:
         assert matches[0].text_length == 4
 
     def test_multiple_matches_in_block(self):
-        blocks = [TextContentBlock(text="test one test two test three")]
+        blocks = [TextContentBlock(content="test one test two test three")]
         turns = [_FakeTurnData(0, blocks)]
         pattern = re.compile("test")
         matches = find_all_matches(turns, pattern)
@@ -293,8 +293,8 @@ class TestFindAllMatches:
 
     def test_bottom_up_turn_ordering(self):
         turns = [
-            _FakeTurnData(0, [TextContentBlock(text="first turn match")]),
-            _FakeTurnData(1, [TextContentBlock(text="second turn match")]),
+            _FakeTurnData(0, [TextContentBlock(content="first turn match")]),
+            _FakeTurnData(1, [TextContentBlock(content="second turn match")]),
         ]
         pattern = re.compile("match")
         matches = find_all_matches(turns, pattern)
@@ -305,8 +305,8 @@ class TestFindAllMatches:
 
     def test_bottom_up_block_ordering(self):
         blocks = [
-            TextContentBlock(text="block zero match"),
-            TextContentBlock(text="block one match"),
+            TextContentBlock(content="block zero match"),
+            TextContentBlock(content="block one match"),
         ]
         turns = [_FakeTurnData(0, blocks)]
         pattern = re.compile("match")
@@ -318,8 +318,8 @@ class TestFindAllMatches:
 
     def test_skips_streaming_turns(self):
         turns = [
-            _FakeTurnData(0, [TextContentBlock(text="match")]),
-            _FakeTurnData(1, [TextContentBlock(text="match")], is_streaming=True),
+            _FakeTurnData(0, [TextContentBlock(content="match")]),
+            _FakeTurnData(1, [TextContentBlock(content="match")], is_streaming=True),
         ]
         pattern = re.compile("match")
         matches = find_all_matches(turns, pattern)
@@ -330,7 +330,7 @@ class TestFindAllMatches:
         blocks = [
             NewlineBlock(),
             SeparatorBlock(),
-            TextContentBlock(text="findme"),
+            TextContentBlock(content="findme"),
         ]
         turns = [_FakeTurnData(0, blocks)]
         pattern = re.compile("findme")
@@ -339,14 +339,14 @@ class TestFindAllMatches:
         assert matches[0].block_index == 2
 
     def test_no_matches(self):
-        blocks = [TextContentBlock(text="hello world")]
+        blocks = [TextContentBlock(content="hello world")]
         turns = [_FakeTurnData(0, blocks)]
         pattern = re.compile("nonexistent")
         matches = find_all_matches(turns, pattern)
         assert len(matches) == 0
 
     def test_case_insensitive_pattern(self):
-        blocks = [TextContentBlock(text="Hello World")]
+        blocks = [TextContentBlock(content="Hello World")]
         turns = [_FakeTurnData(0, blocks)]
         pattern = re.compile("hello", re.IGNORECASE)
         matches = find_all_matches(turns, pattern)

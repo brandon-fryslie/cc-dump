@@ -216,11 +216,11 @@ class TestRenderBlocksToolSummary:
     def test_tool_uses_collapsed_to_summary(self):
         """Consecutive ToolUseBlocks hidden when tools=EXISTENCE."""
         blocks = [
-            TextContentBlock(text="hello"),
+            TextContentBlock(content="hello"),
             ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
             ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
             ToolUseBlock(name="Bash", input_size=150, msg_color_idx=2),
-            TextContentBlock(text="world"),
+            TextContentBlock(content="world"),
         ]
         result = render_blocks(blocks, {"tools": HIDDEN})
 
@@ -273,7 +273,7 @@ class TestCollapseToolRuns:
     def test_passthrough_when_tools_on(self):
         """tools_on=True returns all blocks with correct indices."""
         blocks = [
-            TextContentBlock(text="hello"),
+            TextContentBlock(content="hello"),
             ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
             ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
         ]
@@ -303,10 +303,10 @@ class TestCollapseToolRuns:
     def test_mixed_blocks_preserved(self):
         """Text, ToolUse, ToolUse, Text -> Text, Summary, Text."""
         blocks = [
-            TextContentBlock(text="before"),
+            TextContentBlock(content="before"),
             ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
             ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
-            TextContentBlock(text="after"),
+            TextContentBlock(content="after"),
         ]
         result = collapse_tool_runs(blocks, tools_on=False)
 
@@ -340,7 +340,7 @@ class TestCollapseToolRuns:
         """ToolUse, Text, ToolUse -> Summary, Text, Summary (two separate runs)."""
         blocks = [
             ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
-            TextContentBlock(text="middle"),
+            TextContentBlock(content="middle"),
             ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
         ]
         result = collapse_tool_runs(blocks, tools_on=False)
@@ -355,11 +355,11 @@ class TestCollapseToolRuns:
     def test_indices_correct(self):
         """Verify orig_idx values are correct for each returned item."""
         blocks = [
-            TextContentBlock(text="a"),       # 0
+            TextContentBlock(content="a"),       # 0
             ToolUseBlock(name="B", input_size=1, msg_color_idx=0),  # 1
             ToolUseBlock(name="C", input_size=1, msg_color_idx=0),  # 2
             ToolUseBlock(name="D", input_size=1, msg_color_idx=0),  # 3
-            TextContentBlock(text="e"),       # 4
+            TextContentBlock(content="e"),       # 4
             ToolUseBlock(name="F", input_size=1, msg_color_idx=0),  # 5
         ]
         result = collapse_tool_runs(blocks, tools_on=False)
@@ -391,7 +391,7 @@ class TestCollapseToolRuns:
         """Result-only run dropped, use run summarized, text preserved."""
         blocks = [
             ToolResultBlock(size=500, tool_name="Read", msg_color_idx=0),
-            TextContentBlock(text="middle"),
+            TextContentBlock(content="middle"),
             ToolUseBlock(name="Bash", input_size=100, msg_color_idx=1),
             ToolResultBlock(size=300, tool_name="Bash", msg_color_idx=2),
         ]

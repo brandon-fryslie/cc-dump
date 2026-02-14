@@ -230,7 +230,7 @@ def normalize_blocks_for_comparison(blocks: list) -> list:
                 # Merge all delta text
                 merged_text = ''.join(b.text for b in pending_text_deltas)
                 # Create single merged block with combined text
-                merged_block = fmt.TextDeltaBlock(text=merged_text)
+                merged_block = fmt.TextDeltaBlock(content=merged_text)
                 normalized.append(merged_block)
                 pending_text_deltas = []
 
@@ -240,7 +240,7 @@ def normalize_blocks_for_comparison(blocks: list) -> list:
     # Flush any remaining TextDeltaBlocks
     if pending_text_deltas:
         merged_text = ''.join(b.text for b in pending_text_deltas)
-        normalized.append(fmt.TextDeltaBlock(text=merged_text))
+        normalized.append(fmt.TextDeltaBlock(content=merged_text))
 
     return normalized
 

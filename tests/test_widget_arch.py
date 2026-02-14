@@ -131,7 +131,7 @@ class TestRenderTurnToStrips:
         console = Console()
         filters = {}
         blocks = [
-            TextContentBlock(text="Hello, world!", indent=""),
+            TextContentBlock(content="Hello, world!", indent=""),
         ]
 
         strips, block_map = render_turn_to_strips(blocks, filters, console, width=80)
@@ -148,7 +148,7 @@ class TestRenderTurnToStrips:
         console = Console()
         filters = {}
         blocks = [
-            TextContentBlock(text="Line 1\nLine 2\nLine 3", indent=""),
+            TextContentBlock(content="Line 1\nLine 2\nLine 3", indent=""),
         ]
 
         strips, block_map = render_turn_to_strips(blocks, filters, console, width=80)
@@ -163,7 +163,7 @@ class TestRenderTurnToStrips:
         filters = {"headers": HIDDEN, "tools": ALWAYS_VISIBLE}
         blocks = [
             HeaderBlock(header_type="request", label="REQUEST 1", timestamp="12:00:00"),  # hidden at EXISTENCE
-            TextContentBlock(text="User message", indent=""),  # visible
+            TextContentBlock(content="User message", indent=""),  # visible
             ToolUseBlock(name="read_file", input_size=100, msg_color_idx=0),  # visible
         ]
 
@@ -183,7 +183,7 @@ class TestTurnDataReRender:
     def test_compute_relevant_keys_finds_filter_dependencies(self):
         """compute_relevant_keys should identify which filters affect this turn."""
         blocks = [
-            TextContentBlock(text="Hello", indent=""),
+            TextContentBlock(content="Hello", indent=""),
             ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
             MetadataBlock(model="claude-3", max_tokens=100, stream=True, tool_count=0),
         ]
@@ -200,7 +200,7 @@ class TestTurnDataReRender:
     def test_re_render_skips_when_irrelevant_filter_changes(self):
         """re_render should skip when changed filter is not relevant."""
         blocks = [
-            TextContentBlock(text="Hello", indent=""),
+            TextContentBlock(content="Hello", indent=""),
         ]
         console = Console()
         filters1 = {"headers": HIDDEN, "tools": HIDDEN}
@@ -224,7 +224,7 @@ class TestTurnDataReRender:
     def test_re_render_executes_when_relevant_filter_changes(self):
         """re_render should execute when a relevant filter changes."""
         blocks = [
-            TextContentBlock(text="Hello", indent=""),
+            TextContentBlock(content="Hello", indent=""),
             ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
         ]
         console = Console()
@@ -295,7 +295,7 @@ class TestConversationViewBinarySearch:
         # Manually create and add TurnData
         td = TurnData(
             turn_index=0,
-            blocks=[TextContentBlock(text="Hello", indent="")],
+            blocks=[TextContentBlock(content="Hello", indent="")],
             strips=[Strip.blank(80), Strip.blank(80)],  # 2 lines
         )
         td.line_offset = 0
@@ -321,7 +321,7 @@ class TestConversationViewBinarySearch:
         # Turn 0: 3 lines (line 0-2)
         td0 = TurnData(
             turn_index=0,
-            blocks=[TextContentBlock(text="A\nB\nC", indent="")],
+            blocks=[TextContentBlock(content="A\nB\nC", indent="")],
             strips=[Strip.blank(80), Strip.blank(80), Strip.blank(80)],
         )
         td0.line_offset = 0
@@ -329,7 +329,7 @@ class TestConversationViewBinarySearch:
         # Turn 1: 2 lines (line 3-4)
         td1 = TurnData(
             turn_index=1,
-            blocks=[TextContentBlock(text="D\nE", indent="")],
+            blocks=[TextContentBlock(content="D\nE", indent="")],
             strips=[Strip.blank(80), Strip.blank(80)],
         )
         td1.line_offset = 3
@@ -337,7 +337,7 @@ class TestConversationViewBinarySearch:
         # Turn 2: 1 line (line 5)
         td2 = TurnData(
             turn_index=2,
-            blocks=[TextContentBlock(text="F", indent="")],
+            blocks=[TextContentBlock(content="F", indent="")],
             strips=[Strip.blank(80)],
         )
         td2.line_offset = 5
@@ -367,7 +367,7 @@ class TestConversationViewBinarySearch:
         # Create a turn with 2 lines
         td = TurnData(
             turn_index=0,
-            blocks=[TextContentBlock(text="Line 1\nLine 2", indent="")],
+            blocks=[TextContentBlock(content="Line 1\nLine 2", indent="")],
             strips=[Strip.blank(80), Strip.blank(80)],
         )
         td.line_offset = 0
@@ -387,7 +387,7 @@ class TestConversationViewBinarySearch:
         # Turn 0: lines 0-2 (3 lines)
         td0 = TurnData(
             turn_index=0,
-            blocks=[TextContentBlock(text="A\nB\nC", indent="")],
+            blocks=[TextContentBlock(content="A\nB\nC", indent="")],
             strips=[Strip.blank(80), Strip.blank(80), Strip.blank(80)],
         )
         td0.line_offset = 0
@@ -395,7 +395,7 @@ class TestConversationViewBinarySearch:
         # Turn 1: lines 3-5 (3 lines)
         td1 = TurnData(
             turn_index=1,
-            blocks=[TextContentBlock(text="D\nE\nF", indent="")],
+            blocks=[TextContentBlock(content="D\nE\nF", indent="")],
             strips=[Strip.blank(80), Strip.blank(80), Strip.blank(80)],
         )
         td1.line_offset = 3
@@ -461,12 +461,12 @@ class TestScrollPreservation:
         """Toggling a filter should keep the same turn at the viewport top."""
         console = Console()
         turns_blocks = [
-            [TextContentBlock(text="Turn 0 text", indent="")],
+            [TextContentBlock(content="Turn 0 text", indent="")],
             [
-                TextContentBlock(text="Turn 1 text\nLine 2\nLine 3", indent=""),
+                TextContentBlock(content="Turn 1 text\nLine 2\nLine 3", indent=""),
                 ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
             ],
-            [TextContentBlock(text="Turn 2 text", indent="")],
+            [TextContentBlock(content="Turn 2 text", indent="")],
         ]
         filters = {"tools": ALWAYS_VISIBLE}
         conv = self._make_conv(console, turns_blocks, filters)
@@ -496,16 +496,16 @@ class TestScrollPreservation:
 
         console = Console()
         turns_blocks = [
-            [TextContentBlock(text="Turn 0", indent="")],
+            [TextContentBlock(content="Turn 0", indent="")],
             [
                 SystemLabelBlock(),
                 TrackedContentBlock(status="new", tag_id="sys", color_idx=0, content="System"),
             ],
             [
-                TextContentBlock(text="Turn 2 text\nLine 2", indent=""),
+                TextContentBlock(content="Turn 2 text\nLine 2", indent=""),
                 ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
             ],
-            [TextContentBlock(text="Turn 3", indent="")],
+            [TextContentBlock(content="Turn 3", indent="")],
         ]
         filters = {"system": ALWAYS_VISIBLE, "tools": ALWAYS_VISIBLE}
         conv = self._make_conv(console, turns_blocks, filters)
@@ -536,7 +536,7 @@ class TestScrollPreservation:
         """In follow mode, scroll_to should not be called by rerender."""
         console = Console()
         turns_blocks = [
-            [TextContentBlock(text="Turn 0", indent=""),
+            [TextContentBlock(content="Turn 0", indent=""),
              ToolUseBlock(name="test", input_size=10, msg_color_idx=0)],
         ]
         filters = {"tools": ALWAYS_VISIBLE}
@@ -554,7 +554,7 @@ class TestScrollPreservation:
         # Turn with many lines when tools are shown
         turns_blocks = [
             [
-                TextContentBlock(text="Line 0\nLine 1\nLine 2", indent=""),
+                TextContentBlock(content="Line 0\nLine 1\nLine 2", indent=""),
                 ToolUseBlock(name="tool1", input_size=10, msg_color_idx=0),
                 ToolUseBlock(name="tool2", input_size=20, msg_color_idx=1),
                 ToolUseBlock(name="tool3", input_size=30, msg_color_idx=2),
@@ -585,8 +585,8 @@ class TestScrollPreservation:
         """Lazy re-render via _deferred_offset_recalc should not shift viewport."""
         console = Console()
         turns_blocks = [
-            [TextContentBlock(text="Turn 0\nLine 2", indent="")],
-            [TextContentBlock(text="Turn 1\nLine 2", indent="")],
+            [TextContentBlock(content="Turn 0\nLine 2", indent="")],
+            [TextContentBlock(content="Turn 1\nLine 2", indent="")],
         ]
         filters = {}
         conv = self._make_conv(console, turns_blocks, filters)
@@ -616,10 +616,10 @@ class TestScrollPreservation:
         # Turn 1: system blocks (will be hidden at EXISTENCE level)
         # Turn 2: always visible text
         turns_blocks = [
-            [TextContentBlock(text="Turn 0 visible", indent="")],
+            [TextContentBlock(content="Turn 0 visible", indent="")],
             [SystemLabelBlock(),
              TrackedContentBlock(status="new", tag_id="sys", color_idx=0, content="System only")],
-            [TextContentBlock(text="Turn 2 visible", indent="")],
+            [TextContentBlock(content="Turn 2 visible", indent="")],
         ]
         filters = {"system": ALWAYS_VISIBLE}
         conv = self._make_conv(console, turns_blocks, filters)
@@ -642,7 +642,7 @@ class TestWidestStripCache:
     def test_widest_strip_set_after_re_render(self):
         """_widest_strip matches actual max strip cell_length after re_render."""
         from rich.console import Console
-        blocks = [TextContentBlock(text="Short\nA much longer line of text here", indent="")]
+        blocks = [TextContentBlock(content="Short\nA much longer line of text here", indent="")]
         console = Console()
         filters = {}
         td = TurnData(turn_index=0, blocks=blocks, strips=[])
@@ -748,7 +748,7 @@ class TestViewportTurnRange:
         for i in range(n):
             td = TurnData(
                 turn_index=i,
-                blocks=[TextContentBlock(text="x", indent="")],
+                blocks=[TextContentBlock(content="x", indent="")],
                 strips=[Strip.blank(80)] * lines_per_turn,
                 _widest_strip=80,
             )
@@ -839,7 +839,7 @@ class TestViewportOnlyRerender:
         conv = ConversationView()
         for i in range(n_turns):
             blocks = [
-                TextContentBlock(text=f"Turn {i}", indent=""),
+                TextContentBlock(content=f"Turn {i}", indent=""),
                 ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
             ]
             strips, block_strip_map = render_turn_to_strips(blocks, filters, console, width=80)
@@ -924,7 +924,7 @@ class TestViewportOnlyRerender:
         """When a turn with _pending_filter_snapshot is re-rendered, pending is cleared."""
         console = Console()
         blocks = [
-            TextContentBlock(text="Hello", indent=""),
+            TextContentBlock(content="Hello", indent=""),
             ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
         ]
         td = TurnData(
@@ -964,7 +964,7 @@ class TestLazyRerenderInRenderLine:
         """When a turn with pending snapshot is accessed via render_line, it re-renders."""
         console = Console()
         blocks = [
-            TextContentBlock(text="Hello world", indent=""),
+            TextContentBlock(content="Hello world", indent=""),
             ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
         ]
         filters = {"tools": ALWAYS_VISIBLE}
@@ -1004,7 +1004,7 @@ class TestLazyRerenderInRenderLine:
     def test_no_lazy_rerender_without_pending(self):
         """render_line should not re-render turns without _pending_filter_snapshot."""
         console = Console()
-        blocks = [TextContentBlock(text="Hello", indent="")]
+        blocks = [TextContentBlock(content="Hello", indent="")]
         filters = {}
 
         strips, block_strip_map = render_turn_to_strips(blocks, filters, console, width=80)

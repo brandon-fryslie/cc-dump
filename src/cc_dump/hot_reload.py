@@ -8,6 +8,7 @@ Live instances (tui/app.py, tui/widgets.py) and stable boundaries (proxy.py) are
 import importlib
 import os
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 # Modules to reload in dependency order (leaves first, dependents after)
@@ -34,6 +35,7 @@ _EXCLUDED_FILES = {
     "cli.py",  # entry point, not reloadable at runtime
     "hot_reload.py",  # this file
     "event_types.py",  # stable type definitions, never reload
+    "tmux_controller.py",  # stable boundary, holds live pane refs
     "__init__.py",  # module init
     "__main__.py",  # entry point
 }
@@ -71,33 +73,35 @@ def init(package_dir: str) -> None:
     _scan_mtimes()
 
 
+def _iter_watched_files() -> Iterator[tuple[str, str]]:
+    """Yield (abs_path, rel_path) for all watched Python files after exclusion filters."""
+    root = Path(_watch_dirs[0]) if _watch_dirs else None
+    for d in _watch_dirs:
+        if not os.path.isdir(d):
+            continue
+        for fname in os.listdir(d):
+            if not fname.endswith(".py") or fname in _EXCLUDED_FILES:
+                continue
+            abs_path = os.path.join(d, fname)
+            rel_str = str(Path(abs_path).relative_to(root)).replace(os.sep, "/")
+            if rel_str in _EXCLUDED_MODULES:
+                continue
+            yield abs_path, rel_str
+
+
 def has_changes() -> bool:
     """Check if any watched files have changed mtimes (without updating cache).
 
     Cheap read-only scan — no module reloads, no side effects on _mtimes.
     Use this for debounce detection; call check_and_get_reloaded() to actually reload.
     """
-    for d in _watch_dirs:
-        if not os.path.isdir(d):
-            continue
-        for fname in os.listdir(d):
-            if not fname.endswith(".py"):
-                continue
-            if fname in _EXCLUDED_FILES:
-                continue
-
-            path = os.path.join(d, fname)
-            rel_path = Path(path).relative_to(Path(_watch_dirs[0]))
-            rel_str = str(rel_path).replace(os.sep, "/")
-            if rel_str in _EXCLUDED_MODULES:
-                continue
-
-            try:
-                mtime = os.path.getmtime(path)
-                if path in _mtimes and _mtimes[path] != mtime:
-                    return True
-            except (FileNotFoundError, OSError):
-                pass
+    for abs_path, _rel in _iter_watched_files():
+        try:
+            mtime = os.path.getmtime(abs_path)
+            if abs_path in _mtimes and _mtimes[abs_path] != mtime:
+                return True
+        except (FileNotFoundError, OSError):
+            pass
     return False
 
 
@@ -151,29 +155,14 @@ def check_and_get_reloaded() -> list[str]:
 
 def _scan_mtimes() -> None:
     """Populate mtime cache with current file modification times."""
-    for d in _watch_dirs:
-        if not os.path.isdir(d):
-            continue
-        for fname in os.listdir(d):
-            if not fname.endswith(".py"):
-                continue
-            if fname in _EXCLUDED_FILES:
-                continue
-
-            path = os.path.join(d, fname)
-            # Check if this is an excluded module
-            rel_path = Path(path).relative_to(Path(_watch_dirs[0]))
-            rel_str = str(rel_path).replace(os.sep, "/")
-            if rel_str in _EXCLUDED_MODULES:
-                continue
-
-            try:
-                _mtimes[path] = os.path.getmtime(path)
-            except FileNotFoundError:
-                pass  # File deleted between listdir and getmtime
-            except OSError as e:
-                sys.stderr.write(f"[hot-reload] cannot stat {path}: {e}\n")
-                sys.stderr.flush()
+    for abs_path, _rel in _iter_watched_files():
+        try:
+            _mtimes[abs_path] = os.path.getmtime(abs_path)
+        except FileNotFoundError:
+            pass  # File deleted between listdir and getmtime
+        except OSError as e:
+            sys.stderr.write(f"[hot-reload] cannot stat {abs_path}: {e}\n")
+            sys.stderr.flush()
 
 
 def _get_changed_files() -> set[str]:
@@ -183,31 +172,16 @@ def _get_changed_files() -> set[str]:
         Set of absolute file paths that have changed.
     """
     changed = set()
-    for d in _watch_dirs:
-        if not os.path.isdir(d):
-            continue
-        for fname in os.listdir(d):
-            if not fname.endswith(".py"):
-                continue
-            if fname in _EXCLUDED_FILES:
-                continue
-
-            path = os.path.join(d, fname)
-            # Check if this is an excluded module
-            rel_path = Path(path).relative_to(Path(_watch_dirs[0]))
-            rel_str = str(rel_path).replace(os.sep, "/")
-            if rel_str in _EXCLUDED_MODULES:
-                continue
-
-            try:
-                mtime = os.path.getmtime(path)
-                if path in _mtimes and _mtimes[path] != mtime:
-                    changed.add(path)
-                _mtimes[path] = mtime
-            except FileNotFoundError:
-                pass  # File deleted between listdir and getmtime
-            except OSError as e:
-                sys.stderr.write(f"[hot-reload] cannot stat {path}: {e}\n")
-                sys.stderr.flush()
+    for abs_path, _rel in _iter_watched_files():
+        try:
+            mtime = os.path.getmtime(abs_path)
+            if abs_path in _mtimes and _mtimes[abs_path] != mtime:
+                changed.add(abs_path)
+            _mtimes[abs_path] = mtime
+        except FileNotFoundError:
+            pass  # File deleted between listdir and getmtime
+        except OSError as e:
+            sys.stderr.write(f"[hot-reload] cannot stat {abs_path}: {e}\n")
+            sys.stderr.flush()
 
     return changed

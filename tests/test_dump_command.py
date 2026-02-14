@@ -168,7 +168,7 @@ async def test_dump_all_block_types():
             turn.blocks.append(fmt.StreamInfoBlock(model="claude-sonnet-4-5"))
 
             # TextDeltaBlock (only in streaming mode, manually add for test)
-            turn.blocks.append(fmt.TextDeltaBlock(text="Streaming text delta"))
+            turn.blocks.append(fmt.TextDeltaBlock(content="Streaming text delta"))
 
             # SeparatorBlock
             turn.blocks.append(fmt.SeparatorBlock(style="heavy"))

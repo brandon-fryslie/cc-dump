@@ -64,8 +64,8 @@ def write_block_text(f, block, block_idx: int, log_fn=None) -> None:
             f.write(f"  Timestamp: {block.timestamp}\n")
 
     elif isinstance(block, cc_dump.formatting.TextContentBlock):
-        if block.text:
-            f.write(f"  {block.text}\n")
+        if block.content:
+            f.write(f"  {block.content}\n")
 
     elif isinstance(block, cc_dump.formatting.ToolUseBlock):
         f.write(f"  Tool: {block.name}\n")
@@ -104,8 +104,8 @@ def write_block_text(f, block, block_idx: int, log_fn=None) -> None:
         f.write(f"  Tool: {block.name}\n")
 
     elif isinstance(block, cc_dump.formatting.TextDeltaBlock):
-        if block.text:
-            f.write(f"  {block.text}\n")
+        if block.content:
+            f.write(f"  {block.content}\n")
 
     elif isinstance(block, cc_dump.formatting.StopReasonBlock):
         f.write(f"  Stop reason: {block.reason}\n")

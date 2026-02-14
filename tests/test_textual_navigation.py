@@ -23,7 +23,7 @@ def _make_text_turn(text: str, n_lines: int = 50) -> list:
     long_text = (text + "\n") * n_lines
     return [
         HeaderBlock(label="REQUEST #1", request_num=1, header_type="request"),
-        TextContentBlock(text=long_text, category=Category.USER),
+        TextContentBlock(content=long_text, category=Category.USER),
     ]
 
 

@@ -83,7 +83,7 @@ def test_gutter_on_truncated_blocks():
     # Create a long text block that will be truncated
     long_text = "\n".join([f"Line {i}" for i in range(20)])
     block = TextContentBlock(
-        text=long_text,
+        content=long_text,
         category=Category.TOOLS,
     )
 
@@ -152,7 +152,7 @@ def test_content_renders_at_reduced_width():
     # Create a block with known width requirements
     # Use a long line that would wrap differently at different widths
     block = TextContentBlock(
-        text="A" * 100,  # 100 chars
+        content="A" * 100,  # 100 chars
         category=Category.USER,
     )
 
@@ -182,7 +182,7 @@ def test_expandable_arrow_changes():
     # Create a long block
     long_text = "\n".join([f"Line {i}" for i in range(20)])
     block = TextContentBlock(
-        text=long_text,
+        content=long_text,
         category=Category.ASSISTANT,
     )
 
@@ -229,7 +229,7 @@ def test_right_gutter_appears_above_min_width():
     set_theme(theme)
 
     block = TextContentBlock(
-        text="Test content",
+        content="Test content",
         category=Category.USER,
     )
 

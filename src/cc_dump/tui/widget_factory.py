@@ -573,7 +573,7 @@ class ConversationView(ScrollView):
         # // [LAW:dataflow-not-control-flow] Block declares streaming behavior via property
         if block.show_during_streaming:
             # TextDeltaBlock: buffer and progressive display
-            td._text_delta_buffer.append(block.text)
+            td._text_delta_buffer.append(block.content)
             self._refresh_streaming_delta(td)
             # Update virtual size and auto-scroll
             self._update_streaming_size(td)
@@ -607,13 +607,13 @@ class ConversationView(ScrollView):
 
         for block in td.blocks:
             if type(block).__name__ == "TextDeltaBlock":
-                delta_buffer.append(block.text)
+                delta_buffer.append(block.content)
             else:
                 # Flush accumulated deltas as a single TextContentBlock with ASSISTANT category
                 if delta_buffer:
                     combined_text = "".join(delta_buffer)
                     consolidated.append(
-                        TextContentBlock(text=combined_text, category=Category.ASSISTANT)
+                        TextContentBlock(content=combined_text, category=Category.ASSISTANT)
                     )
                     delta_buffer.clear()
                 # Add the non-delta block
@@ -623,7 +623,7 @@ class ConversationView(ScrollView):
         if delta_buffer:
             combined_text = "".join(delta_buffer)
             consolidated.append(
-                TextContentBlock(text=combined_text, category=Category.ASSISTANT)
+                TextContentBlock(content=combined_text, category=Category.ASSISTANT)
             )
 
         # Eagerly populate content_regions for consolidated text blocks

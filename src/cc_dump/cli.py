@@ -169,6 +169,17 @@ def main():
     else:
         print("   Recording: disabled (--no-record)")
 
+    # Tmux integration (optional — no-op when not in tmux or libtmux missing)
+    import cc_dump.tmux_controller
+
+    tmux_ctrl = None
+    if cc_dump.tmux_controller.is_available():
+        tmux_ctrl = cc_dump.tmux_controller.TmuxController()
+        tmux_ctrl.set_port(actual_port)
+        if tmux_ctrl.state == cc_dump.tmux_controller.TmuxState.READY:
+            router.add_subscriber(DirectSubscriber(tmux_ctrl.on_event))
+            print("   Tmux: available (press 'c' to launch claude)")
+
     router.start()
 
     # Initialize hot-reload watcher
@@ -193,10 +204,14 @@ def main():
         replay_data=replay_data,
         recording_path=record_path,
         replay_file=args.replay,
+        tmux_controller=tmux_ctrl,
     )
     try:
         app.run()
     finally:
+        # Clean up tmux state (unzoom)
+        if tmux_ctrl:
+            tmux_ctrl.cleanup()
         # Graceful shutdown with timeout for in-flight requests
         if server:
             print("\n🛑 Shutting down gracefully (press Ctrl+C again to force quit)...", file=sys.stderr)

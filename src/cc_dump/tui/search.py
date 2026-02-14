@@ -101,7 +101,7 @@ _TEXT_EXTRACTORS: dict[str, Callable] = {
         b.content if b.status == "new" else b.new_content if b.status == "changed" else ""
     ),
     "RoleBlock": lambda b: b.role,
-    "TextContentBlock": lambda b: b.text,
+    "TextContentBlock": lambda b: b.content,
     "ToolUseBlock": lambda b: f"{b.name} {b.detail}",
     "ToolResultBlock": lambda b: f"{b.tool_name} {b.detail}",
     "ToolUseSummaryBlock": lambda b: " ".join(
@@ -111,7 +111,7 @@ _TEXT_EXTRACTORS: dict[str, Callable] = {
     "UnknownTypeBlock": lambda b: b.block_type,
     "StreamInfoBlock": lambda b: f"model: {b.model}",
     "StreamToolUseBlock": lambda b: b.name,
-    "TextDeltaBlock": lambda b: b.text,
+    "TextDeltaBlock": lambda b: b.content,
     "StopReasonBlock": lambda b: f"stop: {b.reason}",
     "ErrorBlock": lambda b: f"HTTP {b.code} {b.reason}",
     "ProxyErrorBlock": lambda b: b.error,
