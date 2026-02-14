@@ -325,6 +325,35 @@ class CcDumpApp(App):
         self._closing = True
         self._router.stop()
 
+    # ─── Mouse / tmux coordination ────────────────────────────────────
+    # // [LAW:single-enforcer] _on_mouse_activity is the sole mouse→tmux bridge.
+
+    def _on_mouse_activity(self) -> None:
+        """Disable tmux mouse (let Textual handle it) and reset leave timer."""
+        tmux = self._tmux_controller
+        if tmux is None:
+            return
+        tmux.set_mouse(False)
+        if self._mouse_leave_timer is not None:
+            self._mouse_leave_timer.stop()
+        self._mouse_leave_timer = self.set_timer(0.5, self._on_mouse_leave_timeout)
+
+    def _on_mouse_leave_timeout(self) -> None:
+        """No mouse events for 500ms — assume mouse left pane, re-enable tmux mouse."""
+        tmux = self._tmux_controller
+        if tmux is not None:
+            tmux.set_mouse(True)
+        self._mouse_leave_timer = None
+
+    def on_mouse_move(self, event) -> None:
+        self._on_mouse_activity()
+
+    def on_mouse_scroll_down(self, event) -> None:
+        self._on_mouse_activity()
+
+    def on_mouse_scroll_up(self, event) -> None:
+        self._on_mouse_activity()
+
     # ─── Helpers ───────────────────────────────────────────────────────
 
     def _app_log(self, level: str, message: str):

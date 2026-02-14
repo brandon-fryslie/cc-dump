@@ -285,6 +285,8 @@ class TestCleanup:
         ctrl._is_zoomed = True
         ctrl._our_pane = MagicMock()
         ctrl._claude_pane = MagicMock()
+        ctrl._original_mouse = None
+        ctrl._mouse_is_on = None
         ctrl.cleanup()
         assert ctrl._is_zoomed is False
         ctrl._our_pane.resize.assert_called_once_with(zoom=True)
@@ -296,5 +298,7 @@ class TestCleanup:
         ctrl._is_zoomed = False
         ctrl._our_pane = MagicMock()
         ctrl._claude_pane = None
+        ctrl._original_mouse = None
+        ctrl._mouse_is_on = None
         ctrl.cleanup()
         ctrl._our_pane.resize.assert_not_called()
