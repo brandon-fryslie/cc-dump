@@ -123,9 +123,12 @@ def _normalize_color(color: str | None, fallback: str) -> str:
     Textual's ANSI themes use names like "ansi_green" that Rich can't parse
     in style strings. Convert via Textual's Color.parse().rgb, falling back
     to the provided default if parsing fails.
+
+    "ansi_default" means "terminal's default" — unknowable at runtime, so
+    we treat it as None and use the fallback.
     // [LAW:single-enforcer] All color normalization goes through here.
     """
-    if color is None:
+    if color is None or color == "ansi_default":
         return fallback
     if color.startswith("#") and len(color) == 7:
         return color
