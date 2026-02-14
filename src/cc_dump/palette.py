@@ -60,9 +60,6 @@ _FILTER_INDICATOR_INDEX: dict[str, int] = {
     "metadata": 4,
     "user": 5,
     "assistant": 6,
-    "stats": 7,
-    "economics": 8,
-    "timeline": 9,
 }
 
 
@@ -167,8 +164,9 @@ def generate_filter_colors(
     # Step 2: Find seed hue in largest gap
     seed = _find_indicator_seed(theme_hues)
 
-    # Step 3: Generate 10 hues via golden angle from seed
-    hues = [(seed + i * GOLDEN_ANGLE) % 360 for i in range(10)]
+    # Step 3: Generate hues via golden angle from seed
+    n_hues = len(_FILTER_INDICATOR_INDEX)
+    hues = [(seed + i * GOLDEN_ANGLE) % 360 for i in range(n_hues)]
 
     # Step 4: Compute luminances from theme
     _, _, bg_l = _hex_to_hsl(background)

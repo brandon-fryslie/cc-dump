@@ -86,14 +86,13 @@ class StatusFooter(Static):
         line2 = Text(no_wrap=True)
         for key, label, state_key in self._ACTION_ITEMS:
             is_active = bool(state.get(state_key, False))
-            _, bg_color, fg_light = tc.filter_colors[state_key]
             # // [LAW:dataflow-not-control-flow] Style derived from is_active value
-            active_style = f"bold {fg_light} on {bg_color}"
+            active_style = f"bold reverse {tc.accent}"
             style = active_style if is_active else "dim"
             click = _click(f"app.toggle_{state_key}")
             if line2.plain:
                 line2.append("  ")
-            line2.append(f" {key}", style=Style.parse(active_style if is_active else "dim") + click)
+            line2.append(f" {key}", style=Style.parse("bold" if is_active else "dim") + click)
             line2.append(" ", style=click)
             line2.append(label, style=Style.parse(style) + click)
 
