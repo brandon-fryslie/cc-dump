@@ -401,3 +401,32 @@ def test_neutral_gutter_for_newline_and_error():
     assert segments[0].style.dim, "ErrorBlock left gutter should be dim"
     assert segments[-1].text == "▐"
     assert segments[-1].style.dim, "ErrorBlock right gutter should be dim"
+
+
+def test_filter_indicators_adapt_to_theme():
+    """FILTER_INDICATORS should change when set_theme() switches dark/light.
+
+    Must access via module-level attribute (not from-imported snapshot)
+    since set_theme() rebinds the module-level name.
+    """
+    import cc_dump.tui.rendering as rendering_mod
+
+    dark_theme = BUILTIN_THEMES["textual-dark"]
+    rendering_mod.set_theme(dark_theme)
+    dark_indicators = dict(rendering_mod.FILTER_INDICATORS)
+
+    light_theme = BUILTIN_THEMES["textual-light"]
+    rendering_mod.set_theme(light_theme)
+    light_indicators = dict(rendering_mod.FILTER_INDICATORS)
+
+    # Colors should differ between dark and light modes
+    for name in ["headers", "tools", "system", "user", "assistant"]:
+        dark_color = dark_indicators[name][1]
+        light_color = light_indicators[name][1]
+        assert dark_color != light_color, (
+            f"Filter indicator '{name}' should have different colors in dark vs light mode: "
+            f"dark={dark_color}, light={light_color}"
+        )
+
+    # Restore dark theme for other tests
+    rendering_mod.set_theme(dark_theme)

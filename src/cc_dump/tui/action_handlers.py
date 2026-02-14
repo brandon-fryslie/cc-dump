@@ -118,6 +118,17 @@ def toggle_info(app) -> None:
     _toggle_panel(app, "info")
 
 
+def toggle_keys(app) -> None:
+    """Toggle the keys panel via mount/remove."""
+    import cc_dump.tui.keys_panel
+    panel_class = cc_dump.tui.keys_panel.KeysPanel
+    existing = app.screen.query(panel_class)
+    if existing:
+        existing.first().remove()
+    else:
+        app.screen.mount(cc_dump.tui.keys_panel.create_keys_panel())
+
+
 # ─── Filterset actions ─────────────────────────────────────────────────
 
 

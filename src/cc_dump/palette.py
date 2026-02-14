@@ -77,36 +77,14 @@ _FILTER_INDICATOR_INDEX: dict[str, int] = {
 }
 
 
-def _darken_hex(
-    hex_color: str, lightness: float = 0.25, saturation: float = 0.60
-) -> str:
-    """Derive a dark background variant from a hex foreground color."""
-    r, g, b = _hex_to_rgb(hex_color)
-    h, l_orig, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
-    # Re-synthesize at target lightness/saturation, preserving hue
-    return _hsl_to_hex(h * 360.0, saturation, lightness)
-
-
-def _lighten_hex(
-    hex_color: str, lightness: float = 0.85, saturation: float = 0.50
-) -> str:
-    """Derive a light foreground variant from a hex color.
-
-    Target: high lightness with moderate saturation — readable on a dark
-    background variant of the same hue.
-    """
-    r, g, b = _hex_to_rgb(hex_color)
-    h, l_orig, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
-    # Re-synthesize at target lightness/saturation, preserving hue
-    return _hsl_to_hex(h * 360.0, saturation, lightness)
-
-
-# Pre-compute foreground, dark background, and light foreground variants
-INDICATOR_FG: list[str] = [hex_color for _, hex_color in _INDICATOR_COLORS]
-INDICATOR_BG: list[str] = [_darken_hex(hex_color) for _, hex_color in _INDICATOR_COLORS]
-INDICATOR_FG_LIGHT: list[str] = [
-    _lighten_hex(hex_color) for _, hex_color in _INDICATOR_COLORS
-]
+# Extract hues once from the hand-picked indicator palette.
+# // [LAW:one-source-of-truth] Hue is the canonical value; S/L vary by mode.
+_INDICATOR_HUES: list[float] = []
+for _name, _hex in _INDICATOR_COLORS:
+    _r, _g, _b = _hex_to_rgb(_hex)
+    _h, _l, _s = colorsys.rgb_to_hls(_r / 255.0, _g / 255.0, _b / 255.0)
+    _INDICATOR_HUES.append(_h * 360.0)
+del _name, _hex, _r, _g, _b, _h, _l, _s  # clean up module scope
 
 
 class Palette:
@@ -234,30 +212,47 @@ class Palette:
 
     # ── Filter colors (stable assignments for headers/tools/system/etc.) ──
 
-    def filter_color(self, filter_name: str) -> str:
+    def filter_colors_for_mode(
+        self, filter_name: str, dark: bool = True
+    ) -> tuple[str, str, str]:
+        """Get mode-aware (fg, bg, fg_light) triple for a named filter.
+
+        // [LAW:one-source-of-truth] Single method for all filter color derivation.
+        // [LAW:dataflow-not-control-flow] dark is a value selecting S/L parameters.
+
+        Dark mode:  fg S=0.75 L=0.55, bg S=0.60 L=0.25, fg_light S=0.50 L=0.85
+        Light mode: fg S=0.70 L=0.40, bg S=0.45 L=0.85, fg_light S=0.80 L=0.25
+        """
+        idx = _FILTER_INDICATOR_INDEX.get(filter_name, 0)
+        hue = _INDICATOR_HUES[idx]
+        if dark:
+            fg = _hsl_to_hex(hue, 0.75, 0.55)
+            bg = _hsl_to_hex(hue, 0.60, 0.25)
+            fg_light = _hsl_to_hex(hue, 0.50, 0.85)
+        else:
+            fg = _hsl_to_hex(hue, 0.70, 0.40)
+            bg = _hsl_to_hex(hue, 0.45, 0.85)
+            fg_light = _hsl_to_hex(hue, 0.80, 0.25)
+        return fg, bg, fg_light
+
+    def filter_color(self, filter_name: str, dark: bool = True) -> str:
         """Get a stable foreground color for a named filter.
 
         Uses the fixed indicator palette (warm→cool gradient), not the
         golden-angle palette.
         """
-        idx = _FILTER_INDICATOR_INDEX.get(filter_name, 0)
-        return INDICATOR_FG[idx]
+        return self.filter_colors_for_mode(filter_name, dark)[0]
 
-    def filter_bg(self, filter_name: str) -> str:
-        """Get a stable dark background for a named filter.
+    def filter_bg(self, filter_name: str, dark: bool = True) -> str:
+        """Get a stable dark/light background for a named filter."""
+        return self.filter_colors_for_mode(filter_name, dark)[1]
 
-        Uses darkened variants of the fixed indicator palette.
+    def filter_fg_light(self, filter_name: str, dark: bool = True) -> str:
+        """Get a stable high-contrast foreground for a named filter.
+
+        Dark mode: light text on dark bg. Light mode: dark text on light bg.
         """
-        idx = _FILTER_INDICATOR_INDEX.get(filter_name, 0)
-        return INDICATOR_BG[idx]
-
-    def filter_fg_light(self, filter_name: str) -> str:
-        """Get a stable light foreground for a named filter.
-
-        High-lightness variant readable on the dark background of the same hue.
-        """
-        idx = _FILTER_INDICATOR_INDEX.get(filter_name, 0)
-        return INDICATOR_FG_LIGHT[idx]
+        return self.filter_colors_for_mode(filter_name, dark)[2]
 
     # ── Accent color (for keybinding highlights, etc.) ──
 

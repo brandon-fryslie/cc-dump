@@ -76,6 +76,27 @@ class TestNormalModeKeyDispatch:
         # Should have changed
         assert app.theme != original
 
+    async def test_keys_panel_toggle(self, app_and_pilot):
+        """Pressing '?' mounts keys panel, pressing again removes it."""
+        pilot, app = app_and_pilot
+        from cc_dump.tui.keys_panel import KeysPanel
+
+        # Initially no keys panel
+        assert not app.screen.query(KeysPanel)
+
+        await pilot.press("?")
+        await pilot.pause()
+
+        # Panel should be mounted
+        panels = app.screen.query(KeysPanel)
+        assert len(panels) == 1
+
+        await pilot.press("?")
+        await pilot.pause()
+
+        # Panel should be removed
+        assert not app.screen.query(KeysPanel)
+
     async def test_panel_toggle_8_shows_economics(self, app_and_pilot):
         """Pressing '8' toggles economics panel."""
         pilot, app = app_and_pilot
@@ -249,6 +270,7 @@ class TestKeymapCompleteness:
             "toggle_economics",
             "toggle_timeline",
             "toggle_follow",
+            "toggle_keys",
             "next_theme",
             "prev_theme",
         }

@@ -6,6 +6,7 @@ so it can be hot-reloaded without affecting the live widget instances.
 
 import cc_dump.analysis
 import cc_dump.palette
+import cc_dump.tui.input_modes
 from rich.text import Text
 
 
@@ -279,5 +280,36 @@ def render_info_panel(info: dict) -> Text:
     text.append("ANTHROPIC_BASE_URL=", style="dim")
     text.append(proxy_url, style=f"bold {p.info}")
     text.append(" claude", style="dim")
+
+    return text
+
+
+def render_keys_panel() -> Text:
+    """Render the keyboard shortcuts panel display.
+
+    // [LAW:one-source-of-truth] KEY_GROUPS from input_modes is the sole data source.
+
+    Returns:
+        Rich Text object with grouped key shortcuts
+    """
+    p = cc_dump.palette.PALETTE
+    key_groups = cc_dump.tui.input_modes.KEY_GROUPS
+
+    text = Text()
+    text.append("Keyboard Shortcuts", style=f"bold {p.info}")
+    text.append("\n")
+
+    for i, (group_title, keys) in enumerate(key_groups):
+        if i > 0:
+            text.append("\n")
+        text.append("  ")
+        text.append(group_title, style="bold")
+        text.append("\n")
+        for key_display, description in keys:
+            text.append("    ")
+            text.append("{:>15}".format(key_display), style=f"bold {p.info}")
+            text.append("  ")
+            text.append(description)
+            text.append("\n")
 
     return text

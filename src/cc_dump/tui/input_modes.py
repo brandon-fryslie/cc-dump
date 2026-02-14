@@ -90,6 +90,10 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         # Info panel
         "i": "toggle_info",
 
+        # Keys panel
+        "?": "toggle_keys",
+        "question_mark": "toggle_keys",
+
         # Tmux integration
         "c": "launch_claude",
         "z": "toggle_tmux_zoom",
@@ -160,6 +164,7 @@ FOOTER_KEYS: dict[InputMode, list[tuple[str, str]]] = {
         ("[]", "theme"),
         ("i", "info"),
         ("-=", "preset"),
+        ("?", "keys"),
         ("/", "search"),
         ("c", "claude"),
         ("z", "zoom"),
@@ -178,3 +183,46 @@ FOOTER_KEYS: dict[InputMode, list[tuple[str, str]]] = {
         ("jk", "scroll"),
     ],
 }
+
+
+# [LAW:one-source-of-truth] Display data for keys panel.
+# Format: list of (group_title, [(key_display, description), ...]) tuples.
+KEY_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
+    ("Navigation", [
+        ("g / G", "Top / bottom"),
+        ("j / k", "Scroll line"),
+        ("h / l", "Scroll column"),
+        ("^D / ^U", "Half page"),
+        ("^F / ^B", "Full page"),
+    ]),
+    ("Categories", [
+        ("1-7", "Toggle visibility"),
+        ("Q-U", "Cycle detail level"),
+        ("q-u", "Toggle expand"),
+    ]),
+    ("Panels", [
+        ("8", "Cost panel"),
+        ("9", "Timeline"),
+        ("0", "Follow mode"),
+        ("*", "Cost breakdown"),
+        ("^L", "Debug logs"),
+        ("i", "Server info"),
+        ("?", "Keys panel"),
+    ]),
+    ("Search", [
+        ("/", "Start search"),
+    ]),
+    ("Filtersets", [
+        ("= / -", "Next / prev preset"),
+        ("F1-F9", "Load preset"),
+        ("Shift+F1-F9", "Save preset"),
+    ]),
+    ("Theme", [
+        ("[ / ]", "Prev / next theme"),
+    ]),
+    ("Tmux", [
+        ("c", "Launch Claude"),
+        ("z", "Toggle zoom"),
+        ("Z", "Auto-zoom"),
+    ]),
+]

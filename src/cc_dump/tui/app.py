@@ -198,7 +198,13 @@ class CcDumpApp(App):
     # ─── Lifecycle ─────────────────────────────────────────────────────
 
     def get_system_commands(self, screen):
-        yield from super().get_system_commands(screen)
+        for cmd in super().get_system_commands(screen):
+            if cmd.title == "Keys":
+                continue  # Replace with our version
+            yield cmd
+        yield SystemCommand(
+            "Keys", "Show keyboard shortcuts", self.action_toggle_keys
+        )
         yield SystemCommand(
             "Toggle cost panel", "Economics panel", self.action_toggle_economics
         )
@@ -548,6 +554,16 @@ class CcDumpApp(App):
 
     def action_toggle_info(self):
         _actions.toggle_info(self)
+
+    def action_toggle_keys(self):
+        _actions.toggle_keys(self)
+
+    # Override Textual's built-in help panel to use ours
+    def action_show_help_panel(self):
+        _actions.toggle_keys(self)
+
+    def action_hide_help_panel(self):
+        _actions.toggle_keys(self)
 
     def action_toggle_economics_breakdown(self):
         _actions.toggle_economics_breakdown(self)

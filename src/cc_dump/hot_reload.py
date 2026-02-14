@@ -26,6 +26,7 @@ _RELOAD_ORDER = [
     "cc_dump.tui.panel_renderers",  # depends on: analysis
     "cc_dump.tui.event_handlers",  # depends on: analysis, formatting
     "cc_dump.tui.info_panel",  # depends on: palette, panel_renderers
+    "cc_dump.tui.keys_panel",  # depends on: panel_renderers
     "cc_dump.tui.widget_factory",  # depends on: analysis, rendering, panel_renderers
 ]
 

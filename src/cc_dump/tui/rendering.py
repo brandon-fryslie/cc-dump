@@ -208,7 +208,7 @@ def set_theme(textual_theme) -> None:
     Called by app on_mount, watch_theme, and after hot-reload.
     // [LAW:single-enforcer] Sole entry point for theme changes.
     """
-    global _theme_colors, ROLE_STYLES, TAG_STYLES, MSG_COLORS
+    global _theme_colors, ROLE_STYLES, TAG_STYLES, MSG_COLORS, FILTER_INDICATORS
 
     _theme_colors = build_theme_colors(textual_theme)
     tc = _theme_colors
@@ -223,6 +223,7 @@ def set_theme(textual_theme) -> None:
     p = cc_dump.palette.PALETTE
     TAG_STYLES = [p.fg_on_bg_for_mode(i, tc.dark) for i in range(min(p.count, 12))]
     MSG_COLORS = [p.msg_color_for_mode(i, tc.dark) for i in range(6)]
+    FILTER_INDICATORS = _build_filter_indicators(tc.dark)
 
 
 # ─── Visibility model constants ───────────────────────────────────────────────
@@ -327,22 +328,15 @@ TAG_STYLES: list[tuple[str, str]] = []
 MSG_COLORS: list[str] = ["cyan", "magenta", "yellow", "blue", "green", "red"]
 
 
-def _build_filter_indicators() -> dict[str, tuple[str, str]]:
-    """Filter indicators use the fixed indicator palette (excluded from theme).
+def _build_filter_indicators(dark: bool = True) -> dict[str, tuple[str, str]]:
+    """Build filter indicator (symbol, fg_color) mapping for the given mode.
 
-    // [LAW:one-source-of-truth] Filter indicator colors are intentionally
-    // independent of the Textual theme per user request.
+    // [LAW:one-source-of-truth] Filter indicator colors adapt to dark/light theme.
+    // [LAW:single-enforcer] Rebuilt by set_theme() alongside TAG_STYLES/MSG_COLORS.
     """
     p = cc_dump.palette.PALETTE
-    return {
-        "headers": ("\u258c", p.filter_color("headers")),
-        "tools": ("\u258c", p.filter_color("tools")),
-        "system": ("\u258c", p.filter_color("system")),
-        "budget": ("\u258c", p.filter_color("budget")),
-        "metadata": ("\u258c", p.filter_color("metadata")),
-        "user": ("\u258c", p.filter_color("user")),
-        "assistant": ("\u258c", p.filter_color("assistant")),
-    }
+    names = ["headers", "tools", "system", "budget", "metadata", "user", "assistant"]
+    return {name: ("\u258c", p.filter_color(name, dark)) for name in names}
 
 
 FILTER_INDICATORS = _build_filter_indicators()
