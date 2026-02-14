@@ -8,6 +8,7 @@ from cc_dump.tui.rendering import (
     _render_region_parts,
     _ensure_content_regions,
 )
+from cc_dump.segmentation import segment, SubBlockKind
 from rich.console import Console
 from textual.theme import BUILTIN_THEMES
 
@@ -29,23 +30,135 @@ def _render_to_text(renderable) -> str:
 
 
 def test_render_xml_collapsed_returns_renderable():
-    """_render_xml_collapsed returns a renderable with arrow, tag, and line count."""
+    """_render_xml_collapsed returns a renderable with arrow, tag pair, and preview."""
     _setup_theme()
-    result = _render_xml_collapsed("thinking", 47)
+    result = _render_xml_collapsed("thinking", "some inner content here")
     plain = _render_to_text(result)
     assert "▷" in plain
     assert "<thinking>" in plain
-    assert "47 lines" in plain
+    assert "</thinking>" in plain
+    assert "some inner content here" in plain
 
 
 def test_render_xml_collapsed_various_tags():
-    """Different tag names and line counts render correctly."""
+    """Different tag names and inner text render correctly."""
     _setup_theme()
-    for tag, lines in [("search_results", 100), ("x", 1), ("my-tag", 0)]:
-        result = _render_xml_collapsed(tag, lines)
+    for tag, inner in [("search_results", "result data"), ("x", "y"), ("my-tag", "")]:
+        result = _render_xml_collapsed(tag, inner)
         plain = _render_to_text(result)
         assert f"<{tag}>" in plain
-        assert f"{lines} lines" in plain
+        assert f"</{tag}>" in plain
+
+
+def test_render_xml_collapsed_truncates_long_preview():
+    """Long inner text is truncated with ellipsis."""
+    _setup_theme()
+    long_text = "A" * 100
+    result = _render_xml_collapsed("tag", long_text)
+    plain = _render_to_text(result)
+    assert "\u2026" in plain  # ellipsis
+    assert "<tag>" in plain
+    assert "</tag>" in plain
+
+
+def test_render_xml_collapsed_multiline_preview():
+    """Multi-line inner text is flattened to single line."""
+    _setup_theme()
+    inner = "Line 1\nLine 2\nLine 3"
+    result = _render_xml_collapsed("thinking", inner)
+    plain = _render_to_text(result)
+    assert "Line 1 Line 2 Line 3" in plain
+    assert "\n" not in plain.split("▷")[1].split("</thinking>")[0]
+
+
+# ─── Segmentation: XML form detection ─────────────────────────────────────
+
+
+def test_segment_form_b_tags_on_own_lines():
+    """Form B: <tag>\\ncontent\\n</tag> — tags on their own lines."""
+    text = "before\n<thinking>\ninner content\n</thinking>\nafter"
+    result = segment(text)
+    xml_blocks = [sb for sb in result.sub_blocks if sb.kind == SubBlockKind.XML_BLOCK]
+    assert len(xml_blocks) == 1
+    assert xml_blocks[0].meta.tag_name == "thinking"
+    inner = text[xml_blocks[0].meta.inner_span.start : xml_blocks[0].meta.inner_span.end]
+    assert "inner content" in inner
+
+
+def test_segment_form_a_content_after_open_tag():
+    """Form A: <tag>content after open tag\\n...\\n</tag>."""
+    text = "before\n<thinking>I need to think\nabout this\n</thinking>\nafter"
+    result = segment(text)
+    xml_blocks = [sb for sb in result.sub_blocks if sb.kind == SubBlockKind.XML_BLOCK]
+    assert len(xml_blocks) == 1
+    assert xml_blocks[0].meta.tag_name == "thinking"
+    inner = text[xml_blocks[0].meta.inner_span.start : xml_blocks[0].meta.inner_span.end]
+    assert "I need to think" in inner
+
+
+def test_segment_form_c_single_line():
+    """Form C: <tag>content</tag> — all on one line."""
+    text = "before\n<note>short note</note>\nafter"
+    result = segment(text)
+    xml_blocks = [sb for sb in result.sub_blocks if sb.kind == SubBlockKind.XML_BLOCK]
+    assert len(xml_blocks) == 1
+    assert xml_blocks[0].meta.tag_name == "note"
+    inner = text[xml_blocks[0].meta.inner_span.start : xml_blocks[0].meta.inner_span.end]
+    assert inner == "short note"
+
+
+def test_segment_form_c_with_attributes():
+    """Form C with attributes: <tag attr='val'>content</tag>."""
+    text = "<result type='text'>hello world</result>"
+    result = segment(text)
+    xml_blocks = [sb for sb in result.sub_blocks if sb.kind == SubBlockKind.XML_BLOCK]
+    assert len(xml_blocks) == 1
+    assert xml_blocks[0].meta.tag_name == "result"
+    inner = text[xml_blocks[0].meta.inner_span.start : xml_blocks[0].meta.inner_span.end]
+    assert inner == "hello world"
+
+
+def test_segment_mixed_forms():
+    """Multiple XML blocks using different forms in the same text."""
+    text = (
+        "<thinking>quick thought</thinking>\n"
+        "<details>\nmulti-line\ncontent\n</details>\n"
+        "<note>another inline note\nwith continuation\n</note>"
+    )
+    result = segment(text)
+    xml_blocks = [sb for sb in result.sub_blocks if sb.kind == SubBlockKind.XML_BLOCK]
+    assert len(xml_blocks) == 3
+    assert xml_blocks[0].meta.tag_name == "thinking"
+    assert xml_blocks[1].meta.tag_name == "details"
+    assert xml_blocks[2].meta.tag_name == "note"
+
+
+def test_segment_self_closing_excluded():
+    """Self-closing tags like <br/> are not treated as XML blocks."""
+    text = "text\n<br/>\nmore text"
+    result = segment(text)
+    xml_blocks = [sb for sb in result.sub_blocks if sb.kind == SubBlockKind.XML_BLOCK]
+    assert len(xml_blocks) == 0
+
+
+def test_segment_start_tag_span_covers_just_tag():
+    """start_tag_span covers only the <tag> part, not the whole line."""
+    text = "<thinking>content here\nmore\n</thinking>"
+    result = segment(text)
+    xml_blocks = [sb for sb in result.sub_blocks if sb.kind == SubBlockKind.XML_BLOCK]
+    assert len(xml_blocks) == 1
+    start_tag = text[xml_blocks[0].meta.start_tag_span.start : xml_blocks[0].meta.start_tag_span.end]
+    assert start_tag == "<thinking>"
+
+
+def test_segment_end_tag_span_covers_just_tag():
+    """end_tag_span covers only the </tag> part."""
+    text = "<thinking>\ncontent\n</thinking>"
+    result = segment(text)
+    xml_blocks = [sb for sb in result.sub_blocks if sb.kind == SubBlockKind.XML_BLOCK]
+    assert len(xml_blocks) == 1
+    end_tag = text[xml_blocks[0].meta.end_tag_span.start : xml_blocks[0].meta.end_tag_span.end]
+    assert end_tag == "</thinking>"
 
 
 # ─── _ensure_content_regions ───────────────────────────────────────────────
@@ -59,6 +172,24 @@ def test_ensure_content_regions_with_xml_content():
     _ensure_content_regions(block)
     assert len(block.content_regions) == 1
     assert block.content_regions[0].index == 0
+
+
+def test_ensure_content_regions_form_a():
+    """Block with Form A XML gets content_regions populated."""
+    _setup_theme()
+    text = "Some text\n<thinking>content after tag\nmore\n</thinking>\nend"
+    block = TextContentBlock(text=text, category=Category.ASSISTANT)
+    _ensure_content_regions(block)
+    assert len(block.content_regions) == 1
+
+
+def test_ensure_content_regions_form_c():
+    """Block with Form C single-line XML gets content_regions populated."""
+    _setup_theme()
+    text = "Some text\n<note>inline note</note>\nend"
+    block = TextContentBlock(text=text, category=Category.ASSISTANT)
+    _ensure_content_regions(block)
+    assert len(block.content_regions) == 1
 
 
 def test_ensure_content_regions_without_xml():
@@ -132,7 +263,7 @@ def test_region_parts_with_xml_expanded():
 
 
 def test_region_parts_xml_collapsed():
-    """Collapsed XML sub-block renders as single-line indicator."""
+    """Collapsed XML sub-block renders with preview text."""
     _setup_theme()
     text = "Intro text\n<thinking>\nLine 1\nLine 2\nLine 3\n</thinking>\nConclusion"
     block = TextContentBlock(text=text, category=Category.ASSISTANT)
@@ -144,11 +275,42 @@ def test_region_parts_xml_collapsed():
     assert len(xml_parts) == 1
     renderable, _ = xml_parts[0]
 
-    # Collapsed XML should be a renderable with ▷
+    # Collapsed XML should show arrow, both tags, and preview content
     plain = _render_to_text(renderable)
     assert "▷" in plain
     assert "<thinking>" in plain
-    assert "lines" in plain
+    assert "</thinking>" in plain
+    assert "Line 1" in plain
+
+
+def test_region_parts_form_a_collapsed():
+    """Form A collapsed: shows content preview from after open tag."""
+    _setup_theme()
+    text = "Intro\n<thinking>I need to think\nabout something\n</thinking>\nEnd"
+    block = TextContentBlock(text=text, category=Category.ASSISTANT)
+    block.content_regions = [ContentRegion(index=0, expanded=False)]
+    parts = _render_region_parts(block)
+
+    xml_parts = [(r, idx) for r, idx in parts if idx is not None]
+    assert len(xml_parts) == 1
+    plain = _render_to_text(xml_parts[0][0])
+    assert "▷" in plain
+    assert "I need to think" in plain
+
+
+def test_region_parts_form_c_collapsed():
+    """Form C collapsed: single-line XML shows content."""
+    _setup_theme()
+    text = "Intro\n<note>short note</note>\nEnd"
+    block = TextContentBlock(text=text, category=Category.ASSISTANT)
+    block.content_regions = [ContentRegion(index=0, expanded=False)]
+    parts = _render_region_parts(block)
+
+    xml_parts = [(r, idx) for r, idx in parts if idx is not None]
+    assert len(xml_parts) == 1
+    plain = _render_to_text(xml_parts[0][0])
+    assert "▷" in plain
+    assert "short note" in plain
 
 
 def test_region_parts_multiple_xml_blocks():
@@ -346,3 +508,46 @@ def test_xml_strips_have_gutter():
         segments = list(strip)
         assert len(segments) >= 2, f"Strip {i} should have at least left gutter + content"
         assert segments[0].text == "▌", f"Strip {i} should start with left gutter indicator"
+
+
+# ─── Form A/C rendering through full pipeline ─────────────────────────────
+
+
+def test_form_a_renders_as_xml_block():
+    """Form A content renders with syntax-highlighted tags (not backtick-wrapped)."""
+    _setup_theme()
+    text = "<thinking>I need to think\nabout this problem\n</thinking>"
+    block = TextContentBlock(text=text, category=Category.ASSISTANT)
+
+    console = Console()
+    filters = {"assistant": ALWAYS_VISIBLE}
+
+    strips, _ = render_turn_to_strips(
+        blocks=[block],
+        filters=filters,
+        console=console,
+        width=80,
+    )
+
+    # Should have content_regions (detected as XML)
+    assert len(block.content_regions) == 1
+
+
+def test_form_c_renders_as_xml_block():
+    """Form C single-line renders with syntax-highlighted tags."""
+    _setup_theme()
+    text = "<note>short note</note>"
+    block = TextContentBlock(text=text, category=Category.ASSISTANT)
+
+    console = Console()
+    filters = {"assistant": ALWAYS_VISIBLE}
+
+    strips, _ = render_turn_to_strips(
+        blocks=[block],
+        filters=filters,
+        console=console,
+        width=80,
+    )
+
+    # Should have content_regions (detected as XML)
+    assert len(block.content_regions) == 1

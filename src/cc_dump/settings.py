@@ -79,6 +79,18 @@ def save_filterset(slot: str, filters: dict[str, VisState]) -> None:
     save_settings(data)
 
 
+def save_theme(theme_name: str) -> None:
+    """Persist theme choice to settings."""
+    data = load_settings()
+    data["theme"] = theme_name
+    save_settings(data)
+
+
+def load_theme() -> Optional[str]:
+    """Load saved theme name, or None if unset."""
+    return load_settings().get("theme")
+
+
 def get_filterset(slot: str) -> Optional[dict[str, VisState]]:
     """Load a single filterset slot, returning dict[str, VisState] or None if unset."""
     filtersets = load_filtersets()

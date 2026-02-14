@@ -312,10 +312,13 @@ class HARRecordingSubscriber:
     This is a DirectSubscriber-style component that runs inline in the router
     thread. It writes each complete HAR entry immediately to disk, so the file
     is always valid HAR JSON and close() is instant.
+
+    File creation is deferred until the first entry is committed, so sessions
+    with no API traffic produce no file at all.
     """
 
     def __init__(self, path: str, session_id: str):
-        """Initialize HAR recorder and open file with valid empty HAR.
+        """Initialize HAR recorder. File is NOT created until first entry.
 
         Args:
             path: Output file path for HAR file
@@ -332,10 +335,19 @@ class HARRecordingSubscriber:
         self.response_events: list[dict[str, Any]] = []
         self.request_start_time = None
 
-        # Open file and write valid empty HAR structure
+        # Diagnostic counters for investigation if something goes wrong
+        self._events_received: dict[str, int] = {}
+
+        # Lazy file init — _file is None until first entry
+        self._file = None
+        self._entries_end_pos = 0
+        self._first_entry = True
+        self._entry_count = 0
+
+    def _open_file(self) -> None:
+        """Create the HAR file and write the header. Called on first entry only."""
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
 
-        # Build HAR header through the opening bracket of entries array
         har_header = {
             "log": {
                 "version": "1.2",
@@ -344,17 +356,13 @@ class HARRecordingSubscriber:
             }
         }
         header_json = json.dumps(har_header, ensure_ascii=False)
-        # Strip trailing ]}} to get preamble through opening [
-        preamble = header_json[:-3]  # Remove ]}}
+        preamble = header_json[:-3]  # Strip ]}} to get preamble through opening [
 
         self._file = open(self.path, "w", encoding="utf-8")
         self._file.write(preamble)
         self._entries_end_pos = self._file.tell()
         self._file.write("\n]}}")
         self._file.flush()
-
-        self._first_entry = True
-        self._entry_count = 0
 
     def on_event(self, event: PipelineEvent) -> None:
         """Handle an event from the router.
@@ -368,6 +376,8 @@ class HARRecordingSubscriber:
         Errors are logged but never crash the router.
         """
         try:
+            kind_name = event.kind.name
+            self._events_received[kind_name] = self._events_received.get(kind_name, 0) + 1
             self._handle(event)
         except Exception as e:
             import traceback
@@ -407,6 +417,10 @@ class HARRecordingSubscriber:
         """Reconstruct complete message and write HAR entry to disk immediately."""
         if not self.pending_request or not self.response_events:
             return
+
+        # Lazy file creation — only when we have a real entry to write
+        if self._file is None:
+            self._open_file()
 
         try:
             # Reconstruct complete message from events
@@ -487,9 +501,48 @@ class HARRecordingSubscriber:
         self.request_start_time = None
 
     def close(self) -> None:
-        """Close file handle - file is already valid HAR."""
+        """Close file handle and enforce non-empty invariant.
+
+        If no entries were written, the file is deleted (if it exists) and a
+        diagnostic message is emitted to stderr for investigation.
+        """
+        if self._file is None:
+            # File was never opened — no entries, no file. Expected path for
+            # sessions with no API traffic. Log quietly for diagnostics.
+            if self._events_received:
+                sys.stderr.write(
+                    f"[har] WARN: session {self.session_id} received events "
+                    f"but wrote 0 HAR entries. Events: {self._events_received}. "
+                    f"No file created at {self.path}\n"
+                )
+                sys.stderr.flush()
+            return
+
         try:
             self._file.close()
         except Exception as e:
             sys.stderr.write(f"[har] error closing file: {e}\n")
             sys.stderr.flush()
+
+        # Belt-and-suspenders: if file was opened but has 0 entries, something
+        # is broken — the lazy init should prevent this. Delete and scream.
+        if self._entry_count == 0:
+            sys.stderr.write(
+                f"\n{'='*72}\n"
+                f"[har] FATAL: empty HAR file detected — deleting garbage\n"
+                f"  path:       {self.path}\n"
+                f"  session_id: {self.session_id}\n"
+                f"  entries:    {self._entry_count}\n"
+                f"  events:     {self._events_received}\n"
+                f"  This should never happen with lazy file init.\n"
+                f"  If you see this, the bug is in _commit_entry or _open_file.\n"
+                f"{'='*72}\n\n"
+            )
+            sys.stderr.flush()
+            try:
+                os.unlink(self.path)
+                sys.stderr.write(f"[har] deleted empty file: {self.path}\n")
+                sys.stderr.flush()
+            except OSError as e:
+                sys.stderr.write(f"[har] failed to delete {self.path}: {e}\n")
+                sys.stderr.flush()

@@ -83,9 +83,9 @@ class SegmentResult:
 # Fence open: optional indent, 3+ backticks or tildes, optional info string
 FENCE_OPEN_RE = re.compile(r"^([ \t]*)((`{3,})|(~{3,}))(.*)", re.MULTILINE)
 
-# XML open tag on its own line (no content after tag on same line)
+# XML open tag at line start (may have content after > on same line)
 XML_OPEN_RE = re.compile(
-    r"^[ \t]*<([A-Za-z_][\w:.\-]*)(\s[^>]*)?>[ \t]*$", re.MULTILINE
+    r"^[ \t]*<([A-Za-z_][\w:.\-]*)(\s[^>]*)?>", re.MULTILINE
 )
 
 # Match tags NOT already inside backticks — for wrapping in backticks
@@ -201,7 +201,13 @@ def _process_fence(
 def _try_xml_block(
     text: str, m: re.Match, errors: list[ParseError]
 ) -> SubBlock | None:
-    """Try to parse an XML block from an opening tag match. Returns None on failure."""
+    """Try to parse an XML block from an opening tag match. Returns None on failure.
+
+    Handles three forms:
+      Form A: <tag>content after open tag\\n...\\n</tag>
+      Form B: <tag>\\ncontent\\n</tag>  (tags on own lines)
+      Form C: <tag>content</tag>  (single line)
+    """
     stripped = text[m.start() : m.end()].lstrip()
 
     # Exclude comments, processing instructions, CDATA, closing tags, self-closing
@@ -215,35 +221,64 @@ def _try_xml_block(
         return None
 
     tag_name = m.group(1)
-    stl_end = _end_of_line(text, m.start())
+    tag_end = m.end()  # position right after '>'
+    close_str = "</" + tag_name + ">"
 
-    # Search for </tag_name> at line start — through ALL remaining text (opaque span)
-    end_re = re.compile(
+    # Pass 1: Same-line close tag (Form C: <tag>content</tag>)
+    line_end = text.find("\n", m.start())
+    if line_end == -1:
+        line_end = len(text)
+    same_line_rest = text[tag_end:line_end]
+    close_pos = same_line_rest.find(close_str)
+    if close_pos != -1:
+        abs_close_start = tag_end + close_pos
+        abs_close_end = abs_close_start + len(close_str)
+        block_end = _end_of_line(text, abs_close_start)
+        return SubBlock(
+            SubBlockKind.XML_BLOCK,
+            Span(m.start(), block_end),
+            XmlBlockMeta(
+                tag_name=tag_name,
+                start_tag_span=Span(m.start(), tag_end),
+                end_tag_span=Span(abs_close_start, abs_close_end),
+                inner_span=Span(tag_end, abs_close_start),
+            ),
+        )
+
+    # Pass 2: Multi-line close tag (Forms A & B)
+    # Try strict first: </tag> on its own line
+    end_re_strict = re.compile(
         r"^[ \t]*</" + re.escape(tag_name) + r">[ \t]*$", re.MULTILINE
     )
-    em = end_re.search(text, stl_end)
+    em = end_re_strict.search(text, tag_end)
+    if not em:
+        # Fallback: </tag> anywhere after the open tag
+        end_re_loose = re.compile(r"</" + re.escape(tag_name) + r">")
+        em = end_re_loose.search(text, tag_end)
 
     if em:
+        close_end = em.start() + len(close_str)
         block_end = _end_of_line(text, em.start())
         return SubBlock(
             SubBlockKind.XML_BLOCK,
             Span(m.start(), block_end),
             XmlBlockMeta(
                 tag_name=tag_name,
-                start_tag_span=Span(m.start(), stl_end),
-                end_tag_span=Span(em.start(), block_end),
-                inner_span=Span(stl_end, em.start()),
+                start_tag_span=Span(m.start(), tag_end),
+                end_tag_span=Span(em.start(), close_end),
+                inner_span=Span(tag_end, em.start()),
             ),
         )
-    else:
-        errors.append(
-            ParseError(
-                ParseErrorKind.UNCLOSED_XML,
-                Span(m.start(), stl_end),
-                f"Unclosed <{tag_name}> tag",
-            )
+
+    stl_end = _end_of_line(text, m.start())
+    errors.append(
+        ParseError(
+            ParseErrorKind.UNCLOSED_XML,
+            Span(m.start(), stl_end),
+            f"Unclosed <{tag_name}> tag",
         )
-        return None
+    )
+    return None
 
 
 def _fill_md_gaps(

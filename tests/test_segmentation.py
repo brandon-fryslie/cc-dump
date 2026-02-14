@@ -108,7 +108,7 @@ class TestXmlBlock:
 
         xb = result.sub_blocks[0]
         assert xb.meta.tag_name == "thinking"
-        assert inner_text(text, xb) == "I need to consider this.\n"
+        assert inner_text(text, xb) == "\nI need to consider this.\n"
 
     def test_system_reminder(self):
         text = "<system-reminder>\nSome reminder text.\n</system-reminder>"

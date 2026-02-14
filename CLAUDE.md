@@ -58,7 +58,7 @@ just reinstall                    # after structural changes
 **Event flow:**
 ```
 proxy.py (HTTP intercept, emits events)
-  → router.py (fan-out: QueueSubscriber for TUI, DirectSubscriber for SQLite, DirectSubscriber for HAR)
+  → router.py (fan-out: QueueSubscriber for TUI, DirectSubscriber for analytics, DirectSubscriber for HAR)
     → event_handlers.py (drains queue, calls formatting)
       → formatting.py (API JSON → FormattedBlock dataclasses)
         → widget_factory.py (stores TurnData with pre-rendered strips)
@@ -72,29 +72,35 @@ proxy.py (HTTP intercept, emits events)
 
 **Virtual rendering:** `ConversationView` uses Textual's Line API. Completed turns are stored as `TurnData` (blocks + pre-rendered strips). `render_line(y)` uses binary search over turns — O(log n) lookup, O(viewport) rendering.
 
-**Database:** SQLite with content-addressed blob storage. Large strings (≥512 bytes) are extracted to a `blobs` table keyed by SHA256, replaced with `{"__blob__": hash}` references. DB is a derived index — token counts and tool statistics are queried from it directly. In principle, SQLite can be rebuilt by replaying HAR files.
+**Database:** `analytics_store.py` — SQLite with content-addressed blob storage. Large strings (≥512 bytes) are extracted to a `blobs` table keyed by SHA256, replaced with `{"__blob__": hash}` references. DB is a derived index — token counts and tool statistics are queried from it directly. In principle, SQLite can be rebuilt by replaying HAR files.
 
 ## Hot-Reload System
 
 See `HOT_RELOAD_ARCHITECTURE.md` for full details. The critical rule:
 
-**Stable boundary modules** (`proxy.py`, `cli.py`, `tui/app.py`, `tui/widgets.py`, `hot_reload.py`, `har_recorder.py`, `har_replayer.py`, `sessions.py`) must use `import cc_dump.module` — never `from cc_dump.module import func`. Direct imports create stale references that won't update on reload.
-
-**Reloadable modules** (`formatting.py`, `tui/rendering.py`, `tui/widget_factory.py`, `tui/event_handlers.py`, `tui/panel_renderers.py`, `colors.py`, `analysis.py`, `palette.py`, `router.py`, `tui/protocols.py`, `tui/custom_footer.py`) can be safely reloaded in dependency order.
+**Stable boundary modules** must use `import cc_dump.module` — never `from cc_dump.module import func`. Direct imports create stale references that won't update on reload.
 
 **Any file change triggers full reload + widget replacement.** This is intentional — the reload is fast and eliminates partial-reload complexity.
+
+To discover which modules are stable vs reloadable, check `hot_reload.py`:
+```bash
+grep -A 20 '_RELOAD_ORDER' src/cc_dump/hot_reload.py    # reloadable modules, in dependency order
+grep -A 10 '_EXCLUDED_FILES' src/cc_dump/hot_reload.py   # stable boundaries (never reload)
+grep -A 10 '_EXCLUDED_MODULES' src/cc_dump/hot_reload.py # stable TUI modules (never reload)
+```
 
 When adding new modules, classify them as stable or reloadable and follow the corresponding import pattern.
 
 ## Key Types
 
-- `FormattedBlock` hierarchy in `formatting.py` — the IR between formatting and rendering. Subclasses: `HeaderBlock`, `MetadataBlock`, `TrackedContentBlock`, `ToolUseBlock`, `ToolResultBlock`, `TextDeltaBlock`, `StreamInfoBlock`, `TurnBudgetBlock`, etc.
+- `FormattedBlock` hierarchy in `formatting.py` — the IR between formatting and rendering. Discover subclasses: `grep 'class.*FormattedBlock' src/cc_dump/formatting.py`
   - `Level` enum (IntEnum): EXISTENCE=1, SUMMARY=2, FULL=3 — visibility levels
-  - `Category` enum: HEADERS, USER, ASSISTANT, TOOLS, SYSTEM, METADATA, BUDGET — content groupings
+  - `Category` enum — content groupings. Discover values: `grep 'class Category' -A 20 src/cc_dump/formatting.py`
   - `expanded: bool | None` field — per-block expansion override (None = use level default)
   - `category: Category | None` field — category assignment (None = use BLOCK_CATEGORY static mapping)
 - `TurnData` in `widget_factory.py` — completed turn: list of blocks + pre-rendered Rich strips.
 - `EventRouter` in `router.py` — fan-out with pluggable `QueueSubscriber` / `DirectSubscriber`.
+- Event types in `event_types.py` — dataclasses for proxy→router communication. Discover: `grep 'class.*:' src/cc_dump/event_types.py`
 
 ## 3-Level Visibility System
 
@@ -102,14 +108,14 @@ When adding new modules, classify them as stable or reloadable and follow the co
 
 **Architecture:** Each category has 3 levels (EXISTENCE/SUMMARY/FULL) × 2 states (collapsed/expanded) = 6 visual representations.
 
-**Rendering pipeline:**
-1. `rendering.py:render_turn_to_strips()` — two-tier dispatch:
-   - Check `BLOCK_STATE_RENDERERS[(type_name, level, expanded)]` for custom renderer
-   - Fallback: `BLOCK_RENDERERS[type_name]` (full content) + generic truncation to `TRUNCATION_LIMITS[(level, expanded)]`
-2. Category resolved via `get_category(block)` → checks `block.category` then `BLOCK_CATEGORY[type_name]`
-3. Visibility resolved via `_resolve_visibility(block, filters)` → returns `(level, expanded)` tuple
-4. Generic truncation: post-render line limiting with `_make_collapse_indicator()` for truncated blocks
-5. `block._expandable` flag set when block exceeds line limit (enables click-to-expand)
+**Rendering pipeline:** `rendering.py:render_turn_to_strips()` is the entry point. Key concepts:
+1. **Two-tier dispatch:** state-specific renderers (keyed by block type + level + expanded) with fallback to generic block renderers + truncation limits
+2. **Category resolution:** `block.category` field, falling back to static mapping
+3. **Visibility resolution:** returns `(level, expanded)` tuple per block
+4. **Generic truncation:** post-render line limiting with collapse indicators for truncated blocks
+5. **Expandability:** `block._expandable` flag set when block exceeds line limit (enables click-to-expand)
+
+Discover the dispatch tables: `grep 'BLOCK_.*RENDERERS\|TRUNCATION_LIMITS\|BLOCK_CATEGORY' src/cc_dump/tui/rendering.py`
 
 **Tool pre-pass:** At tools level ≤ SUMMARY, `collapse_tool_runs()` creates `ToolUseSummaryBlock` from consecutive tool use/result pairs.
 

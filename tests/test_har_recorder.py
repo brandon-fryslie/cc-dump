@@ -339,23 +339,20 @@ def test_reconstruct_message_malformed_tool_json():
 
 
 def test_har_subscriber_initialization(tmp_path):
-    """Subscriber initializes with correct structure and valid empty HAR file."""
+    """Subscriber initializes without creating a file (lazy init)."""
     har_path = tmp_path / "test.har"
     subscriber = HARRecordingSubscriber(str(har_path), "session_123")
 
     assert subscriber.path == str(har_path)
     assert subscriber.session_id == "session_123"
 
-    # File should exist and be valid HAR even before close
-    assert har_path.exists()
-    with open(har_path, "r") as f:
-        har = json.load(f)
-
-    assert har["log"]["version"] == "1.2"
-    assert har["log"]["creator"]["name"] == "cc-dump"
-    assert har["log"]["entries"] == []
+    # File should NOT exist until first entry is committed
+    assert not har_path.exists()
 
     subscriber.close()
+
+    # File should still not exist after closing with 0 entries
+    assert not har_path.exists()
 
 
 def test_har_subscriber_accumulates_events(tmp_path):
@@ -685,11 +682,12 @@ def test_har_subscriber_incomplete_stream(tmp_path):
     # Close should still work
     subscriber.close()
 
-    # File should be written with zero entries
-    assert har_path.exists()
-    with open(har_path, "r") as f:
-        har = json.load(f)
-    assert len(har["log"]["entries"]) == 0
+    # No file should exist — no complete entries were committed
+    assert not har_path.exists()
+
+    # But events WERE received — diagnostic counters should reflect this
+    assert subscriber._events_received["REQUEST_HEADERS"] == 1
+    assert subscriber._events_received["RESPONSE_EVENT"] == 1
 
 
 def test_har_subscriber_large_content(tmp_path):
@@ -907,3 +905,33 @@ def test_har_subscriber_progressive_saving(tmp_path):
     with open(har_path, "r") as f:
         har = json.load(f)
     assert len(har["log"]["entries"]) == 2
+
+
+def test_har_subscriber_close_deletes_empty_file_if_opened(tmp_path, capsys):
+    """If file was somehow opened but has 0 entries, close() deletes it and logs FATAL."""
+    har_path = tmp_path / "test.har"
+    subscriber = HARRecordingSubscriber(str(har_path), "session_123")
+
+    # Force-open the file without committing any entries (simulates a bug)
+    subscriber._open_file()
+    assert har_path.exists()
+
+    subscriber.close()
+
+    # File should be deleted
+    assert not har_path.exists()
+
+    # FATAL message should be in stderr
+    captured = capsys.readouterr()
+    assert "FATAL" in captured.err
+    assert "empty HAR file" in captured.err
+    assert "session_123" in captured.err
+
+
+def test_har_subscriber_no_file_no_events(tmp_path):
+    """Session with zero events creates no file and no warnings."""
+    har_path = tmp_path / "test.har"
+    subscriber = HARRecordingSubscriber(str(har_path), "session_123")
+    subscriber.close()
+    assert not har_path.exists()
+    assert subscriber._events_received == {}

@@ -1531,60 +1531,6 @@ class TimelinePanel(Static):
         self._refresh_display([])
 
 
-class FilterStatusBar(Static):
-    """Status bar showing which filters are currently active with colored indicators."""
-
-    def __init__(self):
-        # Initialize with placeholder text so widget is visible
-        super().__init__("Active: (initializing...)")
-
-    def update_filters(self, filters: dict):
-        """Update the status bar to show active filters with visibility indicators.
-
-        Args:
-            filters: Dict with filter states (category name -> VisState)
-        """
-        # Icon shows high-level visibility status (not expanded state)
-        def get_icon(vis):
-            if not vis.visible:
-                return "\u00b7"  # · Hidden
-            elif not vis.full:
-                return "\u25d0"  # ◐ Summary
-            else:
-                return "\u25cf"  # ● Full
-
-        p = cc_dump.palette.PALETTE
-        categories = [
-            ("1", "User", "user"),
-            ("2", "Assistant", "assistant"),
-            ("3", "Tools", "tools"),
-            ("4", "System", "system"),
-            ("5", "Budget", "budget"),
-            ("6", "Metadata", "metadata"),
-            ("7", "Headers", "headers"),
-        ]
-
-        text = Text()
-        for i, (key, name, cat_name) in enumerate(categories):
-            vis = filters.get(cat_name, cc_dump.formatting.ALWAYS_VISIBLE)
-            color = p.filter_color(cat_name)
-            icon = get_icon(vis)
-            if i > 0:
-                text.append(" ", style="dim")
-            text.append(icon, style=f"bold {color}")
-            text.append(f"{name}", style=color if vis.visible else "dim")
-
-        self.update(text)
-
-    def get_state(self) -> dict:
-        """Extract state for transfer to a new instance."""
-        return {}
-
-    def restore_state(self, state: dict):
-        """Restore state from a previous instance."""
-        pass
-
-
 class LogsPanel(RichLog):
     """Panel showing cc-dump application logs (debug, errors, internal messages)."""
 

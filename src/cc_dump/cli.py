@@ -165,7 +165,7 @@ def main():
             record_path, session_id
         )
         router.add_subscriber(DirectSubscriber(har_recorder.on_event))
-        print(f"   Recording: {record_path}")
+        print(f"   Recording: {record_path} (created on first API call)")
     else:
         print("   Recording: disabled (--no-record)")
 
