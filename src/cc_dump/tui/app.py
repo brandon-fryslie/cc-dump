@@ -733,7 +733,7 @@ class CcDumpApp(App):
         if conv is not None:
             conv._block_strip_cache.clear()
             conv._line_cache.clear()
-            conv.rerender(self.active_filters)
+            conv.rerender(self.active_filters, force=True)
 
     # ─── Key dispatch ──────────────────────────────────────────────────
 

@@ -660,7 +660,7 @@ class ConversationView(ScrollView):
 
     # ─────────────────────────────────────────────────────────────────────────
 
-    def rerender(self, filters: dict, search_ctx=None):
+    def rerender(self, filters: dict, search_ctx=None, force: bool = False):
         """Re-render affected turns in place. Preserves scroll position.
 
         Uses stored block-level anchor (set on user scroll) to maintain
@@ -669,6 +669,8 @@ class ConversationView(ScrollView):
         Args:
             filters: Current filter state (category name -> Level)
             search_ctx: Optional SearchContext for highlighting matches
+            force: Force re-render even if filter snapshot hasn't changed
+                   (e.g. theme change rebuilds gutter colors).
         """
         self._last_filters = filters
         self._last_search_ctx = search_ctx  # Store for lazy rerenders
@@ -683,8 +685,8 @@ class ConversationView(ScrollView):
         # Viewport-only re-rendering: only process visible turns + buffer
         vp_start, vp_end = self._viewport_turn_range()
 
-        # When search is active, force re-render all viewport turns
-        force = search_ctx is not None
+        # Force re-render when search is active or caller requests it (theme change)
+        force = force or search_ctx is not None
 
         first_changed = None
         for idx, td in enumerate(self._turns):
@@ -710,7 +712,7 @@ class ConversationView(ScrollView):
                 snapshot = {
                     k: filters.get(k, cc_dump.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
                 }
-                if snapshot != td._last_filter_snapshot:
+                if force or snapshot != td._last_filter_snapshot:
                     td._pending_filter_snapshot = snapshot
 
         if first_changed is not None:
