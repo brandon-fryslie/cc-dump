@@ -109,6 +109,7 @@ class CcDumpApp(App):
         self._closing = False
         self._replacing_widgets = False
         self._markdown_theme_pushed = False
+        self._mouse_leave_timer = None
 
         import cc_dump.palette
 
@@ -264,6 +265,10 @@ class CcDumpApp(App):
         yield cc_dump.tui.custom_footer.StatusFooter()
 
     def on_mount(self):
+        # Save tmux mouse state before we start toggling it
+        if self._tmux_controller is not None:
+            self._tmux_controller.save_mouse_state()
+
         # [LAW:one-source-of-truth] Restore persisted theme choice
         saved = cc_dump.settings.load_theme()
         if saved and saved in self.available_themes:
@@ -313,6 +318,9 @@ class CcDumpApp(App):
             self._process_replay_data()
 
     def on_unmount(self):
+        if self._mouse_leave_timer is not None:
+            self._mouse_leave_timer.stop()
+            self._mouse_leave_timer = None
         self._app_log("INFO", "cc-dump TUI shutting down")
         self._closing = True
         self._router.stop()

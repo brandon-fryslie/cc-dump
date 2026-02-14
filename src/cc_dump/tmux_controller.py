@@ -10,6 +10,7 @@ All libtmux usage is lazy-imported and wrapped in try/except.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from enum import Enum, auto
 from typing import TYPE_CHECKING
@@ -89,6 +90,8 @@ class TmuxController:
         self.auto_zoom = True
         self._is_zoomed = False
         self._port: int | None = None
+        self._original_mouse: str | None = None  # saved setting for restore
+        self._mouse_is_on: bool | None = None  # idempotency guard
         self._server: libtmux.Server | None = None
         self._session: libtmux.Session | None = None
         self._our_pane: libtmux.Pane | None = None
@@ -229,8 +232,51 @@ class TmuxController:
         if action is not None:
             action()
 
+    def save_mouse_state(self) -> None:
+        """Capture current tmux mouse option via `show-option -gv mouse`."""
+        try:
+            result = subprocess.run(
+                ["tmux", "show-option", "-gv", "mouse"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            self._original_mouse = result.stdout.strip() or "off"
+        except Exception as e:
+            _log("save_mouse_state error: {}".format(e))
+            self._original_mouse = "on"  # safe default
+
+    def set_mouse(self, on: bool) -> None:
+        """Idempotent tmux mouse toggle via `set-option -g mouse on/off`."""
+        if self._mouse_is_on is on:
+            return
+        value = "on" if on else "off"
+        try:
+            subprocess.run(
+                ["tmux", "set-option", "-g", "mouse", value],
+                capture_output=True,
+                timeout=2,
+            )
+            self._mouse_is_on = on
+        except Exception as e:
+            _log("set_mouse error: {}".format(e))
+
+    def restore_mouse_state(self) -> None:
+        """Restore saved setting via `set-option -g mouse <original>`."""
+        if self._original_mouse is None:
+            return
+        try:
+            subprocess.run(
+                ["tmux", "set-option", "-g", "mouse", self._original_mouse],
+                capture_output=True,
+                timeout=2,
+            )
+        except Exception as e:
+            _log("restore_mouse_state error: {}".format(e))
+
     def cleanup(self) -> None:
-        """Unzoom on shutdown. Does NOT kill the claude pane."""
+        """Restore mouse state and unzoom on shutdown. Does NOT kill the claude pane."""
+        self.restore_mouse_state()
         self.unzoom()
 
 
