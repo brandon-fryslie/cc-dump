@@ -527,6 +527,12 @@ class CcDumpApp(App):
     def action_apply_filterset(self, slot: str):
         _actions.apply_filterset(self, slot)
 
+    def action_next_filterset(self):
+        _actions.next_filterset(self)
+
+    def action_prev_filterset(self):
+        _actions.prev_filterset(self)
+
     # Panel toggles
     def action_toggle_economics(self):
         _actions.toggle_economics(self)

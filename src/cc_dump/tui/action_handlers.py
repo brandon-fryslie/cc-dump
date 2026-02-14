@@ -12,6 +12,9 @@ import cc_dump.settings
 from cc_dump.settings import DEFAULT_FILTERSETS
 import cc_dump.tui.rendering
 
+# [LAW:one-source-of-truth] Ordered slot list for cycling (skips F3)
+_FILTERSET_SLOTS = ["1", "2", "4", "5", "6", "7", "8", "9"]
+
 # [LAW:one-source-of-truth] Names for built-in filterset slots
 _FILTERSET_NAMES: dict[str, str] = {
     "1": "Conversation",
@@ -116,6 +119,22 @@ def toggle_info(app) -> None:
 
 
 # ─── Filterset actions ─────────────────────────────────────────────────
+
+
+def _cycle_filterset(app, direction: int) -> None:
+    """Cycle through filterset slots. direction: +1 forward, -1 backward."""
+    current = app._active_filterset_slot
+    idx = _FILTERSET_SLOTS.index(current) if current in _FILTERSET_SLOTS else -1
+    next_idx = (idx + direction) % len(_FILTERSET_SLOTS)
+    apply_filterset(app, _FILTERSET_SLOTS[next_idx])
+
+
+def next_filterset(app) -> None:
+    _cycle_filterset(app, 1)
+
+
+def prev_filterset(app) -> None:
+    _cycle_filterset(app, -1)
 
 
 def save_filterset(app, slot: str) -> None:
