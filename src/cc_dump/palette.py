@@ -48,17 +48,21 @@ def _angular_distance(a: float, b: float) -> float:
 
 # ── Filter indicator index ────────────────────────────────────────────
 # Stable mapping: filter name → index (for golden-angle hue generation).
+# The 7 main gutter/footer categories MUST occupy consecutive indices 0-6
+# so golden-angle spacing keeps them maximally separated (min gap 32.5°).
+# Non-consecutive indices cluster — e.g. indices {0,1,2,3,4,8,9} have
+# only 20° minimum gap because index 8 lands 20° from index 0.
 _FILTER_INDICATOR_INDEX: dict[str, int] = {
     "headers": 0,
     "tools": 1,
     "system": 2,
     "budget": 3,
     "metadata": 4,
-    "stats": 5,
-    "economics": 6,
-    "timeline": 7,
-    "user": 8,
-    "assistant": 9,
+    "user": 5,
+    "assistant": 6,
+    "stats": 7,
+    "economics": 8,
+    "timeline": 9,
 }
 
 

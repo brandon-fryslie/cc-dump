@@ -62,9 +62,25 @@ Generate 10 hues by stepping from the seed at the golden angle (137.508°):
 hue[i] = (seed + i * 137.508°) mod 360°
 ```
 
-The golden angle is the optimal irrational rotation — it maximizes the minimum angular distance between any N consecutively assigned hues. This means `hue[0]` and `hue[1]` are never adjacent on the wheel, and even the first 3-4 hues are well-separated.
+The golden angle is the optimal irrational rotation — it maximizes the minimum angular distance between any N **consecutively** assigned hues. This means `hue[0]` and `hue[1]` are never adjacent on the wheel, and even the first 3-4 hues are well-separated.
 
 Each filter category maps to a fixed index (0-9) in this sequence via `_FILTER_INDICATOR_INDEX`, so the mapping is stable — "headers" is always index 0, "tools" is always index 1, etc.
+
+#### Index Assignment Matters
+
+The golden angle's separation guarantee only holds for **consecutive** indices. If you cherry-pick non-consecutive indices, hues can cluster. With 10 hues and indices 0-9, the offsets from seed are:
+
+```
+idx 0:   0.0°    idx 5: 327.5°
+idx 1: 137.5°    idx 6: 105.0°
+idx 2: 275.0°    idx 7: 242.6°
+idx 3:  52.5°    idx 8:  20.1°
+idx 4: 190.0°    idx 9: 157.6°
+```
+
+Notice: index 0 (0°) and index 8 (20.1°) are only **20° apart**. If the 7 main categories used indices {0,1,2,3,4,8,9}, the minimum hue gap would be ~20° — nearly indistinguishable on many monitors.
+
+The fix: assign the 7 main gutter/footer categories to consecutive indices 0-6. Their sorted hues are 0°, 52.5°, 105°, 137.5°, 190°, 275°, 327.5° with a minimum gap of **32.5°** — a 63% improvement. The less-prominent action items (stats, economics, timeline) get indices 7-9.
 
 ### Step 4: Derive Lightness from Theme Luminance Range
 
@@ -254,6 +270,12 @@ Deriving from actual bg/surface/fg luminances handles the full continuum natural
 ### ANSI Themes Are a Special Case
 
 ANSI themes can't tell you their actual colors at runtime — the terminal decides. The pragmatic solution is: detect the unknowable case, assume dark mode (TUI users overwhelmingly use dark terminals), and use conservative fallback values. Trying to probe the terminal's actual colors is unreliable and platform-dependent.
+
+### Golden Angle Only Works for Consecutive Indices
+
+The golden angle guarantees maximum minimum separation for N **consecutive** indices {0, 1, ..., N-1}. If you assign your N categories to non-consecutive indices (e.g., {0,1,2,3,4,8,9} for 7 categories out of 10), the guarantee breaks. Index 0 lands at 0° and index 8 at 20.1° — nearly identical hues despite being "different" palette entries.
+
+The fix is trivial but easy to miss: always assign the categories you need to distinguish to consecutive indices. Less-important items get the leftover indices. This improved minimum separation from 20° to 32.5° for our 7 main categories.
 
 ### Surface Proximity Matters
 
