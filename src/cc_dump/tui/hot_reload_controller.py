@@ -14,6 +14,7 @@ import cc_dump.tui.rendering
 import cc_dump.tui.search
 import cc_dump.tui.widget_factory
 import cc_dump.tui.info_panel
+import cc_dump.tui.custom_footer
 
 _DEBOUNCE_S = 2.0  # Quiet period before reload fires
 
@@ -121,6 +122,7 @@ async def _replace_all_widgets_inner(app) -> None:
     old_timeline = app._get_timeline()
     old_logs = app._get_logs()
     old_info = app._get_info()
+    old_footer = app._get_footer()
 
     if old_conv is None:
         return  # Widgets already missing — nothing to replace
@@ -169,6 +171,8 @@ async def _replace_all_widgets_inner(app) -> None:
         await old_logs.remove()
     if old_info is not None:
         await old_info.remove()
+    if old_footer is not None:
+        await old_footer.remove()
 
     # 4. Assign IDs and mount new widgets
     new_conv.id = app._conv_id
@@ -191,6 +195,11 @@ async def _replace_all_widgets_inner(app) -> None:
     await app.mount(new_timeline, after=new_economics)
     await app.mount(new_logs, after=new_timeline)
     await app.mount(new_info, after=new_logs)
+
+    # StatusFooter is stateless — create fresh and push current visibility state
+    new_footer = cc_dump.tui.custom_footer.StatusFooter()
+    await app.mount(new_footer, after=new_info)
+    app._update_footer_state()
 
     # 5. Re-render with current filters
     new_conv.rerender(app.active_filters)

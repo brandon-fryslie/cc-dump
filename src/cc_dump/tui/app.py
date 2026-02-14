@@ -18,17 +18,18 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Header
 
-from cc_dump.tui.custom_footer import StatusFooter
 from cc_dump.tui.category_config import CATEGORY_CONFIG
 
 # Module-level imports for hot-reload (never use `from` for these)
 import cc_dump.formatting
+import cc_dump.settings
 import cc_dump.tui.rendering
 import cc_dump.tui.widget_factory
 import cc_dump.tui.event_handlers
 import cc_dump.tui.search
 import cc_dump.tui.input_modes
 import cc_dump.tui.info_panel
+import cc_dump.tui.custom_footer
 
 # Extracted controller modules (not hot-reloadable, safe for `from` imports)
 from cc_dump.tui import action_handlers as _actions
@@ -174,7 +175,7 @@ class CcDumpApp(App):
 
     def _get_footer(self):
         try:
-            return self.query_one(StatusFooter)
+            return self.query_one(cc_dump.tui.custom_footer.StatusFooter)
         except NoMatches:
             return None
 
@@ -249,9 +250,13 @@ class CcDumpApp(App):
         search_bar.id = self._search_bar_id
         yield search_bar
 
-        yield StatusFooter()
+        yield cc_dump.tui.custom_footer.StatusFooter()
 
     def on_mount(self):
+        # [LAW:one-source-of-truth] Restore persisted theme choice
+        saved = cc_dump.settings.load_theme()
+        if saved and saved in self.available_themes:
+            self.theme = saved
         cc_dump.tui.rendering.set_theme(self.current_theme)
         self._apply_markdown_theme()
 
