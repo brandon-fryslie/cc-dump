@@ -117,22 +117,43 @@ class ThemeColors:
     filter_colors: dict[str, tuple[str, str, str]]
 
 
+def _normalize_color(color: str | None, fallback: str) -> str:
+    """Normalize a theme color to #RRGGBB hex.
+
+    Textual's ANSI themes use names like "ansi_green" that Rich can't parse
+    in style strings. Convert via Textual's Color.parse().rgb, falling back
+    to the provided default if parsing fails.
+    // [LAW:single-enforcer] All color normalization goes through here.
+    """
+    if color is None:
+        return fallback
+    if color.startswith("#") and len(color) == 7:
+        return color
+    try:
+        from textual.color import Color
+        c = Color.parse(color)
+        r, g, b = c.rgb
+        return "#{:02X}{:02X}{:02X}".format(r, g, b)
+    except Exception:
+        return fallback
+
+
 def build_theme_colors(textual_theme) -> ThemeColors:
     """Map a Textual Theme to ThemeColors.
 
-    Handles None fields on Theme objects with sensible derivations.
+    Handles None fields and ANSI color names with sensible derivations.
     """
     dark = textual_theme.dark
 
-    primary = textual_theme.primary or "#0178D4"
-    secondary = textual_theme.secondary or primary
-    accent = textual_theme.accent or primary
-    warning = textual_theme.warning or "#ffa62b"
-    error = textual_theme.error or "#ba3c5b"
-    success = textual_theme.success or "#4EBF71"
-    foreground = textual_theme.foreground or ("#e0e0e0" if dark else "#1e1e1e")
-    background = textual_theme.background or ("#1e1e1e" if dark else "#e0e0e0")
-    surface = textual_theme.surface or ("#2b2b2b" if dark else "#d0d0d0")
+    primary = _normalize_color(textual_theme.primary, "#0178D4")
+    secondary = _normalize_color(textual_theme.secondary, primary)
+    accent = _normalize_color(textual_theme.accent, primary)
+    warning = _normalize_color(textual_theme.warning, "#ffa62b")
+    error = _normalize_color(textual_theme.error, "#ba3c5b")
+    success = _normalize_color(textual_theme.success, "#4EBF71")
+    foreground = _normalize_color(textual_theme.foreground, "#e0e0e0" if dark else "#1e1e1e")
+    background = _normalize_color(textual_theme.background, "#1e1e1e" if dark else "#e0e0e0")
+    surface = _normalize_color(textual_theme.surface, "#2b2b2b" if dark else "#d0d0d0")
 
     code_theme = "github-dark" if dark else "friendly"
 

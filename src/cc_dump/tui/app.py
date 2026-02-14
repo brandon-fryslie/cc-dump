@@ -728,6 +728,7 @@ class CcDumpApp(App):
             return
         cc_dump.tui.rendering.set_theme(self.current_theme)
         self._apply_markdown_theme()
+        self._update_footer_state()
         conv = self._get_conv()
         if conv is not None:
             conv._block_strip_cache.clear()
