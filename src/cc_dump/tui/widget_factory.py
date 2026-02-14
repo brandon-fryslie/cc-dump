@@ -1241,11 +1241,20 @@ class ConversationView(ScrollView):
                     }
                 )
 
+        # Serialize scroll anchor for position preservation across hot-reload
+        anchor = self._scroll_anchor
+        anchor_dict = (
+            {"turn_index": anchor.turn_index, "block_index": anchor.block_index, "line_in_block": anchor.line_in_block}
+            if anchor is not None
+            else None
+        )
+
         return {
             "all_blocks": all_blocks,
             "follow_mode": self._follow_mode,
             "turn_count": len(self._turns),
             "streaming_states": streaming_states,
+            "scroll_anchor": anchor_dict,
         }
 
     def restore_state(self, state: dict):
@@ -1306,6 +1315,17 @@ class ConversationView(ScrollView):
                 self.add_turn(block_list, filters)
 
         self._recalculate_offsets()
+
+        # Restore scroll anchor and resolve position (when not following)
+        anchor_dict = state.get("scroll_anchor")
+        if anchor_dict is not None:
+            self._scroll_anchor = ScrollAnchor(
+                turn_index=anchor_dict["turn_index"],
+                block_index=anchor_dict["block_index"],
+                line_in_block=anchor_dict["line_in_block"],
+            )
+            if not self._follow_mode:
+                self._resolve_anchor()
 
 
 class StatsPanel(Static):
