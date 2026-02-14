@@ -478,7 +478,7 @@ class CcDumpApp(App):
             except Exception as e:
                 if self._closing:
                     break
-                self.call_from_thread(self._log, "ERROR", f"Event queue error: {e}")
+                self.call_from_thread(self._app_log, "ERROR", f"Event queue error: {e}")
                 continue
             self.call_from_thread(self._check_hot_reload)
             self.call_from_thread(self._handle_event, event)
@@ -520,7 +520,7 @@ class CcDumpApp(App):
         handler = cc_dump.tui.event_handlers.EVENT_HANDLERS.get(kind)
         if handler and callable(handler):
             self._app_state = handler(
-                event, self._state, widgets, self._app_state, self._log
+                event, self._state, widgets, self._app_state, self._app_log
             )
 
             # Check for new session signal from handler
@@ -551,7 +551,7 @@ class CcDumpApp(App):
         _dump.dump_conversation(self)
 
     def _write_block_text(self, f, block, block_idx: int):
-        _dump.write_block_text(f, block, block_idx, log_fn=self._log)
+        _dump.write_block_text(f, block, block_idx, log_fn=self._app_log)
 
     # Visibility actions
     def action_toggle_vis(self, category: str):

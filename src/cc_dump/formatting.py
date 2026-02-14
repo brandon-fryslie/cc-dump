@@ -30,6 +30,9 @@ from cc_dump.event_types import (
 from cc_dump.analysis import TurnBudget, compute_turn_budget, estimate_tokens, tool_result_breakdown
 from cc_dump.colors import TAG_COLORS
 
+# Type alias for content block dicts from the API response
+_ContentBlockDict = dict[str, str | int | dict | list | None]
+
 
 # ─── API Metadata parsing ────────────────────────────────────────────────────
 
@@ -350,7 +353,7 @@ class TextDeltaBlock(FormattedBlock):
     """A text delta from streaming response."""
 
     content: str = ""
-    show_during_streaming = True
+    show_during_streaming: bool = True
 
 
 @dataclass
@@ -788,8 +791,8 @@ def format_request(body, state, request_headers: dict | None = None):
 
     # Tool correlation state (per-request, not persistent)
     tool_id_map: dict[
-        str, tuple[str, int, str]
-    ] = {}  # tool_use_id -> (name, color_idx, detail)
+        str, tuple[str, int, str, dict]
+    ] = {}  # tool_use_id -> (name, color_idx, detail, tool_input)
     tool_color_counter = 0
 
     # Messages
@@ -947,7 +950,6 @@ def format_complete_response(complete_message):
     content = complete_message.get("content", [])
     for block in content:
         block_type = block.get("type", "")
-        _ContentBlockDict = dict[str, str | int | dict | list | None]
         factory: Callable[[_ContentBlockDict], list[FormattedBlock]] = _COMPLETE_RESPONSE_FACTORIES.get(block_type, lambda _: [])
         blocks.extend(factory(block))
 

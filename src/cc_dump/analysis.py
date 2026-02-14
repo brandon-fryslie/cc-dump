@@ -419,6 +419,7 @@ def classify_model(model_str: str) -> tuple[str, ModelPricing]:
 
 
 # [LAW:dataflow-not-control-flow] [LAW:one-source-of-truth] Model display names
+# NOTE: update when model versions change (e.g. 4.5 → 5.0)
 _MODEL_DISPLAY = {
     "opus": "Opus 4.5",
     "sonnet": "Sonnet 4.5",

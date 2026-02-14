@@ -637,16 +637,3 @@ def test_collapsibility_guard_code_fence_not_collapsible():
     assert "code_fence" not in COLLAPSIBLE_REGION_KINDS
 
 
-# ─── Transform hook ──────────────────────────────────────────────────────
-
-
-def test_transform_hook_identity():
-    """Empty transform list is identity — blocks pass through unchanged."""
-    _setup_theme()
-    from cc_dump.tui.rendering import _apply_block_transforms
-
-    text = "Hello world"
-    block = TextContentBlock(content=text, category=Category.ASSISTANT)
-    prepared = [(0, block)]
-    result = _apply_block_transforms(prepared, {"assistant": ALWAYS_VISIBLE})
-    assert result == prepared

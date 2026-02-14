@@ -136,14 +136,10 @@ def build_theme_colors(textual_theme) -> ThemeColors:
     search_current_fg = "#000000" if dark else "#ffffff"
     search_current_style = f"bold {search_current_fg} on {accent}"
 
-    # Markdown theme: adapt to dark/light mode
+    # Markdown theme
     # [LAW:one-source-of-truth] markdown styling defined here
-    if dark:
-        md_code_style = f"{foreground} on {surface}"
-        md_h_dim = "dim italic"
-    else:
-        md_code_style = f"{foreground} on {surface}"
-        md_h_dim = "dim italic"
+    md_code_style = f"{foreground} on {surface}"
+    md_h_dim = "dim italic"
 
     markdown_theme_dict = {
         "markdown.code": md_code_style,
@@ -579,12 +575,13 @@ def _get_or_segment(block):
     return block._segment_result
 
 
-def _render_text_as_markdown(text: str) -> ConsoleRenderable:
+def _render_text_as_markdown(text: str, seg=None) -> ConsoleRenderable:
     """Render text string as Markdown using SubBlock segmentation.
 
     // [LAW:dataflow-not-control-flow] Dispatch via SubBlockKind match.
 
     Extracted from _render_segmented_block to enable reuse for TrackedContentBlock.
+    Accepts optional pre-computed segmentation to avoid double work.
     """
     from cc_dump.segmentation import (
         segment,
@@ -594,7 +591,8 @@ def _render_text_as_markdown(text: str) -> ConsoleRenderable:
     )
 
     tc = get_theme_colors()
-    seg = segment(text)
+    if seg is None:
+        seg = segment(text)
 
     # Single SubBlock of kind MD: fast path — just Markdown with tag wrapping
     if len(seg.sub_blocks) == 1 and seg.sub_blocks[0].kind == SubBlockKind.MD:
@@ -648,8 +646,8 @@ def _render_segmented_block(block) -> ConsoleRenderable:
     // [LAW:dataflow-not-control-flow] Dispatch via SubBlockKind match.
     """
     # Use cached segmentation on the block object for efficiency
-    _get_or_segment(block)
-    return _render_text_as_markdown(block.content)
+    seg = _get_or_segment(block)
+    return _render_text_as_markdown(block.content, seg=seg)
 
 
 def _render_xml_collapsed(tag_name: str, inner_text: str) -> ConsoleRenderable:
@@ -1506,28 +1504,6 @@ def _prepare_blocks(blocks: list, filters: dict) -> list[tuple[int, FormattedBlo
     return collapse_tool_runs(blocks, tools_on)
 
 
-# FUTURE: register transforms for:
-# - hide-empty-blocks: skip blocks with no visible content
-# - coalesce-same-category: merge consecutive blocks with same category
-#   into a single display group with one header and concatenated regions
-_BLOCK_TRANSFORMS: list[Callable] = []
-
-
-def _apply_block_transforms(
-    prepared: list[tuple[int, FormattedBlock]],
-    filters: dict,
-) -> list[tuple[int, FormattedBlock]]:
-    """Apply registered block transforms in pipeline order.
-
-    Currently empty — transforms are applied in list order.
-    // [LAW:pipelines-compilers] Staged with explicit I/O. No back-edges.
-    """
-    result = prepared
-    for transform in _BLOCK_TRANSFORMS:
-        result = transform(result, filters)
-    return result
-
-
 # ─── Truncation and collapse indicator ─────────────────────────────────────────
 
 
@@ -1688,7 +1664,7 @@ def render_blocks(
         List of (block_index, Text) pairs.
     """
     prepared = _prepare_blocks(blocks, filters)
-    prepared = _apply_block_transforms(prepared, filters)
+
 
     rendered: list[tuple[int, Text]] = []
     for orig_idx, block in prepared:
@@ -1763,7 +1739,7 @@ def render_turn_to_strips(
     block_strip_map: dict[int, int] = {}
 
     prepared = _prepare_blocks(blocks, filters)
-    prepared = _apply_block_transforms(prepared, filters)
+
 
     for orig_idx, block in prepared:
         vis = _resolve_visibility(block, filters)
