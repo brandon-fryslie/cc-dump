@@ -63,6 +63,7 @@ markers = [
 
 [tool.mypy]
 # Run: uv run mypy src
+mypy_path = "stubs"
 check_untyped_defs = true
 disallow_any_explicit = true
 disable_error_code = [

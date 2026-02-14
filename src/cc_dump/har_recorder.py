@@ -8,7 +8,7 @@ import json
 import os
 import sys
 from datetime import datetime, timezone
-from typing import Any
+from typing import TypedDict
 
 from cc_dump.event_types import (
     PipelineEvent,
@@ -25,6 +25,36 @@ from cc_dump.event_types import (
     ContentBlockStopEvent,
     MessageDeltaEvent,
 )
+
+
+class _UsageDict(TypedDict, total=False):
+    input_tokens: int
+    output_tokens: int
+    cache_read_input_tokens: int
+    cache_creation_input_tokens: int
+
+
+class _ContentBlock(TypedDict, total=False):
+    type: str
+    text: str
+    id: str
+    name: str
+    input: dict
+
+
+class ReconstructedMessage(TypedDict):
+    id: str
+    type: str
+    role: str
+    content: list[_ContentBlock]
+    model: str
+    stop_reason: str | None
+    stop_sequence: str | None
+    usage: _UsageDict
+
+
+_SSEScalar = str | int | None
+_SSEEventRecord = dict[str, _SSEScalar | dict[str, _SSEScalar | dict[str, _SSEScalar]]]
 
 
 def build_har_request(method: str, url: str, headers: dict, body: dict) -> dict:
@@ -108,7 +138,7 @@ def build_har_response(
 class _ReconstructionState:
     """Shared state for event reconstructors."""
 
-    def __init__(self, message: dict, content_blocks: list, current_text_block: dict | None):
+    def __init__(self, message: ReconstructedMessage, content_blocks: list, current_text_block: dict | None):
         self.message = message
         self.content_blocks = content_blocks
         self.current_text_block = current_text_block
@@ -120,7 +150,12 @@ def _handle_message_start(event: dict, state: _ReconstructionState) -> None:
     state.message["id"] = msg.get("id", "")
     state.message["model"] = msg.get("model", "")
     state.message["role"] = msg.get("role", "assistant")
-    state.message["usage"] = dict(msg.get("usage", {}))
+    raw_usage = msg.get("usage", {})
+    usage: _UsageDict = {}
+    for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
+        if k in raw_usage:
+            usage[k] = raw_usage[k]  # type: ignore[literal-required]
+    state.message["usage"] = usage
 
 
 def _handle_content_block_start(event: dict, state: _ReconstructionState) -> None:
@@ -194,7 +229,7 @@ _EVENT_RECONSTRUCTORS = {
 }
 
 
-def reconstruct_message_from_events(events: list[dict]) -> dict:
+def reconstruct_message_from_events(events: list[_SSEEventRecord]) -> ReconstructedMessage:
     """Reconstruct complete Claude message from SSE event sequence.
 
     This is the KEY function: accumulates deltas into final message in the
@@ -206,7 +241,7 @@ def reconstruct_message_from_events(events: list[dict]) -> dict:
     Returns:
         Complete message dict: {"id": "...", "type": "message", "content": [...], "usage": {...}}
     """
-    message: dict[str, Any] = {
+    message: ReconstructedMessage = {
         "id": "",
         "type": "message",
         "role": "assistant",
@@ -235,7 +270,7 @@ def reconstruct_message_from_events(events: list[dict]) -> dict:
     return state.message
 
 
-def _sse_event_to_dict(sse_event: object) -> dict:
+def _sse_event_to_dict(sse_event: object) -> _SSEEventRecord:
     """Convert a typed SSEEvent back to the raw dict format for reconstruction.
 
     The reconstruct_message_from_events function works with raw dicts internally.
@@ -332,7 +367,7 @@ class HARRecordingSubscriber:
         self.pending_request_headers = None
         self.response_status = None
         self.response_headers = None
-        self.response_events: list[dict[str, Any]] = []
+        self.response_events: list[_SSEEventRecord] = []
         self.request_start_time = None
 
         # Diagnostic counters for investigation if something goes wrong

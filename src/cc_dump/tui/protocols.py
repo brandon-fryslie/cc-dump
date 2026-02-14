@@ -13,7 +13,12 @@ The HotSwappableWidget protocol enables the widget hot-swap pattern:
 This guarantees that code changes take effect immediately without proxy restart.
 """
 
-from typing import Protocol, Dict, Any
+from typing import Protocol
+
+
+_Leaf = str | int | float | bool | None
+WidgetStateValue = _Leaf | list | dict | set
+WidgetState = dict[str, WidgetStateValue]
 
 
 class HotSwappableWidget(Protocol):
@@ -34,15 +39,15 @@ class HotSwappableWidget(Protocol):
 
     Example:
         class MyWidget:
-            def get_state(self) -> Dict[str, Any]:
+            def get_state(self) -> WidgetState:
                 return {"count": self.count, "items": self.items}
 
-            def restore_state(self, state: Dict[str, Any]) -> None:
+            def restore_state(self, state: WidgetState) -> None:
                 self.count = state.get("count", 0)
                 self.items = state.get("items", [])
     """
 
-    def get_state(self) -> Dict[str, Any]:
+    def get_state(self) -> WidgetState:
         """Extract widget state for transfer to a new instance.
 
         Returns:
@@ -51,7 +56,7 @@ class HotSwappableWidget(Protocol):
         """
         ...
 
-    def restore_state(self, state: Dict[str, Any]) -> None:
+    def restore_state(self, state: WidgetState) -> None:
         """Restore state from a previous widget instance.
 
         Args:

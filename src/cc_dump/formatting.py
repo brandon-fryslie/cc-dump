@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from collections.abc import Callable
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 from cc_dump.event_types import (
     InputJsonDeltaEvent,
@@ -882,7 +882,7 @@ def _fmt_message_delta(event: MessageDeltaEvent) -> list[FormattedBlock]:
 
 
 # [LAW:dataflow-not-control-flow] Dispatch table: SSEEvent type -> formatter
-_RESPONSE_EVENT_FORMATTERS: dict[type, Callable[..., list[FormattedBlock]]] = {
+_RESPONSE_EVENT_FORMATTERS: dict[type[SSEEvent], Callable[[SSEEvent], list[FormattedBlock]]] = {
     MessageStartEvent: _fmt_message_start,
     TextBlockStartEvent: lambda _: [],
     ToolUseBlockStartEvent: _fmt_tool_use_block_start,
@@ -947,7 +947,8 @@ def format_complete_response(complete_message):
     content = complete_message.get("content", [])
     for block in content:
         block_type = block.get("type", "")
-        factory: Callable[[dict[str, Any]], list[FormattedBlock]] = _COMPLETE_RESPONSE_FACTORIES.get(block_type, lambda _: [])
+        _ContentBlockDict = dict[str, str | int | dict | list | None]
+        factory: Callable[[_ContentBlockDict], list[FormattedBlock]] = _COMPLETE_RESPONSE_FACTORIES.get(block_type, lambda _: [])
         blocks.extend(factory(block))
 
     # [LAW:dataflow-not-control-flow] Always create block, let renderer handle empty

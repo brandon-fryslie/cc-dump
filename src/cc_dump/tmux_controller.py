@@ -7,9 +7,15 @@ All libtmux usage is lazy-imported and wrapped in try/except.
 // [LAW:dataflow-not-control-flow] Zoom decisions via _ZOOM_DECISIONS lookup table.
 """
 
+from __future__ import annotations
+
 import os
 import sys
 from enum import Enum, auto
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import libtmux
 
 from cc_dump.event_types import (
     MessageDeltaEvent,
@@ -83,10 +89,10 @@ class TmuxController:
         self.auto_zoom = True
         self._is_zoomed = False
         self._port: int | None = None
-        self._server = None
-        self._session = None
-        self._our_pane = None
-        self._claude_pane = None
+        self._server: libtmux.Server | None = None
+        self._session: libtmux.Session | None = None
+        self._our_pane: libtmux.Pane | None = None
+        self._claude_pane: libtmux.Pane | None = None
 
         if not os.environ.get("TMUX"):
             self.state = TmuxState.NOT_IN_TMUX

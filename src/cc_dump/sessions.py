@@ -8,7 +8,17 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional, TypedDict
+
+
+class RecordingInfo(TypedDict):
+    path: str
+    filename: str
+    session_id: str | None
+    session_name: str | None
+    created: str
+    entry_count: int
+    size_bytes: int
 
 
 def get_recordings_dir() -> str:
@@ -20,7 +30,7 @@ def get_recordings_dir() -> str:
     return os.path.expanduser("~/.local/share/cc-dump/recordings")
 
 
-def list_recordings(recordings_dir: Optional[str] = None) -> list[dict]:
+def list_recordings(recordings_dir: Optional[str] = None) -> list[RecordingInfo]:
     """List available recordings with metadata.
 
     Args:
@@ -44,7 +54,7 @@ def list_recordings(recordings_dir: Optional[str] = None) -> list[dict]:
     if recordings_dir is None:
         recordings_dir = get_recordings_dir()
 
-    recordings: list[dict[str, Any]] = []
+    recordings: list[RecordingInfo] = []
     recordings_path = Path(recordings_dir)
 
     # Return empty list if directory doesn't exist
@@ -149,7 +159,7 @@ def format_size(size_bytes: int) -> str:
         return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
 
 
-def print_recordings_list(recordings: list[dict]) -> None:
+def print_recordings_list(recordings: list[RecordingInfo]) -> None:
     """Print a formatted list of recordings.
 
     Args:
