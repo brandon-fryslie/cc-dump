@@ -116,6 +116,11 @@ class ThemeColors:
     # // [LAW:one-source-of-truth] All filter colors derived from theme.
     filter_colors: dict[str, tuple[str, str, str]]
 
+    # Action colors: pool of theme semantic colors for non-filter UI items
+    # (panels, toggles, etc.). Naturally distinct from filter_colors since
+    # filter hues are placed in gaps *between* these theme colors.
+    action_colors: list[str]
+
 
 def _normalize_color(color: str | None, fallback: str) -> str:
     """Normalize a theme color to #RRGGBB hex.
@@ -209,6 +214,10 @@ def build_theme_colors(textual_theme) -> ThemeColors:
         surface=surface,
     )
 
+    # Action color pool: theme semantic colors for non-filter UI items.
+    # Order chosen for visual variety — avoids adjacent similar tones.
+    action_colors = [accent, warning, success, error, primary, secondary]
+
     return ThemeColors(
         primary=primary,
         secondary=secondary,
@@ -234,6 +243,7 @@ def build_theme_colors(textual_theme) -> ThemeColors:
         search_keys_style=f"bold {warning}",
         markdown_theme_dict=markdown_theme_dict,
         filter_colors=filter_colors,
+        action_colors=action_colors,
     )
 
 
