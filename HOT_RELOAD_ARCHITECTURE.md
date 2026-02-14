@@ -24,7 +24,6 @@ These modules contain live instances or entry points that cannot be safely reloa
 | `cli.py` | Entry point, already executed | N/A |
 | `hot_reload.py` | The reloader itself | N/A |
 | `tui/app.py` | Textual App instance, holds widget references | Use `import module` only |
-| `tui/widgets.py` | Shim holding current widget instances | Use `import module` only |
 
 **Critical Rule**: Stable boundary modules MUST use module-level imports for all reloadable code:
 

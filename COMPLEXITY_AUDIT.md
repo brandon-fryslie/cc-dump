@@ -206,9 +206,8 @@ Implementing expand/collapse of user/assistant blocks will be **difficult** in t
 | `sessions.py` | 168 lines, has tests, but not wired into main app | **WIRE UP or REMOVE** — `--list` CLI arg exists and works but doesn't use sessions.py |
 
 ### Re-export Shim
-| Module | Status | Action |
-|--------|--------|--------|
-| `tui/widgets.py` | 24-line re-export of widget_factory.py classes | KEEP — intentional stable import boundary for hot-reload |
+
+_Deleted._ `tui/widgets.py` was a stale re-export shim that created stale class references after hot-reload. No code imported from it.
 
 ---
 

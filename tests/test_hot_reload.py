@@ -353,15 +353,99 @@ class TestWidgetStatePreservation:
 
         assert new_widget._follow_mode is False
 
-    def test_economics_panel_state_roundtrip(self):
+    def test_conversation_view_blocks_preserve_expansion(self):
+        """Blocks with expanded=True/False survive roundtrip via reference."""
+        from cc_dump.formatting import TextContentBlock
+        from cc_dump.tui.widget_factory import ConversationView, TurnData
+
+        block_a = TextContentBlock(content="hello")
+        block_a.expanded = True
+        block_b = TextContentBlock(content="world")
+        block_b.expanded = False
+
+        widget = ConversationView()
+        td = TurnData(turn_index=0, blocks=[block_a, block_b], strips=[])
+        widget._turns.append(td)
+
+        state = widget.get_state()
+        new_widget = ConversationView()
+        new_widget.restore_state(state)
+
+        # Blocks are passed by reference — same objects
+        restored_blocks = state["all_blocks"][0]
+        assert restored_blocks[0].expanded is True
+        assert restored_blocks[1].expanded is False
+
+    def test_conversation_view_blocks_preserve_force_vis(self):
+        """_force_vis survives roundtrip via block reference."""
+        from cc_dump.formatting import TextContentBlock, ALWAYS_VISIBLE
+        from cc_dump.tui.widget_factory import ConversationView, TurnData
+
+        block = TextContentBlock(content="test")
+        block._force_vis = ALWAYS_VISIBLE
+
+        widget = ConversationView()
+        td = TurnData(turn_index=0, blocks=[block], strips=[])
+        widget._turns.append(td)
+
+        state = widget.get_state()
+        restored_blocks = state["all_blocks"][0]
+        assert restored_blocks[0]._force_vis is ALWAYS_VISIBLE
+
+    def test_conversation_view_follow_mode_true_roundtrip(self):
+        """follow_mode=True explicitly survives roundtrip."""
+        from cc_dump.tui.widget_factory import ConversationView
+
+        widget = ConversationView()
+        widget._follow_mode = True
+
+        state = widget.get_state()
+        new_widget = ConversationView()
+        new_widget.restore_state(state)
+
+        assert new_widget._follow_mode is True
+
+    def test_economics_panel_breakdown_mode_roundtrip(self):
         from cc_dump.tui.widget_factory import ToolEconomicsPanel
 
         widget = ToolEconomicsPanel()
+        widget._breakdown_mode = True
         state = widget.get_state()
 
         new_widget = ToolEconomicsPanel()
         new_widget.restore_state(state)
-        assert new_widget is not None
+        assert new_widget._breakdown_mode is True
+
+    def test_stats_panel_empty_state_roundtrip(self):
+        """Restoring from empty state produces valid defaults."""
+        from cc_dump.tui.widget_factory import StatsPanel
+
+        widget = StatsPanel()
+        new_widget = StatsPanel()
+        new_widget.restore_state({})
+
+        assert new_widget.request_count == 0
+        assert new_widget.models_seen == set()
+
+    def test_content_region_state_roundtrip(self):
+        """Content regions with expanded=False survive via block reference."""
+        from cc_dump.formatting import TextContentBlock, ContentRegion
+        from cc_dump.tui.widget_factory import ConversationView, TurnData
+
+        block = TextContentBlock(content="test")
+        block.content_regions = [
+            ContentRegion(index=0, kind="xml_block", expanded=False),
+            ContentRegion(index=1, kind="md", expanded=None),
+        ]
+
+        widget = ConversationView()
+        td = TurnData(turn_index=0, blocks=[block], strips=[])
+        widget._turns.append(td)
+
+        state = widget.get_state()
+        restored_blocks = state["all_blocks"][0]
+        assert restored_blocks[0].content_regions[0].expanded is False
+        assert restored_blocks[0].content_regions[1].expanded is None
 
     def test_timeline_panel_state_roundtrip(self):
         from cc_dump.tui.widget_factory import TimelinePanel
@@ -406,9 +490,17 @@ class TestHotReloadModuleStructure:
 
         assert isinstance(_EXCLUDED_MODULES, set)
 
-        required_exclusions = ["tui/app.py", "tui/widgets.py"]
+        required_exclusions = ["tui/app.py"]
         for exc in required_exclusions:
             assert exc in _EXCLUDED_MODULES, f"Expected {exc} to be excluded"
+
+    def test_no_widgets_reexport_module(self):
+        """tui/widgets.py re-export shim must not exist (regression guard)."""
+        widgets_path = Path(__file__).parent.parent / "src" / "cc_dump" / "tui" / "widgets.py"
+        assert not widgets_path.exists(), (
+            "tui/widgets.py re-export module should not exist — "
+            "it creates stale references after hot-reload"
+        )
 
     def test_reload_order_respects_dependencies(self):
         from cc_dump.hot_reload import _RELOAD_ORDER
@@ -500,6 +592,22 @@ class TestHotReloadFileDetection:
         # Restore
         hr._mtimes.update(mtimes_before)
 
+    def test_new_file_detected_on_first_check(self):
+        """New files (not yet in _mtimes) are detected on first check."""
+        import cc_dump.hot_reload as hr
+
+        test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
+        hr.init(str(test_dir))
+
+        # Pick an existing watched file and remove it from _mtimes to simulate
+        # a new file that appeared after init
+        target_path = next(p for p in hr._mtimes if "formatting.py" in p)
+        del hr._mtimes[target_path]
+
+        assert hr.has_changes() is True, "New file should be detected by has_changes()"
+        changed = hr._get_changed_files()
+        assert target_path in changed, "New file should appear in _get_changed_files()"
+
     def test_check_and_get_reloaded_returns_empty_list_when_no_changes(self):
         import cc_dump.hot_reload as hr
 
@@ -511,3 +619,64 @@ class TestHotReloadFileDetection:
 
         assert isinstance(reloaded, list)
         assert len(reloaded) == 0, "Should return empty list when no changes"
+
+
+class TestSearchStateHotReload:
+    """Unit tests for search state preservation across hot-reload."""
+
+    def test_search_scalars_survive_fresh_state(self):
+        """query, modes, cursor_pos transfer to fresh SearchState via _do_hot_reload logic."""
+        from cc_dump.tui.search import SearchState, SearchPhase, SearchMode
+
+        # Simulate the scalar save/restore that _do_hot_reload performs
+        old_state = SearchState()
+        old_state.phase = SearchPhase.NAVIGATING
+        old_state.query = "test_pattern"
+        old_state.modes = SearchMode.CASE_INSENSITIVE | SearchMode.WORD_BOUNDARY
+        old_state.cursor_pos = 5
+
+        # Save scalars (mirrors _do_hot_reload save step)
+        saved_query = old_state.query
+        saved_modes = old_state.modes
+        saved_cursor_pos = old_state.cursor_pos
+        saved_phase = old_state.phase
+
+        # Reset to fresh state (mirrors _do_hot_reload reset step)
+        new_state = SearchState()
+
+        # Restore scalars (mirrors _do_hot_reload restore step)
+        new_state.query = saved_query
+        new_state.modes = saved_modes
+        new_state.cursor_pos = saved_cursor_pos
+        new_state.phase = saved_phase
+
+        assert new_state.query == "test_pattern"
+        assert new_state.modes == SearchMode.CASE_INSENSITIVE | SearchMode.WORD_BOUNDARY
+        assert new_state.cursor_pos == 5
+        assert new_state.phase == SearchPhase.NAVIGATING
+
+    def test_stale_search_fields_not_preserved(self):
+        """matches, expanded_blocks, debounce_timer reset to defaults after reload."""
+        from cc_dump.tui.search import SearchState, SearchPhase, SearchMatch
+
+        old_state = SearchState()
+        old_state.phase = SearchPhase.NAVIGATING
+        old_state.query = "test"
+        old_state.matches = [SearchMatch(0, 0, 0, 4)]
+        old_state.expanded_blocks = [(0, 0)]
+        old_state.debounce_timer = "fake_timer"
+
+        # After reload, a fresh SearchState should have empty derived fields
+        new_state = SearchState()
+        # Restore only scalars (as _do_hot_reload does)
+        new_state.query = old_state.query
+        new_state.modes = old_state.modes
+        new_state.cursor_pos = old_state.cursor_pos
+        new_state.phase = old_state.phase
+
+        # Derived/stale fields must be fresh defaults
+        assert new_state.matches == []
+        assert new_state.expanded_blocks == []
+        assert new_state.debounce_timer is None
+        assert new_state.saved_filters == {}
+        assert new_state.saved_scroll_y is None

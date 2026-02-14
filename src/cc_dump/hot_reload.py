@@ -2,7 +2,7 @@
 
 This module monitors Python source files and reloads them when changes are detected.
 Only pure-function modules are reloaded (formatting, rendering, analysis, colors).
-Live instances (tui/app.py, tui/widgets.py) and stable boundaries (proxy.py) are never reloaded.
+Live instances (tui/app.py) and stable boundaries (proxy.py) are never reloaded.
 """
 
 import importlib
@@ -44,7 +44,6 @@ _EXCLUDED_FILES = {
 # Directories/modules to exclude
 _EXCLUDED_MODULES = {
     "tui/app.py",  # live app instance, can't safely reload
-    "tui/widgets.py",  # live widget instances, can't safely reload
     "tui/category_config.py",  # pure data, but referenced at init time
     "tui/action_handlers.py",  # accesses live app/widget state
     "tui/search_controller.py",  # accesses live app/widget state
@@ -99,7 +98,7 @@ def has_changes() -> bool:
     for abs_path, _rel in _iter_watched_files():
         try:
             mtime = os.path.getmtime(abs_path)
-            if abs_path in _mtimes and _mtimes[abs_path] != mtime:
+            if abs_path not in _mtimes or _mtimes[abs_path] != mtime:
                 return True
         except (FileNotFoundError, OSError):
             pass
@@ -176,7 +175,7 @@ def _get_changed_files() -> set[str]:
     for abs_path, _rel in _iter_watched_files():
         try:
             mtime = os.path.getmtime(abs_path)
-            if abs_path in _mtimes and _mtimes[abs_path] != mtime:
+            if abs_path not in _mtimes or _mtimes[abs_path] != mtime:
                 changed.add(abs_path)
             _mtimes[abs_path] = mtime
         except FileNotFoundError:

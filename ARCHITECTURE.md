@@ -249,7 +249,7 @@ Modules are classified as **stable** (never reload) or **reloadable** (reload on
 | Stable boundaries | Reloadable modules |
 |---|---|
 | `proxy.py`, `cli.py`, `hot_reload.py` | `palette.py`, `colors.py`, `analysis.py` |
-| `tui/app.py`, `tui/widgets.py` | `formatting.py`, `tui/rendering.py` |
+| `tui/app.py` | `formatting.py`, `tui/rendering.py` |
 | `har_recorder.py`, `har_replayer.py` | `tui/event_handlers.py`, `tui/widget_factory.py` |
 | `sessions.py` | `tui/panel_renderers.py`, `tui/custom_footer.py` |
 

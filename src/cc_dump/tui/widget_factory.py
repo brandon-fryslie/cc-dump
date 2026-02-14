@@ -2,9 +2,6 @@
 
 This module is RELOADABLE. When it reloads, the app can create new widget
 instances from the updated class definitions and swap them in.
-
-Widget classes are defined here, not in widgets.py. The widgets.py module
-becomes a thin non-reloadable shell that just holds the current instances.
 """
 
 import json

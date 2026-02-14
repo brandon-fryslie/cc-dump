@@ -64,13 +64,27 @@ async def _do_hot_reload(app) -> None:
 
     app._app_log("INFO", f"Hot-reload: {', '.join(reloaded_modules)}")
 
-    # Cancel any active search on reload (state references may be stale)
+    # Save search scalars before resetting (stale matches/expanded_blocks are discarded)
     SearchPhase = cc_dump.tui.search.SearchPhase
-    if app._search_state.phase != SearchPhase.INACTIVE:
-        app._search_state = cc_dump.tui.search.SearchState()
-        bar = app._get_search_bar()
-        if bar is not None:
-            bar.display = False
+    old_search = app._search_state
+    search_was_active = old_search.phase != SearchPhase.INACTIVE
+    saved_query = old_search.query
+    saved_modes = old_search.modes
+    saved_cursor_pos = old_search.cursor_pos
+    saved_phase = old_search.phase
+
+    # Cancel debounce timer and clear expansion overrides on old blocks
+    if old_search.debounce_timer is not None:
+        old_search.debounce_timer.stop()
+    if search_was_active:
+        from cc_dump.tui.search_controller import clear_search_expand
+        clear_search_expand(app)
+
+    # Reset to fresh state (matches, expanded_blocks, debounce_timer discarded)
+    app._search_state = cc_dump.tui.search.SearchState()
+    bar = app._get_search_bar()
+    if bar is not None:
+        bar.display = False
 
     # Rebuild theme state after modules reload (before any rendering)
     cc_dump.tui.rendering.set_theme(app.current_theme)
@@ -90,6 +104,43 @@ async def _do_hot_reload(app) -> None:
     except Exception as e:
         app.notify(f"[hot-reload] error applying: {e}", severity="error")
         app._app_log("ERROR", f"Hot-reload error applying: {e}")
+        return
+
+    # Restore search state after successful widget replacement
+    if search_was_active and saved_query:
+        from cc_dump.tui.category_config import CATEGORY_CONFIG
+        from cc_dump.tui.search_controller import (
+            run_search,
+            navigate_to_current,
+            update_search_bar,
+        )
+
+        state = app._search_state
+        state.query = saved_query
+        state.modes = saved_modes
+        state.cursor_pos = saved_cursor_pos
+
+        # Capture fresh filter state and scroll position from new widgets
+        state.saved_filters = {
+            name: (
+                app._is_visible[name],
+                app._is_full[name],
+                app._is_expanded[name],
+            )
+            for _, name, _, _ in CATEGORY_CONFIG
+        }
+        conv = app._get_conv()
+        state.saved_scroll_y = conv.scroll_offset.y if conv is not None else None
+
+        # Re-execute search against fresh blocks
+        run_search(app)
+
+        # Restore phase and navigate if we had results
+        state.phase = saved_phase
+        if saved_phase == SearchPhase.NAVIGATING and state.matches:
+            navigate_to_current(app)
+
+        update_search_bar(app)
 
 
 async def replace_all_widgets(app) -> None:
