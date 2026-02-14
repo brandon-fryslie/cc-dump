@@ -296,20 +296,18 @@ def render_keys_panel() -> Text:
     key_groups = cc_dump.tui.input_modes.KEY_GROUPS
 
     text = Text()
-    text.append("Keyboard Shortcuts", style=f"bold {p.info}")
+    text.append("Keys", style=f"bold {p.info}")
     text.append("\n")
 
-    for i, (group_title, keys) in enumerate(key_groups):
-        if i > 0:
-            text.append("\n")
-        text.append("  ")
-        text.append(group_title, style="bold")
+    for group_title, keys in key_groups:
+        text.append(" ")
+        text.append(group_title, style="bold underline")
         text.append("\n")
         for key_display, description in keys:
-            text.append("    ")
-            text.append("{:>15}".format(key_display), style=f"bold {p.info}")
             text.append("  ")
-            text.append(description)
+            text.append("{:>6}".format(key_display), style=f"bold {p.info}")
+            text.append("  ")
+            text.append(description, style="dim")
             text.append("\n")
 
     return text

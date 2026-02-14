@@ -16,9 +16,9 @@ class KeysPanel(Static):
     DEFAULT_CSS = """
     KeysPanel {
         dock: right;
-        width: 33%;
-        min-width: 28;
-        max-width: 45;
+        width: 28%;
+        min-width: 24;
+        max-width: 36;
         border-left: solid $accent;
         padding: 1;
         height: 1fr;
