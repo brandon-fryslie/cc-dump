@@ -1,10 +1,13 @@
-"""Tests for tmux_controller — zoom decisions, state machine, event handling.
+"""Tests for tmux_controller — zoom decisions, state machine, event handling, mouse.
 
 All tests mock libtmux and tmux env vars; no actual tmux required.
 """
 
 import os
+import subprocess
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from cc_dump.event_types import (
     ErrorEvent,
@@ -26,14 +29,48 @@ from cc_dump.tmux_controller import (
 )
 
 
-def _make_controller(**overrides) -> TmuxController:
-    """Create a TmuxController via real __init__ (TMUX unset → NOT_IN_TMUX),
-    then override attrs for the test scenario."""
-    with patch.dict(os.environ, {}, clear=True):
-        ctrl = TmuxController()
-    for k, v in overrides.items():
-        setattr(ctrl, k, v)
-    return ctrl
+# ─── Fixtures ────────────────────────────────────────────────────────────────
+
+
+_VALID_ATTRS = frozenset({
+    "state", "auto_zoom", "_is_zoomed", "_port",
+    "_original_mouse", "_mouse_is_on",
+    "_server", "_session", "_our_pane", "_claude_pane",
+})
+
+
+@pytest.fixture
+def make_controller():
+    """Factory fixture: creates TmuxController with TMUX unset, then applies overrides."""
+
+    def _factory(**overrides) -> TmuxController:
+        bad = set(overrides) - _VALID_ATTRS
+        if bad:
+            raise ValueError(f"Invalid TmuxController overrides: {bad}")
+        with patch.dict(os.environ, {}, clear=True):
+            ctrl = TmuxController()
+        for k, v in overrides.items():
+            setattr(ctrl, k, v)
+        return ctrl
+
+    return _factory
+
+
+@pytest.fixture
+def active_controller(make_controller):
+    """Controller in CLAUDE_RUNNING state with mocked panes."""
+    return make_controller(
+        state=TmuxState.CLAUDE_RUNNING,
+        _our_pane=MagicMock(),
+        _claude_pane=MagicMock(),
+    )
+
+
+@pytest.fixture
+def mock_subprocess():
+    """Patch subprocess.run for tmux command testing."""
+    with patch("cc_dump.tmux_controller.subprocess.run") as mock_run:
+        yield mock_run
 
 
 # ─── _ZOOM_DECISIONS table ───────────────────────────────────────────────────
@@ -105,17 +142,7 @@ class TestIsAvailable:
     def test_tmux_set_no_libtmux(self):
         with patch.dict(os.environ, {"TMUX": "/tmp/tmux-1000/default,123,0"}):
             with patch.dict("sys.modules", {"libtmux": None}):
-                # Force ImportError
-                import builtins
-                original_import = builtins.__import__
-
-                def mock_import(name, *args, **kwargs):
-                    if name == "libtmux":
-                        raise ImportError("no libtmux")
-                    return original_import(name, *args, **kwargs)
-
-                with patch("builtins.__import__", side_effect=mock_import):
-                    assert is_available() is False
+                assert is_available() is False
 
     def test_tmux_set_with_libtmux(self):
         mock_libtmux = MagicMock()
@@ -128,16 +155,16 @@ class TestIsAvailable:
 
 
 class TestTmuxControllerStates:
-    def test_not_in_tmux(self):
-        ctrl = _make_controller()
+    def test_not_in_tmux(self, make_controller):
+        ctrl = make_controller()
         assert ctrl.state == TmuxState.NOT_IN_TMUX
 
-    def test_not_in_tmux_cannot_launch(self):
-        ctrl = _make_controller()
+    def test_not_in_tmux_cannot_launch(self, make_controller):
+        ctrl = make_controller()
         assert ctrl.launch_claude() is False
 
-    def test_not_in_tmux_zoom_is_noop(self):
-        ctrl = _make_controller()
+    def test_not_in_tmux_zoom_is_noop(self, make_controller):
+        ctrl = make_controller()
         ctrl.zoom()
         assert ctrl._is_zoomed is False
 
@@ -146,19 +173,14 @@ class TestTmuxControllerStates:
 
 
 class TestOnEvent:
-    def test_request_triggers_zoom(self):
-        ctrl = _make_controller(
-            state=TmuxState.CLAUDE_RUNNING,
-            _our_pane=MagicMock(),
-            _claude_pane=MagicMock(),
-        )
+    def test_request_triggers_zoom(self, active_controller):
         event = RequestBodyEvent(body={})
-        ctrl.on_event(event)
-        assert ctrl._is_zoomed is True
-        ctrl._our_pane.resize.assert_called_once_with(zoom=True)
+        active_controller.on_event(event)
+        assert active_controller._is_zoomed is True
+        active_controller._our_pane.resize.assert_called_once_with(zoom=True)
 
-    def test_end_turn_triggers_unzoom(self):
-        ctrl = _make_controller(
+    def test_end_turn_triggers_unzoom(self, make_controller):
+        ctrl = make_controller(
             state=TmuxState.CLAUDE_RUNNING,
             _is_zoomed=True,
             _our_pane=MagicMock(),
@@ -169,8 +191,8 @@ class TestOnEvent:
         ctrl.on_event(event)
         assert ctrl._is_zoomed is False
 
-    def test_tool_use_is_noop(self):
-        ctrl = _make_controller(
+    def test_tool_use_is_noop(self, make_controller):
+        ctrl = make_controller(
             state=TmuxState.CLAUDE_RUNNING,
             _is_zoomed=True,
             _our_pane=MagicMock(),
@@ -183,8 +205,8 @@ class TestOnEvent:
         assert ctrl._is_zoomed is True
         ctrl._our_pane.resize.assert_not_called()
 
-    def test_error_triggers_unzoom(self):
-        ctrl = _make_controller(
+    def test_error_triggers_unzoom(self, make_controller):
+        ctrl = make_controller(
             state=TmuxState.CLAUDE_RUNNING,
             _is_zoomed=True,
             _our_pane=MagicMock(),
@@ -194,8 +216,8 @@ class TestOnEvent:
         ctrl.on_event(event)
         assert ctrl._is_zoomed is False
 
-    def test_proxy_error_triggers_unzoom(self):
-        ctrl = _make_controller(
+    def test_proxy_error_triggers_unzoom(self, make_controller):
+        ctrl = make_controller(
             state=TmuxState.CLAUDE_RUNNING,
             _is_zoomed=True,
             _our_pane=MagicMock(),
@@ -205,20 +227,15 @@ class TestOnEvent:
         ctrl.on_event(event)
         assert ctrl._is_zoomed is False
 
-    def test_auto_zoom_off_ignores_events(self):
-        ctrl = _make_controller(
-            state=TmuxState.CLAUDE_RUNNING,
-            auto_zoom=False,
-            _our_pane=MagicMock(),
-            _claude_pane=MagicMock(),
-        )
+    def test_auto_zoom_off_ignores_events(self, active_controller):
+        active_controller.auto_zoom = False
         event = RequestBodyEvent(body={})
-        ctrl.on_event(event)
-        assert ctrl._is_zoomed is False
-        ctrl._our_pane.resize.assert_not_called()
+        active_controller.on_event(event)
+        assert active_controller._is_zoomed is False
+        active_controller._our_pane.resize.assert_not_called()
 
-    def test_not_claude_running_ignores_events(self):
-        ctrl = _make_controller(
+    def test_not_claude_running_ignores_events(self, make_controller):
+        ctrl = make_controller(
             state=TmuxState.READY,
             _our_pane=MagicMock(),
             _claude_pane=MagicMock(),
@@ -228,51 +245,41 @@ class TestOnEvent:
         assert ctrl._is_zoomed is False
         ctrl._our_pane.resize.assert_not_called()
 
-    def test_unrelated_sse_event_no_decision(self):
+    def test_unrelated_sse_event_no_decision(self, active_controller):
         """TextDeltaEvent wrapped in ResponseSSEEvent has no table entry."""
-        ctrl = _make_controller(
-            state=TmuxState.CLAUDE_RUNNING,
-            _our_pane=MagicMock(),
-            _claude_pane=MagicMock(),
-        )
         sse = TextDeltaEvent(index=0, text="hello")
         event = ResponseSSEEvent(sse_event=sse)
-        ctrl.on_event(event)
-        assert ctrl._is_zoomed is False
-        ctrl._our_pane.resize.assert_not_called()
+        active_controller.on_event(event)
+        assert active_controller._is_zoomed is False
+        active_controller._our_pane.resize.assert_not_called()
 
-    def test_response_done_no_decision(self):
+    def test_response_done_no_decision(self, active_controller):
         """ResponseDoneEvent has no table entry — no-op."""
-        ctrl = _make_controller(
-            state=TmuxState.CLAUDE_RUNNING,
-            _our_pane=MagicMock(),
-            _claude_pane=MagicMock(),
-        )
         event = ResponseDoneEvent()
-        ctrl.on_event(event)
-        assert ctrl._is_zoomed is False
-        ctrl._our_pane.resize.assert_not_called()
+        active_controller.on_event(event)
+        assert active_controller._is_zoomed is False
+        active_controller._our_pane.resize.assert_not_called()
 
 
 # ─── Zoom idempotency ───────────────────────────────────────────────────────
 
 
 class TestZoomIdempotency:
-    def test_zoom_when_already_zoomed_is_noop(self):
-        ctrl = _make_controller(
+    def test_zoom_when_already_zoomed_is_noop(self, make_controller):
+        ctrl = make_controller(
             _is_zoomed=True,
             _our_pane=MagicMock(),
         )
         ctrl.zoom()
         ctrl._our_pane.resize.assert_not_called()
 
-    def test_unzoom_when_not_zoomed_is_noop(self):
-        ctrl = _make_controller(_our_pane=MagicMock())
+    def test_unzoom_when_not_zoomed_is_noop(self, make_controller):
+        ctrl = make_controller(_our_pane=MagicMock())
         ctrl.unzoom()
         ctrl._our_pane.resize.assert_not_called()
 
-    def test_toggle_zoom(self):
-        ctrl = _make_controller(_our_pane=MagicMock())
+    def test_toggle_zoom(self, make_controller):
+        ctrl = make_controller(_our_pane=MagicMock())
         ctrl.toggle_zoom()
         assert ctrl._is_zoomed is True
         ctrl.toggle_zoom()
@@ -283,28 +290,135 @@ class TestZoomIdempotency:
 
 
 class TestToggleAutoZoom:
-    def test_toggle(self):
-        ctrl = _make_controller()
+    def test_toggle(self, make_controller):
+        ctrl = make_controller()
         ctrl.toggle_auto_zoom()
         assert ctrl.auto_zoom is False
         ctrl.toggle_auto_zoom()
         assert ctrl.auto_zoom is True
 
 
+# ─── save_mouse_state ────────────────────────────────────────────────────────
+
+
+class TestSaveMouseState:
+    def test_captures_mouse_on(self, make_controller, mock_subprocess):
+        ctrl = make_controller()
+        mock_subprocess.return_value = MagicMock(stdout="on\n")
+        ctrl.save_mouse_state()
+        assert ctrl._original_mouse == "on"
+        mock_subprocess.assert_called_once_with(
+            ["tmux", "show-option", "-gv", "mouse"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+
+    def test_captures_mouse_off(self, make_controller, mock_subprocess):
+        ctrl = make_controller()
+        mock_subprocess.return_value = MagicMock(stdout="off\n")
+        ctrl.save_mouse_state()
+        assert ctrl._original_mouse == "off"
+
+    def test_subprocess_failure_defaults_to_on(self, make_controller, mock_subprocess):
+        ctrl = make_controller()
+        mock_subprocess.side_effect = subprocess.TimeoutExpired(cmd="tmux", timeout=2)
+        ctrl.save_mouse_state()
+        assert ctrl._original_mouse == "on"
+
+
+# ─── set_mouse ───────────────────────────────────────────────────────────────
+
+
+class TestSetMouse:
+    def test_set_mouse_on(self, make_controller, mock_subprocess):
+        ctrl = make_controller(_mouse_is_on=False)
+        ctrl.set_mouse(True)
+        mock_subprocess.assert_called_once_with(
+            ["tmux", "set-option", "-g", "mouse", "on"],
+            capture_output=True,
+            timeout=2,
+        )
+        assert ctrl._mouse_is_on is True
+
+    def test_set_mouse_off(self, make_controller, mock_subprocess):
+        ctrl = make_controller(_mouse_is_on=True)
+        ctrl.set_mouse(False)
+        mock_subprocess.assert_called_once_with(
+            ["tmux", "set-option", "-g", "mouse", "off"],
+            capture_output=True,
+            timeout=2,
+        )
+        assert ctrl._mouse_is_on is False
+
+    def test_set_mouse_idempotent(self, make_controller, mock_subprocess):
+        ctrl = make_controller(_mouse_is_on=True)
+        ctrl.set_mouse(True)
+        mock_subprocess.assert_not_called()
+
+    def test_set_mouse_error_does_not_update_state(self, make_controller, mock_subprocess):
+        ctrl = make_controller(_mouse_is_on=False)
+        mock_subprocess.side_effect = subprocess.TimeoutExpired(cmd="tmux", timeout=2)
+        ctrl.set_mouse(True)
+        assert ctrl._mouse_is_on is False
+
+
+# ─── restore_mouse_state ─────────────────────────────────────────────────────
+
+
+class TestRestoreMouseState:
+    def test_restores_saved_value(self, make_controller, mock_subprocess):
+        ctrl = make_controller(_original_mouse="on")
+        ctrl.restore_mouse_state()
+        mock_subprocess.assert_called_once_with(
+            ["tmux", "set-option", "-g", "mouse", "on"],
+            capture_output=True,
+            timeout=2,
+        )
+
+    def test_noop_when_no_saved_state(self, make_controller, mock_subprocess):
+        ctrl = make_controller()  # _original_mouse defaults to None
+        ctrl.restore_mouse_state()
+        mock_subprocess.assert_not_called()
+
+    def test_error_does_not_crash(self, make_controller, mock_subprocess):
+        ctrl = make_controller(_original_mouse="off")
+        mock_subprocess.side_effect = subprocess.TimeoutExpired(cmd="tmux", timeout=2)
+        ctrl.restore_mouse_state()  # should not raise
+
+
 # ─── cleanup ─────────────────────────────────────────────────────────────────
 
 
 class TestCleanup:
-    def test_cleanup_unzooms(self):
-        ctrl = _make_controller(
+    def test_cleanup_restores_mouse_and_unzooms(self, make_controller, mock_subprocess):
+        ctrl = make_controller(
+            _original_mouse="off",
             _is_zoomed=True,
             _our_pane=MagicMock(),
         )
         ctrl.cleanup()
+        # Mouse restored
+        mock_subprocess.assert_called_once_with(
+            ["tmux", "set-option", "-g", "mouse", "off"],
+            capture_output=True,
+            timeout=2,
+        )
+        # Unzoomed
         assert ctrl._is_zoomed is False
         ctrl._our_pane.resize.assert_called_once_with(zoom=True)
 
-    def test_cleanup_when_not_zoomed_is_noop(self):
-        ctrl = _make_controller(_our_pane=MagicMock())
+    def test_cleanup_when_not_zoomed_still_restores_mouse(self, make_controller, mock_subprocess):
+        ctrl = make_controller(
+            _original_mouse="on",
+            _our_pane=MagicMock(),
+        )
         ctrl.cleanup()
+        # Mouse restored
+        mock_subprocess.assert_called_once_with(
+            ["tmux", "set-option", "-g", "mouse", "on"],
+            capture_output=True,
+            timeout=2,
+        )
+        # Not unzoomed (wasn't zoomed)
         ctrl._our_pane.resize.assert_not_called()

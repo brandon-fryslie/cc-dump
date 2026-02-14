@@ -189,14 +189,10 @@ name = "cc-dump"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [
+    { name = "libtmux" },
     { name = "textual" },
     { name = "textual-serve" },
     { name = "tiktoken" },
-]
-
-[package.optional-dependencies]
-tmux = [
-    { name = "libtmux" },
 ]
 
 [package.dev-dependencies]
@@ -210,12 +206,11 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "libtmux", marker = "extra == 'tmux'", specifier = ">=0.30.0" },
+    { name = "libtmux", specifier = ">=0.30.0" },
     { name = "textual", specifier = ">=0.80.0" },
     { name = "textual-serve", specifier = ">=1.0.0" },
     { name = "tiktoken", specifier = ">=0.5.0" },
 ]
-provides-extras = ["tmux"]
 
 [package.metadata.requires-dev]
 dev = [

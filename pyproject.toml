@@ -10,6 +10,7 @@ dependencies = [
     "textual>=0.80.0",
     "textual-serve>=1.0.0",
     "tiktoken>=0.5.0",
+    "libtmux>=0.30.0",
 ]
 keywords = ["claude", "anthropic", "proxy", "api", "debugging", "tui"]
 classifiers = [
@@ -24,9 +25,6 @@ classifiers = [
     "Topic :: Software Development :: Debuggers",
     "Topic :: Utilities",
 ]
-
-[project.optional-dependencies]
-tmux = ["libtmux>=0.30.0"]
 
 [project.urls]
 Homepage = "https://github.com/brandon-fryslie/cc-dump"
