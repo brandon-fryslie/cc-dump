@@ -1,4 +1,4 @@
-"""Tests for tmux_controller — zoom decisions, state machine, event handling, mouse.
+"""Tests for tmux_controller — zoom decisions, state machine, event handling.
 
 All tests mock libtmux and tmux env vars; no actual tmux required.
 """
@@ -33,7 +33,7 @@ from cc_dump.tmux_controller import (
 
 _VALID_ATTRS = frozenset({
     "state", "auto_zoom", "_is_zoomed", "_port",
-    "_claude_command", "_original_mouse", "_mouse_is_on",
+    "_claude_command",
     "_server", "_session", "_our_pane", "_claude_pane",
 })
 
@@ -290,139 +290,24 @@ class TestToggleAutoZoom:
         assert ctrl.auto_zoom is True
 
 
-# ─── save_mouse_state ────────────────────────────────────────────────────────
-
-
-class TestSaveMouseState:
-    def test_captures_mouse_on(self, make_controller):
-        session = MagicMock()
-        session.show_option.return_value = "on"
-        ctrl = make_controller(_session=session)
-        ctrl.save_mouse_state()
-        assert ctrl._original_mouse == "on"
-        session.show_option.assert_called_once_with("mouse")
-
-    def test_captures_mouse_off(self, make_controller):
-        session = MagicMock()
-        session.show_option.return_value = "off"
-        ctrl = make_controller(_session=session)
-        ctrl.save_mouse_state()
-        assert ctrl._original_mouse == "off"
-
-    def test_none_value_defaults_to_on(self, make_controller):
-        session = MagicMock()
-        session.show_option.return_value = None
-        ctrl = make_controller(_session=session)
-        ctrl.save_mouse_state()
-        assert ctrl._original_mouse == "on"
-
-    def test_error_defaults_to_on(self, make_controller):
-        session = MagicMock()
-        session.show_option.side_effect = Exception("libtmux error")
-        ctrl = make_controller(_session=session)
-        ctrl.save_mouse_state()
-        assert ctrl._original_mouse == "on"
-
-    def test_noop_without_session(self, make_controller):
-        ctrl = make_controller()
-        ctrl.save_mouse_state()
-        assert ctrl._original_mouse is None
-
-
-# ─── set_mouse ───────────────────────────────────────────────────────────────
-
-
-class TestSetMouse:
-    def test_set_mouse_on(self, make_controller):
-        session = MagicMock()
-        ctrl = make_controller(_mouse_is_on=False, _session=session)
-        ctrl.set_mouse(True)
-        session.set_option.assert_called_once_with("mouse", "on")
-        assert ctrl._mouse_is_on is True
-
-    def test_set_mouse_off(self, make_controller):
-        session = MagicMock()
-        ctrl = make_controller(_mouse_is_on=True, _session=session)
-        ctrl.set_mouse(False)
-        session.set_option.assert_called_once_with("mouse", "off")
-        assert ctrl._mouse_is_on is False
-
-    def test_set_mouse_idempotent(self, make_controller):
-        session = MagicMock()
-        ctrl = make_controller(_mouse_is_on=True, _session=session)
-        ctrl.set_mouse(True)
-        session.set_option.assert_not_called()
-
-    def test_set_mouse_error_does_not_update_state(self, make_controller):
-        session = MagicMock()
-        session.set_option.side_effect = Exception("libtmux error")
-        ctrl = make_controller(_mouse_is_on=False, _session=session)
-        ctrl.set_mouse(True)
-        assert ctrl._mouse_is_on is False
-
-    def test_noop_without_session(self, make_controller):
-        ctrl = make_controller(_mouse_is_on=False)
-        ctrl.set_mouse(True)
-        assert ctrl._mouse_is_on is False
-
-
-# ─── restore_mouse_state ─────────────────────────────────────────────────────
-
-
-class TestRestoreMouseState:
-    def test_restores_saved_value(self, make_controller):
-        session = MagicMock()
-        ctrl = make_controller(_original_mouse="on", _session=session)
-        ctrl.restore_mouse_state()
-        session.set_option.assert_called_once_with("mouse", "on")
-
-    def test_noop_when_no_saved_state(self, make_controller):
-        session = MagicMock()
-        ctrl = make_controller(_session=session)  # _original_mouse defaults to None
-        ctrl.restore_mouse_state()
-        session.set_option.assert_not_called()
-
-    def test_noop_without_session(self, make_controller):
-        ctrl = make_controller(_original_mouse="on")
-        ctrl.restore_mouse_state()  # should not raise
-
-    def test_error_does_not_crash(self, make_controller):
-        session = MagicMock()
-        session.set_option.side_effect = Exception("libtmux error")
-        ctrl = make_controller(_original_mouse="off", _session=session)
-        ctrl.restore_mouse_state()  # should not raise
-
-
 # ─── cleanup ─────────────────────────────────────────────────────────────────
 
 
 class TestCleanup:
-    def test_cleanup_restores_mouse_and_unzooms(self, make_controller):
-        session = MagicMock()
+    def test_cleanup_unzooms(self, make_controller):
         ctrl = make_controller(
-            _original_mouse="off",
             _is_zoomed=True,
             _our_pane=MagicMock(),
-            _session=session,
         )
         ctrl.cleanup()
-        # Mouse restored
-        session.set_option.assert_called_once_with("mouse", "off")
-        # Unzoomed
         assert ctrl._is_zoomed is False
         ctrl._our_pane.resize.assert_called_once_with(zoom=True)
 
-    def test_cleanup_when_not_zoomed_still_restores_mouse(self, make_controller):
-        session = MagicMock()
+    def test_cleanup_when_not_zoomed_is_noop(self, make_controller):
         ctrl = make_controller(
-            _original_mouse="on",
             _our_pane=MagicMock(),
-            _session=session,
         )
         ctrl.cleanup()
-        # Mouse restored
-        session.set_option.assert_called_once_with("mouse", "on")
-        # Not unzoomed (wasn't zoomed)
         ctrl._our_pane.resize.assert_not_called()
 
 

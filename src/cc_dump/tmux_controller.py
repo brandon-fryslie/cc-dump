@@ -91,8 +91,6 @@ class TmuxController:
         self._is_zoomed = False
         self._port: int | None = None
         self._claude_command = claude_command
-        self._original_mouse: str | None = None  # saved setting for restore
-        self._mouse_is_on: bool | None = None  # idempotency guard
         self._server: libtmux.Server | None = None
         self._session: libtmux.Session | None = None
         self._our_pane: libtmux.Pane | None = None
@@ -292,42 +290,8 @@ class TmuxController:
         if action is not None:
             action()
 
-    def save_mouse_state(self) -> None:
-        """Capture current tmux mouse option for this session."""
-        if self._session is None:
-            return
-        try:
-            val = self._session.show_option("mouse")
-            self._original_mouse = val if val is not None else "on"
-        except Exception as e:
-            _log("save_mouse_state error: {}".format(e))
-            self._original_mouse = "on"  # safe default
-
-    def set_mouse(self, on: bool) -> None:
-        """Idempotent session-scoped tmux mouse toggle."""
-        if self._mouse_is_on is on:
-            return
-        if self._session is None:
-            return
-        value = "on" if on else "off"
-        try:
-            self._session.set_option("mouse", value)
-            self._mouse_is_on = on
-        except Exception as e:
-            _log("set_mouse error: {}".format(e))
-
-    def restore_mouse_state(self) -> None:
-        """Restore saved mouse setting for this session."""
-        if self._original_mouse is None or self._session is None:
-            return
-        try:
-            self._session.set_option("mouse", self._original_mouse)
-        except Exception as e:
-            _log("restore_mouse_state error: {}".format(e))
-
     def cleanup(self) -> None:
-        """Restore mouse state and unzoom on shutdown. Does NOT kill the claude pane."""
-        self.restore_mouse_state()
+        """Unzoom on shutdown. Does NOT kill the claude pane."""
         self.unzoom()
 
 

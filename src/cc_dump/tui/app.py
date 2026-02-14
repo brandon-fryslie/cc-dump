@@ -109,8 +109,6 @@ class CcDumpApp(App):
         self._closing = False
         self._replacing_widgets = False
         self._markdown_theme_pushed = False
-        self._mouse_leave_timer = None
-
         import cc_dump.palette
 
         self.sub_title = f"[{cc_dump.palette.PALETTE.info}]session: {session_name}[/]"
@@ -272,10 +270,6 @@ class CcDumpApp(App):
         yield cc_dump.tui.custom_footer.StatusFooter()
 
     def on_mount(self):
-        # Save tmux mouse state before we start toggling it
-        if self._tmux_controller is not None:
-            self._tmux_controller.save_mouse_state()
-
         # [LAW:one-source-of-truth] Restore persisted theme choice
         saved = cc_dump.settings.load_theme()
         if saved and saved in self.available_themes:
@@ -336,9 +330,6 @@ class CcDumpApp(App):
         if tee is not None:
             tee.disconnect()
 
-        if self._mouse_leave_timer is not None:
-            self._mouse_leave_timer.stop()
-            self._mouse_leave_timer = None
         self._app_log("INFO", "cc-dump TUI shutting down")
         self._closing = True
         self._router.stop()
@@ -371,37 +362,6 @@ class CcDumpApp(App):
         self._update_error_indicator()
 
         # DON'T call super() - keep running, hot reload will fix it
-
-    # ─── Mouse / tmux coordination ────────────────────────────────────
-    # // [LAW:single-enforcer] _on_mouse_activity is the sole mouse→tmux bridge.
-
-    def _on_mouse_activity(self) -> None:
-        """Disable tmux mouse (let Textual handle it) and reset leave timer."""
-        tmux = self._tmux_controller
-        if tmux is None:
-            return
-        tmux.set_mouse(False)
-        self._app_log("DEBUG", "mouse activity → tmux mouse off")
-        if self._mouse_leave_timer is not None:
-            self._mouse_leave_timer.stop()
-        self._mouse_leave_timer = self.set_timer(0.5, self._on_mouse_leave_timeout)
-
-    def _on_mouse_leave_timeout(self) -> None:
-        """No mouse events for 500ms — assume mouse left pane, re-enable tmux mouse."""
-        tmux = self._tmux_controller
-        if tmux is not None:
-            tmux.set_mouse(True)
-            self._app_log("DEBUG", "mouse leave timeout → tmux mouse on")
-        self._mouse_leave_timer = None
-
-    def on_mouse_move(self, event) -> None:
-        self._on_mouse_activity()
-
-    def on_mouse_scroll_down(self, event) -> None:
-        self._on_mouse_activity()
-
-    def on_mouse_scroll_up(self, event) -> None:
-        self._on_mouse_activity()
 
     # ─── Helpers ───────────────────────────────────────────────────────
 

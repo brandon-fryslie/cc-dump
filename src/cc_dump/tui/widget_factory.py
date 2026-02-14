@@ -190,58 +190,72 @@ class ConversationView(ScrollView):
         except NoScreen:
             selection = None
 
-        if actual_y >= self._total_lines:
-            return Strip.blank(width, self.rich_style)
+        try:
+            if actual_y >= self._total_lines:
+                return Strip.blank(width, self.rich_style)
 
-        key = (actual_y, scroll_x, width, self._widest_line)
-        # Bypass cache when selection is active (selection is transient)
-        if selection is None and key in self._line_cache:
-            return self._line_cache[key].apply_style(self.rich_style)
+            key = (actual_y, scroll_x, width, self._widest_line)
+            # Bypass cache when selection is active (selection is transient)
+            if selection is None and key in self._line_cache:
+                return self._line_cache[key].apply_style(self.rich_style)
 
-        # Binary search for the turn containing this line
-        turn = self._find_turn_for_line(actual_y)
-        if turn is None:
-            return Strip.blank(width, self.rich_style)
+            # Binary search for the turn containing this line
+            turn = self._find_turn_for_line(actual_y)
+            if turn is None:
+                return Strip.blank(width, self.rich_style)
 
-        # Lazy re-render: if this turn was deferred during a filter toggle,
-        # re-render it now that it's scrolled into view.
-        if turn._pending_filter_snapshot is not None:
-            self._lazy_rerender_turn(turn)
+            # Lazy re-render: if this turn was deferred during a filter toggle,
+            # re-render it now that it's scrolled into view.
+            if turn._pending_filter_snapshot is not None:
+                self._lazy_rerender_turn(turn)
 
-        local_y = actual_y - turn.line_offset
-        if local_y < len(turn.strips):
-            strip = turn.strips[local_y].crop_extend(
-                scroll_x, scroll_x + width, self.rich_style
+            local_y = actual_y - turn.line_offset
+            if local_y < len(turn.strips):
+                strip = turn.strips[local_y].crop_extend(
+                    scroll_x, scroll_x + width, self.rich_style
+                )
+            else:
+                strip = Strip.blank(width, self.rich_style)
+
+            # Apply selection highlight
+            if selection is not None:
+                span = selection.get_span(actual_y)
+                if span is not None:
+                    strip = self._apply_selection_to_strip(strip, span)
+
+            # Apply base style
+            strip = strip.apply_style(self.rich_style)
+
+            # Apply offsets for text selection coordinate mapping
+            strip = strip.apply_offsets(scroll_x, actual_y)
+
+            # Composite error indicator overlay (viewport-fixed, upper-right)
+            strip = cc_dump.tui.error_indicator.composite_overlay(
+                strip, y, width, self._indicator
             )
-        else:
-            strip = Strip.blank(width, self.rich_style)
 
-        # Apply selection highlight
-        if selection is not None:
-            span = selection.get_span(actual_y)
-            if span is not None:
-                strip = self._apply_selection_to_strip(strip, span)
+            self._line_cache[key] = strip
 
-        # Apply base style
-        strip = strip.apply_style(self.rich_style)
+            # Track which turn this cache key belongs to (for selective invalidation)
+            turn_idx = turn.turn_index
+            if turn_idx not in self._cache_keys_by_turn:
+                self._cache_keys_by_turn[turn_idx] = set()
+            self._cache_keys_by_turn[turn_idx].add(key)
 
-        # Apply offsets for text selection coordinate mapping
-        strip = strip.apply_offsets(scroll_x, actual_y)
-
-        # Composite error indicator overlay (viewport-fixed, upper-right)
-        strip = cc_dump.tui.error_indicator.composite_overlay(
-            strip, y, width, self._indicator
-        )
-
-        self._line_cache[key] = strip
-
-        # Track which turn this cache key belongs to (for selective invalidation)
-        turn_idx = turn.turn_index
-        if turn_idx not in self._cache_keys_by_turn:
-            self._cache_keys_by_turn[turn_idx] = set()
-        self._cache_keys_by_turn[turn_idx].add(key)
-
-        return strip
+            return strip
+        except Exception as exc:
+            import sys, traceback
+            sys.stderr.write("[render] " + traceback.format_exc())
+            sys.stderr.flush()
+            # Show in error indicator overlay (deduplicate by exception type+message)
+            err_key = f"render:{type(exc).__name__}"
+            if not any(item.id == err_key for item in self._indicator.items):
+                self._indicator.items.append(
+                    cc_dump.tui.error_indicator.ErrorItem(
+                        err_key, "\u26a0\ufe0f", f"{type(exc).__name__}: {exc}"
+                    )
+                )
+            return Strip.blank(width, self.rich_style)
 
     def _apply_selection_to_strip(
         self, strip: Strip, span: tuple[int, int]
