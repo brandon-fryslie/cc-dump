@@ -106,7 +106,9 @@ class CcDumpApp(App):
         self._recording_path = recording_path
         self._replay_file = replay_file
         self._tmux_controller = tmux_controller
+        self._mouse_leave_timer = None
         self._closing = False
+        self._quit_requested_at: float | None = None
         self._replacing_widgets = False
         self._markdown_theme_pushed = False
         import cc_dump.palette
@@ -270,10 +272,11 @@ class CcDumpApp(App):
         yield cc_dump.tui.custom_footer.StatusFooter()
 
     def on_mount(self):
-        # Save tmux mouse state before we start toggling it
+        # Disable tmux mouse so Textual handles scrolling; restored in cleanup()
         tmux = self._tmux_controller
         if tmux is not None:
             tmux.save_mouse_state()
+            tmux.set_mouse(False)
 
         # [LAW:one-source-of-truth] Restore persisted theme choice
         saved = cc_dump.settings.load_theme()
@@ -327,6 +330,15 @@ class CcDumpApp(App):
 
         if self._replay_data:
             self._process_replay_data()
+
+    def action_quit(self) -> None:
+        import time
+        now = time.monotonic()
+        if self._quit_requested_at is not None and (now - self._quit_requested_at) < 1.0:
+            self.exit()
+            return
+        self._quit_requested_at = now
+        self.notify("Press Ctrl+C again to quit", timeout=1)
 
     def on_unmount(self):
         # Disconnect stderr tee before teardown
@@ -548,17 +560,19 @@ class CcDumpApp(App):
             "analytics_store": self._analytics_store,
         }
 
-        handler = cc_dump.tui.event_handlers.EVENT_HANDLERS.get(kind)
-        if handler and callable(handler):
-            self._app_state = handler(
-                event, self._state, widgets, self._app_state, self._app_log
-            )
+        # [LAW:dataflow-not-control-flow] Always call handler, use no-op for unknown
+        handler = cc_dump.tui.event_handlers.EVENT_HANDLERS.get(
+            kind, cc_dump.tui.event_handlers._noop
+        )
+        self._app_state = handler(
+            event, self._state, widgets, self._app_state, self._app_log
+        )
 
-            # Check for new session signal from handler
-            new_session_id = self._app_state.pop("new_session_id", None)
-            if new_session_id:
-                self.post_message(NewSession(new_session_id))
-                self.notify(f"New session: {new_session_id[:8]}...")
+        # Check for new session signal from handler
+        new_session_id = self._app_state.pop("new_session_id", None)
+        if new_session_id:
+            self.post_message(NewSession(new_session_id))
+            self.notify(f"New session: {new_session_id[:8]}...")
 
     # ─── Delegates to extracted modules ────────────────────────────────
     # Textual requires action_* and watch_* as methods on the App class.
@@ -676,18 +690,31 @@ class CcDumpApp(App):
         self._update_footer_state()
 
     # ─── Mouse / tmux coordination ────────────────────────────────────
+    # Enter/Leave bubble from child widgets on every internal transition.
+    # Real "mouse left terminal": Leave with no subsequent Enter.
+    # Dedup: Leave schedules re-enable after 50ms, Enter cancels it.
 
     def on_enter(self, event) -> None:
-        """Mouse entered app — disable tmux mouse so Textual handles it."""
+        """Mouse entered a widget — cancel any pending mouse-restore."""
+        if self._mouse_leave_timer is not None:
+            self._mouse_leave_timer.stop()
+            self._mouse_leave_timer = None
         tmux = self._tmux_controller
-        if tmux is not None and tmux.set_mouse(False):
-            self.notify("tmux mouse off")
+        if tmux is not None:
+            tmux.set_mouse(False)
 
     def on_leave(self, event) -> None:
-        """Mouse left app — re-enable tmux mouse."""
+        """Mouse left a widget — schedule mouse-restore (cancelled by Enter)."""
+        if self._mouse_leave_timer is not None:
+            self._mouse_leave_timer.stop()
+        self._mouse_leave_timer = self.set_timer(0.05, self._restore_tmux_mouse)
+
+    def _restore_tmux_mouse(self) -> None:
+        """Timer fired — mouse really left the terminal."""
+        self._mouse_leave_timer = None
         tmux = self._tmux_controller
-        if tmux is not None and tmux.set_mouse(True):
-            self.notify("tmux mouse on")
+        if tmux is not None:
+            tmux.set_mouse(True)
 
     # Settings
     def action_toggle_settings(self):

@@ -359,9 +359,11 @@ def test_format_response_event_message_stop():
 
 
 def test_format_request_headers_empty():
-    """Empty headers dict returns empty list."""
+    """Empty headers dict creates HttpHeadersBlock with empty dict."""
     blocks = format_request_headers({})
-    assert blocks == []
+    assert len(blocks) == 1
+    assert isinstance(blocks[0], HttpHeadersBlock)
+    assert blocks[0].headers == {}
 
 
 def test_format_request_headers_with_headers():
@@ -1136,12 +1138,14 @@ class TestToolDefinitionsBlock:
         assert tdb.content_regions[0].tags == ["Read"]
         assert tdb.content_regions[1].tags == ["Write"]
 
-    def test_no_tool_definitions_block_without_tools(self, fresh_state):
-        """No ToolDefinitionsBlock when tools is empty."""
+    def test_tool_definitions_block_with_empty_tools(self, fresh_state):
+        """ToolDefinitionsBlock created even with empty tools list."""
         body = _make_body_with_tools([])
         blocks = format_request(body, fresh_state)
         tool_def_blocks = [b for b in blocks if isinstance(b, ToolDefinitionsBlock)]
-        assert len(tool_def_blocks) == 0
+        assert len(tool_def_blocks) == 1
+        assert tool_def_blocks[0].tools == []
+        assert tool_def_blocks[0].total_tokens == 0
 
     def test_tool_descriptions_stored_in_state(self, fresh_state):
         """state['tool_descriptions'] populated after format_request."""

@@ -759,20 +759,20 @@ def format_request(body, state, request_headers: dict | None = None):
     breakdown = tool_result_breakdown(messages)
     blocks.append(TurnBudgetBlock(budget=budget, tool_result_by_name=breakdown))
 
-    # Tool definitions block (when tools are present)
-    # // [LAW:dataflow-not-control-flow] Always evaluate; empty tools → no block appended
-    if tools:
-        per_tool_tokens = [estimate_tokens(json.dumps(t)) for t in tools]
-        tool_def_block = ToolDefinitionsBlock(
-            tools=tools,
-            tool_tokens=per_tool_tokens,
-            total_tokens=sum(per_tool_tokens),
-        )
+    # Tool definitions block
+    # [LAW:dataflow-not-control-flow] Always create block, renderer handles empty list
+    per_tool_tokens = [estimate_tokens(json.dumps(t)) for t in tools]
+    tool_def_block = ToolDefinitionsBlock(
+        tools=tools,
+        tool_tokens=per_tool_tokens,
+        total_tokens=sum(per_tool_tokens),
+    )
+    if tools:  # Only set regions if tools are present
         tool_def_block.content_regions = [
             ContentRegion(index=i, kind="tool_def", tags=[tool.get("name", "?")], expanded=False)
             for i, tool in enumerate(tools)
         ]
-        blocks.append(tool_def_block)
+    blocks.append(tool_def_block)
 
     blocks.append(SeparatorBlock(style="thin"))
 
@@ -962,9 +962,8 @@ def format_complete_response(complete_message):
 
 def format_request_headers(headers_dict: dict) -> list:
     """Format HTTP request headers as blocks."""
-    if not headers_dict:
-        return []
-    return [HttpHeadersBlock(headers=headers_dict, header_type="request")]
+    # [LAW:dataflow-not-control-flow] Always create block, renderer handles empty dict
+    return [HttpHeadersBlock(headers=headers_dict or {}, header_type="request")]
 
 
 def format_response_headers(status_code: int, headers_dict: dict) -> list:

@@ -1845,7 +1845,6 @@ def render_turn_to_strips(
         max_lines = TRUNCATION_LIMITS[vis]
 
         # Hidden blocks produce 0 lines — skip early
-        # // [LAW:dataflow-not-control-flow] 0 is the value; skipping is the operation for 0
         if max_lines == 0:
             continue
 

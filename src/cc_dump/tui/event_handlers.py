@@ -74,17 +74,17 @@ def handle_response_headers(event: ResponseHeadersEvent, state, widgets, app_sta
 
     try:
         blocks = cc_dump.formatting.format_response_headers(status_code, headers_dict)
-        if blocks:
-            conv = widgets["conv"]
-            filters = widgets["filters"]
+        conv = widgets["conv"]
+        filters = widgets["filters"]
 
-            # Begin streaming turn if not started
-            conv.begin_streaming_turn()
+        # [LAW:dataflow-not-control-flow] Always begin turn (idempotent), process blocks
+        conv.begin_streaming_turn()
 
-            # Append response header blocks
-            for block in blocks:
-                conv.append_streaming_block(block, filters)
+        # Append response header blocks (empty list is safe)
+        for block in blocks:
+            conv.append_streaming_block(block, filters)
 
+        if blocks:  # Only log if blocks were actually produced
             log_fn(
                 "DEBUG",
                 f"Displayed response headers: HTTP {status_code}, {len(headers_dict)} headers",
@@ -107,9 +107,8 @@ def handle_response_event(event: ResponseSSEEvent, state, widgets, app_state, lo
         stats = widgets["stats"]
         filters = widgets["filters"]
 
-        # Begin streaming turn if not started
-        if blocks:
-            conv.begin_streaming_turn()
+        # [LAW:dataflow-not-control-flow] Always begin turn (idempotent), process blocks
+        conv.begin_streaming_turn()
 
         for block in blocks:
             # Append to ConversationView streaming turn
