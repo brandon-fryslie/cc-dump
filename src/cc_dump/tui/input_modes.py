@@ -99,7 +99,7 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         "=": "next_filterset",
         "equals_sign": "next_filterset",
         "-": "prev_filterset",
-        "hyphen_minus": "prev_filterset",
+        "minus": "prev_filterset",
 
         # Filterset presets (F-key apply, Shift+F-key save; F3 broken, skip it)
         "f1": "apply_filterset('1')",
