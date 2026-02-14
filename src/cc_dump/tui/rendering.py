@@ -141,12 +141,26 @@ def _normalize_color(color: str | None, fallback: str) -> str:
         return fallback
 
 
+def _is_ansi_default(color: str | None) -> bool:
+    """Check if a theme color is the unknowable terminal default."""
+    return color is None or color == "ansi_default"
+
+
 def build_theme_colors(textual_theme) -> ThemeColors:
     """Map a Textual Theme to ThemeColors.
 
     Handles None fields and ANSI color names with sensible derivations.
+    When bg/fg/surface are all unknowable (ansi_default), assumes dark mode
+    for fallback values since terminal TUI users overwhelmingly use dark backgrounds.
     """
     dark = textual_theme.dark
+
+    # If bg/fg/surface are all unknowable, override dark assumption
+    # // [LAW:dataflow-not-control-flow] assume_dark is a value, not a branch
+    assume_dark = dark or all(
+        _is_ansi_default(getattr(textual_theme, attr))
+        for attr in ("background", "foreground", "surface")
+    )
 
     primary = _normalize_color(textual_theme.primary, "#0178D4")
     secondary = _normalize_color(textual_theme.secondary, primary)
@@ -154,9 +168,9 @@ def build_theme_colors(textual_theme) -> ThemeColors:
     warning = _normalize_color(textual_theme.warning, "#ffa62b")
     error = _normalize_color(textual_theme.error, "#ba3c5b")
     success = _normalize_color(textual_theme.success, "#4EBF71")
-    foreground = _normalize_color(textual_theme.foreground, "#e0e0e0" if dark else "#1e1e1e")
-    background = _normalize_color(textual_theme.background, "#1e1e1e" if dark else "#e0e0e0")
-    surface = _normalize_color(textual_theme.surface, "#2b2b2b" if dark else "#d0d0d0")
+    foreground = _normalize_color(textual_theme.foreground, "#e0e0e0" if assume_dark else "#1e1e1e")
+    background = _normalize_color(textual_theme.background, "#1e1e1e" if assume_dark else "#e0e0e0")
+    surface = _normalize_color(textual_theme.surface, "#2b2b2b" if assume_dark else "#d0d0d0")
 
     code_theme = "github-dark" if dark else "friendly"
 
