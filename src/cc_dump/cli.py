@@ -173,12 +173,22 @@ def main():
     import cc_dump.tmux_controller
 
     tmux_ctrl = None
+    TmuxState = cc_dump.tmux_controller.TmuxState
     if cc_dump.tmux_controller.is_available():
         tmux_ctrl = cc_dump.tmux_controller.TmuxController()
         tmux_ctrl.set_port(actual_port)
-        if tmux_ctrl.state == cc_dump.tmux_controller.TmuxState.READY:
+        if tmux_ctrl.state == TmuxState.READY:
             router.add_subscriber(DirectSubscriber(tmux_ctrl.on_event))
-            print("   Tmux: available (press 'c' to launch claude)")
+    # [LAW:dataflow-not-control-flow] Status message from state, not branching
+    _TMUX_STATUS = {
+        None: "disabled (not in tmux)" if not os.environ.get("TMUX") else "disabled (libtmux not installed)",
+        TmuxState.READY: "enabled (press 'c' to launch claude)",
+        TmuxState.CLAUDE_RUNNING: "enabled (claude running)",
+        TmuxState.NOT_IN_TMUX: "disabled (not in tmux)",
+        TmuxState.NO_LIBTMUX: "disabled (libtmux not installed)",
+    }
+    tmux_state = tmux_ctrl.state if tmux_ctrl else None
+    print(f"   Tmux: {_TMUX_STATUS[tmux_state]}")
 
     router.start()
 
