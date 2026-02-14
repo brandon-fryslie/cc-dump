@@ -53,8 +53,6 @@ class TestFooterMarkupRendering:
             (" 6 6", "budget"),
             (" 7 7", "metadata"),
             (" 3 3", "assistant"),
-            (" 8 8", "cost"),
-            (" 9 9", "timeline"),
         ]
 
         for pattern, binding_name in duplicate_patterns:

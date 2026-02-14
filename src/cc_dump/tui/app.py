@@ -280,6 +280,16 @@ class CcDumpApp(App):
         cc_dump.tui.rendering.set_theme(self.current_theme)
         self._apply_markdown_theme()
 
+        # Connect stderr tee to LogsPanel (flushes buffered pre-TUI messages)
+        # stderr_tee is a stable boundary — safe to use `from` import
+        from cc_dump.stderr_tee import get_tee as _get_tee
+        tee = _get_tee()
+        if tee is not None:
+            def _drain(level, source, message):
+                formatted = f"[{source}] {message}" if source != "stderr" else message
+                self.call_from_thread(self._app_log, level, formatted)
+            tee.connect(_drain)
+
         self._app_log("INFO", "🚀 cc-dump proxy started")
         self._app_log("INFO", f"Listening on: http://{self._host}:{self._port}")
 
@@ -317,6 +327,12 @@ class CcDumpApp(App):
             self._process_replay_data()
 
     def on_unmount(self):
+        # Disconnect stderr tee before teardown
+        from cc_dump.stderr_tee import get_tee as _get_tee
+        tee = _get_tee()
+        if tee is not None:
+            tee.disconnect()
+
         if self._mouse_leave_timer is not None:
             self._mouse_leave_timer.stop()
             self._mouse_leave_timer = None
@@ -380,6 +396,7 @@ class CcDumpApp(App):
                     "tmux_available": tmux is not None and tmux.state in _TMUX_ACTIVE,
                     "tmux_auto_zoom": tmux.auto_zoom if tmux is not None else False,
                     "tmux_zoomed": tmux._is_zoomed if tmux is not None else False,
+                    "stale_files": getattr(self, "_stale_files", []),
                 }
                 footer.update_display(state)
 

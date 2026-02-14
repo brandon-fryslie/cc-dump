@@ -138,9 +138,9 @@ Tool use/result pairs are correlated by ID. At tools level SUMMARY or below, con
 
 ### Token and Cost Analysis
 
-**Cost panel** (`8`) — Per-tool token usage aggregates. Press `*` to toggle between aggregate and per-model breakdown views.
+**Cost panel** (`.` to cycle) — Per-tool token usage aggregates. Press `,` to toggle between aggregate and per-model breakdown views.
 
-**Timeline panel** (`9`) — Context growth visualization across requests.
+**Timeline panel** (`.` to cycle) — Context growth visualization across requests.
 
 **Budget blocks** — Per-turn token accounting: input, output, cache creation, cache read tokens, and cost estimates.
 
@@ -228,7 +228,7 @@ Available via the command palette (`Ctrl+P` → "Dump conversation"). Exports th
 
 ### Economics Breakdown
 
-`*` toggles the cost panel between aggregate view and per-model breakdown view, useful for multi-model sessions.
+`,` toggles the cost panel between aggregate view and per-model breakdown view, useful for multi-model sessions.
 
 ### Hot-Reload Development
 
@@ -258,9 +258,8 @@ Each press cycles: current → next visibility level.
 
 | Key | Panel |
 |-----|-------|
-| `8` | Cost panel (per-tool token aggregates) |
-| `9` | Timeline panel (context growth) |
-| `*` | Toggle cost panel aggregate ↔ per-model breakdown |
+| `.` | Cycle panel (stats → economics → timeline) |
+| `,` | Cycle panel mode (aggregate ↔ per-model breakdown) |
 | `i` | Server info panel |
 | `Ctrl+L` | Debug logs panel |
 

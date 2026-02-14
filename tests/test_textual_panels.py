@@ -47,6 +47,27 @@ async def test_follow_mode_toggle():
         assert is_follow_mode(app)
 
 
+async def test_panel_mode_cycling_comma():
+    """Press ',' cycles intra-panel mode on the active panel."""
+    async with run_app() as (pilot, app):
+        # Cycle to economics panel (has breakdown mode)
+        await press_and_settle(pilot, ".")
+        assert is_panel_visible(app, "economics")
+
+        # Get economics widget and check initial mode
+        economics = app._get_economics()
+        assert economics is not None
+        assert economics._breakdown_mode is False
+
+        # Press comma to toggle breakdown mode
+        await press_and_settle(pilot, ",")
+        assert economics._breakdown_mode is True
+
+        # Press comma again to toggle back
+        await press_and_settle(pilot, ",")
+        assert economics._breakdown_mode is False
+
+
 async def test_panels_initial_state():
     """Stats panel starts visible, economics/timeline hidden, logs hidden."""
     async with run_app() as (pilot, app):

@@ -208,6 +208,8 @@ def apply_filterset(app, slot: str) -> None:
     name = _FILTERSET_NAMES.get(slot, "")
     label = f"F{slot} {name}" if name else f"F{slot}"
     app.notify(label)
+    # [LAW:single-enforcer] Footer updates only at _update_footer_state() boundary
+    app._update_footer_state()
 
 
 # ─── Navigation actions ────────────────────────────────────────────────
@@ -289,12 +291,7 @@ def _refresh_panel(app, getter_name: str) -> None:
 
 
 def refresh_stats(app) -> None:
-    """Refresh stats panel from analytics store."""
-    if not app.is_running or app._analytics_store is None:
-        return
-    stats = app._get_stats()
-    if stats is not None:
-        stats.refresh_from_store(app._analytics_store)
+    _refresh_panel(app, "_get_stats")
 
 
 def refresh_economics(app) -> None:

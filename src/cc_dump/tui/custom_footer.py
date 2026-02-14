@@ -80,9 +80,8 @@ class StatusFooter(Static):
             active_style = f"bold {fg_light} on {bg_color}"
             style = active_style if vis.visible else "dim"
             click = _click(f"app.toggle_vis('{name}')")
-            line1.append(f" {key} ", style=Style.parse(active_style if vis.visible else "dim") + click)
-            line1.append(name, style=Style.parse(style) + click)
-            line1.append(f" {icon} ", style=Style.parse(style) + click)
+            # [LAW:one-type-per-behavior] Single segment = single hover region for unified chip
+            line1.append(f" {key} {name} {icon} ", style=Style.parse(style) + click)
 
         # Line 2: panel indicator + follow + commands
         line2 = Text(no_wrap=True)
@@ -153,5 +152,12 @@ class StatusFooter(Static):
             line2.append(" Z", style=Style.parse("bold" if tmux_auto else "dim") + auto_click)
             line2.append(" ", style=auto_click)
             line2.append("auto", style=Style.parse(auto_style) + auto_click)
+
+        # Stale-file indicator — visible when excluded files are edited
+        stale = state.get("stale_files", [])
+        if stale:
+            names = ", ".join(s.split("/")[-1] for s in stale)
+            line2.append("  ")
+            line2.append(f" RESTART: {names} ", style="bold white on red")
 
         return Text("\n").join([line1, line2])

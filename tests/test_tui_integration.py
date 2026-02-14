@@ -332,8 +332,6 @@ class TestIntegrationScenarios:
         wait_for_content(proc, timeout=2)
 
         proc.send("7", press_enter=False)
-        settle(proc)
-        proc.send("8", press_enter=False)
         settle(proc, 0.1)
 
         assert proc.is_alive()
@@ -345,31 +343,22 @@ class TestIntegrationScenarios:
         settle(proc)
         proc.send("7", press_enter=False)
         settle(proc)
-        proc.send("8", press_enter=False)
-        settle(proc)
 
     def test_panel_management_workflow(self, class_proc_with_port):
         proc, port = class_proc_with_port
 
-        proc.send("8", press_enter=False)
+        # Cycle panels with '.' — stats → economics → timeline
+        proc.send(".", press_enter=False)
         settle(proc)
-        proc.send("9", press_enter=False)
-        settle(proc)
-        proc.send("3", press_enter=False)
+        proc.send(".", press_enter=False)
         settle(proc)
         proc.send("\x0c", press_enter=False)
         settle(proc, 0.1)
 
         assert proc.is_alive()
 
-        # Clean up — restore to defaults
-        proc.send("8", press_enter=False)
-        settle(proc)
-        proc.send("9", press_enter=False)
-        settle(proc)
-        proc.send("\x0c", press_enter=False)
-        settle(proc)
-        proc.send("3", press_enter=False)
+        # Cycle back to stats (timeline → stats)
+        proc.send(".", press_enter=False)
         settle(proc)
 
         assert proc.is_alive()

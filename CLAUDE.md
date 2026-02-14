@@ -126,7 +126,7 @@ Discover the dispatch tables: `grep 'BLOCK_.*RENDERERS\|TRUNCATION_LIMITS\|BLOCK
 **Key mappings:**
 - Number keys: `1` user, `2` assistant, `3` tools, `4` system, `5` budget, `6` metadata, `7` headers
 - Shift+number toggles detail (e.g., `!` for user detail toggle)
-- Panels: `8` cost, `9` timeline, `0` follow mode
+- Panels: `.` cycle panel, `,` panel mode, `0` follow mode
 - Vim navigation: `g`/`G` top/bottom, `j`/`k` line scroll, `h`/`l` column scroll, `ctrl+d`/`ctrl+u` half-page, `ctrl+f`/`ctrl+b` full-page
 - Default levels: headers/metadata/budget=EXISTENCE, user/assistant=FULL, tools/system=SUMMARY
 

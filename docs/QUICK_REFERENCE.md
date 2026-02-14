@@ -29,10 +29,9 @@
 
 | Key | Action |
 |-----|--------|
-| `8` | Toggle cost panel (economics) |
-| `9` | Toggle timeline panel |
+| `.` | Cycle panel (stats → economics → timeline) |
+| `,` | Cycle panel mode (e.g., aggregate ↔ per-model) |
 | `0` | Toggle follow mode (auto-scroll) |
-| `*` | Toggle economics breakdown (aggregate ↔ per-model) |
 | `Ctrl+L` | Toggle logs panel |
 | `Ctrl+P` | Command palette |
 

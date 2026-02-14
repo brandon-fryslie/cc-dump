@@ -38,6 +38,7 @@ _EXCLUDED_FILES = {
     "hot_reload.py",  # this file
     "event_types.py",  # stable type definitions, never reload
     "tmux_controller.py",  # stable boundary, holds live pane refs
+    "stderr_tee.py",  # stable boundary, holds live sys.stderr ref
     "__init__.py",  # module init
     "__main__.py",  # entry point
 }
@@ -53,8 +54,20 @@ _EXCLUDED_MODULES = {
     "tui/hot_reload_controller.py",  # accesses live app/widget state
 }
 
+# Excluded files worth monitoring for staleness (files a developer would edit).
+# Subset of _EXCLUDED_FILES ∪ _EXCLUDED_MODULES, minus boilerplate nobody touches.
+_STALENESS_WATCHLIST = {
+    # from _EXCLUDED_FILES
+    "proxy.py", "cli.py", "event_types.py", "tmux_controller.py", "stderr_tee.py",
+    # from _EXCLUDED_MODULES
+    "tui/app.py", "tui/category_config.py", "tui/action_handlers.py",
+    "tui/search_controller.py", "tui/dump_export.py", "tui/theme_controller.py",
+    "tui/hot_reload_controller.py",
+}
+
 _watch_dirs: list[str] = []
 _mtimes: dict[str, float] = {}
+_excluded_mtimes: dict[str, float] = {}
 
 
 def init(package_dir: str) -> None:
@@ -72,6 +85,7 @@ def init(package_dir: str) -> None:
 
     # Seed initial mtimes
     _scan_mtimes()
+    _scan_excluded_mtimes()
 
 
 def _iter_watched_files() -> Iterator[tuple[str, str]]:
@@ -186,3 +200,44 @@ def _get_changed_files() -> set[str]:
             sys.stderr.flush()
 
     return changed
+
+
+def _iter_excluded_files() -> Iterator[tuple[str, str]]:
+    """Yield (abs_path, rel_path) for excluded files worth monitoring for staleness."""
+    root = Path(_watch_dirs[0]) if _watch_dirs else None
+    for d in _watch_dirs:
+        if not os.path.isdir(d):
+            continue
+        for fname in os.listdir(d):
+            if not fname.endswith(".py"):
+                continue
+            abs_path = os.path.join(d, fname)
+            rel_str = str(Path(abs_path).relative_to(root)).replace(os.sep, "/")
+            # Check both bare filename and relative path against watchlist
+            if fname in _STALENESS_WATCHLIST or rel_str in _STALENESS_WATCHLIST:
+                yield abs_path, rel_str
+
+
+def _scan_excluded_mtimes() -> None:
+    """Seed mtime cache for excluded files."""
+    for abs_path, _rel in _iter_excluded_files():
+        try:
+            _excluded_mtimes[abs_path] = os.path.getmtime(abs_path)
+        except (FileNotFoundError, OSError):
+            pass
+
+
+def get_stale_excluded() -> list[str]:
+    """Return short names of excluded files that changed since app start.
+
+    These files are running stale code — edits won't take effect until restart.
+    """
+    stale = []
+    for abs_path, rel_str in _iter_excluded_files():
+        try:
+            mtime = os.path.getmtime(abs_path)
+            if abs_path in _excluded_mtimes and _excluded_mtimes[abs_path] != mtime:
+                stale.append(rel_str)
+        except (FileNotFoundError, OSError):
+            pass
+    return stale

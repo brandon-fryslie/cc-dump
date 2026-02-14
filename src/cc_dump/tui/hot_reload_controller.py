@@ -35,6 +35,13 @@ async def check_hot_reload(app) -> None:
         app._app_log("ERROR", f"Hot-reload error checking: {e}")
         return
 
+    # Check excluded files for staleness on every tick (cheap mtime scan)
+    stale = cc_dump.hot_reload.get_stale_excluded()
+    old_stale = getattr(app, "_stale_files", [])
+    if stale != old_stale:
+        app._stale_files = stale
+        app._update_footer_state()
+
     if not changed:
         return
 
@@ -243,9 +250,10 @@ async def _replace_all_widgets_inner(app) -> None:
     new_info.id = app._info_id
 
     from cc_dump.tui.action_handlers import PANEL_ORDER
-    new_stats.display = (active_panel == "stats")
-    new_economics.display = (active_panel == "economics")
-    new_timeline.display = (active_panel == "timeline")
+    # [LAW:one-source-of-truth] Panel visibility driven by PANEL_ORDER, not hardcoded names
+    _panel_widgets = {"stats": new_stats, "economics": new_economics, "timeline": new_timeline}
+    for _name in PANEL_ORDER:
+        _panel_widgets[_name].display = (active_panel == _name)
     new_logs.display = logs_visible
     new_info.display = info_visible
 

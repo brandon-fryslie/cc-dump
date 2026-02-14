@@ -62,6 +62,10 @@ def main():
     )
     args = parser.parse_args()
 
+    # Install stderr tee before anything else writes to stderr
+    import cc_dump.stderr_tee
+    cc_dump.stderr_tee.install()
+
     # Initialize color palette before anything else imports it
     import cc_dump.palette
 
