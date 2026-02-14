@@ -81,6 +81,11 @@ def save_claude_command(command: str) -> None:
     save_setting("claude_command", command)
 
 
+def load_auto_zoom_default() -> bool:
+    """Load the configured auto-zoom default for tmux integration."""
+    return bool(load_setting("auto_zoom_default", False))
+
+
 def load_filtersets() -> dict[str, dict[str, list[bool]]]:
     """Extract filtersets key from settings. Returns empty dict if absent."""
     return load_settings().get("filtersets", {})

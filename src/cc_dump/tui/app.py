@@ -129,7 +129,7 @@ class CcDumpApp(App):
 
         # Settings panel state
         self._settings_panel_open: bool = False
-        self._settings_fields: list[dict] = []  # [{key, value, cursor_pos}, ...]
+        self._settings_fields: list = []  # list[FieldState] from settings_panel
         self._settings_active_field: int = 0
 
         # Exception tracking for error indicator
@@ -270,6 +270,11 @@ class CcDumpApp(App):
         yield cc_dump.tui.custom_footer.StatusFooter()
 
     def on_mount(self):
+        # Save tmux mouse state before we start toggling it
+        tmux = self._tmux_controller
+        if tmux is not None:
+            tmux.save_mouse_state()
+
         # [LAW:one-source-of-truth] Restore persisted theme choice
         saved = cc_dump.settings.load_theme()
         if saved and saved in self.available_themes:
@@ -670,6 +675,20 @@ class CcDumpApp(App):
         self.notify("Auto-zoom: {}".format(label))
         self._update_footer_state()
 
+    # ─── Mouse / tmux coordination ────────────────────────────────────
+
+    def on_enter(self, event) -> None:
+        """Mouse entered app — disable tmux mouse so Textual handles it."""
+        tmux = self._tmux_controller
+        if tmux is not None and tmux.set_mouse(False):
+            self.notify("tmux mouse off")
+
+    def on_leave(self, event) -> None:
+        """Mouse left app — re-enable tmux mouse."""
+        tmux = self._tmux_controller
+        if tmux is not None and tmux.set_mouse(True):
+            self.notify("tmux mouse on")
+
     # Settings
     def action_toggle_settings(self):
         _actions.toggle_settings(self)
@@ -680,12 +699,8 @@ class CcDumpApp(App):
 
         fields = []
         for field_def in cc_dump.tui.settings_panel.SETTINGS_FIELDS:
-            value = cc_dump.settings.load_setting(field_def["key"], field_def["default"])
-            fields.append({
-                "key": field_def["key"],
-                "value": str(value),
-                "cursor_pos": len(str(value)),
-            })
+            value = cc_dump.settings.load_setting(field_def.key, field_def.default)
+            fields.append(field_def.make_state(value))
         self._settings_fields = fields
         self._settings_active_field = 0
         self._settings_panel_open = True
@@ -700,14 +715,16 @@ class CcDumpApp(App):
         import cc_dump.tui.settings_panel
 
         if save:
-            for field_data in self._settings_fields:
-                cc_dump.settings.save_setting(field_data["key"], field_data["value"])
-            # Update tmux controller if claude_command changed
+            for field_state in self._settings_fields:
+                cc_dump.settings.save_setting(field_state.key, field_state.save_value)
+            # Apply side effects for specific settings
             tmux = self._tmux_controller
             if tmux is not None:
-                for field_data in self._settings_fields:
-                    if field_data["key"] == "claude_command":
-                        tmux.set_claude_command(field_data["value"])
+                for field_state in self._settings_fields:
+                    if field_state.key == "claude_command":
+                        tmux.set_claude_command(field_state.save_value)
+                    elif field_state.key == "auto_zoom_default":
+                        tmux.auto_zoom = field_state.save_value
 
         # Remove panel widget
         for panel in self.screen.query(cc_dump.tui.settings_panel.SettingsPanel):
@@ -743,30 +760,8 @@ class CcDumpApp(App):
             self._close_settings(save=False)
             return
 
-        # Text editing on active field
-        field = fields[idx]
-        value = field["value"]
-        pos = field["cursor_pos"]
-
-        if key == "backspace":
-            if pos > 0:
-                field["value"] = value[:pos - 1] + value[pos:]
-                field["cursor_pos"] = pos - 1
-        elif key == "delete":
-            if pos < len(value):
-                field["value"] = value[:pos] + value[pos + 1:]
-        elif key == "left":
-            field["cursor_pos"] = max(0, pos - 1)
-        elif key == "right":
-            field["cursor_pos"] = min(len(value), pos + 1)
-        elif key == "home":
-            field["cursor_pos"] = 0
-        elif key == "end":
-            field["cursor_pos"] = len(value)
-        elif event.character and event.character.isprintable():
-            field["value"] = value[:pos] + event.character + value[pos:]
-            field["cursor_pos"] = pos + 1
-
+        # Delegate to the active field's handle_key
+        fields[idx].handle_key(key, event.character)
         self._update_settings_panel_display()
 
     def _update_settings_panel_display(self) -> None:

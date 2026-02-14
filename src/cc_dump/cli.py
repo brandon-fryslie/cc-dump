@@ -181,7 +181,8 @@ def main():
     TmuxState = cc_dump.tmux_controller.TmuxState
     if cc_dump.tmux_controller.is_available():
         claude_cmd = cc_dump.settings.load_claude_command()
-        tmux_ctrl = cc_dump.tmux_controller.TmuxController(claude_command=claude_cmd)
+        auto_zoom = cc_dump.settings.load_auto_zoom_default()
+        tmux_ctrl = cc_dump.tmux_controller.TmuxController(claude_command=claude_cmd, auto_zoom=auto_zoom)
         tmux_ctrl.set_port(actual_port)
         # Subscribe for both READY and CLAUDE_RUNNING (adoption case)
         if tmux_ctrl.state in (TmuxState.READY, TmuxState.CLAUDE_RUNNING):
