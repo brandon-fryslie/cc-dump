@@ -78,8 +78,8 @@ def _hex_to_hsl(hex_color: str) -> tuple[float, float, float]:
         r, g, b = int(h_str[0:2], 16), int(h_str[2:4], 16), int(h_str[4:6], 16)
     except ValueError:
         return (0.0, 0.5, 0.5)
-    h, l, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
-    return (h * 360.0, s, l)
+    h, lightness, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
+    return (h * 360.0, s, lightness)
 
 
 def _lerp(a: float, b: float, t: float) -> float:

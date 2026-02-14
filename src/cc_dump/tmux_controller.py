@@ -10,7 +10,6 @@ All libtmux usage is lazy-imported and wrapped in try/except.
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 from enum import Enum, auto
 from typing import TYPE_CHECKING
@@ -294,44 +293,35 @@ class TmuxController:
             action()
 
     def save_mouse_state(self) -> None:
-        """Capture current tmux mouse option via `show-option -gv mouse`."""
+        """Capture current tmux mouse option for this session."""
+        if self._session is None:
+            return
         try:
-            result = subprocess.run(
-                ["tmux", "show-option", "-gv", "mouse"],
-                capture_output=True,
-                text=True,
-                timeout=2,
-            )
-            self._original_mouse = result.stdout.strip() or "off"
+            val = self._session.show_option("mouse")
+            self._original_mouse = val if val is not None else "on"
         except Exception as e:
             _log("save_mouse_state error: {}".format(e))
             self._original_mouse = "on"  # safe default
 
     def set_mouse(self, on: bool) -> None:
-        """Idempotent tmux mouse toggle via `set-option -g mouse on/off`."""
+        """Idempotent session-scoped tmux mouse toggle."""
         if self._mouse_is_on is on:
+            return
+        if self._session is None:
             return
         value = "on" if on else "off"
         try:
-            subprocess.run(
-                ["tmux", "set-option", "-g", "mouse", value],
-                capture_output=True,
-                timeout=2,
-            )
+            self._session.set_option("mouse", value)
             self._mouse_is_on = on
         except Exception as e:
             _log("set_mouse error: {}".format(e))
 
     def restore_mouse_state(self) -> None:
-        """Restore saved setting via `set-option -g mouse <original>`."""
-        if self._original_mouse is None:
+        """Restore saved mouse setting for this session."""
+        if self._original_mouse is None or self._session is None:
             return
         try:
-            subprocess.run(
-                ["tmux", "set-option", "-g", "mouse", self._original_mouse],
-                capture_output=True,
-                timeout=2,
-            )
+            self._session.set_option("mouse", self._original_mouse)
         except Exception as e:
             _log("restore_mouse_state error: {}".format(e))
 

@@ -4,7 +4,6 @@ All tests mock libtmux and tmux env vars; no actual tmux required.
 """
 
 import os
-import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -64,13 +63,6 @@ def active_controller(make_controller):
         _our_pane=MagicMock(),
         _claude_pane=MagicMock(),
     )
-
-
-@pytest.fixture
-def mock_subprocess():
-    """Patch subprocess.run for tmux command testing."""
-    with patch("cc_dump.tmux_controller.subprocess.run") as mock_run:
-        yield mock_run
 
 
 # ─── _ZOOM_DECISIONS table ───────────────────────────────────────────────────
@@ -302,63 +294,74 @@ class TestToggleAutoZoom:
 
 
 class TestSaveMouseState:
-    def test_captures_mouse_on(self, make_controller, mock_subprocess):
-        ctrl = make_controller()
-        mock_subprocess.return_value = MagicMock(stdout="on\n")
+    def test_captures_mouse_on(self, make_controller):
+        session = MagicMock()
+        session.show_option.return_value = "on"
+        ctrl = make_controller(_session=session)
         ctrl.save_mouse_state()
         assert ctrl._original_mouse == "on"
-        mock_subprocess.assert_called_once_with(
-            ["tmux", "show-option", "-gv", "mouse"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
+        session.show_option.assert_called_once_with("mouse")
 
-    def test_captures_mouse_off(self, make_controller, mock_subprocess):
-        ctrl = make_controller()
-        mock_subprocess.return_value = MagicMock(stdout="off\n")
+    def test_captures_mouse_off(self, make_controller):
+        session = MagicMock()
+        session.show_option.return_value = "off"
+        ctrl = make_controller(_session=session)
         ctrl.save_mouse_state()
         assert ctrl._original_mouse == "off"
 
-    def test_subprocess_failure_defaults_to_on(self, make_controller, mock_subprocess):
-        ctrl = make_controller()
-        mock_subprocess.side_effect = subprocess.TimeoutExpired(cmd="tmux", timeout=2)
+    def test_none_value_defaults_to_on(self, make_controller):
+        session = MagicMock()
+        session.show_option.return_value = None
+        ctrl = make_controller(_session=session)
         ctrl.save_mouse_state()
         assert ctrl._original_mouse == "on"
+
+    def test_error_defaults_to_on(self, make_controller):
+        session = MagicMock()
+        session.show_option.side_effect = Exception("libtmux error")
+        ctrl = make_controller(_session=session)
+        ctrl.save_mouse_state()
+        assert ctrl._original_mouse == "on"
+
+    def test_noop_without_session(self, make_controller):
+        ctrl = make_controller()
+        ctrl.save_mouse_state()
+        assert ctrl._original_mouse is None
 
 
 # ─── set_mouse ───────────────────────────────────────────────────────────────
 
 
 class TestSetMouse:
-    def test_set_mouse_on(self, make_controller, mock_subprocess):
-        ctrl = make_controller(_mouse_is_on=False)
+    def test_set_mouse_on(self, make_controller):
+        session = MagicMock()
+        ctrl = make_controller(_mouse_is_on=False, _session=session)
         ctrl.set_mouse(True)
-        mock_subprocess.assert_called_once_with(
-            ["tmux", "set-option", "-g", "mouse", "on"],
-            capture_output=True,
-            timeout=2,
-        )
+        session.set_option.assert_called_once_with("mouse", "on")
         assert ctrl._mouse_is_on is True
 
-    def test_set_mouse_off(self, make_controller, mock_subprocess):
-        ctrl = make_controller(_mouse_is_on=True)
+    def test_set_mouse_off(self, make_controller):
+        session = MagicMock()
+        ctrl = make_controller(_mouse_is_on=True, _session=session)
         ctrl.set_mouse(False)
-        mock_subprocess.assert_called_once_with(
-            ["tmux", "set-option", "-g", "mouse", "off"],
-            capture_output=True,
-            timeout=2,
-        )
+        session.set_option.assert_called_once_with("mouse", "off")
         assert ctrl._mouse_is_on is False
 
-    def test_set_mouse_idempotent(self, make_controller, mock_subprocess):
-        ctrl = make_controller(_mouse_is_on=True)
+    def test_set_mouse_idempotent(self, make_controller):
+        session = MagicMock()
+        ctrl = make_controller(_mouse_is_on=True, _session=session)
         ctrl.set_mouse(True)
-        mock_subprocess.assert_not_called()
+        session.set_option.assert_not_called()
 
-    def test_set_mouse_error_does_not_update_state(self, make_controller, mock_subprocess):
+    def test_set_mouse_error_does_not_update_state(self, make_controller):
+        session = MagicMock()
+        session.set_option.side_effect = Exception("libtmux error")
+        ctrl = make_controller(_mouse_is_on=False, _session=session)
+        ctrl.set_mouse(True)
+        assert ctrl._mouse_is_on is False
+
+    def test_noop_without_session(self, make_controller):
         ctrl = make_controller(_mouse_is_on=False)
-        mock_subprocess.side_effect = subprocess.TimeoutExpired(cmd="tmux", timeout=2)
         ctrl.set_mouse(True)
         assert ctrl._mouse_is_on is False
 
@@ -367,23 +370,26 @@ class TestSetMouse:
 
 
 class TestRestoreMouseState:
-    def test_restores_saved_value(self, make_controller, mock_subprocess):
+    def test_restores_saved_value(self, make_controller):
+        session = MagicMock()
+        ctrl = make_controller(_original_mouse="on", _session=session)
+        ctrl.restore_mouse_state()
+        session.set_option.assert_called_once_with("mouse", "on")
+
+    def test_noop_when_no_saved_state(self, make_controller):
+        session = MagicMock()
+        ctrl = make_controller(_session=session)  # _original_mouse defaults to None
+        ctrl.restore_mouse_state()
+        session.set_option.assert_not_called()
+
+    def test_noop_without_session(self, make_controller):
         ctrl = make_controller(_original_mouse="on")
-        ctrl.restore_mouse_state()
-        mock_subprocess.assert_called_once_with(
-            ["tmux", "set-option", "-g", "mouse", "on"],
-            capture_output=True,
-            timeout=2,
-        )
+        ctrl.restore_mouse_state()  # should not raise
 
-    def test_noop_when_no_saved_state(self, make_controller, mock_subprocess):
-        ctrl = make_controller()  # _original_mouse defaults to None
-        ctrl.restore_mouse_state()
-        mock_subprocess.assert_not_called()
-
-    def test_error_does_not_crash(self, make_controller, mock_subprocess):
-        ctrl = make_controller(_original_mouse="off")
-        mock_subprocess.side_effect = subprocess.TimeoutExpired(cmd="tmux", timeout=2)
+    def test_error_does_not_crash(self, make_controller):
+        session = MagicMock()
+        session.set_option.side_effect = Exception("libtmux error")
+        ctrl = make_controller(_original_mouse="off", _session=session)
         ctrl.restore_mouse_state()  # should not raise
 
 
@@ -391,35 +397,31 @@ class TestRestoreMouseState:
 
 
 class TestCleanup:
-    def test_cleanup_restores_mouse_and_unzooms(self, make_controller, mock_subprocess):
+    def test_cleanup_restores_mouse_and_unzooms(self, make_controller):
+        session = MagicMock()
         ctrl = make_controller(
             _original_mouse="off",
             _is_zoomed=True,
             _our_pane=MagicMock(),
+            _session=session,
         )
         ctrl.cleanup()
         # Mouse restored
-        mock_subprocess.assert_called_once_with(
-            ["tmux", "set-option", "-g", "mouse", "off"],
-            capture_output=True,
-            timeout=2,
-        )
+        session.set_option.assert_called_once_with("mouse", "off")
         # Unzoomed
         assert ctrl._is_zoomed is False
         ctrl._our_pane.resize.assert_called_once_with(zoom=True)
 
-    def test_cleanup_when_not_zoomed_still_restores_mouse(self, make_controller, mock_subprocess):
+    def test_cleanup_when_not_zoomed_still_restores_mouse(self, make_controller):
+        session = MagicMock()
         ctrl = make_controller(
             _original_mouse="on",
             _our_pane=MagicMock(),
+            _session=session,
         )
         ctrl.cleanup()
         # Mouse restored
-        mock_subprocess.assert_called_once_with(
-            ["tmux", "set-option", "-g", "mouse", "on"],
-            capture_output=True,
-            timeout=2,
-        )
+        session.set_option.assert_called_once_with("mouse", "on")
         # Not unzoomed (wasn't zoomed)
         ctrl._our_pane.resize.assert_not_called()
 

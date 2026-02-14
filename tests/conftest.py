@@ -153,7 +153,8 @@ def _launch_cc_dump(port=0, timeout=10):
     Uses port 0 by default — the OS assigns a free port, eliminating
     collisions when xdist runs multiple workers in parallel.
     """
-    cmd = ["uv", "run", "cc-dump", "--port", str(port)]
+    # // [LAW:dataflow-not-control-flow] coalesce None→0 rather than branching
+    cmd = ["uv", "run", "cc-dump", "--port", str(port or 0)]
 
     proc = PtyProcess(cmd, timeout=timeout)
 
@@ -210,22 +211,6 @@ def _teardown_proc(proc):
 # Function-scoped fixture (original behavior, one process per test)
 # ---------------------------------------------------------------------------
 
-@pytest.fixture
-def start_cc_dump():
-    """Factory fixture to start cc-dump TUI and return PtyProcess."""
-    processes = []
-
-    def _start(port=None, timeout=10):
-        proc, _port = _launch_cc_dump(port=port, timeout=timeout)
-        processes.append(proc)
-        return proc
-
-    yield _start
-
-    for proc in processes:
-        _teardown_proc(proc)
-
-
 # ---------------------------------------------------------------------------
 # Class-scoped fixtures (one process shared across all tests in a class)
 # ---------------------------------------------------------------------------
@@ -235,14 +220,6 @@ def class_proc():
     """One cc-dump process shared across all tests in a class (no port needed)."""
     proc, _port = _launch_cc_dump()
     yield proc
-    _teardown_proc(proc)
-
-
-@pytest.fixture(scope="class")
-def class_proc_with_port():
-    """Class-scoped process with known port for HTTP tests."""
-    proc, port = _launch_cc_dump()
-    yield proc, port
     _teardown_proc(proc)
 
 
@@ -262,26 +239,3 @@ def fresh_state():
     }
 
 
-def _send_request(port, content="Test", extra_json=None, extra_headers=None):
-    """Send a test request to cc-dump proxy. Swallows connection errors."""
-    import requests
-
-    body = {
-        "model": "claude-3-5-sonnet-20241022",
-        "max_tokens": 50,
-        "messages": [{"role": "user", "content": content}],
-    }
-    if extra_json:
-        body.update(extra_json)
-    headers = {"anthropic-version": "2023-06-01"}
-    if extra_headers:
-        headers.update(extra_headers)
-    try:
-        requests.post(
-            f"http://127.0.0.1:{port}/v1/messages",
-            json=body,
-            timeout=2,
-            headers=headers,
-        )
-    except requests.exceptions.RequestException:
-        pass

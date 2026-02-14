@@ -23,6 +23,7 @@ import cc_dump.palette
 import cc_dump.analysis
 import cc_dump.tui.rendering
 import cc_dump.tui.panel_renderers
+import cc_dump.tui.error_indicator
 
 
 def _compute_widest(strips: list) -> int:
@@ -168,6 +169,7 @@ class ConversationView(ScrollView):
         self._pending_restore: dict | None = None
         self._scrolling_programmatically: bool = False
         self._scroll_anchor: ScrollAnchor | None = None
+        self._indicator = cc_dump.tui.error_indicator.IndicatorState()
 
     @contextmanager
     def _programmatic_scroll(self):
@@ -225,6 +227,11 @@ class ConversationView(ScrollView):
 
         # Apply offsets for text selection coordinate mapping
         strip = strip.apply_offsets(scroll_x, actual_y)
+
+        # Composite error indicator overlay (viewport-fixed, upper-right)
+        strip = cc_dump.tui.error_indicator.composite_overlay(
+            strip, y, width, self._indicator
+        )
 
         self._line_cache[key] = strip
 
@@ -1178,6 +1185,26 @@ class ConversationView(ScrollView):
             # Resolve anchor to maintain scroll position after expand/collapse
             if not self._follow_mode:
                 self._resolve_anchor()
+
+    # ─── Error indicator ────────────────────────────────────────────────────
+
+    def update_error_items(self, items: list) -> None:
+        """Set error indicator items. Called by app when stale files change."""
+        self._indicator.items = items
+        if not items:
+            self._indicator.expanded = False
+        self._line_cache.clear()
+        self.refresh()
+
+    def on_mouse_move(self, event) -> None:
+        """Track hover for error indicator expansion."""
+        hit = cc_dump.tui.error_indicator.hit_test_event(
+            self._indicator, event.x, event.y, self._content_width
+        )
+        if hit != self._indicator.expanded:
+            self._indicator.expanded = hit
+            self._line_cache.clear()
+            self.refresh()
 
     # ─── State management ────────────────────────────────────────────────────
 

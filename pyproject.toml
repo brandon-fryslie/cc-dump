@@ -59,6 +59,9 @@ markers = [
     "pty: tests requiring PTY subprocess (slow)",
     "textual: in-process Textual harness tests (fast)",
 ]
+filterwarnings = [
+    "ignore:.*use of forkpty\\(\\).*:DeprecationWarning",
+]
 
 [tool.mypy]
 # Run: uv run mypy src

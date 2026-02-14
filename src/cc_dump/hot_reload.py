@@ -25,10 +25,11 @@ _RELOAD_ORDER = [
     "cc_dump.tui.custom_footer",  # depends on: palette, rendering
     "cc_dump.tui.panel_renderers",  # depends on: analysis
     "cc_dump.tui.event_handlers",  # depends on: analysis, formatting
+    "cc_dump.tui.error_indicator",  # depends on: nothing (pure rendering)
     "cc_dump.tui.info_panel",  # depends on: palette, panel_renderers
     "cc_dump.tui.keys_panel",  # depends on: panel_renderers
     "cc_dump.tui.settings_panel",  # depends on: palette
-    "cc_dump.tui.widget_factory",  # depends on: analysis, rendering, panel_renderers
+    "cc_dump.tui.widget_factory",  # depends on: analysis, rendering, panel_renderers, error_indicator
 ]
 
 # Files to explicitly exclude from watching

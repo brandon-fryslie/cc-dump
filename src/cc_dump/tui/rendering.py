@@ -8,6 +8,9 @@ Two-tier dispatch:
 
 # [LAW:single-enforcer] All visibility logic is enforced in render_turn_to_strips().
 # Individual renderers never check filters or collapsed state.
+#
+# Pygments Syntax() is for USER-AUTHORED code content (code fences, bash, etc.).
+# Structural UI elements (XML tags, headers, labels) must use theme colors directly.
 """
 
 from __future__ import annotations
@@ -428,17 +431,51 @@ def _category_indicator_name(block: FormattedBlock) -> str | None:
     return cat.value
 
 
-def _render_xml_tag(tag_text: str) -> Syntax:
-    """Render an XML open/close tag with syntax highlighting.
+def _render_xml_tag(tag_text: str) -> Text:
+    """Render an XML open/close tag with theme-aware styling.
 
-    Uses the html lexer for proper token-level colorization:
-    angle brackets, tag names, attributes each get distinct colors.
+    Parses tag text to style components individually:
+    - Arrow indicators (▷/▽): dim secondary
+    - Angle brackets and slash: dim foreground
+    - Tag name: tc.secondary (role color, theme-derived)
+    - Inline content (collapsed preview text): dim italic foreground
 
     // [LAW:one-source-of-truth] Single function for all XML tag rendering.
     // [LAW:one-type-per-behavior] All XML tags render identically — one function.
     """
+    import re
+
     tc = get_theme_colors()
-    return Syntax(tag_text, "html", theme=tc.code_theme, background_color="default")
+    t = Text()
+
+    pos = 0
+    # Extract leading arrow if present
+    arrow_match = re.match(r"^([▷▽]\s*)", tag_text)
+    if arrow_match:
+        t.append(arrow_match.group(1), style=f"dim {tc.secondary}")
+        pos = arrow_match.end()
+
+    # Parse remaining: alternating tags and text content
+    tag_pattern = re.compile(r"(</?)([\w.-]+)(>)")
+    remaining = tag_text[pos:]
+    last_end = 0
+    bracket_style = f"dim {tc.foreground}"
+    name_style = tc.secondary
+
+    for m in tag_pattern.finditer(remaining):
+        # Text before this tag (content between tags in collapsed view)
+        if m.start() > last_end:
+            t.append(remaining[last_end : m.start()], style=f"dim italic {tc.foreground}")
+        t.append(m.group(1), style=bracket_style)  # < or </
+        t.append(m.group(2), style=name_style)  # tag name
+        t.append(m.group(3), style=bracket_style)  # >
+        last_end = m.end()
+
+    # Trailing text after last tag
+    if last_end < len(remaining):
+        t.append(remaining[last_end:], style=f"dim italic {tc.foreground}")
+
+    return t
 
 
 # ─── Full-content renderers (BLOCK_RENDERERS) ─────────────────────────────────
