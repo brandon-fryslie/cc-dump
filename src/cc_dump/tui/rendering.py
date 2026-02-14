@@ -19,8 +19,6 @@ from rich.text import Text
 from rich.markdown import Markdown
 from rich.console import ConsoleRenderable, Group
 from rich.syntax import Syntax
-from rich.theme import Theme as RichTheme
-
 from collections import Counter
 
 from cc_dump.formatting import (
@@ -650,7 +648,7 @@ def _render_segmented_block(block) -> ConsoleRenderable:
     // [LAW:dataflow-not-control-flow] Dispatch via SubBlockKind match.
     """
     # Use cached segmentation on the block object for efficiency
-    seg = _get_or_segment(block)
+    _get_or_segment(block)
     return _render_text_as_markdown(block.content)
 
 
@@ -1747,7 +1745,6 @@ def render_turn_to_strips(
         block index to its first strip line index.
     """
     from rich.segment import Segment
-    from rich.style import Style
     from textual.strip import Strip
 
     base_render_options = console.options

@@ -15,7 +15,6 @@ from textual.strip import Strip
 from textual.cache import LRUCache
 from textual.geometry import Size
 from rich.segment import Segment
-from rich.style import Style
 from rich.text import Text
 from rich.markdown import Markdown
 

@@ -9,7 +9,6 @@ Not hot-reloadable (accesses app widgets and reactive state).
 
 import cc_dump.formatting
 import cc_dump.settings
-from cc_dump.settings import DEFAULT_FILTERSETS
 import cc_dump.tui.rendering
 
 # [LAW:one-source-of-truth] Ordered slot list for cycling (skips F3)
