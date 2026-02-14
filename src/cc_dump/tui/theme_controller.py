@@ -34,7 +34,7 @@ def apply_markdown_theme(app) -> None:
     """
     # Skip markdown theme for ANSI-based Textual themes
     if "ansi" in app.theme.lower():
-        if hasattr(app, "_markdown_theme_pushed") and app._markdown_theme_pushed:
+        if app._markdown_theme_pushed:
             try:
                 app.console.pop_theme()
             except Exception:
@@ -46,7 +46,7 @@ def apply_markdown_theme(app) -> None:
     from rich.theme import Theme as RichTheme
 
     # Pop old markdown theme if we pushed one before
-    if hasattr(app, "_markdown_theme_pushed") and app._markdown_theme_pushed:
+    if app._markdown_theme_pushed:
         try:
             app.console.pop_theme()
         except Exception:

@@ -10,7 +10,7 @@
 import os
 import queue
 import threading
-from typing import Any, Optional
+from typing import Optional, TypedDict
 
 from textual.app import App, ComposeResult, SystemCommand
 from textual.css.query import NoMatches
@@ -37,6 +37,19 @@ from cc_dump.tui import search_controller as _search
 from cc_dump.tui import dump_export as _dump
 from cc_dump.tui import theme_controller as _theme
 from cc_dump.tui import hot_reload_controller as _hot_reload
+
+
+class TurnUsage(TypedDict, total=False):
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_creation_tokens: int
+
+
+class AppState(TypedDict, total=False):
+    current_turn_usage: TurnUsage
+    pending_request_headers: dict[str, str]
+    new_session_id: str
 
 
 class NewSession(Message):
@@ -95,6 +108,7 @@ class CcDumpApp(App):
         self._tmux_controller = tmux_controller
         self._closing = False
         self._replacing_widgets = False
+        self._markdown_theme_pushed = False
 
         import cc_dump.palette
 
@@ -104,7 +118,7 @@ class CcDumpApp(App):
         if not replay_data:
             self._replay_complete.set()
 
-        self._app_state: dict[str, Any] = {"current_turn_usage": {}}
+        self._app_state: AppState = {"current_turn_usage": {}}
 
         # [LAW:one-source-of-truth] Initialize from CATEGORY_CONFIG
         self._is_visible = {name: d.visible for _, name, _, d in CATEGORY_CONFIG}
