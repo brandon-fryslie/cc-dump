@@ -46,45 +46,225 @@ def _angular_distance(a: float, b: float) -> float:
     return min(d, 360 - d)
 
 
-# ── Fixed indicator palette for filter toggles ──────────────────────────
-# Hand-picked palette (warm → cool gradient) for filter indicator bars.
-# Each entry is (name, foreground_hex).
-_INDICATOR_COLORS: list[tuple[str, str]] = [
-    ("strawberry-red", "#F94144"),
-    ("atomic-tangerine", "#F3722C"),
-    ("carrot-orange", "#F8961E"),
-    ("tuscan-sun", "#F9C74F"),
-    ("golden-sand", "#C5C35E"),
-    ("willow-green", "#90BE6D"),
-    ("mint-leaf", "#6AB47C"),
-    ("seagrass", "#43AA8B"),
-    ("dark-cyan", "#4D908E"),
-    ("blue-slate", "#577590"),
-]
-
-# Stable mapping: filter name → index into _INDICATOR_COLORS
+# ── Filter indicator index ────────────────────────────────────────────
+# Stable mapping: filter name → index (for golden-angle hue generation).
 _FILTER_INDICATOR_INDEX: dict[str, int] = {
-    "headers": 0,  # strawberry-red
-    "tools": 1,  # atomic-tangerine
-    "system": 2,  # carrot-orange
-    "budget": 3,  # tuscan-sun
-    "metadata": 4,  # golden-sand
-    "stats": 5,  # willow-green
-    "economics": 6,  # mint-leaf
-    "timeline": 7,  # seagrass
-    "user": 8,  # dark-cyan
-    "assistant": 9,  # blue-slate
+    "headers": 0,
+    "tools": 1,
+    "system": 2,
+    "budget": 3,
+    "metadata": 4,
+    "stats": 5,
+    "economics": 6,
+    "timeline": 7,
+    "user": 8,
+    "assistant": 9,
 }
 
 
-# Extract hues once from the hand-picked indicator palette.
-# // [LAW:one-source-of-truth] Hue is the canonical value; S/L vary by mode.
-_INDICATOR_HUES: list[float] = []
-for _name, _hex in _INDICATOR_COLORS:
-    _r, _g, _b = _hex_to_rgb(_hex)
-    _h, _l, _s = colorsys.rgb_to_hls(_r / 255.0, _g / 255.0, _b / 255.0)
-    _INDICATOR_HUES.append(_h * 360.0)
-del _name, _hex, _r, _g, _b, _h, _l, _s  # clean up module scope
+# ── Theme-relative filter color generation ────────────────────────────
+
+
+def _hex_to_hsl(hex_color: str) -> tuple[float, float, float]:
+    """Parse #RRGGBB to (H in 0-360, S in 0-1, L in 0-1).
+
+    Returns (0, 0.5, 0.5) for unparseable values (e.g. ANSI color names).
+    """
+    h_str = hex_color.lstrip("#")
+    if len(h_str) != 6:
+        return (0.0, 0.5, 0.5)
+    try:
+        r, g, b = int(h_str[0:2], 16), int(h_str[2:4], 16), int(h_str[4:6], 16)
+    except ValueError:
+        return (0.0, 0.5, 0.5)
+    h, l, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
+    return (h * 360.0, s, l)
+
+
+def _lerp(a: float, b: float, t: float) -> float:
+    """Linear interpolation between a and b by factor t."""
+    return a + (b - a) * t
+
+
+def _find_indicator_seed(theme_hues: list[float]) -> float:
+    """Find seed hue in the largest angular gap between theme hues.
+
+    // [LAW:one-source-of-truth] Single algorithm for gap detection.
+    """
+    if not theme_hues:
+        return 30.0  # warm fallback when no theme colors
+
+    # Deduplicate and sort
+    sorted_hues = sorted(set(h % 360 for h in theme_hues))
+    if len(sorted_hues) < 2:
+        return (sorted_hues[0] + 180.0) % 360
+
+    # Find the largest angular gap
+    best_gap = 0.0
+    best_mid = 0.0
+    for i in range(len(sorted_hues)):
+        h1 = sorted_hues[i]
+        h2 = sorted_hues[(i + 1) % len(sorted_hues)]
+        gap = (h2 - h1) % 360
+        if gap > best_gap:
+            best_gap = gap
+            best_mid = (h1 + gap / 2) % 360
+
+    return best_mid
+
+
+def _wcag_relative_luminance(hex_color: str) -> float:
+    """Compute WCAG 2.1 relative luminance from #RRGGBB hex."""
+    r, g, b = _hex_to_rgb(hex_color)
+    rs, gs, bs = r / 255.0, g / 255.0, b / 255.0
+
+    def linearize(c: float) -> float:
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * linearize(rs) + 0.7152 * linearize(gs) + 0.0722 * linearize(bs)
+
+
+def _wcag_contrast(hex1: str, hex2: str) -> float:
+    """WCAG 2.1 contrast ratio between two hex colors."""
+    l1 = _wcag_relative_luminance(hex1)
+    l2 = _wcag_relative_luminance(hex2)
+    lighter, darker = max(l1, l2), min(l1, l2)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def generate_filter_colors(
+    primary: str,
+    secondary: str,
+    accent: str,
+    background: str,
+    foreground: str,
+    surface: str,
+) -> dict[str, tuple[str, str, str]]:
+    """Generate theme-relative filter indicator colors.
+
+    Returns dict mapping filter name to (gutter_fg_hex, chip_bg_hex, chip_fg_hex).
+
+    // [LAW:one-source-of-truth] Single function for all filter color derivation.
+    // [LAW:dataflow-not-control-flow] All parameters are values; computation is unconditional.
+
+    Algorithm:
+    1. Extract hues from theme primary/secondary/accent
+    2. Find largest hue gap → seed indicator hues there
+    3. Derive S/L from theme luminance range (bg, surface, fg)
+    4. Per-hue WCAG contrast enforcement for chip fg/bg
+    """
+    # Step 1: Extract theme hues
+    theme_hues: list[float] = []
+    for hex_color in (primary, secondary, accent):
+        h, s, _ = _hex_to_hsl(hex_color)
+        if s > 0.05:  # skip near-achromatic
+            theme_hues.append(h)
+
+    # Step 2: Find seed hue in largest gap
+    seed = _find_indicator_seed(theme_hues)
+
+    # Step 3: Generate 10 hues via golden angle from seed
+    hues = [(seed + i * GOLDEN_ANGLE) % 360 for i in range(10)]
+
+    # Step 4: Compute luminances from theme
+    _, _, bg_l = _hex_to_hsl(background)
+    _, _, surface_l = _hex_to_hsl(surface)
+    _, _, fg_l = _hex_to_hsl(foreground)
+    _, primary_s, _ = _hex_to_hsl(primary)
+
+    is_dark = bg_l < fg_l
+
+    # Gutter foreground: midpoint of bg→fg range, pushed away from bg
+    gutter_l = _lerp(bg_l, fg_l, 0.50)
+    min_gutter_dist = 0.20
+    if abs(gutter_l - bg_l) < min_gutter_dist:
+        gutter_l = bg_l + min_gutter_dist if is_dark else bg_l - min_gutter_dist
+    gutter_l = max(0.05, min(0.95, gutter_l))
+
+    # Chip background: pushed away from surface by ΔL≥0.20
+    # Extra margin provides room for per-hue contrast adjustments (phase 2)
+    # without violating the surface proximity constraint.
+    chip_bg_l = surface_l + (0.20 if is_dark else -0.20)
+    chip_bg_l = max(0.05, min(0.95, chip_bg_l))
+
+    # Chip foreground: initial target pushed away from chip_bg
+    chip_fg_l_base = chip_bg_l + (0.45 if is_dark else -0.45)
+    if is_dark:
+        chip_fg_l_base = max(chip_fg_l_base, 0.80)
+    else:
+        chip_fg_l_base = min(chip_fg_l_base, 0.20)
+    chip_fg_l_base = max(0.05, min(0.95, chip_fg_l_base))
+
+    # Step 5: Compute saturations from primary_S
+    gutter_s = max(0.45, min(0.85, primary_s * 0.90))
+    chip_bg_s = max(0.25, min(0.60, gutter_s * 0.55))
+    chip_fg_s = max(0.10, min(0.35, gutter_s * 0.25))
+
+    # Step 6: Map hue[i] → filter name, with per-hue WCAG contrast enforcement.
+    #
+    # HSL lightness doesn't map linearly to WCAG luminance — green-yellow
+    # hues have much higher luminance at the same HSL L due to the 0.7152
+    # green coefficient. We enforce contrast in escalating phases:
+    # Phase 1: Push chip_fg L toward extreme
+    # Phase 2: Desaturate chip_fg (achromatic maximizes luminance at given L)
+    # Phase 3: Darken chip_bg L (with surface proximity floor)
+    # Phase 4: Desaturate chip_bg (reduces green/yellow WCAG luminance)
+    min_contrast = 4.6  # target slightly above 4.5 for rounding margin
+    result: dict[str, tuple[str, str, str]] = {}
+    for name, idx in _FILTER_INDICATOR_INDEX.items():
+        h = hues[idx]
+        gutter_fg = _hsl_to_hex(h, gutter_s, gutter_l)
+
+        bg_l = chip_bg_l
+        bg_s = chip_bg_s
+        fg_l = chip_fg_l_base
+        fg_s = chip_fg_s
+        chip_bg = _hsl_to_hex(h, bg_s, bg_l)
+        chip_fg = _hsl_to_hex(h, fg_s, fg_l)
+        contrast = _wcag_contrast(chip_fg, chip_bg)
+
+        # Phase 1: push chip_fg L toward extreme
+        fg_step = 0.03 if is_dark else -0.03
+        iterations = 6
+        while contrast < min_contrast and iterations > 0:
+            fg_l = max(0.05, min(0.95, fg_l + fg_step))
+            chip_fg = _hsl_to_hex(h, fg_s, fg_l)
+            contrast = _wcag_contrast(chip_fg, chip_bg)
+            iterations -= 1
+
+        # Phase 2: desaturate chip_fg (achromatic maximizes luminance at given L)
+        iterations = 8
+        while contrast < min_contrast and fg_s > 0.01 and iterations > 0:
+            fg_s = max(0.0, fg_s - 0.04)
+            chip_fg = _hsl_to_hex(h, fg_s, fg_l)
+            contrast = _wcag_contrast(chip_fg, chip_bg)
+            iterations -= 1
+
+        # Phase 3: darken/lighten chip_bg L with surface proximity floor
+        bg_step = -0.02 if is_dark else 0.02
+        min_surface_dist = 0.10
+        iterations = 10
+        while contrast < min_contrast and iterations > 0:
+            candidate = bg_l + bg_step
+            if abs(candidate - surface_l) < min_surface_dist:
+                break
+            bg_l = max(0.05, min(0.95, candidate))
+            chip_bg = _hsl_to_hex(h, bg_s, bg_l)
+            contrast = _wcag_contrast(chip_fg, chip_bg)
+            iterations -= 1
+
+        # Phase 4: desaturate chip_bg (reduces green/yellow WCAG luminance
+        # because green channel has highest WCAG weight 0.7152)
+        iterations = 10
+        while contrast < min_contrast and bg_s > 0.01 and iterations > 0:
+            bg_s = max(0.0, bg_s - 0.03)
+            chip_bg = _hsl_to_hex(h, bg_s, bg_l)
+            contrast = _wcag_contrast(chip_fg, chip_bg)
+            iterations -= 1
+
+        result[name] = (gutter_fg, chip_bg, chip_fg)
+
+    return result
 
 
 class Palette:
@@ -209,50 +389,6 @@ class Palette:
     def success_bg(self) -> str:
         """Semantic green-ish dark background."""
         return self._bg_colors[self._semantic_indices["success"]]
-
-    # ── Filter colors (stable assignments for headers/tools/system/etc.) ──
-
-    def filter_colors_for_mode(
-        self, filter_name: str, dark: bool = True
-    ) -> tuple[str, str, str]:
-        """Get mode-aware (fg, bg, fg_light) triple for a named filter.
-
-        // [LAW:one-source-of-truth] Single method for all filter color derivation.
-        // [LAW:dataflow-not-control-flow] dark is a value selecting S/L parameters.
-
-        Dark mode:  fg S=0.75 L=0.55, bg S=0.60 L=0.25, fg_light S=0.50 L=0.85
-        Light mode: fg S=0.70 L=0.40, bg S=0.45 L=0.85, fg_light S=0.80 L=0.25
-        """
-        idx = _FILTER_INDICATOR_INDEX.get(filter_name, 0)
-        hue = _INDICATOR_HUES[idx]
-        if dark:
-            fg = _hsl_to_hex(hue, 0.75, 0.55)
-            bg = _hsl_to_hex(hue, 0.60, 0.25)
-            fg_light = _hsl_to_hex(hue, 0.50, 0.85)
-        else:
-            fg = _hsl_to_hex(hue, 0.70, 0.40)
-            bg = _hsl_to_hex(hue, 0.45, 0.85)
-            fg_light = _hsl_to_hex(hue, 0.80, 0.25)
-        return fg, bg, fg_light
-
-    def filter_color(self, filter_name: str, dark: bool = True) -> str:
-        """Get a stable foreground color for a named filter.
-
-        Uses the fixed indicator palette (warm→cool gradient), not the
-        golden-angle palette.
-        """
-        return self.filter_colors_for_mode(filter_name, dark)[0]
-
-    def filter_bg(self, filter_name: str, dark: bool = True) -> str:
-        """Get a stable dark/light background for a named filter."""
-        return self.filter_colors_for_mode(filter_name, dark)[1]
-
-    def filter_fg_light(self, filter_name: str, dark: bool = True) -> str:
-        """Get a stable high-contrast foreground for a named filter.
-
-        Dark mode: light text on dark bg. Light mode: dark text on light bg.
-        """
-        return self.filter_colors_for_mode(filter_name, dark)[2]
 
     # ── Accent color (for keybinding highlights, etc.) ──
 

@@ -112,6 +112,10 @@ class ThemeColors:
     # Markdown theme dict (for Rich console.push_theme)
     markdown_theme_dict: dict
 
+    # Filter indicator colors: name → (gutter_fg, chip_bg, chip_fg)
+    # // [LAW:one-source-of-truth] All filter colors derived from theme.
+    filter_colors: dict[str, tuple[str, str, str]]
+
 
 def build_theme_colors(textual_theme) -> ThemeColors:
     """Map a Textual Theme to ThemeColors.
@@ -158,6 +162,15 @@ def build_theme_colors(textual_theme) -> ThemeColors:
         "markdown.hr": "dim",
     }
 
+    filter_colors = cc_dump.palette.generate_filter_colors(
+        primary=primary,
+        secondary=secondary,
+        accent=accent,
+        background=background,
+        foreground=foreground,
+        surface=surface,
+    )
+
     return ThemeColors(
         primary=primary,
         secondary=secondary,
@@ -182,6 +195,7 @@ def build_theme_colors(textual_theme) -> ThemeColors:
         search_error_style=f"bold {error}",
         search_keys_style=f"bold {warning}",
         markdown_theme_dict=markdown_theme_dict,
+        filter_colors=filter_colors,
     )
 
 
@@ -217,7 +231,7 @@ def set_theme(textual_theme) -> None:
     p = cc_dump.palette.PALETTE
     TAG_STYLES = [p.fg_on_bg_for_mode(i, tc.dark) for i in range(min(p.count, 12))]
     MSG_COLORS = [p.msg_color_for_mode(i, tc.dark) for i in range(6)]
-    FILTER_INDICATORS = _build_filter_indicators(tc.dark)
+    FILTER_INDICATORS = _build_filter_indicators(tc)
 
 
 # ─── Visibility model constants ───────────────────────────────────────────────
@@ -322,18 +336,18 @@ TAG_STYLES: list[tuple[str, str]] = []
 MSG_COLORS: list[str] = ["cyan", "magenta", "yellow", "blue", "green", "red"]
 
 
-def _build_filter_indicators(dark: bool = True) -> dict[str, tuple[str, str]]:
-    """Build filter indicator (symbol, fg_color) mapping for the given mode.
+def _build_filter_indicators(tc: ThemeColors) -> dict[str, tuple[str, str]]:
+    """Build filter indicator (symbol, fg_color) mapping from ThemeColors.
 
-    // [LAW:one-source-of-truth] Filter indicator colors adapt to dark/light theme.
+    // [LAW:one-source-of-truth] Filter indicator colors derived from theme via tc.filter_colors.
     // [LAW:single-enforcer] Rebuilt by set_theme() alongside TAG_STYLES/MSG_COLORS.
     """
-    p = cc_dump.palette.PALETTE
     names = ["headers", "tools", "system", "budget", "metadata", "user", "assistant"]
-    return {name: ("\u258c", p.filter_color(name, dark)) for name in names}
+    return {name: ("\u258c", tc.filter_colors[name][0]) for name in names}
 
 
-FILTER_INDICATORS = _build_filter_indicators()
+# Initialized empty — rebuilt by set_theme() before first render.
+FILTER_INDICATORS: dict[str, tuple[str, str]] = {}
 
 
 def _add_filter_indicator(

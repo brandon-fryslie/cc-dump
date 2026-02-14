@@ -403,30 +403,95 @@ def test_neutral_gutter_for_newline_and_error():
     assert segments[-1].style.dim, "ErrorBlock right gutter should be dim"
 
 
-def test_filter_indicators_adapt_to_theme():
-    """FILTER_INDICATORS should change when set_theme() switches dark/light.
+def _relative_luminance(hex_color: str) -> float:
+    """Compute relative luminance per WCAG 2.1 from #RRGGBB hex."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0
 
-    Must access via module-level attribute (not from-imported snapshot)
-    since set_theme() rebinds the module-level name.
+    def linearize(c):
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b)
+
+
+def _contrast_ratio(hex1: str, hex2: str) -> float:
+    """WCAG 2.1 contrast ratio between two hex colors."""
+    l1 = _relative_luminance(hex1)
+    l2 = _relative_luminance(hex2)
+    lighter = max(l1, l2)
+    darker = min(l1, l2)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _perceptual_lightness(hex_color: str) -> float:
+    """Perceptual lightness (HSL L) from #RRGGBB hex."""
+    import colorsys
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0
+    _, l, _ = colorsys.rgb_to_hls(r, g, b)
+    return l
+
+
+def test_filter_indicators_adapt_to_theme():
+    """FILTER_INDICATORS should adapt per-theme, not just dark/light.
+
+    Verifies across multiple themes that:
+    1. Gutter colors differ between themes
+    2. Chip fg vs chip bg meets WCAG AA contrast (≥4.5:1)
+    3. Chip bg differs from surface by ≥ΔL=0.10
     """
     import cc_dump.tui.rendering as rendering_mod
 
-    dark_theme = BUILTIN_THEMES["textual-dark"]
-    rendering_mod.set_theme(dark_theme)
-    dark_indicators = dict(rendering_mod.FILTER_INDICATORS)
+    test_themes = ["textual-dark", "textual-light", "dracula", "solarized-dark", "nord"]
+    available_themes = [t for t in test_themes if t in BUILTIN_THEMES]
+    assert len(available_themes) >= 2, "Need at least 2 themes to compare"
 
-    light_theme = BUILTIN_THEMES["textual-light"]
-    rendering_mod.set_theme(light_theme)
-    light_indicators = dict(rendering_mod.FILTER_INDICATORS)
+    theme_indicators: dict[str, dict] = {}
+    theme_filter_colors: dict[str, dict] = {}
+    theme_surfaces: dict[str, str] = {}
 
-    # Colors should differ between dark and light modes
-    for name in ["headers", "tools", "system", "user", "assistant"]:
-        dark_color = dark_indicators[name][1]
-        light_color = light_indicators[name][1]
-        assert dark_color != light_color, (
-            f"Filter indicator '{name}' should have different colors in dark vs light mode: "
-            f"dark={dark_color}, light={light_color}"
+    for theme_name in available_themes:
+        theme = BUILTIN_THEMES[theme_name]
+        rendering_mod.set_theme(theme)
+        theme_indicators[theme_name] = dict(rendering_mod.FILTER_INDICATORS)
+        tc = rendering_mod.get_theme_colors()
+        theme_filter_colors[theme_name] = dict(tc.filter_colors)
+        theme_surfaces[theme_name] = tc.surface
+
+    filter_names = ["headers", "tools", "system", "user", "assistant"]
+
+    # 1. Colors should differ between themes for each filter
+    for name in filter_names:
+        colors_by_theme = {
+            t: theme_indicators[t][name][1] for t in available_themes
+        }
+        unique_colors = set(colors_by_theme.values())
+        assert len(unique_colors) > 1, (
+            f"Filter '{name}' should have different gutter colors across themes, "
+            f"got: {colors_by_theme}"
         )
 
+    # 2. WCAG AA contrast: chip_fg vs chip_bg ≥ 4.5:1 for all themes
+    for theme_name in available_themes:
+        for name in filter_names:
+            _, chip_bg, chip_fg = theme_filter_colors[theme_name][name]
+            ratio = _contrast_ratio(chip_fg, chip_bg)
+            assert ratio >= 4.5, (
+                f"Theme '{theme_name}', filter '{name}': chip contrast ratio "
+                f"{ratio:.2f} < 4.5 (fg={chip_fg}, bg={chip_bg})"
+            )
+
+    # 3. Chip bg should differ from surface by ΔL ≥ 0.10
+    for theme_name in available_themes:
+        surface_l = _perceptual_lightness(theme_surfaces[theme_name])
+        for name in filter_names:
+            _, chip_bg, _ = theme_filter_colors[theme_name][name]
+            chip_bg_l = _perceptual_lightness(chip_bg)
+            delta_l = abs(chip_bg_l - surface_l)
+            assert delta_l >= 0.10, (
+                f"Theme '{theme_name}', filter '{name}': chip bg ΔL from surface "
+                f"{delta_l:.3f} < 0.10 (chip_bg_L={chip_bg_l:.3f}, surface_L={surface_l:.3f})"
+            )
+
     # Restore dark theme for other tests
-    rendering_mod.set_theme(dark_theme)
+    rendering_mod.set_theme(BUILTIN_THEMES["textual-dark"])

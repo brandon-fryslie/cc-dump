@@ -4,7 +4,6 @@ from rich.style import Style
 from rich.text import Text
 from textual.widgets import Static
 
-import cc_dump.palette
 import cc_dump.tui.rendering
 from cc_dump.formatting import VisState, HIDDEN
 
@@ -66,7 +65,6 @@ class StatusFooter(Static):
         // [LAW:dataflow-not-control-flow] State values determine rendering, no branching.
         Each span carries @click meta so clicks dispatch the matching action.
         """
-        p = cc_dump.palette.PALETTE
         tc = cc_dump.tui.rendering.get_theme_colors()
 
         # Line 1: categories with icon+color — active gets colored background
@@ -75,8 +73,7 @@ class StatusFooter(Static):
         for key, name in self._CATEGORY_ITEMS:
             vis = state.get(name, HIDDEN)
             icon = self._VIS_ICONS[vis]
-            fg_light = p.filter_fg_light(name, tc.dark)
-            bg_color = p.filter_bg(name, tc.dark)
+            _, bg_color, fg_light = tc.filter_colors[name]
             # // [LAW:dataflow-not-control-flow] Style derived from vis.visible value
             active_style = f"bold {fg_light} on {bg_color}"
             style = active_style if vis.visible else "dim"
@@ -89,8 +86,7 @@ class StatusFooter(Static):
         line2 = Text(no_wrap=True)
         for key, label, state_key in self._ACTION_ITEMS:
             is_active = bool(state.get(state_key, False))
-            fg_light = p.filter_fg_light(state_key, tc.dark)
-            bg_color = p.filter_bg(state_key, tc.dark)
+            _, bg_color, fg_light = tc.filter_colors[state_key]
             # // [LAW:dataflow-not-control-flow] Style derived from is_active value
             active_style = f"bold {fg_light} on {bg_color}"
             style = active_style if is_active else "dim"
