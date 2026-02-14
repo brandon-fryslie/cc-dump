@@ -77,6 +77,7 @@ class CcDumpApp(App):
         replay_data: Optional[list] = None,
         recording_path: Optional[str] = None,
         replay_file: Optional[str] = None,
+        tmux_controller=None,
     ):
         super().__init__()
         self._event_queue = event_queue
@@ -91,6 +92,7 @@ class CcDumpApp(App):
         self._replay_data = replay_data
         self._recording_path = recording_path
         self._replay_file = replay_file
+        self._tmux_controller = tmux_controller
         self._closing = False
         self._replacing_widgets = False
 
@@ -319,12 +321,21 @@ class CcDumpApp(App):
             footer = self._get_footer()
             if footer is not None:
                 conv = self._get_conv()
+                tmux = self._tmux_controller
+                import cc_dump.tmux_controller
+                _TMUX_ACTIVE = {
+                    cc_dump.tmux_controller.TmuxState.READY,
+                    cc_dump.tmux_controller.TmuxState.CLAUDE_RUNNING,
+                }
                 state = {
                     **self.active_filters,
                     "economics": self.show_economics,
                     "timeline": self.show_timeline,
                     "follow": conv._follow_mode if conv is not None else True,
                     "active_filterset": self._active_filterset_slot,
+                    "tmux_available": tmux is not None and tmux.state in _TMUX_ACTIVE,
+                    "tmux_auto_zoom": tmux.auto_zoom if tmux is not None else False,
+                    "tmux_zoomed": tmux._is_zoomed if tmux is not None else False,
                 }
                 footer.update_display(state)
 
@@ -531,6 +542,45 @@ class CcDumpApp(App):
 
     def action_toggle_economics_breakdown(self):
         _actions.toggle_economics_breakdown(self)
+
+    # Tmux integration
+    def action_launch_claude(self):
+        tmux = self._tmux_controller
+        if tmux is None:
+            self.notify("Tmux not available", severity="warning")
+            return
+        import cc_dump.tmux_controller
+        if tmux.state == cc_dump.tmux_controller.TmuxState.CLAUDE_RUNNING:
+            if tmux.focus_claude():
+                self.notify("Focused claude pane")
+            else:
+                self.notify("Failed to focus claude pane", severity="error")
+        elif tmux.state == cc_dump.tmux_controller.TmuxState.READY:
+            if tmux.launch_claude():
+                self.notify("Launched claude in tmux pane")
+                self._update_footer_state()
+            else:
+                self.notify("Failed to launch claude", severity="error")
+        else:
+            self.notify("Tmux not available", severity="warning")
+
+    def action_toggle_tmux_zoom(self):
+        tmux = self._tmux_controller
+        if tmux is None:
+            self.notify("Tmux not available", severity="warning")
+            return
+        tmux.toggle_zoom()
+        self._update_footer_state()
+
+    def action_toggle_auto_zoom(self):
+        tmux = self._tmux_controller
+        if tmux is None:
+            self.notify("Tmux not available", severity="warning")
+            return
+        tmux.toggle_auto_zoom()
+        label = "on" if tmux.auto_zoom else "off"
+        self.notify("Auto-zoom: {}".format(label))
+        self._update_footer_state()
 
     # Navigation
     def action_toggle_follow(self):

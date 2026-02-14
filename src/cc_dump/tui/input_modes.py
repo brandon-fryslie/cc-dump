@@ -90,6 +90,11 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         # Info panel
         "i": "toggle_info",
 
+        # Tmux integration
+        "c": "launch_claude",
+        "z": "toggle_tmux_zoom",
+        "Z": "toggle_auto_zoom",
+
         # Filterset presets (F-key apply, Shift+F-key save; F3 broken, skip it)
         "f1": "apply_filterset('1')",
         "f2": "apply_filterset('2')",
@@ -150,6 +155,8 @@ FOOTER_KEYS: dict[InputMode, list[tuple[str, str]]] = {
         ("i", "info"),
         ("F1-F9", "presets"),
         ("/", "search"),
+        ("c", "claude"),
+        ("z", "zoom"),
     ],
     InputMode.SEARCH_EDIT: [
         ("enter", "search"),

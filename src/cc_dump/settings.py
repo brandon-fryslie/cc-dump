@@ -91,15 +91,39 @@ def load_theme() -> Optional[str]:
     return load_settings().get("theme")
 
 
+# [LAW:one-source-of-truth] Built-in filterset defaults.
+# User overrides (via Shift+F-key) take precedence.
+_H = VisState(False, False, False)  # hidden
+_SC = VisState(True, False, False)  # summary, collapsed
+_FC = VisState(True, True, False)   # full, collapsed
+
+def _fs(user, assistant, tools, system, budget, metadata, headers):
+    return {"user": user, "assistant": assistant, "tools": tools,
+            "system": system, "budget": budget, "metadata": metadata,
+            "headers": headers}
+
+DEFAULT_FILTERSETS: dict[str, dict[str, VisState]] = {
+    "1": _fs(_FC, _FC, _H,  _H,  _H,  _H,  _H),   # Conversation
+    "2": _fs(_SC, _SC, _SC, _SC, _SC, _SC, _SC),    # Overview
+    "4": _fs(_SC, _SC, _FC, _H,  _H,  _H,  _H),    # Tools
+    "5": _fs(_SC, _SC, _H,  _FC, _H,  _FC, _FC),    # System
+    "6": _fs(_SC, _SC, _SC, _H,  _FC, _FC, _H),     # Cost
+    "7": _fs(_FC, _FC, _FC, _FC, _FC, _FC, _FC),    # Full Debug
+    "8": _fs(_H,  _FC, _H,  _H,  _H,  _H,  _H),    # Assistant
+    "9": _fs(_SC, _SC, _SC, _H,  _H,  _H,  _H),    # Minimal
+}
+
+
 def get_filterset(slot: str) -> Optional[dict[str, VisState]]:
-    """Load a single filterset slot, returning dict[str, VisState] or None if unset."""
+    """Load a single filterset slot. User overrides take precedence over defaults."""
     filtersets = load_filtersets()
     raw = filtersets.get(slot)
-    if raw is None:
-        return None
-    # Convert [bool, bool, bool] lists back to VisState
-    return {
-        name: VisState(*triple)
-        for name, triple in raw.items()
-        if isinstance(triple, list) and len(triple) == 3
-    }
+    if raw is not None:
+        # Convert [bool, bool, bool] lists back to VisState
+        return {
+            name: VisState(*triple)
+            for name, triple in raw.items()
+            if isinstance(triple, list) and len(triple) == 3
+        }
+    # [LAW:one-source-of-truth] Fall back to built-in defaults
+    return DEFAULT_FILTERSETS.get(slot)

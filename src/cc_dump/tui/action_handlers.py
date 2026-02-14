@@ -9,7 +9,20 @@ Not hot-reloadable (accesses app widgets and reactive state).
 
 import cc_dump.formatting
 import cc_dump.settings
+from cc_dump.settings import DEFAULT_FILTERSETS
 import cc_dump.tui.rendering
+
+# [LAW:one-source-of-truth] Names for built-in filterset slots
+_FILTERSET_NAMES: dict[str, str] = {
+    "1": "Conversation",
+    "2": "Overview",
+    "4": "Tools",
+    "5": "System",
+    "6": "Cost",
+    "7": "Full Debug",
+    "8": "Assistant",
+    "9": "Minimal",
+}
 
 
 # ─── Visibility actions ────────────────────────────────────────────────
@@ -110,21 +123,24 @@ def save_filterset(app, slot: str) -> None:
     cc_dump.settings.save_filterset(slot, app.active_filters)
     app._active_filterset_slot = slot
     app._update_footer_state()
-    app.notify(f"Saved filterset F{slot}")
+    app.notify(f"Saved preset F{slot}")
 
 
 def apply_filterset(app, slot: str) -> None:
     """Apply a saved filterset slot to the current visibility state."""
     filters = cc_dump.settings.get_filterset(slot)
     if filters is None:
-        app.notify(f"Filterset F{slot} is empty", severity="warning")
+        app.notify(f"Preset F{slot} is empty", severity="warning")
         return
     # Apply all three axes from the loaded VisState values
     app._is_visible = {name: vs.visible for name, vs in filters.items()}
     app._is_full = {name: vs.full for name, vs in filters.items()}
     app._is_expanded = {name: vs.expanded for name, vs in filters.items()}
     app._active_filterset_slot = slot
-    app.notify(f"Applied filterset F{slot}")
+    # Show name for built-in presets, just slot number for user-defined
+    name = _FILTERSET_NAMES.get(slot, "")
+    label = f"F{slot} {name}" if name else f"F{slot}"
+    app.notify(label)
 
 
 def toggle_economics_breakdown(app) -> None:
