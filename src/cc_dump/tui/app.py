@@ -349,6 +349,7 @@ class CcDumpApp(App):
         if tmux is None:
             return
         tmux.set_mouse(False)
+        self._app_log("DEBUG", "mouse activity → tmux mouse off")
         if self._mouse_leave_timer is not None:
             self._mouse_leave_timer.stop()
         self._mouse_leave_timer = self.set_timer(0.5, self._on_mouse_leave_timeout)
@@ -358,6 +359,7 @@ class CcDumpApp(App):
         tmux = self._tmux_controller
         if tmux is not None:
             tmux.set_mouse(True)
+            self._app_log("DEBUG", "mouse leave timeout → tmux mouse on")
         self._mouse_leave_timer = None
 
     def on_mouse_move(self, event) -> None:
@@ -396,9 +398,24 @@ class CcDumpApp(App):
                     "tmux_available": tmux is not None and tmux.state in _TMUX_ACTIVE,
                     "tmux_auto_zoom": tmux.auto_zoom if tmux is not None else False,
                     "tmux_zoomed": tmux._is_zoomed if tmux is not None else False,
-                    "stale_files": getattr(self, "_stale_files", []),
                 }
                 footer.update_display(state)
+            self._update_error_indicator()
+
+    def _update_error_indicator(self):
+        """Push stale-file errors to ConversationView's overlay indicator."""
+        conv = self._get_conv()
+        if conv is None:
+            return
+        stale = getattr(self, "_stale_files", [])
+        import cc_dump.tui.error_indicator
+        ErrorItem = cc_dump.tui.error_indicator.ErrorItem
+        # // [LAW:dataflow-not-control-flow] Always build items list; empty list = no indicator.
+        items = [
+            ErrorItem("stale", "\u274c", s.split("/")[-1])
+            for s in stale
+        ]
+        conv.update_error_items(items)
 
     def _build_server_info(self) -> dict:
         """// [LAW:one-source-of-truth] All server info derived from constructor params."""
@@ -577,6 +594,9 @@ class CcDumpApp(App):
 
     def action_toggle_expand(self, category: str):
         _actions.toggle_expand(self, category)
+
+    def action_cycle_vis(self, category: str):
+        _actions.cycle_vis(self, category)
 
     def _clear_overrides(self, category_name: str):
         _actions.clear_overrides(self, category_name)

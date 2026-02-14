@@ -27,6 +27,17 @@ _FILTERSET_NAMES: dict[str, str] = {
 }
 
 
+# [LAW:one-source-of-truth] Ordered visibility states for cycling filter chips.
+# Progression: hidden → summary collapsed → summary expanded → full collapsed → full expanded
+_VIS_CYCLE = [
+    cc_dump.formatting.VisState(False, False, False),  # 1. Hidden
+    cc_dump.formatting.VisState(True, False, False),   # 2. Summary Collapsed
+    cc_dump.formatting.VisState(True, False, True),    # 3. Summary Expanded
+    cc_dump.formatting.VisState(True, True, False),    # 4. Full Collapsed
+    cc_dump.formatting.VisState(True, True, True),     # 5. Full Expanded
+]
+
+
 # ─── Visibility actions ────────────────────────────────────────────────
 
 # [LAW:dataflow-not-control-flow] Visibility toggle specs — data, not branches.
@@ -75,6 +86,40 @@ def toggle_detail(app, category: str) -> None:
 
 def toggle_expand(app, category: str) -> None:
     _toggle_vis_dicts(app, category, "expand")
+
+
+def cycle_vis(app, category: str) -> None:
+    """Cycle category through 5 visibility states: hidden → summary → full.
+
+    // [LAW:dataflow-not-control-flow] State progression driven by _VIS_CYCLE list.
+    // [LAW:one-type-per-behavior] Single function for all category visibility cycling.
+    """
+    # Get current state from three reactive dicts
+    current = cc_dump.formatting.VisState(
+        app._is_visible[category],
+        app._is_full[category],
+        app._is_expanded[category]
+    )
+
+    # Find index in cycle (default to -1 if state not found, wraps to 0)
+    try:
+        idx = _VIS_CYCLE.index(current)
+    except ValueError:
+        idx = -1
+
+    # Compute next state with modulo wrap
+    next_idx = (idx + 1) % len(_VIS_CYCLE)
+    next_state = _VIS_CYCLE[next_idx]
+
+    # Update all three reactive dicts atomically
+    # [LAW:dataflow-not-control-flow] Always execute these updates; values vary
+    app._is_visible = {**app._is_visible, category: next_state.visible}
+    app._is_full = {**app._is_full, category: next_state.full}
+    app._is_expanded = {**app._is_expanded, category: next_state.expanded}
+
+    # Clear per-block overrides and invalidate active filterset
+    clear_overrides(app, category)
+    app._active_filterset_slot = None
 
 
 # ─── Panel cycling ─────────────────────────────────────────────────────

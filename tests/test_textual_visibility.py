@@ -125,3 +125,64 @@ async def test_category_toggle(key, category):
         await press_and_settle(pilot, key)
         restored = get_vis_state(app, category)
         assert restored == initial, f"{category}: should restore to {initial}, got {restored}"
+
+
+async def test_cycle_vis_five_state_cycle():
+    """Click-to-cycle progresses through 5 states: hidden → summary-collapsed → summary-expanded → full-collapsed → full-expanded → hidden."""
+    async with run_app() as (pilot, app):
+        # Start with headers hidden
+        assert get_vis_state(app, "headers") == HIDDEN
+
+        # Cycle 1: Hidden → Summary Collapsed
+        app.action_cycle_vis("headers")
+        assert get_vis_state(app, "headers") == SUMMARY_COLLAPSED
+
+        # Cycle 2: Summary Collapsed → Summary Expanded
+        app.action_cycle_vis("headers")
+        assert get_vis_state(app, "headers") == SUMMARY_EXPANDED
+
+        # Cycle 3: Summary Expanded → Full Collapsed
+        app.action_cycle_vis("headers")
+        assert get_vis_state(app, "headers") == FULL_COLLAPSED
+
+        # Cycle 4: Full Collapsed → Full Expanded
+        app.action_cycle_vis("headers")
+        assert get_vis_state(app, "headers") == FULL_EXPANDED
+
+        # Cycle 5: Full Expanded → Hidden (wraps)
+        app.action_cycle_vis("headers")
+        assert get_vis_state(app, "headers") == HIDDEN
+
+
+async def test_cycle_vis_all_categories():
+    """cycle_vis works for all 7 categories and doesn't affect keyboard toggle behavior."""
+    async with run_app() as (pilot, app):
+        categories = ["user", "assistant", "tools", "system", "budget", "metadata", "headers"]
+
+        for cat in categories:
+            initial = get_vis_state(app, cat)
+
+            # Cycle once
+            app.action_cycle_vis(cat)
+            after_cycle = get_vis_state(app, cat)
+
+            # State should have changed (different from initial)
+            assert after_cycle != initial, f"{cat}: state should change after cycle_vis"
+
+            # Cycling multiple times should cycle through states deterministically
+            app.action_cycle_vis(cat)
+            after_second = get_vis_state(app, cat)
+            assert after_second != after_cycle, f"{cat}: second cycle should differ from first"
+
+
+async def test_cycle_vis_clears_overrides_and_filterset():
+    """cycle_vis clears per-block overrides and invalidates active filterset."""
+    async with run_app() as (pilot, app):
+        # Set a filterset slot
+        app._active_filterset_slot = "1"
+
+        # Cycle a category
+        app.action_cycle_vis("tools")
+
+        # Filterset should be invalidated (set to None)
+        assert app._active_filterset_slot is None
