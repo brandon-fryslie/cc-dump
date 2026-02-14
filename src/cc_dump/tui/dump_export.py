@@ -73,7 +73,7 @@ def write_block_text(f, block, block_idx: int, log_fn=None) -> None:
         if block.detail:
             f.write(f"  Detail: {block.detail}\n")
         if block.input_size:
-            f.write(f"  Input size: {block.input_size} bytes\n")
+            f.write(f"  Input lines: {block.input_size}\n")
 
     elif isinstance(block, cc_dump.formatting.ToolResultBlock):
         f.write(f"  Tool: {block.tool_name}\n")
@@ -81,9 +81,9 @@ def write_block_text(f, block, block_idx: int, log_fn=None) -> None:
         if block.detail:
             f.write(f"  Detail: {block.detail}\n")
         if block.is_error:
-            f.write(f"  ERROR (size: {block.size} bytes)\n")
+            f.write(f"  ERROR ({block.size} lines)\n")
         else:
-            f.write(f"  Result size: {block.size} bytes\n")
+            f.write(f"  Result lines: {block.size}\n")
 
     elif isinstance(block, cc_dump.formatting.ToolUseSummaryBlock):
         f.write("  Tool counts:\n")

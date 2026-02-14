@@ -116,7 +116,7 @@ _TEXT_EXTRACTORS: dict[str, Callable] = {
     "ErrorBlock": lambda b: f"HTTP {b.code} {b.reason}",
     "ProxyErrorBlock": lambda b: b.error,
     "NewlineBlock": lambda b: "",
-    "TurnBudgetBlock": lambda b: f"Context: {b.budget.total_est} tok",
+    "TurnBudgetBlock": lambda b: f"Context: {b.budget.total_est} tokens",
 }
 
 

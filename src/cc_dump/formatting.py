@@ -547,7 +547,7 @@ def _format_tool_use_content(cblock, ctx: _ContentContext) -> list:
     """Format a tool_use content block."""
     name = cblock.get("name", "?")
     tool_input = cblock.get("input", {})
-    input_size = len(json.dumps(tool_input))
+    input_size = sum(v.count('\n') + 1 for v in tool_input.values() if isinstance(v, str)) or 1
     tool_use_id = cblock.get("id", "")
     detail = _tool_detail(name, tool_input)
     description = ctx.state.get("tool_descriptions", {}).get(name, "")
@@ -574,17 +574,15 @@ def _format_tool_result_content(cblock, ctx: _ContentContext) -> list:
     content_val = cblock.get("content", "")
     # [LAW:dataflow-not-control-flow] Extract content text unconditionally
     if isinstance(content_val, list):
-        size = sum(len(json.dumps(p)) for p in content_val)
         # Extract text parts from list
         content_text = "".join(
             p.get("text", "") for p in content_val if p.get("type") == "text"
         )
     elif isinstance(content_val, str):
-        size = len(content_val)
         content_text = content_val
     else:
-        size = len(json.dumps(content_val))
         content_text = json.dumps(content_val)
+    size = len(content_text.splitlines()) if content_text else 0
     is_error = cblock.get("is_error", False)
     tool_use_id = cblock.get("tool_use_id", "")
     # Look up correlated name, color, and detail

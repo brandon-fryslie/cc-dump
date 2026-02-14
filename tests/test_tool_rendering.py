@@ -28,7 +28,7 @@ class TestRenderToolUseWithDetail:
     """Tests for _render_tool_use with detail field."""
 
     def test_with_detail(self):
-        """Tool use block with detail shows detail between name and bytes."""
+        """Tool use block with detail shows detail between name and lines."""
         block = ToolUseBlock(
             name="Read",
             input_size=100,
@@ -41,13 +41,13 @@ class TestRenderToolUseWithDetail:
         plain = result.plain
         assert "Read" in plain
         assert "...path/file.ts" in plain
-        assert "100 bytes" in plain
+        assert "100 lines" in plain
 
-        # Detail should appear between name and bytes
+        # Detail should appear between name and lines
         name_idx = plain.index("Read")
         detail_idx = plain.index("...path/file.ts")
-        bytes_idx = plain.index("100 bytes")
-        assert name_idx < detail_idx < bytes_idx
+        lines_idx = plain.index("100 lines")
+        assert name_idx < detail_idx < lines_idx
 
     def test_without_detail(self):
         """Tool use block without detail (empty string) shows normal output."""
@@ -62,7 +62,7 @@ class TestRenderToolUseWithDetail:
         assert result is not None
         plain = result.plain
         assert "Read" in plain
-        assert "100 bytes" in plain
+        assert "100 lines" in plain
 
     def test_with_default_detail(self):
         """Tool use block created without detail parameter works correctly."""
@@ -76,7 +76,7 @@ class TestRenderToolUseWithDetail:
         assert result is not None
         plain = result.plain
         assert "Read" in plain
-        assert "100 bytes" in plain
+        assert "100 lines" in plain
 
     def test_bash_detail_shown(self):
         """Bash tool with command detail shows command."""
@@ -92,7 +92,7 @@ class TestRenderToolUseWithDetail:
         plain = result.plain
         assert "Bash" in plain
         assert "git status" in plain
-        assert "200 bytes" in plain
+        assert "200 lines" in plain
 
     def test_skill_detail_shown(self):
         """Skill tool with skill name detail shows skill."""
@@ -108,7 +108,7 @@ class TestRenderToolUseWithDetail:
         plain = result.plain
         assert "Skill" in plain
         assert "commit" in plain
-        assert "50 bytes" in plain
+        assert "50 lines" in plain
 
     def test_detail_styled_dim(self):
         """Detail text is styled dim."""
@@ -139,7 +139,7 @@ class TestRenderToolResultExisting:
 
         assert result is not None
         assert "Bash" in result.plain
-        assert "500 bytes" in result.plain
+        assert "500 lines" in result.plain
 
     def test_generic_full_shows_detail(self):
         """Tool result for generic tool shows detail."""
@@ -155,7 +155,7 @@ class TestRenderToolResultExisting:
         assert result is not None
         assert "Bash" in result.plain
         assert "git status" in result.plain
-        assert "500 bytes" in result.plain
+        assert "500 lines" in result.plain
 
     def test_full_mode_without_name(self):
         """Tool result without tool_name still works (generic fallback)."""
@@ -164,7 +164,7 @@ class TestRenderToolResultExisting:
 
         assert result is not None
         assert "Result" in result.plain
-        assert "500 bytes" in result.plain
+        assert "500 lines" in result.plain
 
     def test_error_result_generic(self):
         """Error result for generic tool shows error label."""
@@ -179,7 +179,7 @@ class TestRenderToolResultExisting:
 
         assert result is not None
         assert "ERROR" in result.plain
-        assert "200 bytes" in result.plain
+        assert "200 lines" in result.plain
 
     def test_summary_shows_header_only(self):
         """Summary renderer shows header, no content."""
@@ -191,7 +191,7 @@ class TestRenderToolResultExisting:
         assert result is not None
         plain = result.plain
         assert "Bash" in plain
-        assert "500 bytes" in plain
+        assert "500 lines" in plain
         # Content should NOT appear in summary
         assert "output text" not in plain
 
@@ -690,7 +690,7 @@ class TestToolUseSummaryLevel:
         plain = result.plain
         assert "[Use: Bash]" in plain
         assert "git status" in plain
-        assert "100 bytes" in plain
+        assert "100 lines" in plain
 
     def test_unknown_tool_falls_back_to_oneliner(self):
         """Unknown tool in _render_tool_use_full falls back to oneliner."""
@@ -914,7 +914,7 @@ class TestToolResultSummaryRenderer:
         assert result is not None
         plain = result.plain
         assert "Read" in plain
-        assert "500 bytes" in plain
+        assert "500 lines" in plain
         assert "...path/file.py" in plain
         # Content should NOT appear
         assert "def foo" not in plain
@@ -967,7 +967,7 @@ class TestRenderTurnToStripsToolLevels:
             blocks, {"tools": VisState(True, True, False)}
         )
         assert "Read" in text
-        assert "500 bytes" in text
+        assert "500 lines" in text
         # Content should NOT appear at full collapsed level (header only)
         assert "lots of content" not in text
 

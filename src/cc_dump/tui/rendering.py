@@ -501,10 +501,10 @@ def _render_tracked_new(
     block: TrackedContentBlock, tag_style: str
 ) -> ConsoleRenderable:
     """Render a TrackedContentBlock with status='new'."""
-    content_len = len(block.content)
+    content_len = len(block.content.splitlines())
     header = Text(block.indent + "  ")
     header.append(" {} ".format(block.tag_id), style=tag_style)
-    header.append(" NEW ({} chars):".format(content_len))
+    header.append(" NEW ({} lines):".format(content_len))
 
     # Render content as Markdown
     content_md = _render_text_as_markdown(block.content)
@@ -522,11 +522,11 @@ def _render_tracked_ref(block: TrackedContentBlock, tag_style: str) -> Text:
 
 def _render_tracked_changed(block: TrackedContentBlock, tag_style: str) -> Text:
     """Render a TrackedContentBlock with status='changed'."""
-    old_len = len(block.old_content)
-    new_len = len(block.new_content)
+    old_len = len(block.old_content.splitlines())
+    new_len = len(block.new_content.splitlines())
     t = Text(block.indent + "  ")
     t.append(" {} ".format(block.tag_id), style=tag_style)
-    t.append(" CHANGED ({} -> {} chars):\n".format(old_len, new_len))
+    t.append(" CHANGED ({} -> {} lines):\n".format(old_len, new_len))
     diff_lines = make_diff_lines(block.old_content, block.new_content)
     t.append(_render_diff(diff_lines, block.indent + "    "))
     return t
@@ -658,13 +658,17 @@ def _render_segmented_block(block) -> ConsoleRenderable:
     return _render_text_as_markdown(block.text)
 
 
-def _render_xml_collapsed(tag_name: str, inner_line_count: int) -> ConsoleRenderable:
-    """Render a collapsed XML sub-block indicator with themed syntax colors.
+def _render_xml_collapsed(tag_name: str, inner_text: str) -> ConsoleRenderable:
+    """Render a collapsed XML sub-block with content preview.
 
     // [LAW:one-source-of-truth] _render_xml_tag for all XML tag rendering.
     // [LAW:one-source-of-truth] Collapsed XML arrow is ▷ (summary collapsed).
     """
-    return _render_xml_tag(f"▷ <{tag_name}> ({inner_line_count} lines)")
+    preview = inner_text.strip().replace("\n", " ")
+    max_len = 60
+    if len(preview) > max_len:
+        preview = preview[:max_len] + "\u2026"
+    return _render_xml_tag(f"▷ <{tag_name}>{preview}</{tag_name}>")
 
 
 def _render_region_parts(
@@ -737,9 +741,6 @@ def _render_region_parts(
 
             m = sb.meta
             inner = text[m.inner_span.start : m.inner_span.end]
-            inner_line_count = inner.count("\n") + (
-                1 if inner and not inner.endswith("\n") else 0
-            )
 
             if is_expanded:
                 # Full XML rendering with syntax-highlighted tags
@@ -764,8 +765,8 @@ def _render_region_parts(
                 xml_parts_with_header.append(_render_xml_tag(end_tag))
                 parts.append((Group(*xml_parts_with_header), current_xml_idx))
             else:
-                # Collapsed: one-line indicator
-                collapsed = _render_xml_collapsed(m.tag_name, inner_line_count)
+                # Collapsed: content preview indicator
+                collapsed = _render_xml_collapsed(m.tag_name, inner)
                 parts.append((collapsed, current_xml_idx))
 
     if not parts:
@@ -889,7 +890,7 @@ def _tool_result_header(block: ToolResultBlock, color: str) -> Text:
     t.append(label, style="bold {}".format(color))
     if block.detail:
         t.append(" {}".format(block.detail), style="dim")
-    t.append(" ({} bytes)".format(block.size))
+    t.append(" ({} lines)".format(block.size))
     return t
 
 
@@ -906,7 +907,7 @@ def _render_tool_use_oneliner(block: ToolUseBlock) -> Text | None:
     t.append("[Use: {}]".format(block.name), style="bold {}".format(color))
     if block.detail:
         t.append(" {}".format(block.detail), style="dim")
-    t.append(" ({} bytes)".format(block.input_size))
+    t.append(" ({} lines)".format(block.input_size))
     return t
 
 
@@ -919,7 +920,7 @@ def _render_tool_use_bash_full(block: ToolUseBlock) -> ConsoleRenderable | None:
     color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
     header = Text("  ")
     header.append("[Use: Bash]", style="bold {}".format(color))
-    header.append(" ({} bytes)".format(block.input_size))
+    header.append(" ({} lines)".format(block.input_size))
 
     command = block.tool_input.get("command", "")
     if not command:
@@ -945,7 +946,7 @@ def _render_tool_use_edit_full(block: ToolUseBlock) -> Text | None:
     t.append("[Use: Edit]", style="bold {}".format(color))
     if block.detail:
         t.append(" {}".format(block.detail), style="dim")
-    t.append(" ({} bytes)".format(block.input_size))
+    t.append(" ({} lines)".format(block.input_size))
 
     old_str = block.tool_input.get("old_string", "")
     new_str = block.tool_input.get("new_string", "")
@@ -1080,7 +1081,7 @@ def _render_tool_def_region_parts(
             t = Text("    ")
             t.append("\u25bd ", style=f"bold {tc.info}")  # ▽
             t.append(name, style="bold")
-            t.append(" ({} tok)".format(_fmt_tokens(tokens)), style="dim")
+            t.append(" ({} tokens)".format(_fmt_tokens(tokens)), style="dim")
             if desc:
                 t.append(":\n      ")
                 t.append(desc, style="dim italic")
@@ -1102,7 +1103,7 @@ def _render_tool_def_region_parts(
             t = Text("    ")
             t.append("\u25b7 ", style=f"bold {tc.info}")  # ▷
             t.append(name, style="bold")
-            t.append(" ({} tok)".format(_fmt_tokens(tokens)), style="dim")
+            t.append(" ({} tokens)".format(_fmt_tokens(tokens)), style="dim")
             if desc:
                 first_line = desc.split("\n", 1)[0]
                 if len(first_line) > 80:
@@ -1277,7 +1278,7 @@ def _render_turn_budget(block: TurnBudgetBlock) -> Text | None:
 
     t = Text("  ")
     t.append("Context: ", style="bold")
-    t.append("{} tok".format(_fmt_tokens(total)))
+    t.append("{} tokens".format(_fmt_tokens(total)))
     t.append(
         " | sys: {} ({})".format(_fmt_tokens(sys_tok), _pct(sys_tok, total)),
         style=f"dim {tc.info}",
@@ -1342,7 +1343,7 @@ def _render_tracked_new_title(block: TrackedContentBlock, tag_style: str) -> Tex
     """Render title for TrackedContentBlock with status='new'."""
     t = Text(block.indent + "  ")
     t.append(" {} ".format(block.tag_id), style=tag_style)
-    t.append(" NEW ({} chars)".format(len(block.content)))
+    t.append(" NEW ({} lines)".format(len(block.content.splitlines())))
     return t
 
 
@@ -1359,8 +1360,8 @@ def _render_tracked_changed_title(block: TrackedContentBlock, tag_style: str) ->
     t = Text(block.indent + "  ")
     t.append(" {} ".format(block.tag_id), style=tag_style)
     t.append(
-        " CHANGED ({} -> {} chars)".format(
-            len(block.old_content), len(block.new_content)
+        " CHANGED ({} -> {} lines)".format(
+            len(block.old_content.splitlines()), len(block.new_content.splitlines())
         )
     )
     return t
@@ -1389,7 +1390,7 @@ def _render_turn_budget_oneliner(block: TurnBudgetBlock) -> Text | None:
     b = block.budget
     t = Text("  ")
     t.append("Context: ", style="bold")
-    t.append("{} tok".format(_fmt_tokens(b.total_est)))
+    t.append("{} tokens".format(_fmt_tokens(b.total_est)))
     return t
 
 
