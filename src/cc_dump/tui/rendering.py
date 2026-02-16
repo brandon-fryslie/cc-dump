@@ -394,7 +394,8 @@ def _build_filter_indicators(tc: ThemeColors) -> dict[str, tuple[str, str]]:
     // [LAW:single-enforcer] Rebuilt by set_theme() alongside TAG_STYLES/MSG_COLORS.
     """
     names = ["headers", "tools", "system", "budget", "metadata", "user", "assistant"]
-    return {name: ("\u258c", tc.filter_colors[name][0]) for name in names}
+    # [LAW:one-source-of-truth] Use chip_bg (element [1]) to match footer chip colors.
+    return {name: ("\u258c", tc.filter_colors[name][1]) for name in names}
 
 
 # Initialized empty — rebuilt by set_theme() before first render.

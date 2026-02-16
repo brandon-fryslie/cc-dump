@@ -211,7 +211,7 @@ class TmuxController:
 
             window = self._our_pane.window
             self._claude_pane = window.split(
-                direction=libtmux.constants.PaneDirection.Right,
+                direction=libtmux.constants.PaneDirection.Below,
                 shell="ANTHROPIC_BASE_URL=http://127.0.0.1:{} {}".format(
                     self._port, self._claude_command
                 ),

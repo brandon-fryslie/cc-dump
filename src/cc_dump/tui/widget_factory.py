@@ -144,8 +144,12 @@ class ConversationView(ScrollView):
         color: $foreground;
         overflow-y: scroll;
         overflow-x: hidden;
+        border: solid $accent;
         &:focus {
             background-tint: $foreground 5%;
+        }
+        &.-app-unfocused {
+            border: solid $surface-lighten-2;
         }
     }
     """
@@ -197,7 +201,11 @@ class ConversationView(ScrollView):
             key = (actual_y, scroll_x, width, self._widest_line)
             # Bypass cache when selection is active (selection is transient)
             if selection is None and key in self._line_cache:
-                return self._line_cache[key].apply_style(self.rich_style)
+                strip = self._line_cache[key].apply_style(self.rich_style)
+                # Apply overlay AFTER cache (viewport-relative, must not be cached)
+                return cc_dump.tui.error_indicator.composite_overlay(
+                    strip, y, width, self._indicator
+                )
 
             # Binary search for the turn containing this line
             turn = self._find_turn_for_line(actual_y)
@@ -229,11 +237,6 @@ class ConversationView(ScrollView):
             # Apply offsets for text selection coordinate mapping
             strip = strip.apply_offsets(scroll_x, actual_y)
 
-            # Composite error indicator overlay (viewport-fixed, upper-right)
-            strip = cc_dump.tui.error_indicator.composite_overlay(
-                strip, y, width, self._indicator
-            )
-
             self._line_cache[key] = strip
 
             # Track which turn this cache key belongs to (for selective invalidation)
@@ -242,6 +245,10 @@ class ConversationView(ScrollView):
                 self._cache_keys_by_turn[turn_idx] = set()
             self._cache_keys_by_turn[turn_idx].add(key)
 
+            # Apply overlay AFTER cache (viewport-relative, must not be cached)
+            strip = cc_dump.tui.error_indicator.composite_overlay(
+                strip, y, width, self._indicator
+            )
             return strip
         except Exception as exc:
             import sys, traceback
