@@ -18,6 +18,8 @@ import cc_dump.tui.keys_panel
 import cc_dump.tui.settings_panel
 import cc_dump.tui.custom_footer
 
+from cc_dump.tui.panel_registry import PANEL_REGISTRY
+
 _DEBOUNCE_S = 2.0  # Quiet period before reload fires
 
 
@@ -175,11 +177,10 @@ async def _replace_all_widgets_inner(app) -> None:
     widgets, then mount new ones with the correct IDs. The _replacing_widgets
     flag prevents any code from querying widgets during the gap.
     """
+    from cc_dump.tui.app import _resolve_factory
+
     # 1. Capture state from old widgets
     old_conv = app._get_conv()
-    old_stats = app._get_stats()
-    old_economics = app._get_economics()
-    old_timeline = app._get_timeline()
     old_logs = app._get_logs()
     old_info = app._get_info()
     old_footer = app._get_footer()
@@ -188,11 +189,16 @@ async def _replace_all_widgets_inner(app) -> None:
         return  # Widgets already missing — nothing to replace
 
     conv_state = old_conv.get_state()
-    stats_state = old_stats.get_state() if old_stats else {}
-    economics_state = old_economics.get_state() if old_economics else {}
-    timeline_state = old_timeline.get_state() if old_timeline else {}
     logs_state = old_logs.get_state() if old_logs else {}
     info_state = old_info.get_state() if old_info else {}
+
+    # [LAW:one-source-of-truth] Capture cycling panel state from registry
+    old_panels = {}
+    panel_states = {}
+    for spec in PANEL_REGISTRY:
+        old_widget = app._get_panel(spec.name)
+        old_panels[spec.name] = old_widget
+        panel_states[spec.name] = old_widget.get_state() if old_widget else {}
 
     active_panel = app.active_panel
     logs_visible = old_logs.display if old_logs else app.show_logs
@@ -202,14 +208,13 @@ async def _replace_all_widgets_inner(app) -> None:
     new_conv = cc_dump.tui.widget_factory.create_conversation_view()
     new_conv.restore_state(conv_state)
 
-    new_stats = cc_dump.tui.widget_factory.create_stats_panel()
-    new_stats.restore_state(stats_state)
-
-    new_economics = cc_dump.tui.widget_factory.create_economics_panel()
-    new_economics.restore_state(economics_state)
-
-    new_timeline = cc_dump.tui.widget_factory.create_timeline_panel()
-    new_timeline.restore_state(timeline_state)
+    # [LAW:one-source-of-truth] Create cycling panels from registry
+    new_panels = {}
+    for spec in PANEL_REGISTRY:
+        factory = _resolve_factory(spec.factory)
+        widget = factory()
+        widget.restore_state(panel_states[spec.name])
+        new_panels[spec.name] = widget
 
     new_logs = cc_dump.tui.widget_factory.create_logs_panel()
     new_logs.restore_state(logs_state)
@@ -228,12 +233,10 @@ async def _replace_all_widgets_inner(app) -> None:
 
     # 3. Remove old widgets
     await old_conv.remove()
-    if old_stats is not None:
-        await old_stats.remove()
-    if old_economics is not None:
-        await old_economics.remove()
-    if old_timeline is not None:
-        await old_timeline.remove()
+    for spec in PANEL_REGISTRY:
+        old_widget = old_panels[spec.name]
+        if old_widget is not None:
+            await old_widget.remove()
     if old_logs is not None:
         await old_logs.remove()
     if old_info is not None:
@@ -241,27 +244,27 @@ async def _replace_all_widgets_inner(app) -> None:
     if old_footer is not None:
         await old_footer.remove()
 
-    # 4. Assign IDs and mount new widgets
+    # 4. Assign IDs, set visibility, and mount new widgets
     new_conv.id = app._conv_id
-    new_stats.id = app._stats_id
-    new_economics.id = app._economics_id
-    new_timeline.id = app._timeline_id
     new_logs.id = app._logs_id
     new_info.id = app._info_id
 
-    from cc_dump.tui.action_handlers import PANEL_ORDER
-    # [LAW:one-source-of-truth] Panel visibility driven by PANEL_ORDER, not hardcoded names
-    _panel_widgets = {"stats": new_stats, "economics": new_economics, "timeline": new_timeline}
-    for _name in PANEL_ORDER:
-        _panel_widgets[_name].display = (active_panel == _name)
+    for spec in PANEL_REGISTRY:
+        w = new_panels[spec.name]
+        w.id = app._panel_ids[spec.name]
+        w.display = (spec.name == active_panel)
+
     new_logs.display = logs_visible
     new_info.display = info_visible
 
     header = app.query_one(Header)
-    await app.mount(new_stats, after=header)
-    await app.mount(new_economics, after=new_stats)
-    await app.mount(new_timeline, after=new_economics)
-    await app.mount(new_conv, after=new_timeline)
+    # Mount cycling panels in registry order
+    prev_widget = header
+    for spec in PANEL_REGISTRY:
+        await app.mount(new_panels[spec.name], after=prev_widget)
+        prev_widget = new_panels[spec.name]
+
+    await app.mount(new_conv, after=prev_widget)
     await app.mount(new_logs, after=new_conv)
     await app.mount(new_info, after=new_logs)
 

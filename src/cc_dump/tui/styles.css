@@ -41,6 +41,13 @@ StatsPanel {
     padding: 0 1;
 }
 
+SessionPanel {
+    height: 1;
+    dock: top;
+    background: $surface;
+    padding: 0 1;
+}
+
 StatusFooter {
     dock: bottom;
     height: auto;

@@ -13,26 +13,26 @@ pytestmark = pytest.mark.textual
 
 
 async def test_panel_cycling_dot():
-    """Press '.' cycles active panel: stats → economics → timeline → stats."""
+    """Press '.' cycles active panel through all registered panels."""
+    from cc_dump.tui.panel_registry import PANEL_ORDER
+
     async with run_app() as (pilot, app):
-        assert is_panel_visible(app, "stats")
-        assert not is_panel_visible(app, "economics")
-        assert not is_panel_visible(app, "timeline")
+        # First panel starts visible, rest hidden
+        assert is_panel_visible(app, PANEL_ORDER[0])
+        for name in PANEL_ORDER[1:]:
+            assert not is_panel_visible(app, name)
 
-        await press_and_settle(pilot, ".")
-        assert not is_panel_visible(app, "stats")
-        assert is_panel_visible(app, "economics")
-        assert not is_panel_visible(app, "timeline")
+        # Cycle through remaining panels
+        for i in range(1, len(PANEL_ORDER)):
+            await press_and_settle(pilot, ".")
+            for j, name in enumerate(PANEL_ORDER):
+                assert is_panel_visible(app, name) == (j == i)
 
+        # One more press wraps back to first
         await press_and_settle(pilot, ".")
-        assert not is_panel_visible(app, "stats")
-        assert not is_panel_visible(app, "economics")
-        assert is_panel_visible(app, "timeline")
-
-        await press_and_settle(pilot, ".")
-        assert is_panel_visible(app, "stats")
-        assert not is_panel_visible(app, "economics")
-        assert not is_panel_visible(app, "timeline")
+        assert is_panel_visible(app, PANEL_ORDER[0])
+        for name in PANEL_ORDER[1:]:
+            assert not is_panel_visible(app, name)
 
 
 async def test_follow_mode_toggle():
@@ -69,9 +69,11 @@ async def test_panel_mode_cycling_comma():
 
 
 async def test_panels_initial_state():
-    """Stats panel starts visible, economics/timeline hidden, logs hidden."""
+    """First cycling panel starts visible, rest hidden, logs hidden."""
+    from cc_dump.tui.panel_registry import PANEL_ORDER
+
     async with run_app() as (pilot, app):
-        assert is_panel_visible(app, "stats")
-        assert not is_panel_visible(app, "economics")
-        assert not is_panel_visible(app, "timeline")
+        assert is_panel_visible(app, PANEL_ORDER[0])
+        for name in PANEL_ORDER[1:]:
+            assert not is_panel_visible(app, name)
         assert not is_panel_visible(app, "logs")

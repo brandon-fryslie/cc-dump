@@ -98,21 +98,16 @@ class TestNormalModeKeyDispatch:
         assert not app.screen.query(KeysPanel)
 
     async def test_dot_cycles_active_panel(self, app_and_pilot):
-        """Pressing '.' cycles active_panel through stats → economics → timeline → stats."""
+        """Pressing '.' cycles active_panel through all registered panels."""
+        from cc_dump.tui.panel_registry import PANEL_ORDER
+
         pilot, app = app_and_pilot
-        assert app.active_panel == "stats"
+        assert app.active_panel == PANEL_ORDER[0]
 
-        await pilot.press(".")
-        await pilot.pause()
-        assert app.active_panel == "economics"
-
-        await pilot.press(".")
-        await pilot.pause()
-        assert app.active_panel == "timeline"
-
-        await pilot.press(".")
-        await pilot.pause()
-        assert app.active_panel == "stats"
+        for expected in PANEL_ORDER[1:] + PANEL_ORDER[:1]:
+            await pilot.press(".")
+            await pilot.pause()
+            assert app.active_panel == expected
 
 class TestSearchModeGating:
     """Test that non-navigation keys are blocked during search modes."""

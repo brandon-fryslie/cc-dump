@@ -11,6 +11,9 @@ import cc_dump.formatting
 import cc_dump.settings
 import cc_dump.tui.rendering
 
+# [LAW:one-source-of-truth] Panel order derived from registry
+from cc_dump.tui.panel_registry import PANEL_ORDER
+
 # [LAW:one-source-of-truth] Ordered slot list for cycling (skips F3)
 _FILTERSET_SLOTS = ["1", "2", "4", "5", "6", "7", "8", "9"]
 
@@ -124,16 +127,6 @@ def cycle_vis(app, category: str) -> None:
 
 # ─── Panel cycling ─────────────────────────────────────────────────────
 
-# [LAW:one-source-of-truth] Ordered panel names for cycling
-PANEL_ORDER = ["stats", "economics", "timeline"]
-
-# [LAW:one-type-per-behavior] Panel config — (getter, refresh_fn_name_or_None)
-_PANEL_CONFIG = {
-    "stats": ("_get_stats", "refresh_stats"),
-    "economics": ("_get_economics", "refresh_economics"),
-    "timeline": ("_get_timeline", "refresh_timeline"),
-}
-
 # [LAW:one-type-per-behavior] Toggle config for non-cycling panels
 _PANEL_TOGGLE_CONFIG = {
     "logs": ("show_logs", "_get_logs", None),
@@ -151,17 +144,25 @@ def cycle_panel(app) -> None:
 
 def cycle_panel_mode(app) -> None:
     """Cycle intra-panel mode for the active panel."""
-    getter_name, _ = _PANEL_CONFIG[app.active_panel]
-    panel = getattr(app, getter_name)()
+    panel = app._get_panel(app.active_panel)
     if panel is not None:
         panel.cycle_mode()
 
 
 def refresh_active_panel(app, panel_name: str) -> None:
-    """Refresh data for the named panel (reuses existing refresh fns)."""
-    _, refresh_name = _PANEL_CONFIG.get(panel_name, (None, None))
-    if refresh_name is not None:
-        globals()[refresh_name](app)
+    """Refresh data for the named panel.
+
+    // [LAW:one-type-per-behavior] Generic refresh via _get_panel + refresh_from_store.
+    Session panel uses a separate refresh path (no analytics store).
+    """
+    if panel_name == "session":
+        refresh_session(app)
+        return
+    if app._analytics_store is None:
+        return
+    panel = app._get_panel(panel_name)
+    if panel is not None:
+        panel.refresh_from_store(app._analytics_store)
 
 
 def _toggle_panel(app, panel_key: str) -> None:
@@ -326,22 +327,35 @@ def half_page_up(app) -> None:
 # ─── Panel refresh ─────────────────────────────────────────────────────
 
 
-def _refresh_panel(app, getter_name: str) -> None:
-    """// [LAW:one-type-per-behavior] Shared refresh logic for store-backed panels."""
+def refresh_panel(app, name: str) -> None:
+    """// [LAW:one-type-per-behavior] Generic refresh for store-backed panels."""
     if not app.is_running or app._analytics_store is None:
         return
-    panel = getattr(app, getter_name)()
+    panel = app._get_panel(name)
     if panel is not None:
         panel.refresh_from_store(app._analytics_store)
 
 
 def refresh_stats(app) -> None:
-    _refresh_panel(app, "_get_stats")
+    refresh_panel(app, "stats")
 
 
 def refresh_economics(app) -> None:
-    _refresh_panel(app, "_get_economics")
+    refresh_panel(app, "economics")
 
 
 def refresh_timeline(app) -> None:
-    _refresh_panel(app, "_get_timeline")
+    refresh_panel(app, "timeline")
+
+
+def refresh_session(app) -> None:
+    """Refresh the session panel with current app state."""
+    panel = app._get_panel("session")
+    if panel is None:
+        return
+    panel.refresh_session_state(
+        session_id=app._session_id,
+        last_message_time=app._app_state.get("last_message_time"),
+        proxy_url="http://{}:{}".format(app._host, app._port),
+        request_count=app._state.get("request_counter", 0),
+    )

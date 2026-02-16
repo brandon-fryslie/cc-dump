@@ -50,10 +50,9 @@ def is_panel_visible(app: CcDumpApp, panel: str) -> bool:
     For cycling panels (stats, economics, timeline): checks actual widget.display.
     For toggle panels (logs, info): checks show_<panel> reactive.
     """
-    from cc_dump.tui.action_handlers import PANEL_ORDER, _PANEL_CONFIG
+    from cc_dump.tui.panel_registry import PANEL_ORDER
     if panel in PANEL_ORDER:
-        getter_name, _ = _PANEL_CONFIG[panel]
-        widget = getattr(app, getter_name)()
+        widget = app._get_panel(panel)
         return widget is not None and widget.display
     return getattr(app, f"show_{panel}")
 

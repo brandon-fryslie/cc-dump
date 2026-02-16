@@ -66,6 +66,30 @@ class HotSwappableWidget(Protocol):
         ...
 
 
+class CyclingPanel(Protocol):
+    """Protocol for cycling panels that refresh from the analytics store.
+
+    Extends HotSwappableWidget with refresh_from_store() and cycle_mode().
+    All cycling panels (stats, economics, timeline, session) implement this shape.
+    """
+
+    def refresh_from_store(self, store, **kwargs) -> None:
+        """Refresh panel data from the analytics store."""
+        ...
+
+    def cycle_mode(self) -> None:
+        """Cycle intra-panel display mode (e.g. aggregate vs breakdown)."""
+        ...
+
+    def get_state(self) -> WidgetState:
+        """Extract widget state for transfer to a new instance."""
+        ...
+
+    def restore_state(self, state: WidgetState) -> None:
+        """Restore state from a previous widget instance."""
+        ...
+
+
 def validate_widget_protocol(widget) -> None:
     """Validate that a widget implements the HotSwappableWidget protocol.
 

@@ -30,13 +30,28 @@ import cc_dump.tui.search
 import cc_dump.tui.input_modes
 import cc_dump.tui.info_panel
 import cc_dump.tui.custom_footer
+import cc_dump.tui.session_panel
 
 # Extracted controller modules (not hot-reloadable, safe for `from` imports)
 from cc_dump.tui import action_handlers as _actions
+from cc_dump.tui.panel_registry import PANEL_REGISTRY, PANEL_ORDER, PANEL_CSS_IDS
 from cc_dump.tui import search_controller as _search
 from cc_dump.tui import dump_export as _dump
 from cc_dump.tui import theme_controller as _theme
 from cc_dump.tui import hot_reload_controller as _hot_reload
+
+
+def _resolve_factory(dotted_path: str):
+    """Resolve a dotted factory path like 'cc_dump.tui.widget_factory.create_stats_panel'.
+
+    Uses importlib to resolve the module, then getattr for the function.
+    This allows the registry to reference functions across modules.
+    """
+    parts = dotted_path.rsplit(".", 1)
+    module_path, func_name = parts[0], parts[1]
+    import importlib
+    mod = importlib.import_module(module_path)
+    return getattr(mod, func_name)
 
 
 class TurnUsage(TypedDict, total=False):
@@ -138,9 +153,8 @@ class CcDumpApp(App):
 
         self._conv_id = "conversation-view"
         self._search_bar_id = "search-bar"
-        self._stats_id = "stats-panel"
-        self._economics_id = "economics-panel"
-        self._timeline_id = "timeline-panel"
+        # [LAW:one-source-of-truth] Panel IDs derived from registry
+        self._panel_ids = dict(PANEL_CSS_IDS)
         self._logs_id = "logs-panel"
         self._info_id = "info-panel"
 
@@ -181,14 +195,21 @@ class CcDumpApp(App):
     def _get_conv(self):
         return self._query_safe("#" + self._conv_id)
 
+    def _get_panel(self, name: str):
+        """// [LAW:one-source-of-truth] Generic panel accessor using registry IDs."""
+        css_id = self._panel_ids.get(name)
+        if css_id is None:
+            return None
+        return self._query_safe("#" + css_id)
+
     def _get_stats(self):
-        return self._query_safe("#" + self._stats_id)
+        return self._get_panel("stats")
 
     def _get_economics(self):
-        return self._query_safe("#" + self._economics_id)
+        return self._get_panel("economics")
 
     def _get_timeline(self):
-        return self._query_safe("#" + self._timeline_id)
+        return self._get_panel("timeline")
 
     def _get_logs(self):
         return self._query_safe("#" + self._logs_id)
@@ -240,17 +261,11 @@ class CcDumpApp(App):
     def compose(self) -> ComposeResult:
         yield Header()
 
-        stats = cc_dump.tui.widget_factory.create_stats_panel()
-        stats.id = self._stats_id
-        yield stats
-
-        economics = cc_dump.tui.widget_factory.create_economics_panel()
-        economics.id = self._economics_id
-        yield economics
-
-        timeline = cc_dump.tui.widget_factory.create_timeline_panel()
-        timeline.id = self._timeline_id
-        yield timeline
+        # [LAW:one-source-of-truth] Cycling panels from registry
+        for spec in PANEL_REGISTRY:
+            widget = _resolve_factory(spec.factory)()
+            widget.id = self._panel_ids[spec.name]
+            yield widget
 
         conv = cc_dump.tui.widget_factory.create_conversation_view()
         conv.id = self._conv_id
@@ -549,6 +564,7 @@ class CcDumpApp(App):
             "refresh_callbacks": {
                 "refresh_economics": self._refresh_economics,
                 "refresh_timeline": self._refresh_timeline,
+                "refresh_session": self._refresh_session,
             },
             "analytics_store": self._analytics_store,
         }
@@ -564,6 +580,7 @@ class CcDumpApp(App):
         # Check for new session signal from handler
         new_session_id = self._app_state.pop("new_session_id", None)
         if new_session_id:
+            self._session_id = new_session_id
             self.post_message(NewSession(new_session_id))
             self.notify(f"New session: {new_session_id[:8]}...")
 
@@ -807,6 +824,9 @@ class CcDumpApp(App):
     def _refresh_timeline(self):
         _actions.refresh_timeline(self)
 
+    def _refresh_session(self):
+        _actions.refresh_session(self)
+
     # Search
     def _start_search(self):
         _search.start_search(self)
@@ -840,15 +860,9 @@ class CcDumpApp(App):
         self._update_footer_state()
 
     def _sync_panel_display(self, active: str):
-        """Set display on all 3 cycling panels based on active_panel value."""
-        from cc_dump.tui.action_handlers import PANEL_ORDER
-        _PANEL_GETTERS = {
-            "stats": self._get_stats,
-            "economics": self._get_economics,
-            "timeline": self._get_timeline,
-        }
+        """// [LAW:one-source-of-truth] Panel visibility driven by PANEL_ORDER from registry."""
         for name in PANEL_ORDER:
-            widget = _PANEL_GETTERS[name]()
+            widget = self._get_panel(name)
             if widget is not None:
                 widget.display = (name == active)
 
@@ -869,6 +883,11 @@ class CcDumpApp(App):
             conv._block_strip_cache.clear()
             conv._line_cache.clear()
             conv.rerender(self.active_filters, force=True)
+
+    def watch_app_focus(self, focused: bool) -> None:
+        conv = self._get_conv()
+        if conv is not None:
+            conv.set_class(not focused, "-app-unfocused")
 
     # ─── Key dispatch ──────────────────────────────────────────────────
 

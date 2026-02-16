@@ -37,9 +37,14 @@ def handle_request_headers(event: RequestHeadersEvent, state, widgets, app_state
 
 def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
     """Handle a request event."""
+    import time
+
     body = event.body
 
     try:
+        # Track last message time for session panel connectivity
+        app_state["last_message_time"] = time.monotonic()
+
         # [LAW:one-source-of-truth] Header injection moved into format_request
         pending_headers = app_state.pop("pending_request_headers", None)
         blocks = cc_dump.formatting.format_request(body, state, request_headers=pending_headers)
@@ -162,11 +167,13 @@ def handle_response_done(event: ResponseDoneEvent, state, widgets, app_state, lo
         if budget_vis.visible:
             conv.rerender(filters)
 
-        # Update economics and timeline panels (these query analytics store)
+        # Update economics, timeline, and session panels
         if "refresh_economics" in refresh_callbacks:
             refresh_callbacks["refresh_economics"]()
         if "refresh_timeline" in refresh_callbacks:
             refresh_callbacks["refresh_timeline"]()
+        if "refresh_session" in refresh_callbacks:
+            refresh_callbacks["refresh_session"]()
 
         log_fn("DEBUG", "Response completed")
     except Exception as e:

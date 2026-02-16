@@ -23,6 +23,7 @@ _RELOAD_ORDER = [
     "cc_dump.router",  # depends on: nothing within reloadable set
     "cc_dump.tui.search",  # depends on: palette
     "cc_dump.tui.rendering",  # depends on: formatting, colors
+    "cc_dump.tui.dump_formatting",  # depends on: formatting
     "cc_dump.tui.custom_footer",  # depends on: palette, rendering
     "cc_dump.tui.panel_renderers",  # depends on: analysis
     "cc_dump.tui.event_handlers",  # depends on: analysis, formatting
@@ -30,6 +31,7 @@ _RELOAD_ORDER = [
     "cc_dump.tui.info_panel",  # depends on: palette, panel_renderers
     "cc_dump.tui.keys_panel",  # depends on: panel_renderers
     "cc_dump.tui.settings_panel",  # depends on: palette
+    "cc_dump.tui.session_panel",  # depends on: panel_renderers
     "cc_dump.tui.widget_factory",  # depends on: analysis, rendering, panel_renderers, error_indicator
 ]
 
@@ -54,6 +56,7 @@ _EXCLUDED_MODULES = {
     "tui/dump_export.py",  # accesses live app/widget state
     "tui/theme_controller.py",  # accesses live app/widget state
     "tui/hot_reload_controller.py",  # accesses live app/widget state
+    "tui/panel_registry.py",  # stable pure data, referenced at init time
 }
 
 # Excluded files worth monitoring for staleness (files a developer would edit).

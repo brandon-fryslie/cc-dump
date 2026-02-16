@@ -220,6 +220,67 @@ def render_timeline_panel(budgets: list[cc_dump.analysis.TurnBudget]) -> str:
     return "\n".join(lines)
 
 
+def render_session_panel(
+    connected: bool,
+    session_id: str | None,
+    last_message_time: float | None,
+    proxy_url: str,
+    request_count: int,
+) -> Text:
+    """Render the session panel display text.
+
+    // [LAW:dataflow-not-control-flow] All fields always rendered; connected drives indicator style.
+
+    Args:
+        connected: Whether a Claude Code client is considered connected
+        session_id: Current session UUID (or None)
+        last_message_time: monotonic time of last message (or None)
+        proxy_url: Proxy URL string
+        request_count: Total request count
+    """
+    import time
+
+    p = cc_dump.palette.PALETTE
+
+    # Indicator
+    result = Text()
+    indicator = "\u25cf" if connected else "\u25cb"
+    indicator_style = f"bold {p.info}" if connected else "dim"
+    label = "Connected" if connected else "Disconnected"
+    result.append(indicator, style=indicator_style)
+    result.append(" ")
+    result.append(label, style=indicator_style)
+
+    # Session ID
+    session_display = session_id[:8] + "..." if session_id else "--"
+    result.append(" | Session: ")
+    result.append(session_display, style=f"{p.info}" if session_id else "dim")
+
+    # Request count
+    result.append(" | Reqs: ")
+    result.append(str(request_count))
+
+    # Last message age
+    result.append(" | Last: ")
+    if last_message_time is not None:
+        age_s = time.monotonic() - last_message_time
+        if age_s < 60:
+            age_str = "{:.0f}s ago".format(age_s)
+        elif age_s < 3600:
+            age_str = "{:.0f}m ago".format(age_s / 60)
+        else:
+            age_str = "{:.0f}h ago".format(age_s / 3600)
+        result.append(age_str)
+    else:
+        result.append("--", style="dim")
+
+    # Proxy URL
+    result.append(" | ")
+    result.append(proxy_url, style="dim")
+
+    return result
+
+
 def render_info_panel(info: dict) -> Text:
     """Render the server info panel display.
 
