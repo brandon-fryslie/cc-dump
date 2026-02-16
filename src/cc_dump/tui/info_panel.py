@@ -24,7 +24,6 @@ class InfoPanel(Static):
         height: auto;
         max-height: 20;
         dock: bottom;
-        background: $surface;
         padding: 0 1;
         border: solid $accent;
     }

@@ -140,16 +140,12 @@ class ConversationView(ScrollView):
 
     DEFAULT_CSS = """
     ConversationView {
-        background: $surface;
         color: $foreground;
         overflow-y: scroll;
         overflow-x: hidden;
         border: solid $accent;
         &:focus {
             background-tint: $foreground 5%;
-        }
-        &.-app-unfocused {
-            border: solid $surface-lighten-2;
         }
     }
     """

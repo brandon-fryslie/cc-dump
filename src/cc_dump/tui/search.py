@@ -209,7 +209,6 @@ class SearchBar(Static):
         dock: bottom;
         height: auto;
         max-height: 6;
-        background: $surface;
         color: $text;
         display: none;
         padding: 0 1;

@@ -1,5 +1,10 @@
 Screen {
     layout: vertical;
+    background: $surface;
+}
+
+Screen.-app-unfocused {
+    background: $surface-lighten-1;
 }
 
 ConversationView {
@@ -11,7 +16,6 @@ ToolEconomicsPanel {
     height: auto;
     max-height: 12;
     dock: top;
-    background: $surface;
     padding: 0 1;
     border: solid $accent;
 }
@@ -20,7 +24,6 @@ TimelinePanel {
     height: auto;
     max-height: 12;
     dock: top;
-    background: $surface;
     padding: 0 1;
     border: solid $accent;
 }
@@ -29,7 +32,6 @@ SearchBar {
     dock: bottom;
     height: auto;
     max-height: 6;
-    background: $surface;
     padding: 0 1;
     border-top: solid $accent;
 }
@@ -37,14 +39,12 @@ SearchBar {
 StatsPanel {
     height: 1;
     dock: top;
-    background: $surface;
     padding: 0 1;
 }
 
 SessionPanel {
     height: 1;
     dock: top;
-    background: $surface;
     padding: 0 1;
 }
 
@@ -52,6 +52,5 @@ StatusFooter {
     dock: bottom;
     height: auto;
     max-height: 3;
-    background: $surface;
     padding: 0 1;
 }

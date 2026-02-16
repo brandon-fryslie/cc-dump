@@ -885,9 +885,7 @@ class CcDumpApp(App):
             conv.rerender(self.active_filters, force=True)
 
     def watch_app_focus(self, focused: bool) -> None:
-        conv = self._get_conv()
-        if conv is not None:
-            conv.set_class(not focused, "-app-unfocused")
+        self.screen.set_class(not focused, "-app-unfocused")
 
     # ─── Key dispatch ──────────────────────────────────────────────────
 
