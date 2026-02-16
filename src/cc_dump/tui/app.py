@@ -106,7 +106,6 @@ class CcDumpApp(App):
         self._recording_path = recording_path
         self._replay_file = replay_file
         self._tmux_controller = tmux_controller
-        self._mouse_leave_timer = None
         self._closing = False
         self._quit_requested_at: float | None = None
         self._replacing_widgets = False
@@ -272,12 +271,6 @@ class CcDumpApp(App):
         yield cc_dump.tui.custom_footer.StatusFooter()
 
     def on_mount(self):
-        # Disable tmux mouse so Textual handles scrolling; restored in cleanup()
-        tmux = self._tmux_controller
-        if tmux is not None:
-            tmux.save_mouse_state()
-            tmux.set_mouse(False)
-
         # [LAW:one-source-of-truth] Restore persisted theme choice
         saved = cc_dump.settings.load_theme()
         if saved and saved in self.available_themes:
@@ -688,33 +681,6 @@ class CcDumpApp(App):
         label = "on" if tmux.auto_zoom else "off"
         self.notify("Auto-zoom: {}".format(label))
         self._update_footer_state()
-
-    # ─── Mouse / tmux coordination ────────────────────────────────────
-    # Enter/Leave bubble from child widgets on every internal transition.
-    # Real "mouse left terminal": Leave with no subsequent Enter.
-    # Dedup: Leave schedules re-enable after 50ms, Enter cancels it.
-
-    def on_enter(self, event) -> None:
-        """Mouse entered a widget — cancel any pending mouse-restore."""
-        if self._mouse_leave_timer is not None:
-            self._mouse_leave_timer.stop()
-            self._mouse_leave_timer = None
-        tmux = self._tmux_controller
-        if tmux is not None:
-            tmux.set_mouse(False)
-
-    def on_leave(self, event) -> None:
-        """Mouse left a widget — schedule mouse-restore (cancelled by Enter)."""
-        if self._mouse_leave_timer is not None:
-            self._mouse_leave_timer.stop()
-        self._mouse_leave_timer = self.set_timer(0.05, self._restore_tmux_mouse)
-
-    def _restore_tmux_mouse(self) -> None:
-        """Timer fired — mouse really left the terminal."""
-        self._mouse_leave_timer = None
-        tmux = self._tmux_controller
-        if tmux is not None:
-            tmux.set_mouse(True)
 
     # Settings
     def action_toggle_settings(self):

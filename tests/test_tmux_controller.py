@@ -35,7 +35,6 @@ _VALID_ATTRS = frozenset({
     "state", "auto_zoom", "_is_zoomed", "_port",
     "_claude_command",
     "_server", "_session", "_our_pane", "_claude_pane",
-    "_original_mouse", "_mouse_is_on",
 })
 
 
@@ -317,19 +316,6 @@ class TestCleanup:
         ctrl.cleanup()
         ctrl._our_pane.resize.assert_not_called()
 
-    def test_cleanup_restores_mouse(self, make_controller):
-        session = MagicMock()
-        ctrl = make_controller(
-            _is_zoomed=True,
-            _our_pane=MagicMock(),
-            _session=session,
-            _original_mouse="on",
-        )
-        ctrl.cleanup()
-        session.set_option.assert_called_with("mouse", "on")
-        assert ctrl._is_zoomed is False
-
-
 # ─── _validate_claude_pane ─────────────────────────────────────────────────
 
 
@@ -575,88 +561,3 @@ class TestOnEventWithDeadPane:
         # Pane was dead, so state transitioned to READY
         assert ctrl.state == TmuxState.READY
         assert ctrl._is_zoomed is False
-
-
-# ─── set_mouse ────────────────────────────────────────────────────────────────
-
-
-class TestSetMouse:
-    def test_set_mouse_off(self, make_controller):
-        session = MagicMock()
-        ctrl = make_controller(_session=session)
-        assert ctrl.set_mouse(False) is True
-        session.set_option.assert_called_once_with("mouse", "off")
-        assert ctrl._mouse_is_on is False
-
-    def test_set_mouse_on(self, make_controller):
-        session = MagicMock()
-        ctrl = make_controller(_session=session, _mouse_is_on=False)
-        assert ctrl.set_mouse(True) is True
-        session.set_option.assert_called_once_with("mouse", "on")
-        assert ctrl._mouse_is_on is True
-
-    def test_idempotent_returns_false(self, make_controller):
-        session = MagicMock()
-        ctrl = make_controller(_session=session, _mouse_is_on=False)
-        assert ctrl.set_mouse(False) is False
-        session.set_option.assert_not_called()
-
-    def test_error_returns_false(self, make_controller):
-        session = MagicMock()
-        session.set_option.side_effect = Exception("tmux error")
-        ctrl = make_controller(_session=session)
-        assert ctrl.set_mouse(False) is False
-        assert ctrl._mouse_is_on is None  # unchanged
-
-    def test_no_session_returns_false(self, make_controller):
-        ctrl = make_controller()
-        assert ctrl.set_mouse(False) is False
-
-
-# ─── save_mouse_state ─────────────────────────────────────────────────────────
-
-
-class TestSaveMouseState:
-    def test_captures_value(self, make_controller):
-        session = MagicMock()
-        session.show_option.return_value = "off"
-        ctrl = make_controller(_session=session)
-        ctrl.save_mouse_state()
-        assert ctrl._original_mouse == "off"
-        session.show_option.assert_called_once_with("mouse")
-
-    def test_none_defaults_to_on(self, make_controller):
-        """No session → defaults to 'on'."""
-        ctrl = make_controller()
-        ctrl.save_mouse_state()
-        assert ctrl._original_mouse == "on"
-
-    def test_error_defaults_to_on(self, make_controller):
-        session = MagicMock()
-        session.show_option.side_effect = Exception("tmux error")
-        ctrl = make_controller(_session=session)
-        ctrl.save_mouse_state()
-        assert ctrl._original_mouse == "on"
-
-
-# ─── restore_mouse_state ──────────────────────────────────────────────────────
-
-
-class TestRestoreMouseState:
-    def test_restores_saved(self, make_controller):
-        session = MagicMock()
-        ctrl = make_controller(_session=session, _original_mouse="off")
-        ctrl.restore_mouse_state()
-        session.set_option.assert_called_once_with("mouse", "off")
-
-    def test_no_saved_is_noop(self, make_controller):
-        session = MagicMock()
-        ctrl = make_controller(_session=session)
-        ctrl.restore_mouse_state()
-        session.set_option.assert_not_called()
-
-    def test_error_does_not_crash(self, make_controller):
-        session = MagicMock()
-        session.set_option.side_effect = Exception("tmux error")
-        ctrl = make_controller(_session=session, _original_mouse="on")
-        ctrl.restore_mouse_state()  # should not raise

@@ -36,14 +36,14 @@ async def test_panel_cycling_dot():
 
 
 async def test_follow_mode_toggle():
-    """Press '0' toggles follow mode."""
+    """Press 'f' toggles follow mode."""
     async with run_app() as (pilot, app):
         assert is_follow_mode(app)
 
-        await press_and_settle(pilot, "0")
+        await press_and_settle(pilot, "f")
         assert not is_follow_mode(app)
 
-        await press_and_settle(pilot, "0")
+        await press_and_settle(pilot, "f")
         assert is_follow_mode(app)
 
 

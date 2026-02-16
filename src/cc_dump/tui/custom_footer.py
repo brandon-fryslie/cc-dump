@@ -48,13 +48,6 @@ class StatusFooter(Static):
         ("7", "headers"),
     ]
 
-    # [LAW:one-source-of-truth] Panel names and display labels for cycling indicator
-    _PANEL_ITEMS = [
-        ("stats", "stats"),
-        ("economics", "cost"),
-        ("timeline", "timeline"),
-    ]
-
     _COMMAND_ITEMS = [("/", "search")]
 
     def update_display(self, state: dict) -> None:
@@ -83,39 +76,18 @@ class StatusFooter(Static):
             # [LAW:one-type-per-behavior] Single segment = single hover region for unified chip
             line1.append(f" {key} {name} {icon} ", style=Style.parse(style) + click)
 
-        # Line 2: panel indicator + follow + commands
+        # Line 2: search + follow + filterset + tmux
         line2 = Text(no_wrap=True)
-        active_panel = state.get("active_panel", "stats")
-        click = _click("app.cycle_panel")
-        for i, (panel_name, label) in enumerate(self._PANEL_ITEMS):
-            is_active = (panel_name == active_panel)
-            # // [LAW:dataflow-not-control-flow] Style derived from is_active value
-            color = tc.action_colors[i % len(tc.action_colors)]
-            active_style = f"bold {color} reverse"
-            style = active_style if is_active else "dim"
-            if line2.plain:
-                line2.append("  ")
-            line2.append(f" {label} ", style=Style.parse(style) + click)
-
-        # Follow mode — prominent when active
-        follow_active = bool(state.get("follow", False))
-        follow_click = _click("app.toggle_follow")
-        line2.append("  ")
-        if follow_active:
-            line2.append(" 0", style=Style.parse("bold") + follow_click)
-            line2.append(" ", style=follow_click)
-            tc = cc_dump.tui.rendering.get_theme_colors()
-            line2.append("FOLLOW", style=Style.parse(tc.follow_active_style) + follow_click)
-        else:
-            line2.append(" 0", style=Style.parse("dim") + follow_click)
-            line2.append(" ", style=follow_click)
-            line2.append("follow", style=Style.parse("dim") + follow_click)
 
         for key, label in self._COMMAND_ITEMS:
-            line2.append("  ")
-            line2.append(f" {key}", style="bold")
-            line2.append(" ")
-            line2.append(label, style="")
+            line2.append(f" {key} {label} ", style="bold")
+
+        # Follow mode — single unified chip
+        # // [LAW:dataflow-not-control-flow] Style derived from follow_active value
+        follow_active = bool(state.get("follow", False))
+        follow_click = _click("app.toggle_follow")
+        active_style = tc.follow_active_style if follow_active else "dim"
+        line2.append(f" f FOLLOW ", style=Style.parse(active_style) + follow_click)
 
         # Filterset indicator — show active preset slot
         active_slot = state.get("active_filterset")

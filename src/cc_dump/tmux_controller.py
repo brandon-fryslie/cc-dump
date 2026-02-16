@@ -95,8 +95,6 @@ class TmuxController:
         self._session: libtmux.Session | None = None
         self._our_pane: libtmux.Pane | None = None
         self._claude_pane: libtmux.Pane | None = None
-        self._original_mouse: str | None = None
-        self._mouse_is_on: bool | None = None
 
         if not os.environ.get("TMUX"):
             self.state = TmuxState.NOT_IN_TMUX
@@ -266,42 +264,6 @@ class TmuxController:
         """Toggle automatic zoom on API activity."""
         self.auto_zoom = not self.auto_zoom
 
-    # ─── Mouse coordination ─────────────────────────────────────────────
-
-    def save_mouse_state(self) -> None:
-        """Capture the session's current mouse option for later restore."""
-        if self._session is None:
-            self._original_mouse = "on"
-            return
-        try:
-            val = self._session.show_option("mouse")
-            self._original_mouse = val if isinstance(val, str) else "on"
-        except Exception:
-            self._original_mouse = "on"
-
-    def set_mouse(self, on: bool) -> bool:
-        """Idempotent mouse toggle. Returns True if state actually changed."""
-        if self._session is None:
-            return False
-        if self._mouse_is_on is on:
-            return False
-        try:
-            self._session.set_option("mouse", "on" if on else "off")
-            self._mouse_is_on = on
-            return True
-        except Exception as e:
-            _log("set_mouse error: {}".format(e))
-            return False
-
-    def restore_mouse_state(self) -> None:
-        """Restore the saved mouse setting."""
-        if self._session is None or self._original_mouse is None:
-            return
-        try:
-            self._session.set_option("mouse", self._original_mouse)
-        except Exception as e:
-            _log("restore_mouse error: {}".format(e))
-
     def on_event(self, event: PipelineEvent) -> None:
         """Subscriber callback — table lookup determines zoom/unzoom.
 
@@ -329,8 +291,7 @@ class TmuxController:
             action()
 
     def cleanup(self) -> None:
-        """Restore mouse + unzoom on shutdown. Does NOT kill the claude pane."""
-        self.restore_mouse_state()
+        """Unzoom on shutdown. Does NOT kill the claude pane."""
         self.unzoom()
 
 

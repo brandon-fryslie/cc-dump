@@ -69,17 +69,6 @@ def cc_dump_path():
     return Path(__file__).parent.parent / "src" / "cc_dump"
 
 
-@pytest.fixture
-def formatting_py(cc_dump_path):
-    """Return path to formatting.py."""
-    return cc_dump_path / "formatting.py"
-
-
-@pytest.fixture
-def proxy_py(cc_dump_path):
-    """Return path to proxy.py."""
-    return cc_dump_path / "proxy.py"
-
 
 # ---------------------------------------------------------------------------
 # File backup/modify helpers

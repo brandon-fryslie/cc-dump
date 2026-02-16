@@ -5,6 +5,7 @@ Only pure-function modules are reloaded (formatting, rendering, analysis, colors
 Live instances (tui/app.py) and stable boundaries (proxy.py) are never reloaded.
 """
 
+import hashlib
 import importlib
 import os
 import sys
@@ -68,7 +69,7 @@ _STALENESS_WATCHLIST = {
 
 _watch_dirs: list[str] = []
 _mtimes: dict[str, float] = {}
-_excluded_mtimes: dict[str, float] = {}
+_excluded_hashes: dict[str, str] = {}
 
 
 def init(package_dir: str) -> None:
@@ -86,7 +87,7 @@ def init(package_dir: str) -> None:
 
     # Seed initial mtimes
     _scan_mtimes()
-    _scan_excluded_mtimes()
+    _scan_excluded_hashes()
 
 
 def _iter_watched_files() -> Iterator[tuple[str, str]]:
@@ -219,26 +220,27 @@ def _iter_excluded_files() -> Iterator[tuple[str, str]]:
                 yield abs_path, rel_str
 
 
-def _scan_excluded_mtimes() -> None:
-    """Seed mtime cache for excluded files."""
+def _file_hash(path: str) -> str | None:
+    """Return hex SHA-256 of file content, or None on error."""
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except (FileNotFoundError, OSError):
+        return None
+
+
+def _scan_excluded_hashes() -> None:
+    """Seed content-hash cache for excluded files."""
     for abs_path, _rel in _iter_excluded_files():
-        try:
-            _excluded_mtimes[abs_path] = os.path.getmtime(abs_path)
-        except (FileNotFoundError, OSError):
-            pass
+        h = _file_hash(abs_path)
+        if h is not None:
+            _excluded_hashes[abs_path] = h
 
 
 def get_stale_excluded() -> list[str]:
-    """Return short names of excluded files that changed since app start.
-
-    These files are running stale code — edits won't take effect until restart.
-    """
+    """Return short names of excluded files whose content changed since app start."""
     stale = []
     for abs_path, rel_str in _iter_excluded_files():
-        try:
-            mtime = os.path.getmtime(abs_path)
-            if abs_path in _excluded_mtimes and _excluded_mtimes[abs_path] != mtime:
-                stale.append(rel_str)
-        except (FileNotFoundError, OSError):
-            pass
+        h = _file_hash(abs_path)
+        if h is not None and abs_path in _excluded_hashes and _excluded_hashes[abs_path] != h:
+            stale.append(rel_str)
     return stale
