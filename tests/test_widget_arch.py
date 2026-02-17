@@ -41,7 +41,7 @@ from cc_dump.formatting import (
     ALWAYS_VISIBLE,
 )
 from cc_dump.tui.rendering import BLOCK_RENDERERS, BLOCK_CATEGORY, render_turn_to_strips
-from cc_dump.tui.widget_factory import TurnData, ConversationView
+from cc_dump.tui.widget_factory import TurnData, ConversationView, FollowState
 
 
 class TestBlockCategoryCompleteness:
@@ -470,7 +470,7 @@ class TestScrollPreservation:
         ]
         filters = {"tools": ALWAYS_VISIBLE}
         conv = self._make_conv(console, turns_blocks, filters)
-        conv._follow_mode = False
+        conv._follow_state = FollowState.OFF
 
         # Scroll to turn 1 with some offset
         turn1 = conv._turns[1]
@@ -509,7 +509,7 @@ class TestScrollPreservation:
         ]
         filters = {"system": ALWAYS_VISIBLE, "tools": ALWAYS_VISIBLE}
         conv = self._make_conv(console, turns_blocks, filters)
-        conv._follow_mode = False
+        conv._follow_state = FollowState.OFF
 
         # Step 1: Scroll to turn 1 (system block area), hide system
         turn1 = conv._turns[1]
@@ -541,7 +541,7 @@ class TestScrollPreservation:
         ]
         filters = {"tools": ALWAYS_VISIBLE}
         conv = self._make_conv(console, turns_blocks, filters)
-        conv._follow_mode = True
+        conv._follow_state = FollowState.ACTIVE
 
         with self._patch_scroll(conv, scroll_y=0):
             conv.rerender({"tools": HIDDEN})
@@ -562,7 +562,7 @@ class TestScrollPreservation:
         ]
         filters = {"tools": ALWAYS_VISIBLE}
         conv = self._make_conv(console, turns_blocks, filters)
-        conv._follow_mode = False
+        conv._follow_state = FollowState.OFF
 
         turn = conv._turns[0]
         original_lines = turn.line_count
@@ -590,7 +590,7 @@ class TestScrollPreservation:
         ]
         filters = {}
         conv = self._make_conv(console, turns_blocks, filters)
-        conv._follow_mode = False
+        conv._follow_state = FollowState.OFF
 
         # Scroll to turn 1
         turn1 = conv._turns[1]
@@ -623,7 +623,7 @@ class TestScrollPreservation:
         ]
         filters = {"system": ALWAYS_VISIBLE}
         conv = self._make_conv(console, turns_blocks, filters)
-        conv._follow_mode = False
+        conv._follow_state = FollowState.OFF
 
         # Scroll to turn 1 (system content)
         turn1 = conv._turns[1]
@@ -882,7 +882,7 @@ class TestViewportOnlyRerender:
         conv = self._make_conv_with_turns(console, 200, filters_initial)
 
         with self._patch_scroll(conv, scroll_y=0, height=10):
-            conv._follow_mode = False
+            conv._follow_state = FollowState.OFF
             conv.rerender({"tools": HIDDEN})
 
         # Compute viewport range to know which turns were deferred
@@ -910,7 +910,7 @@ class TestViewportOnlyRerender:
 
         with self._patch_scroll(conv, scroll_y=0, height=10):
             vp_start, vp_end = conv._viewport_turn_range()
-            conv._follow_mode = False
+            conv._follow_state = FollowState.OFF
             conv.rerender({"tools": HIDDEN})
 
         # Viewport turns should have no pending snapshot

@@ -105,6 +105,7 @@ class ThemeColors:
 
     # Footer
     follow_active_style: str
+    follow_engaged_style: str
 
     # Search bar styles
     search_prompt_style: str
@@ -240,6 +241,7 @@ def build_theme_colors(textual_theme) -> ThemeColors:
         search_all_bg=surface,
         search_current_style=search_current_style,
         follow_active_style=f"bold reverse {success}",
+        follow_engaged_style=f"bold {warning}",
         search_prompt_style=f"bold {primary}",
         search_active_style=f"bold {success}",
         search_error_style=f"bold {error}",

@@ -238,17 +238,17 @@ class TestWidgetStatePreservation:
         assert "claude-3-sonnet" in new_widget.models_seen
 
     def test_conversation_view_state_roundtrip(self):
-        from cc_dump.tui.widget_factory import ConversationView
+        from cc_dump.tui.widget_factory import ConversationView, FollowState
 
         widget = ConversationView()
-        widget._follow_mode = False
+        widget._follow_state = FollowState.OFF
 
         state = widget.get_state()
 
         new_widget = ConversationView()
         new_widget.restore_state(state)
 
-        assert new_widget._follow_mode is False
+        assert new_widget._follow_state == FollowState.OFF
 
     def test_conversation_view_blocks_preserve_expansion(self):
         """Blocks with expanded=True/False survive roundtrip via reference."""
@@ -289,18 +289,31 @@ class TestWidgetStatePreservation:
         restored_blocks = state["all_blocks"][0]
         assert restored_blocks[0]._force_vis is ALWAYS_VISIBLE
 
-    def test_conversation_view_follow_mode_true_roundtrip(self):
-        """follow_mode=True explicitly survives roundtrip."""
-        from cc_dump.tui.widget_factory import ConversationView
+    def test_conversation_view_follow_state_active_roundtrip(self):
+        """follow_state=ACTIVE explicitly survives roundtrip."""
+        from cc_dump.tui.widget_factory import ConversationView, FollowState
 
         widget = ConversationView()
-        widget._follow_mode = True
+        widget._follow_state = FollowState.ACTIVE
 
         state = widget.get_state()
         new_widget = ConversationView()
         new_widget.restore_state(state)
 
-        assert new_widget._follow_mode is True
+        assert new_widget._follow_state == FollowState.ACTIVE
+
+    def test_conversation_view_follow_state_engaged_roundtrip(self):
+        """follow_state=ENGAGED explicitly survives roundtrip."""
+        from cc_dump.tui.widget_factory import ConversationView, FollowState
+
+        widget = ConversationView()
+        widget._follow_state = FollowState.ENGAGED
+
+        state = widget.get_state()
+        new_widget = ConversationView()
+        new_widget.restore_state(state)
+
+        assert new_widget._follow_state == FollowState.ENGAGED
 
     def test_economics_panel_breakdown_mode_roundtrip(self):
         from cc_dump.tui.widget_factory import ToolEconomicsPanel

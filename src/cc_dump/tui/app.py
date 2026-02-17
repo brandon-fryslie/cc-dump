@@ -410,7 +410,7 @@ class CcDumpApp(App):
                 state = {
                     **self.active_filters,
                     "active_panel": self.active_panel,
-                    "follow": conv._follow_mode if conv is not None else True,
+                    "follow_state": conv._follow_state if conv is not None else cc_dump.tui.widget_factory.FollowState.ACTIVE,
                     "active_filterset": self._active_filterset_slot,
                     "tmux_available": tmux is not None and tmux.state in _TMUX_ACTIVE,
                     "tmux_auto_zoom": tmux.auto_zoom if tmux is not None else False,

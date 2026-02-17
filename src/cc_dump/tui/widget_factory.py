@@ -7,6 +7,7 @@ instances from the updated class definitions and swap them in.
 import json
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from enum import Enum
 from textual.dom import NoScreen
 from textual.widgets import RichLog, Static
 from textual.scroll_view import ScrollView
@@ -24,6 +25,45 @@ import cc_dump.analysis
 import cc_dump.tui.rendering
 import cc_dump.tui.panel_renderers
 import cc_dump.tui.error_indicator
+
+
+# ─── Follow mode state machine ──────────────────────────────────────────────
+
+
+class FollowState(Enum):
+    OFF = "off"
+    ENGAGED = "engaged"
+    ACTIVE = "active"
+
+
+# [LAW:dataflow-not-control-flow] Transitions as data, not branches.
+# Key: (current_state, at_bottom) → new_state
+_FOLLOW_TRANSITIONS: dict[tuple[FollowState, bool], FollowState] = {
+    (FollowState.ACTIVE, True): FollowState.ACTIVE,
+    (FollowState.ACTIVE, False): FollowState.ENGAGED,
+    (FollowState.ENGAGED, True): FollowState.ACTIVE,
+    (FollowState.ENGAGED, False): FollowState.ENGAGED,
+    (FollowState.OFF, True): FollowState.OFF,
+    (FollowState.OFF, False): FollowState.OFF,
+}
+
+_FOLLOW_TOGGLE: dict[FollowState, FollowState] = {
+    FollowState.OFF: FollowState.ACTIVE,
+    FollowState.ENGAGED: FollowState.OFF,
+    FollowState.ACTIVE: FollowState.OFF,
+}
+
+_FOLLOW_SCROLL_BOTTOM: dict[FollowState, FollowState] = {
+    FollowState.OFF: FollowState.OFF,
+    FollowState.ENGAGED: FollowState.ACTIVE,
+    FollowState.ACTIVE: FollowState.ACTIVE,
+}
+
+_FOLLOW_DEACTIVATE: dict[FollowState, FollowState] = {
+    FollowState.OFF: FollowState.OFF,
+    FollowState.ENGAGED: FollowState.ENGAGED,
+    FollowState.ACTIVE: FollowState.ENGAGED,
+}
 
 
 def _compute_widest(strips: list) -> int:
@@ -165,7 +205,7 @@ class ConversationView(ScrollView):
         self._last_filters: dict = {}
         self._last_width: int = 78
         self._last_search_ctx = None  # Store search context for lazy rerenders
-        self._follow_mode: bool = True
+        self._follow_state: FollowState = FollowState.ACTIVE
         self._pending_restore: dict | None = None
         self._scrolling_programmatically: bool = False
         self._scroll_anchor: ScrollAnchor | None = None
@@ -179,6 +219,11 @@ class ConversationView(ScrollView):
             yield
         finally:
             self._scrolling_programmatically = False
+
+    @property
+    def _is_following(self) -> bool:
+        """Whether auto-scroll is active (ACTIVE state only)."""
+        return self._follow_state == FollowState.ACTIVE
 
     def render_line(self, y: int) -> Strip:
         """Line API: render a single line at virtual position y."""
@@ -400,7 +445,7 @@ class ConversationView(ScrollView):
         when off-viewport turns lazily re-render and shift line offsets.
         """
         self._recalculate_offsets_from(from_turn_index)
-        if not self._follow_mode:
+        if not self._is_following:
             self._resolve_anchor()
         self.refresh()
 
@@ -464,7 +509,7 @@ class ConversationView(ScrollView):
         self._turns.append(td)
         self._recalculate_offsets()
 
-        if self._follow_mode:
+        if self._is_following:
             with self._programmatic_scroll():
                 self.scroll_end(animate=False, immediate=False, x_axis=False)
 
@@ -578,7 +623,7 @@ class ConversationView(ScrollView):
             self._refresh_streaming_delta(td)
             # Update virtual size and auto-scroll
             self._update_streaming_size(td)
-            if self._follow_mode:
+            if self._is_following:
                 with self._programmatic_scroll():
                     self.scroll_end(animate=False, immediate=False, x_axis=False)
         # Other blocks: stored only, rendered at finalization
@@ -724,7 +769,7 @@ class ConversationView(ScrollView):
             self._recalculate_offsets_from(first_changed)
 
         # Resolve stored block-level anchor to restore scroll position
-        if not self._follow_mode:
+        if not self._is_following:
             self._resolve_anchor()
 
     def ensure_turn_rendered(self, turn_index: int):
@@ -782,27 +827,34 @@ class ConversationView(ScrollView):
 
         CRITICAL: Must call super() to preserve scrollbar sync and refresh.
         CRITICAL: Signature is (old_value, new_value), not (value).
+
+        // [LAW:dataflow-not-control-flow] Transition via _FOLLOW_TRANSITIONS table.
         """
         super().watch_scroll_y(old_value, new_value)
         if self._scrolling_programmatically:
             return
         # Compute anchor on user scroll (block-level anchor for vis_state changes)
         self._scroll_anchor = self._compute_anchor_from_scroll()
-        if self.is_vertical_scroll_end:
-            self._follow_mode = True
-        else:
-            self._follow_mode = False
+        self._follow_state = _FOLLOW_TRANSITIONS[
+            (self._follow_state, self.is_vertical_scroll_end)
+        ]
 
     def toggle_follow(self):
-        """Toggle follow mode."""
-        self._follow_mode = not self._follow_mode
-        if self._follow_mode:
+        """Toggle follow mode.
+
+        // [LAW:dataflow-not-control-flow] Transition via _FOLLOW_TOGGLE table.
+        """
+        self._follow_state = _FOLLOW_TOGGLE[self._follow_state]
+        if self._is_following:
             with self._programmatic_scroll():
                 self.scroll_end(animate=False)
 
     def scroll_to_bottom(self):
-        """Scroll to bottom and enable follow mode."""
-        self._follow_mode = True
+        """Scroll to bottom. Transitions ENGAGED→ACTIVE; OFF stays OFF.
+
+        // [LAW:dataflow-not-control-flow] Transition via _FOLLOW_SCROLL_BOTTOM table.
+        """
+        self._follow_state = _FOLLOW_SCROLL_BOTTOM[self._follow_state]
         with self._programmatic_scroll():
             self.scroll_end(animate=False)
 
@@ -822,7 +874,8 @@ class ConversationView(ScrollView):
         viewport_height = self.scrollable_content_region.height
         centered_y = max(0, target_y - viewport_height // 2)
 
-        self._follow_mode = False
+        # // [LAW:dataflow-not-control-flow] Deactivate via table lookup.
+        self._follow_state = _FOLLOW_DEACTIVATE[self._follow_state]
         with self._programmatic_scroll():
             self.scroll_to(y=centered_y, animate=False)
 
@@ -1167,7 +1220,7 @@ class ConversationView(ScrollView):
             )
             self._recalculate_offsets()
             # Resolve anchor to maintain scroll position
-            if not self._follow_mode:
+            if not self._is_following:
                 self._resolve_anchor()
 
     def _toggle_block_expand(self, turn: TurnData, block_idx: int):
@@ -1200,7 +1253,7 @@ class ConversationView(ScrollView):
             )
             self._recalculate_offsets()
             # Resolve anchor to maintain scroll position after expand/collapse
-            if not self._follow_mode:
+            if not self._is_following:
                 self._resolve_anchor()
 
     # ─── Error indicator ────────────────────────────────────────────────────
@@ -1254,7 +1307,7 @@ class ConversationView(ScrollView):
 
         return {
             "all_blocks": all_blocks,
-            "follow_mode": self._follow_mode,
+            "follow_state": self._follow_state.value,
             "turn_count": len(self._turns),
             "streaming_states": streaming_states,
             "scroll_anchor": anchor_dict,
@@ -1266,7 +1319,13 @@ class ConversationView(ScrollView):
         Restores streaming turn state and re-renders from preserved blocks.
         """
         self._pending_restore = state
-        self._follow_mode = state.get("follow_mode", True)
+        # Support both new follow_state (str) and old follow_mode (bool) for backward compat
+        follow_raw = state.get("follow_state")
+        if follow_raw is not None:
+            self._follow_state = FollowState(follow_raw)
+        else:
+            # Backward compat: old bool format
+            self._follow_state = FollowState.ACTIVE if state.get("follow_mode", True) else FollowState.OFF
 
         # Restore streaming states after _rebuild_from_state is called
         streaming_states = state.get("streaming_states", [])
@@ -1327,7 +1386,7 @@ class ConversationView(ScrollView):
                 block_index=anchor_dict["block_index"],
                 line_in_block=anchor_dict["line_in_block"],
             )
-            if not self._follow_mode:
+            if not self._is_following:
                 self._resolve_anchor()
 
 

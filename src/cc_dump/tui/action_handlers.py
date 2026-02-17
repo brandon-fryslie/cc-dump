@@ -276,7 +276,9 @@ def toggle_follow(app) -> None:
 
 def go_top(app) -> None:
     def _go(c):
-        c._follow_mode = False
+        import cc_dump.tui.widget_factory
+        # // [LAW:dataflow-not-control-flow] Deactivate via table lookup.
+        c._follow_state = cc_dump.tui.widget_factory._FOLLOW_DEACTIVATE[c._follow_state]
         c.scroll_home(animate=False)
 
     _conv_action(app, _go, update_footer=True)

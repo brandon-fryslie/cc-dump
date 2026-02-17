@@ -5,6 +5,7 @@ from rich.text import Text
 from textual.widgets import Static
 
 import cc_dump.tui.rendering
+import cc_dump.tui.widget_factory
 from cc_dump.formatting import VisState, HIDDEN
 
 
@@ -82,12 +83,18 @@ class StatusFooter(Static):
         for key, label in self._COMMAND_ITEMS:
             line2.append(f" {key} {label} ", style="bold")
 
-        # Follow mode — single unified chip
-        # // [LAW:dataflow-not-control-flow] Style derived from follow_active value
-        follow_active = bool(state.get("follow", False))
+        # Follow mode — 3-state chip
+        # // [LAW:dataflow-not-control-flow] Style + label derived from follow_state via table.
+        FollowState = cc_dump.tui.widget_factory.FollowState
+        follow_state = state.get("follow_state", FollowState.ACTIVE)
         follow_click = _click("app.toggle_follow")
-        active_style = tc.follow_active_style if follow_active else "dim"
-        line2.append(f" f FOLLOW ", style=Style.parse(active_style) + follow_click)
+        _FOLLOW_DISPLAY: dict[FollowState, tuple[str, str]] = {
+            FollowState.OFF: ("dim", " f OFF "),
+            FollowState.ENGAGED: (tc.follow_engaged_style, " f FOLLOW "),
+            FollowState.ACTIVE: (tc.follow_active_style, " f FOLLOW "),
+        }
+        follow_style, follow_label = _FOLLOW_DISPLAY[follow_state]
+        line2.append(follow_label, style=Style.parse(follow_style) + follow_click)
 
         # Filterset indicator — show active preset slot
         active_slot = state.get("active_filterset")

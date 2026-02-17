@@ -78,6 +78,9 @@ def get_total_lines(app: CcDumpApp) -> int:
 
 
 def is_follow_mode(app: CcDumpApp) -> bool:
-    """Check if follow mode is active."""
+    """Check if follow mode is active (ACTIVE state)."""
     conv = app._get_conv()
-    return conv._follow_mode if conv is not None else True
+    if conv is None:
+        return True
+    from cc_dump.tui.widget_factory import FollowState
+    return conv._follow_state == FollowState.ACTIVE
