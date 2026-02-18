@@ -19,6 +19,7 @@ _RELOAD_ORDER = [
     "cc_dump.colors",  # depends on: palette
     "cc_dump.analysis",  # no deps within project
     "cc_dump.formatting",  # depends on: colors, analysis
+    "cc_dump.tui.action_config",  # depends on: formatting (VisState), pure data
     "cc_dump.segmentation",  # depends on: nothing (pure parser, before rendering)
     "cc_dump.router",  # depends on: nothing within reloadable set
     "cc_dump.tui.search",  # depends on: palette

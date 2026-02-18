@@ -158,6 +158,29 @@ _RELOAD_ORDER = [
 ]
 ```
 
+### How to Extract Pure Logic from a Stable Module
+
+When a stable boundary module (e.g., `action_handlers.py`) contains pure data or pure functions mixed with stateful code, extract the pure parts into a reloadable sibling module. This lets you iterate on configuration and logic without restarting.
+
+**Existing examples:**
+
+| Stable Module | Reloadable Sibling | What Was Extracted |
+|---------------|--------------------|--------------------|
+| `tui/dump_export.py` | `tui/dump_formatting.py` | Block-to-text rendering (pure function) |
+| `tui/action_handlers.py` | `tui/action_config.py` | Visibility/filterset/panel constants (pure data) |
+| `tui/search_controller.py` | `tui/search.py` | Pattern compilation, match finding (pure functions) |
+
+**Checklist:**
+
+1. **Identify pure logic/data** — no `app` parameter, no widget state, no side effects
+2. **Create reloadable sibling** in `src/cc_dump/tui/` (or `src/cc_dump/`)
+3. **Add to `_RELOAD_ORDER`** in `hot_reload.py`, respecting dependency order
+4. **In stable module**: `import cc_dump.tui.sibling` (module-style, NOT `from`)
+5. **Thin wrapper delegates** via `cc_dump.tui.sibling.function()` or reads `cc_dump.tui.sibling.CONSTANT`
+6. **Import validation test** (`test_hot_reload.py::test_import_validation`) auto-enforces the pattern
+
+**What NOT to extract:** State coordinators (functions that take `app` and mutate widgets/reactive state) must stay in the stable module. If every function in a module needs `app`, there's nothing to extract.
+
 ### How to Add a New Widget
 
 1. **Define the widget class** in `tui/widget_factory.py`:

@@ -9,52 +9,19 @@ Not hot-reloadable (accesses app widgets and reactive state).
 
 import cc_dump.formatting
 import cc_dump.settings
+import cc_dump.tui.action_config  # module-style for hot-reload
 import cc_dump.tui.rendering
 
 # [LAW:one-source-of-truth] Panel order derived from registry
 from cc_dump.tui.panel_registry import PANEL_ORDER
 
-# [LAW:one-source-of-truth] Ordered slot list for cycling (skips F3)
-_FILTERSET_SLOTS = ["1", "2", "4", "5", "6", "7", "8", "9"]
-
-# [LAW:one-source-of-truth] Names for built-in filterset slots
-_FILTERSET_NAMES: dict[str, str] = {
-    "1": "Conversation",
-    "2": "Overview",
-    "4": "Tools",
-    "5": "System",
-    "6": "Cost",
-    "7": "Full Debug",
-    "8": "Assistant",
-    "9": "Minimal",
-}
-
-
-# [LAW:one-source-of-truth] Ordered visibility states for cycling filter chips.
-# Progression: hidden → summary collapsed → summary expanded → full collapsed → full expanded
-_VIS_CYCLE = [
-    cc_dump.formatting.VisState(False, False, False),  # 1. Hidden
-    cc_dump.formatting.VisState(True, False, False),   # 2. Summary Collapsed
-    cc_dump.formatting.VisState(True, False, True),    # 3. Summary Expanded
-    cc_dump.formatting.VisState(True, True, False),    # 4. Full Collapsed
-    cc_dump.formatting.VisState(True, True, True),     # 5. Full Expanded
-]
-
 
 # ─── Visibility actions ────────────────────────────────────────────────
-
-# [LAW:dataflow-not-control-flow] Visibility toggle specs — data, not branches.
-# Each tuple: (dict_attr, force_value_or_None) where None means "toggle".
-_VIS_TOGGLE_SPECS = {
-    "vis": [("_is_visible", None)],
-    "detail": [("_is_visible", True), ("_is_full", None)],
-    "expand": [("_is_visible", True), ("_is_expanded", None)],
-}
 
 
 def _toggle_vis_dicts(app, category: str, spec_key: str) -> None:
     """// [LAW:one-type-per-behavior] Single function for all visibility mutations."""
-    for attr, force in _VIS_TOGGLE_SPECS[spec_key]:
+    for attr, force in cc_dump.tui.action_config.VIS_TOGGLE_SPECS[spec_key]:
         old = getattr(app, attr)
         new = dict(old)
         new[category] = (not old[category]) if force is None else force
@@ -106,13 +73,14 @@ def cycle_vis(app, category: str) -> None:
 
     # Find index in cycle (default to -1 if state not found, wraps to 0)
     try:
-        idx = _VIS_CYCLE.index(current)
+        idx = cc_dump.tui.action_config.VIS_CYCLE.index(current)
     except ValueError:
         idx = -1
 
     # Compute next state with modulo wrap
-    next_idx = (idx + 1) % len(_VIS_CYCLE)
-    next_state = _VIS_CYCLE[next_idx]
+    vis_cycle = cc_dump.tui.action_config.VIS_CYCLE
+    next_idx = (idx + 1) % len(vis_cycle)
+    next_state = vis_cycle[next_idx]
 
     # Update all three reactive dicts atomically
     # [LAW:dataflow-not-control-flow] Always execute these updates; values vary
@@ -126,13 +94,6 @@ def cycle_vis(app, category: str) -> None:
 
 
 # ─── Panel cycling ─────────────────────────────────────────────────────
-
-# [LAW:one-type-per-behavior] Toggle config for non-cycling panels
-_PANEL_TOGGLE_CONFIG = {
-    "logs": ("show_logs", "_get_logs", None),
-    "info": ("show_info", "_get_info", None),
-}
-
 
 def cycle_panel(app) -> None:
     """Cycle active_panel through PANEL_ORDER."""
@@ -167,7 +128,7 @@ def refresh_active_panel(app, panel_name: str) -> None:
 
 def _toggle_panel(app, panel_key: str) -> None:
     """// [LAW:dataflow-not-control-flow] Panel toggling driven by config, not branches."""
-    attr, getter_name, refresh_name = _PANEL_TOGGLE_CONFIG[panel_key]
+    attr, getter_name, refresh_name = cc_dump.tui.action_config.PANEL_TOGGLE_CONFIG[panel_key]
     new_val = not getattr(app, attr)
     setattr(app, attr, new_val)
     widget = getattr(app, getter_name)()
@@ -217,10 +178,11 @@ def toggle_settings(app) -> None:
 
 def _cycle_filterset(app, direction: int) -> None:
     """Cycle through filterset slots. direction: +1 forward, -1 backward."""
+    slots = cc_dump.tui.action_config.FILTERSET_SLOTS
     current = app._active_filterset_slot
-    idx = _FILTERSET_SLOTS.index(current) if current in _FILTERSET_SLOTS else -1
-    next_idx = (idx + direction) % len(_FILTERSET_SLOTS)
-    apply_filterset(app, _FILTERSET_SLOTS[next_idx])
+    idx = slots.index(current) if current in slots else -1
+    next_idx = (idx + direction) % len(slots)
+    apply_filterset(app, slots[next_idx])
 
 
 def next_filterset(app) -> None:
@@ -251,7 +213,7 @@ def apply_filterset(app, slot: str) -> None:
     app._is_expanded = {name: vs.expanded for name, vs in filters.items()}
     app._active_filterset_slot = slot
     # Show name for built-in presets, just slot number for user-defined
-    name = _FILTERSET_NAMES.get(slot, "")
+    name = cc_dump.tui.action_config.FILTERSET_NAMES.get(slot, "")
     label = f"F{slot} {name}" if name else f"F{slot}"
     app.notify(label)
     # [LAW:single-enforcer] Footer updates only at _update_footer_state() boundary
@@ -358,6 +320,4 @@ def refresh_session(app) -> None:
     panel.refresh_session_state(
         session_id=app._session_id,
         last_message_time=app._app_state.get("last_message_time"),
-        proxy_url="http://{}:{}".format(app._host, app._port),
-        request_count=app._state.get("request_counter", 0),
     )
