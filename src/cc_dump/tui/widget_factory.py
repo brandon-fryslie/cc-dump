@@ -1268,8 +1268,12 @@ class ConversationView(ScrollView):
 
     def on_mouse_move(self, event) -> None:
         """Track hover for error indicator expansion."""
-        hit = cc_dump.tui.error_indicator.hit_test_event(
-            self._indicator, event.x, event.y, self._content_width
+        content_offset = event.get_content_offset(self)
+        hit = (
+            content_offset is not None
+            and cc_dump.tui.error_indicator.hit_test_event(
+                self._indicator, content_offset.x, content_offset.y, self._content_width
+            )
         )
         if hit != self._indicator.expanded:
             self._indicator.expanded = hit
