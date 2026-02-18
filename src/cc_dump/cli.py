@@ -6,7 +6,7 @@ import os
 import queue
 import sys
 import threading
-import uuid
+from datetime import datetime
 
 from cc_dump.proxy import ProxyHandler
 from cc_dump.router import EventRouter, QueueSubscriber, DirectSubscriber
@@ -145,10 +145,8 @@ def main():
     router.add_subscriber(display_sub)
 
     # Analytics store (direct subscriber, in-memory)
-    session_id = uuid.uuid4().hex
     analytics_store = AnalyticsStore()
     router.add_subscriber(DirectSubscriber(analytics_store.on_event))
-    print(f"   Session ID: {session_id}")
 
     # HAR recording subscriber (direct subscriber, inline writes)
     # [LAW:one-source-of-truth] Session name from CLI or default
@@ -163,11 +161,9 @@ def main():
         session_dir = os.path.join(record_dir, session_name)
         os.makedirs(session_dir, exist_ok=True)
         record_path = args.record or os.path.join(
-            session_dir, f"recording-{session_id}.har"
+            session_dir, f"recording-{datetime.now().strftime('%Y%m%d-%H%M%S')}.har"
         )
-        har_recorder = cc_dump.har_recorder.HARRecordingSubscriber(
-            record_path, session_id
-        )
+        har_recorder = cc_dump.har_recorder.HARRecordingSubscriber(record_path)
         router.add_subscriber(DirectSubscriber(har_recorder.on_event))
         print(f"   Recording: {record_path} (created on first API call)")
     else:
@@ -214,7 +210,6 @@ def main():
         state,
         router,
         analytics_store=analytics_store,
-        session_id=session_id,
         session_name=session_name,
         host=args.host,
         port=actual_port,

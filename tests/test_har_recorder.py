@@ -341,10 +341,9 @@ def test_reconstruct_message_malformed_tool_json():
 def test_har_subscriber_initialization(tmp_path):
     """Subscriber initializes without creating a file (lazy init)."""
     har_path = tmp_path / "test.har"
-    subscriber = HARRecordingSubscriber(str(har_path), "session_123")
+    subscriber = HARRecordingSubscriber(str(har_path))
 
     assert subscriber.path == str(har_path)
-    assert subscriber.session_id == "session_123"
 
     # File should NOT exist until first entry is committed
     assert not har_path.exists()
@@ -358,7 +357,7 @@ def test_har_subscriber_initialization(tmp_path):
 def test_har_subscriber_accumulates_events(tmp_path):
     """Subscriber accumulates events from event stream and writes to file."""
     har_path = tmp_path / "test.har"
-    subscriber = HARRecordingSubscriber(str(har_path), "session_123")
+    subscriber = HARRecordingSubscriber(str(har_path))
 
     # Simulate event sequence
     subscriber.on_event(RequestHeadersEvent(headers={"content-type": "application/json"}))
@@ -440,7 +439,7 @@ def test_har_subscriber_accumulates_events(tmp_path):
 def test_har_subscriber_writes_file(tmp_path):
     """Subscriber writes valid HAR file on close."""
     har_path = tmp_path / "test.har"
-    subscriber = HARRecordingSubscriber(str(har_path), "session_123")
+    subscriber = HARRecordingSubscriber(str(har_path))
 
     # Add a complete request/response cycle
     subscriber.on_event(RequestHeadersEvent(headers={}))
@@ -512,7 +511,7 @@ def test_har_subscriber_writes_file(tmp_path):
 def test_har_subscriber_multiple_requests(tmp_path):
     """Subscriber handles multiple request/response cycles."""
     har_path = tmp_path / "test.har"
-    subscriber = HARRecordingSubscriber(str(har_path), "session_123")
+    subscriber = HARRecordingSubscriber(str(har_path))
 
     # First request
     subscriber.on_event(RequestHeadersEvent(headers={}))
@@ -646,7 +645,7 @@ def test_har_subscriber_multiple_requests(tmp_path):
 def test_har_subscriber_error_handling(tmp_path):
     """Subscriber logs errors but doesn't crash."""
     har_path = tmp_path / "test.har"
-    subscriber = HARRecordingSubscriber(str(har_path), "session_123")
+    subscriber = HARRecordingSubscriber(str(har_path))
 
     # Send malformed event
     subscriber.on_event(("invalid_event_type", None, None, None))
@@ -657,7 +656,7 @@ def test_har_subscriber_error_handling(tmp_path):
 def test_har_subscriber_incomplete_stream(tmp_path):
     """Subscriber handles incomplete streams gracefully (missing response_done)."""
     har_path = tmp_path / "test.har"
-    subscriber = HARRecordingSubscriber(str(har_path), "session_123")
+    subscriber = HARRecordingSubscriber(str(har_path))
 
     # Start a request but never complete it
     subscriber.on_event(RequestHeadersEvent(headers={}))
@@ -693,7 +692,7 @@ def test_har_subscriber_incomplete_stream(tmp_path):
 def test_har_subscriber_large_content(tmp_path):
     """Subscriber handles large content blocks."""
     har_path = tmp_path / "test.har"
-    subscriber = HARRecordingSubscriber(str(har_path), "session_123")
+    subscriber = HARRecordingSubscriber(str(har_path))
 
     large_text = "A" * 10000  # 10KB of text
 
@@ -763,7 +762,7 @@ def test_har_subscriber_progressive_saving(tmp_path):
     the 30+ second hang on exit that occurred with the old buffer-on-exit approach.
     """
     har_path = tmp_path / "test.har"
-    subscriber = HARRecordingSubscriber(str(har_path), "session_123")
+    subscriber = HARRecordingSubscriber(str(har_path))
 
     # First request/response cycle
     subscriber.on_event(RequestHeadersEvent(headers={}))
@@ -910,7 +909,7 @@ def test_har_subscriber_progressive_saving(tmp_path):
 def test_har_subscriber_close_deletes_empty_file_if_opened(tmp_path, capsys):
     """If file was somehow opened but has 0 entries, close() deletes it and logs FATAL."""
     har_path = tmp_path / "test.har"
-    subscriber = HARRecordingSubscriber(str(har_path), "session_123")
+    subscriber = HARRecordingSubscriber(str(har_path))
 
     # Force-open the file without committing any entries (simulates a bug)
     subscriber._open_file()
@@ -925,13 +924,13 @@ def test_har_subscriber_close_deletes_empty_file_if_opened(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "FATAL" in captured.err
     assert "empty HAR file" in captured.err
-    assert "session_123" in captured.err
+    assert "test.har" in captured.err
 
 
 def test_har_subscriber_no_file_no_events(tmp_path):
     """Session with zero events creates no file and no warnings."""
     har_path = tmp_path / "test.har"
-    subscriber = HARRecordingSubscriber(str(har_path), "session_123")
+    subscriber = HARRecordingSubscriber(str(har_path))
     subscriber.close()
     assert not har_path.exists()
     assert subscriber._events_received == {}

@@ -188,6 +188,9 @@ class FormattedBlock:
     # // [LAW:one-source-of-truth] All sub-region state lives here, not in shadow attrs.
     content_regions: list[ContentRegion] = field(default_factory=list)
 
+    # Claude Code session ID (from user_id metadata). Stamped on all blocks.
+    session_id: str = ""
+
 
 @dataclass
 class SeparatorBlock(FormattedBlock):
@@ -226,7 +229,6 @@ class MetadataBlock(FormattedBlock):
     # API metadata from metadata.user_id field:
     user_hash: str = ""
     account_id: str = ""
-    session_id: str = ""
 
 
 @dataclass
@@ -242,7 +244,7 @@ class ToolDefinitionsBlock(FormattedBlock):
 class NewSessionBlock(FormattedBlock):
     """Indicates a new Claude Code session started."""
 
-    session_id: str = ""
+    pass
 
 
 @dataclass
@@ -728,7 +730,7 @@ def format_request(body, state, request_headers: dict | None = None):
     # Track session changes — emit NewSessionBlock when session changes
     current_session = state.get("current_session")
     if session_id and session_id != current_session:
-        blocks.append(NewSessionBlock(session_id=session_id))
+        blocks.append(NewSessionBlock())
         state["current_session"] = session_id
 
     blocks.append(
@@ -739,7 +741,6 @@ def format_request(body, state, request_headers: dict | None = None):
             tool_count=len(tools),
             user_hash=user_hash,
             account_id=account_id,
-            session_id=session_id,
         )
     )
 
@@ -856,6 +857,10 @@ def format_request(body, state, request_headers: dict | None = None):
     # ToolDefinitionsBlock regions (created inline above) are preserved.
     for block in blocks:
         populate_content_regions(block)
+
+    # // [LAW:one-source-of-truth] Stamp all blocks with session_id
+    for block in blocks:
+        block.session_id = session_id
 
     return blocks
 

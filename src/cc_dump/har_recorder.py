@@ -352,15 +352,13 @@ class HARRecordingSubscriber:
     with no API traffic produce no file at all.
     """
 
-    def __init__(self, path: str, session_id: str):
+    def __init__(self, path: str):
         """Initialize HAR recorder. File is NOT created until first entry.
 
         Args:
             path: Output file path for HAR file
-            session_id: Session ID for metadata
         """
         self.path = path
-        self.session_id = session_id
 
         # State machine for current request/response
         self.pending_request = None
@@ -546,7 +544,7 @@ class HARRecordingSubscriber:
             # sessions with no API traffic. Log quietly for diagnostics.
             if self._events_received:
                 sys.stderr.write(
-                    f"[har] WARN: session {self.session_id} received events "
+                    f"[har] WARN: {os.path.basename(self.path)} received events "
                     f"but wrote 0 HAR entries. Events: {self._events_received}. "
                     f"No file created at {self.path}\n"
                 )
@@ -565,10 +563,9 @@ class HARRecordingSubscriber:
             sys.stderr.write(
                 f"\n{'='*72}\n"
                 f"[har] FATAL: empty HAR file detected — deleting garbage\n"
-                f"  path:       {self.path}\n"
-                f"  session_id: {self.session_id}\n"
-                f"  entries:    {self._entry_count}\n"
-                f"  events:     {self._events_received}\n"
+                f"  path:    {self.path}\n"
+                f"  entries: {self._entry_count}\n"
+                f"  events:  {self._events_received}\n"
                 f"  This should never happen with lazy file init.\n"
                 f"  If you see this, the bug is in _commit_entry or _open_file.\n"
                 f"{'='*72}\n\n"

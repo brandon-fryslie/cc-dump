@@ -293,7 +293,7 @@ def test_record_replay_text_response(tmp_path, fresh_state):
     live_blocks = format_events(SAMPLE_EVENTS, copy.deepcopy(fresh_state))
 
     # 2. Record events to HAR
-    recorder = HARRecordingSubscriber(str(har_path), "test-session")
+    recorder = HARRecordingSubscriber(str(har_path))
     for event in SAMPLE_EVENTS:
         recorder.on_event(event)
     recorder.close()
@@ -320,7 +320,7 @@ def test_record_replay_tool_use(tmp_path, fresh_state):
     live_blocks = format_events(TOOL_USE_EVENTS, copy.deepcopy(fresh_state))
 
     # 2. Record events to HAR
-    recorder = HARRecordingSubscriber(str(har_path), "test-session")
+    recorder = HARRecordingSubscriber(str(har_path))
     for event in TOOL_USE_EVENTS:
         recorder.on_event(event)
     recorder.close()
@@ -407,7 +407,7 @@ def test_record_replay_content_tracking_state(tmp_path):
     live_blocks_2 = format_events(events_2, state_live)
 
     # 2. Record both to HAR
-    recorder = HARRecordingSubscriber(str(har_path), "test-session")
+    recorder = HARRecordingSubscriber(str(har_path))
     for event in events_1 + events_2:
         recorder.on_event(event)
     recorder.close()
@@ -456,7 +456,7 @@ def test_multiple_turns_in_single_har(tmp_path, fresh_state):
     live_blocks = format_events(all_events, copy.deepcopy(fresh_state))
 
     # 2. Record
-    recorder = HARRecordingSubscriber(str(har_path), "test-session")
+    recorder = HARRecordingSubscriber(str(har_path))
     for event in all_events:
         recorder.on_event(event)
     recorder.close()
@@ -544,7 +544,7 @@ def test_har_is_source_of_truth(tmp_path):
     ])
 
     # Record
-    recorder = HARRecordingSubscriber(str(har_path), "test-session")
+    recorder = HARRecordingSubscriber(str(har_path))
     for event in events:
         recorder.on_event(event)
     recorder.close()

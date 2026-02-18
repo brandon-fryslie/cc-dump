@@ -224,8 +224,6 @@ def render_session_panel(
     connected: bool,
     session_id: str | None,
     last_message_time: float | None,
-    proxy_url: str,
-    request_count: int,
 ) -> Text:
     """Render the session panel display text.
 
@@ -235,8 +233,6 @@ def render_session_panel(
         connected: Whether a Claude Code client is considered connected
         session_id: Current session UUID (or None)
         last_message_time: monotonic time of last message (or None)
-        proxy_url: Proxy URL string
-        request_count: Total request count
     """
     import time
 
@@ -256,10 +252,6 @@ def render_session_panel(
     result.append(" | Session: ")
     result.append(session_display, style=f"{p.info}" if session_id else "dim")
 
-    # Request count
-    result.append(" | Reqs: ")
-    result.append(str(request_count))
-
     # Last message age
     result.append(" | Last: ")
     if last_message_time is not None:
@@ -273,10 +265,6 @@ def render_session_panel(
         result.append(age_str)
     else:
         result.append("--", style="dim")
-
-    # Proxy URL
-    result.append(" | ")
-    result.append(proxy_url, style="dim")
 
     return result
 

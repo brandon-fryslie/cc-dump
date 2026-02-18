@@ -51,7 +51,11 @@ async def test_panel_mode_cycling_comma():
     """Press ',' cycles intra-panel mode on the active panel."""
     async with run_app() as (pilot, app):
         # Cycle to economics panel (has breakdown mode)
-        await press_and_settle(pilot, ".")
+        from cc_dump.tui.panel_registry import PANEL_ORDER
+
+        econ_idx = PANEL_ORDER.index("economics")
+        for _ in range(econ_idx):
+            await press_and_settle(pilot, ".")
         assert is_panel_visible(app, "economics")
 
         # Get economics widget and check initial mode

@@ -86,8 +86,8 @@ class CcDumpApp(App):
     _is_expanded: reactive[dict[str, bool]] = reactive({})
 
     # Panel visibility
-    # [LAW:one-source-of-truth] active_panel cycles through stats/economics/timeline
-    active_panel = reactive("stats")
+    # [LAW:one-source-of-truth] active_panel cycles through PANEL_ORDER
+    active_panel = reactive("session")
     show_logs = reactive(False)
     show_info = reactive(False)
 
@@ -97,7 +97,6 @@ class CcDumpApp(App):
         state,
         router,
         analytics_store=None,
-        session_id: Optional[str] = None,
         session_name: str = "unnamed-session",
         host: str = "127.0.0.1",
         port: int = 3344,
@@ -112,7 +111,7 @@ class CcDumpApp(App):
         self._state = state
         self._router = router
         self._analytics_store = analytics_store
-        self._session_id = session_id
+        self._session_id: str | None = None
         self._session_name = session_name
         self._host = host
         self._port = port
@@ -319,9 +318,6 @@ class CcDumpApp(App):
                 f"Usage: HTTP_PROXY=http://{self._host}:{self._port} ANTHROPIC_BASE_URL=http://api.minimax.com claude",
             )
 
-        if self._session_id:
-            self._app_log("INFO", f"Session: {self._session_id}")
-
         self.run_worker(self._drain_events, thread=True, exclusive=False)
 
         # Set initial panel visibility — cycle panels via active_panel
@@ -502,6 +498,10 @@ class CcDumpApp(App):
                 response_blocks.extend(
                     cc_dump.formatting.format_complete_response(complete_message)
                 )
+                # // [LAW:one-source-of-truth] Stamp response blocks with current session
+                current_session = self._state.get("current_session", "")
+                for block in response_blocks:
+                    block.session_id = current_session
                 conv.add_turn(response_blocks, self.active_filters)
 
                 if stats:

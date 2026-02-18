@@ -24,8 +24,6 @@ class SessionPanel(Static):
         super().__init__("")
         self._session_id: str | None = None
         self._last_message_time: float | None = None
-        self._proxy_url: str = ""
-        self._request_count: int = 0
 
     @property
     def _connected(self) -> bool:
@@ -38,14 +36,10 @@ class SessionPanel(Static):
         self,
         session_id: str | None,
         last_message_time: float | None,
-        proxy_url: str,
-        request_count: int,
     ) -> None:
         """Update session state and refresh display."""
         self._session_id = session_id
         self._last_message_time = last_message_time
-        self._proxy_url = proxy_url
-        self._request_count = request_count
         self._refresh_display()
 
     def _refresh_display(self) -> None:
@@ -53,8 +47,6 @@ class SessionPanel(Static):
             connected=self._connected,
             session_id=self._session_id,
             last_message_time=self._last_message_time,
-            proxy_url=self._proxy_url,
-            request_count=self._request_count,
         )
         self.update(rich_text)
 
@@ -68,15 +60,11 @@ class SessionPanel(Static):
         return {
             "session_id": self._session_id,
             "last_message_time": self._last_message_time,
-            "proxy_url": self._proxy_url,
-            "request_count": self._request_count,
         }
 
     def restore_state(self, state: dict) -> None:
         self._session_id = state.get("session_id")
         self._last_message_time = state.get("last_message_time")
-        self._proxy_url = state.get("proxy_url", "")
-        self._request_count = state.get("request_count", 0)
         self._refresh_display()
 
 

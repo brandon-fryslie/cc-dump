@@ -79,6 +79,12 @@ def handle_response_headers(event: ResponseHeadersEvent, state, widgets, app_sta
 
     try:
         blocks = cc_dump.formatting.format_response_headers(status_code, headers_dict)
+
+        # // [LAW:one-source-of-truth] Stamp response blocks with current session
+        current_session = state.get("current_session", "")
+        for block in blocks:
+            block.session_id = current_session
+
         conv = widgets["conv"]
         filters = widgets["filters"]
 
@@ -107,6 +113,11 @@ def handle_response_event(event: ResponseSSEEvent, state, widgets, app_state, lo
 
     try:
         blocks = cc_dump.formatting.format_response_event(sse_event)
+
+        # // [LAW:one-source-of-truth] Stamp response blocks with current session
+        current_session = state.get("current_session", "")
+        for block in blocks:
+            block.session_id = current_session
 
         conv = widgets["conv"]
         stats = widgets["stats"]
@@ -190,6 +201,7 @@ def handle_error(event: ErrorEvent, state, widgets, app_state, log_fn):
     log_fn("ERROR", f"HTTP Error {code}: {reason}")
 
     block = cc_dump.formatting.ErrorBlock(code=code, reason=reason)
+    block.session_id = state.get("current_session", "")
 
     conv = widgets["conv"]
 
@@ -206,6 +218,7 @@ def handle_proxy_error(event: ProxyErrorEvent, state, widgets, app_state, log_fn
     log_fn("ERROR", f"Proxy error: {err}")
 
     block = cc_dump.formatting.ProxyErrorBlock(error=err)
+    block.session_id = state.get("current_session", "")
 
     conv = widgets["conv"]
 
