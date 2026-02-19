@@ -194,6 +194,16 @@ def main():
     tmux_state = tmux_ctrl.state if tmux_ctrl else None
     print(f"   Tmux: {_TMUX_STATUS[tmux_state]}")
 
+    # Request pipeline — transforms + interceptors run before forwarding
+    import cc_dump.sentinel
+    from cc_dump.proxy import RequestPipeline
+
+    pipeline = RequestPipeline(
+        transforms=[],
+        interceptors=[cc_dump.sentinel.make_interceptor(tmux_ctrl)],
+    )
+    ProxyHandler.request_pipeline = pipeline
+
     router.start()
 
     # Initialize hot-reload watcher
