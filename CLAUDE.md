@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 cc-dump is a transparent HTTP proxy for monitoring Claude Code API traffic. It intercepts Anthropic API requests, tracks system prompt changes with diffs, and provides a real-time Textual TUI with HAR recording/replay capabilities. Python 3.10+, production dependencies: `textual`, `textual-serve`, `tiktoken`. See [PROJECT_SPEC.md](PROJECT_SPEC.md) for goals and [ARCHITECTURE.md](ARCHITECTURE.md) for system design.
 
+**Product decisions:** See [PRODUCT_DECISIONS.md](PRODUCT_DECISIONS.md) before proposing feature removal.
+
 ## Textual Framework Reference
 
 We use the Textual TUI framework. Reference documentation is in `dev-docs/textual-docs/`:
