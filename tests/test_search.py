@@ -37,6 +37,12 @@ from cc_dump.formatting import (
     TurnBudgetBlock,
     SeparatorBlock,
     Category,
+    MessageBlock,
+    ToolDefsSection,
+    ToolDefBlock,
+    SkillDefChild,
+    ConfigContentBlock,
+    ThinkingBlock,
 )
 from cc_dump.analysis import TurnBudget
 
@@ -400,3 +406,142 @@ class TestSearchState:
         assert not (state.modes & SearchMode.WORD_BOUNDARY)
         assert state.matches == []
         assert state.current_index == 0
+
+
+# ─── Hierarchy walking ────────────────────────────────────────────────────────
+
+
+class TestFindAllMatchesHierarchy:
+    """Test that find_all_matches walks container children."""
+
+    def test_walks_message_block_children(self):
+        """Content inside a MessageBlock's children is searchable."""
+        child_text = TextContentBlock(content="findme inside container")
+        container = MessageBlock(role="user", msg_index=0, children=[child_text])
+        turns = [_FakeTurnData(0, [container])]
+        pattern = re.compile("findme")
+        matches = find_all_matches(turns, pattern)
+        assert len(matches) == 1
+        assert matches[0].block_index == 0  # parent container's hierarchical index
+        assert matches[0].block is child_text  # actual child block reference
+
+    def test_walks_grandchildren(self):
+        """ToolDefsSection → ToolDefBlock → SkillDefChild is searchable."""
+        skill = SkillDefChild(name="review-pr", description="Code review helper")
+        tool_def = ToolDefBlock(name="Skill", description="Skills", children=[skill])
+        section = ToolDefsSection(tool_count=1, children=[tool_def])
+        turns = [_FakeTurnData(0, [section])]
+        pattern = re.compile("review-pr")
+        matches = find_all_matches(turns, pattern)
+        assert len(matches) == 1
+        assert matches[0].block is skill
+        assert matches[0].block_index == 0  # section's hierarchical index
+
+    def test_container_itself_is_searchable(self):
+        """ToolDefBlock's own text is searchable alongside children."""
+        skill = SkillDefChild(name="review", description="Code review")
+        tool_def = ToolDefBlock(name="Bash", description="Run commands", children=[skill])
+        section = ToolDefsSection(tool_count=1, children=[tool_def])
+        turns = [_FakeTurnData(0, [section])]
+        pattern = re.compile("Bash")
+        matches = find_all_matches(turns, pattern)
+        # Should find "Bash" in the ToolDefBlock itself
+        assert any(m.block is tool_def for m in matches)
+
+    def test_block_reference_stored(self):
+        """SearchMatch.block stores the correct block reference for identity lookup."""
+        block = TextContentBlock(content="unique text here")
+        turns = [_FakeTurnData(0, [block])]
+        pattern = re.compile("unique")
+        matches = find_all_matches(turns, pattern)
+        assert len(matches) == 1
+        assert matches[0].block is block
+
+    def test_child_and_sibling_both_found(self):
+        """Matches in both a container child and a sibling top-level block."""
+        child = TextContentBlock(content="match in child")
+        container = MessageBlock(role="user", msg_index=0, children=[child])
+        sibling = TextContentBlock(content="match in sibling")
+        turns = [_FakeTurnData(0, [container, sibling])]
+        pattern = re.compile("match")
+        matches = find_all_matches(turns, pattern)
+        assert len(matches) == 2
+        match_blocks = [m.block for m in matches]
+        assert any(b is child for b in match_blocks)
+        assert any(b is sibling for b in match_blocks)
+
+    def test_hierarchical_index_is_container_for_children(self):
+        """Children use the parent container's index, not their own flat position."""
+        child1 = TextContentBlock(content="first child match")
+        child2 = TextContentBlock(content="second child match")
+        container = MessageBlock(role="user", msg_index=0, children=[child1, child2])
+        header = HeaderBlock(label="REQUEST #1", timestamp="now")
+        turns = [_FakeTurnData(0, [header, container])]
+        pattern = re.compile("child match")
+        matches = find_all_matches(turns, pattern)
+        assert len(matches) == 2
+        # Both children should have block_index=1 (the container's hierarchical index)
+        assert all(m.block_index == 1 for m in matches)
+
+    def test_config_and_thinking_blocks_searchable(self):
+        """ConfigContentBlock and ThinkingBlock are searchable as children."""
+        config = ConfigContentBlock(content="CLAUDE.md project instructions")
+        thinking = ThinkingBlock(content="Let me think about this")
+        container = MessageBlock(role="user", msg_index=0, children=[config, thinking])
+        turns = [_FakeTurnData(0, [container])]
+
+        pattern = re.compile("CLAUDE.md")
+        matches = find_all_matches(turns, pattern)
+        assert len(matches) == 1
+        assert matches[0].block is config
+
+        pattern2 = re.compile("think about")
+        matches2 = find_all_matches(turns, pattern2)
+        assert len(matches2) == 1
+        assert matches2[0].block is thinking
+
+
+# ─── Identity matching in SearchContext ──────────────────────────────────────
+
+
+class TestSearchContextIdentityMatching:
+    """Test matches_in_block with identity-based matching."""
+
+    def test_identity_matching(self):
+        """When block param is provided, matches by identity not index."""
+        block_a = TextContentBlock(content="hello")
+        block_b = TextContentBlock(content="world")
+        matches = [
+            SearchMatch(turn_index=0, block_index=0, text_offset=0, text_length=5, block=block_a),
+            SearchMatch(turn_index=0, block_index=0, text_offset=0, text_length=5, block=block_b),
+        ]
+        ctx = SearchContext(
+            pattern=re.compile("test"),
+            pattern_str="test",
+            current_match=matches[0],
+            all_matches=matches,
+        )
+        # Same block_index=0 for both, but identity separates them
+        result_a = ctx.matches_in_block(0, 0, block=block_a)
+        assert len(result_a) == 1
+        assert result_a[0].block is block_a
+
+        result_b = ctx.matches_in_block(0, 0, block=block_b)
+        assert len(result_b) == 1
+        assert result_b[0].block is block_b
+
+    def test_index_fallback_without_block(self):
+        """Without block param, falls back to index matching."""
+        matches = [
+            SearchMatch(turn_index=0, block_index=0, text_offset=0, text_length=5, block=object()),
+            SearchMatch(turn_index=0, block_index=1, text_offset=0, text_length=5, block=object()),
+        ]
+        ctx = SearchContext(
+            pattern=re.compile("test"),
+            pattern_str="test",
+            current_match=matches[0],
+            all_matches=matches,
+        )
+        result = ctx.matches_in_block(0, 0)
+        assert len(result) == 1
+        assert result[0].block_index == 0

@@ -309,7 +309,14 @@ def navigate_prev(app) -> None:
 
 
 def navigate_to_current(app) -> None:
-    """Navigate to the current match: expand block with _force_vis, scroll."""
+    """Navigate to the current match: expand block with _force_vis, scroll.
+
+    For container children, sets _force_vis on both the container (so it
+    expands to show children) AND the actual child block. Scroll uses
+    identity-based lookup against td._flat_blocks to resolve the flat index.
+
+    // [LAW:single-enforcer] _force_vis is the sole runtime visibility override.
+    """
     state = app._search_state
     if not state.matches:
         return
@@ -347,28 +354,43 @@ def navigate_to_current(app) -> None:
 
     for i in force_indices:
         td.blocks[i]._force_vis = cc_dump.formatting.ALWAYS_VISIBLE
-        state.expanded_blocks.append((match.turn_index, i))
+        state.expanded_blocks.append((match.turn_index, i, td.blocks[i]))
 
-    # Re-render with search context, ensure target is materialized, scroll
+    # Also force-vis the actual matched child block when it differs from
+    # the container (i.e., the match is inside a child, not the container itself)
+    matched_block = match.block
+    if matched_block is not None and matched_block is not td.blocks[match.block_index]:
+        matched_block._force_vis = cc_dump.formatting.ALWAYS_VISIBLE
+        state.expanded_blocks.append((match.turn_index, match.block_index, matched_block))
+
+    # Re-render with search context, ensure target is materialized
     search_rerender(app)
     conv.ensure_turn_rendered(match.turn_index)
-    conv.scroll_to_block(match.turn_index, match.block_index)
+
+    # Find flat scroll key by identity: walk td._flat_blocks to find the
+    # actual block object, then use the corresponding block_strip_map key.
+    scroll_key = match.block_index  # fallback: hierarchical index
+    if matched_block is not None:
+        bsm_keys = list(td.block_strip_map.keys())
+        for i, flat_block in enumerate(td._flat_blocks):
+            if flat_block is matched_block and i < len(bsm_keys):
+                scroll_key = bsm_keys[i]
+                break
+
+    conv.scroll_to_block(match.turn_index, scroll_key)
     update_search_bar(app)
 
 
 def clear_search_expand(app) -> None:
-    """Reset _force_vis and expanded on blocks we expanded during search."""
-    conv = app._get_conv()
-    if conv is None:
-        return
+    """Reset _force_vis and expanded on blocks we expanded during search.
+
+    expanded_blocks entries are (turn_idx, block_idx, block_ref) triples.
+    Uses block_ref directly for cleanup — handles both container and child blocks.
+    """
     state = app._search_state
-    for turn_idx, block_idx in state.expanded_blocks:
-        if turn_idx < len(conv._turns):
-            td = conv._turns[turn_idx]
-            if block_idx < len(td.blocks):
-                block = td.blocks[block_idx]
-                block._force_vis = None
-                block.expanded = None
+    for _turn_idx, _block_idx, block_ref in state.expanded_blocks:
+        block_ref._force_vis = None
+        block_ref.expanded = None
     state.expanded_blocks.clear()
 
 

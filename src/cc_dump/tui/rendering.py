@@ -2084,7 +2084,7 @@ def render_turn_to_strips(
         block_has_matches = False
         search_hash = None
         if search_ctx is not None:
-            block_matches = search_ctx.matches_in_block(turn_index, orig_idx)
+            block_matches = search_ctx.matches_in_block(turn_index, orig_idx, block=block)
             block_has_matches = bool(block_matches)
             search_hash = search_ctx.pattern_str if block_has_matches else None
 
@@ -2184,7 +2184,7 @@ def render_turn_to_strips(
 
         # Apply search highlights (only on Text objects)
         if block_has_matches and isinstance(text, Text):
-            _apply_search_highlights(text, search_ctx, turn_index, orig_idx)
+            _apply_search_highlights(text, search_ctx, turn_index, orig_idx, block=block)
 
         block_strip_map[orig_idx] = len(all_strips)
         flat_blocks.append(block)
@@ -2282,12 +2282,15 @@ def render_turn_to_strips(
 
 
 def _apply_search_highlights(
-    text: Text, search_ctx, turn_index: int, block_index: int
+    text: Text, search_ctx, turn_index: int, block_index: int, block: object = None
 ) -> None:
     """Apply search highlights to a Text object.
 
     All matches get a dim background highlight.
     The current navigated-to match gets a bright highlight override.
+
+    Uses identity matching (block is current.block) when block is provided,
+    falling back to index comparison for backwards compatibility.
     """
     from rich.style import Style
 
@@ -2303,12 +2306,17 @@ def _apply_search_highlights(
         return  # Regex may fail on rendered text, silently skip
 
     # Bright highlight on the CURRENT match (if it's in this block)
+    # // [LAW:dataflow-not-control-flow] identity_match is a value
     current = search_ctx.current_match
-    if (
+    is_current_block = (
         current is not None
         and current.turn_index == turn_index
-        and current.block_index == block_index
-    ):
+        and (
+            (block is not None and current.block is block)
+            or (block is None and current.block_index == block_index)
+        )
+    )
+    if is_current_block:
         # Find the specific occurrence via pattern.finditer on plain text
         plain = text.plain
         try:

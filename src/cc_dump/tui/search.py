@@ -39,12 +39,17 @@ class SearchPhase(Enum):
 
 @dataclass
 class SearchMatch:
-    """A single match location in the conversation."""
+    """A single match location in the conversation.
+
+    block_index: hierarchical index (parent container's index for children).
+    block: the actual block object — enables identity-based lookup after flattening.
+    """
 
     turn_index: int
     block_index: int
     text_offset: int
     text_length: int
+    block: object = None
 
 
 @dataclass
@@ -56,7 +61,22 @@ class SearchContext:
     current_match: SearchMatch | None
     all_matches: list[SearchMatch]
 
-    def matches_in_block(self, turn_index: int, block_index: int) -> list[SearchMatch]:
+    def matches_in_block(
+        self, turn_index: int, block_index: int, block: object = None
+    ) -> list[SearchMatch]:
+        """Return matches for a specific block.
+
+        When block is provided, uses identity matching (m.block is block)
+        to resolve the flat-vs-hierarchical index mismatch introduced by
+        container blocks with children.
+        """
+        # // [LAW:dataflow-not-control-flow] identity_match is a value, filter always runs
+        if block is not None:
+            return [
+                m
+                for m in self.all_matches
+                if m.turn_index == turn_index and m.block is block
+            ]
         return [
             m
             for m in self.all_matches
@@ -77,9 +97,9 @@ class SearchState:
     matches: list[SearchMatch] = field(default_factory=list)
     current_index: int = 0  # index into matches (0 = most recent)
     saved_filters: dict = field(default_factory=dict)
-    expanded_blocks: list[tuple[int, int]] = field(
+    expanded_blocks: list[tuple[int, int, object]] = field(
         default_factory=list
-    )  # (turn_index, block_index) pairs we expanded
+    )  # (turn_index, block_index, block_ref) triples we expanded
     debounce_timer: object | None = None  # Timer handle
     saved_scroll_y: float | None = None  # Scroll position before search started
 
@@ -117,6 +137,13 @@ _TEXT_EXTRACTORS: dict[str, Callable] = {
     "ProxyErrorBlock": lambda b: b.error,
     "NewlineBlock": lambda b: "",
     "TurnBudgetBlock": lambda b: f"Context: {b.budget.total_est} tokens",
+    # Container child types — searchable when find_all_matches walks children
+    "ToolDefBlock": lambda b: f"{b.name} {b.description}",
+    "SkillDefChild": lambda b: f"{b.name} {b.description}",
+    "AgentDefChild": lambda b: f"{b.name} {b.description}",
+    "ConfigContentBlock": lambda b: b.content,
+    "HookOutputBlock": lambda b: b.content,
+    "ThinkingBlock": lambda b: b.content,
 }
 
 
@@ -166,6 +193,14 @@ def find_all_matches(turns: list, pattern: re.Pattern) -> list[SearchMatch]:
 
     Iterates turns bottom-up, blocks bottom-up within each turn,
     matches reversed within each block. Skips streaming turns.
+
+    Walks container children recursively so content inside MessageBlock,
+    MetadataSection, etc. is searchable. Child matches use the parent
+    container's hierarchical index as block_index (for _force_vis), but
+    store the actual child block in the `block` field (for identity lookup).
+
+    // [LAW:dataflow-not-control-flow] searchable list is always built;
+    // blocks without children contribute only themselves.
     """
     matches: list[SearchMatch] = []
 
@@ -175,22 +210,36 @@ def find_all_matches(turns: list, pattern: re.Pattern) -> list[SearchMatch]:
             continue
 
         for block_idx in range(len(td.blocks) - 1, -1, -1):
-            block = td.blocks[block_idx]
-            text = get_searchable_text(block)
-            if not text:
-                continue
+            top_block = td.blocks[block_idx]
+            # Build searchable list: children (reversed), then container itself
+            # Each entry is (hierarchical_index, actual_block)
+            searchable: list[tuple[int, object]] = []
+            children = getattr(top_block, "children", None)
+            if children:
+                for child in reversed(children):
+                    gc = getattr(child, "children", None)
+                    if gc:
+                        for grandchild in reversed(gc):
+                            searchable.append((block_idx, grandchild))
+                    searchable.append((block_idx, child))
+            searchable.append((block_idx, top_block))
 
-            # Find all matches in this block, reversed for bottom-up ordering
-            block_matches = list(pattern.finditer(text))
-            for m in reversed(block_matches):
-                matches.append(
-                    SearchMatch(
-                        turn_index=turn_idx,
-                        block_index=block_idx,
-                        text_offset=m.start(),
-                        text_length=m.end() - m.start(),
+            for hier_idx, block in searchable:
+                text = get_searchable_text(block)
+                if not text:
+                    continue
+
+                block_matches = list(pattern.finditer(text))
+                for m in reversed(block_matches):
+                    matches.append(
+                        SearchMatch(
+                            turn_index=turn_idx,
+                            block_index=hier_idx,
+                            text_offset=m.start(),
+                            text_length=m.end() - m.start(),
+                            block=block,
+                        )
                     )
-                )
 
     return matches
 
