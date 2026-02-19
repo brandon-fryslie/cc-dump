@@ -1,7 +1,7 @@
 """Settings file I/O for cc-dump.
 
 Manages a general-purpose JSON settings file at XDG_CONFIG_HOME/cc-dump/settings.json.
-Filterset persistence is one consumer; other settings can be added as top-level keys.
+Built-in filterset defaults and theme/settings persistence.
 
 This module is a STABLE BOUNDARY — not hot-reloadable.
 Import as: import cc_dump.settings
@@ -86,26 +86,6 @@ def load_auto_zoom_default() -> bool:
     return bool(load_setting("auto_zoom_default", False))
 
 
-def load_filtersets() -> dict[str, dict[str, list[bool]]]:
-    """Extract filtersets key from settings. Returns empty dict if absent."""
-    return load_settings().get("filtersets", {})
-
-
-def save_filterset(slot: str, filters: dict[str, VisState]) -> None:
-    """Merge one filterset slot into settings and save.
-
-    Each category maps to [visible, full, expanded] triple.
-    """
-    data = load_settings()
-    filtersets = data.get("filtersets", {})
-    filtersets[slot] = {
-        name: list(vs)
-        for name, vs in filters.items()
-    }
-    data["filtersets"] = filtersets
-    save_settings(data)
-
-
 def save_theme(theme_name: str) -> None:
     """Persist theme choice to settings."""
     data = load_settings()
@@ -119,7 +99,6 @@ def load_theme() -> Optional[str]:
 
 
 # [LAW:one-source-of-truth] Built-in filterset defaults.
-# User overrides (via Shift+F-key) take precedence.
 _H = VisState(False, False, False)  # hidden
 _SC = VisState(True, False, False)  # summary, collapsed
 _FC = VisState(True, True, False)   # full, collapsed
@@ -140,16 +119,21 @@ DEFAULT_FILTERSETS: dict[str, dict[str, VisState]] = {
 }
 
 
+# [LAW:one-source-of-truth] Valid category keys derived from defaults
+_VALID_CATEGORY_KEYS = frozenset(next(iter(DEFAULT_FILTERSETS.values())).keys())
+
+
 def get_filterset(slot: str) -> Optional[dict[str, VisState]]:
-    """Load a single filterset slot. User overrides take precedence over defaults."""
-    filtersets = load_filtersets()
-    raw = filtersets.get(slot)
-    if raw is not None:
-        # Convert [bool, bool, bool] lists back to VisState
-        return {
-            name: VisState(*triple)
-            for name, triple in raw.items()
-            if isinstance(triple, list) and len(triple) == 3
-        }
-    # [LAW:one-source-of-truth] Fall back to built-in defaults
+    """Return built-in filterset for slot. Logs warning if stale saved data exists."""
+    # Check for stale saved data and log clearly
+    saved = load_settings().get("filtersets", {}).get(slot)
+    if saved is not None:
+        saved_keys = {k for k, v in saved.items() if isinstance(v, list) and len(v) == 3}
+        if saved_keys != _VALID_CATEGORY_KEYS:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Ignoring stale filterset slot %s: expected keys %s, got %s",
+                slot, sorted(_VALID_CATEGORY_KEYS), sorted(saved_keys),
+            )
+    # [LAW:one-source-of-truth] Always return built-in defaults
     return DEFAULT_FILTERSETS.get(slot)

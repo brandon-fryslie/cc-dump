@@ -184,3 +184,23 @@ async def test_cycle_vis_clears_overrides_and_filterset():
 
         # Filterset should be invalidated (set to None)
         assert app._active_filterset_slot is None
+
+
+async def test_next_filterset_applies_without_crash():
+    """Pressing '=' applies next filterset and sets active slot."""
+    async with run_app() as (pilot, app):
+        assert app._active_filterset_slot is None
+
+        # Apply next filterset via key press
+        await press_and_settle(pilot, "=")
+
+        # Should have set an active slot
+        assert app._active_filterset_slot is not None
+
+        # Visibility state should match the applied filterset defaults
+        from cc_dump.settings import DEFAULT_FILTERSETS
+        slot = app._active_filterset_slot
+        expected = DEFAULT_FILTERSETS[slot]
+        actual = get_all_vis_states(app)
+        for cat, vs in expected.items():
+            assert actual[cat] == vs, f"{cat}: expected {vs}, got {actual[cat]}"

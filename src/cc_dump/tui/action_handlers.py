@@ -208,14 +208,6 @@ def prev_filterset(app) -> None:
     _cycle_filterset(app, -1)
 
 
-def save_filterset(app, slot: str) -> None:
-    """Save current visibility state to a filterset slot."""
-    cc_dump.settings.save_filterset(slot, app.active_filters)
-    app._active_filterset_slot = slot
-    app._update_footer_state()
-    app.notify(f"Saved preset F{slot}")
-
-
 def apply_filterset(app, slot: str) -> None:
     """Apply a saved filterset slot to the current visibility state."""
     filters = cc_dump.settings.get_filterset(slot)

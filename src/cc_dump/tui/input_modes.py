@@ -103,7 +103,7 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         "-": "prev_filterset",
         "minus": "prev_filterset",
 
-        # Filterset presets (F-key apply, Shift+F-key save; F3 broken, skip it)
+        # Filterset presets (F3 not usable — terminal emulators intercept it)
         "f1": "apply_filterset('1')",
         "f2": "apply_filterset('2')",
         "f4": "apply_filterset('4')",
@@ -112,15 +112,6 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         "f7": "apply_filterset('7')",
         "f8": "apply_filterset('8')",
         "f9": "apply_filterset('9')",
-        "shift+f1": "save_filterset('1')",
-        "shift+f2": "save_filterset('2')",
-        "shift+f4": "save_filterset('4')",
-        "shift+f5": "save_filterset('5')",
-        "shift+f6": "save_filterset('6')",
-        "shift+f7": "save_filterset('7')",
-        "shift+f8": "save_filterset('8')",
-        "shift+f9": "save_filterset('9')",
-
         # Settings panel
         "S": "toggle_settings",
 
@@ -239,7 +230,6 @@ KEY_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("/", "Search"),
         ("=/-", "Next/prev preset"),
         ("F1-9", "Load preset"),
-        ("S+F1-9", "Save preset"),
     ]),
     ("Other", [
         ("[/]", "Cycle theme"),

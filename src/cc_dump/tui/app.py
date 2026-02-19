@@ -639,9 +639,6 @@ class CcDumpApp(App):
         _actions.clear_overrides(self, category_name)
 
     # Filterset actions
-    def action_save_filterset(self, slot: str):
-        _actions.save_filterset(self, slot)
-
     def action_apply_filterset(self, slot: str):
         _actions.apply_filterset(self, slot)
 
