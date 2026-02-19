@@ -11,7 +11,7 @@ def _get_footer_content(proc):
     """Wait for and return content with footer visible."""
     return wait_for_content(
         proc,
-        lambda c: any(word in c.lower() for word in ["headers", "tools", "system", "quit"]),
+        lambda c: any(word in c.lower() for word in ["metadata", "tools", "system", "quit"]),
         timeout=5,
     )
 
@@ -24,7 +24,7 @@ class TestFooterMarkupRendering:
         proc = class_proc
         content = _get_footer_content(proc)
 
-        required_words = ["headers", "tools", "system", "metadata"]
+        required_words = ["tools", "system", "metadata", "thinking"]
         found = [word for word in required_words if word in content.lower()]
 
         assert len(found) > 0, \
@@ -38,7 +38,7 @@ class TestFooterMarkupRendering:
         lines = [line.strip() for line in content.split('\n') if line.strip()]
         footer_lines = [
             line for line in lines
-            if any(word in line.lower() for word in ['headers', 'tools', 'system', 'metadata'])
+            if any(word in line.lower() for word in ['tools', 'system', 'metadata', 'thinking'])
         ]
 
         assert len(footer_lines) > 0, \
@@ -47,12 +47,12 @@ class TestFooterMarkupRendering:
         footer_text = ' '.join(footer_lines).lower()
 
         duplicate_patterns = [
-            (" 1 1", "headers"),
-            (" 4 4", "tools"),
-            (" 5 5", "system"),
-            (" 6 6", "budget"),
-            (" 7 7", "metadata"),
-            (" 3 3", "assistant"),
+            (" 1 1", "user"),
+            (" 2 2", "assistant"),
+            (" 3 3", "tools"),
+            (" 4 4", "system"),
+            (" 5 5", "metadata"),
+            (" 6 6", "thinking"),
         ]
 
         for pattern, binding_name in duplicate_patterns:
@@ -80,7 +80,7 @@ class TestFooterMarkupRendering:
         content = _get_footer_content(proc)
 
         lower_content = content.lower()
-        assert any(x in lower_content for x in ["header", "tool", "system"]), \
+        assert any(x in lower_content for x in ["tool", "system", "metadata"]), \
             f"Footer should show binding descriptions. Content:\n{content}"
 
     def test_footer_shows_multiple_bindings(self, class_proc):
@@ -89,7 +89,7 @@ class TestFooterMarkupRendering:
         content = _get_footer_content(proc)
 
         lower_content = content.lower()
-        expected_features = ["headers", "tools", "system", "budget", "metadata", "user", "assistant", "cost", "timeline"]
+        expected_features = ["tools", "system", "metadata", "thinking", "user", "assistant", "cost", "timeline"]
         found = [feat for feat in expected_features if feat in lower_content]
 
         assert len(found) >= 3, \
@@ -100,7 +100,7 @@ class TestFooterMarkupRendering:
         proc = class_proc
         content = _get_footer_content(proc)
 
-        full_words = ["headers", "tools", "system", "metadata"]
+        full_words = ["tools", "system", "metadata", "thinking"]
         lower_content = content.lower()
 
         found_words = [word for word in full_words if word in lower_content]

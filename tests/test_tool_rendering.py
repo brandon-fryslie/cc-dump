@@ -462,9 +462,9 @@ class TestRenderTurnToStripsToolSummary:
             NewlineBlock(),
         ]
         console = Console(width=80, force_terminal=True)
-        filters = {"tools": HIDDEN, "system": ALWAYS_VISIBLE, "headers": HIDDEN, "metadata": HIDDEN, "budget": HIDDEN}
+        filters = {"tools": HIDDEN, "system": ALWAYS_VISIBLE, "metadata": HIDDEN}
 
-        strips, block_strip_map = render_turn_to_strips(
+        strips, block_strip_map, _ = render_turn_to_strips(
             blocks, filters, console, width=80,
         )
 
@@ -485,9 +485,9 @@ class TestRenderTurnToStripsToolSummary:
             ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
         ]
         console = Console(width=80, force_terminal=True)
-        filters = {"tools": ALWAYS_VISIBLE, "system": ALWAYS_VISIBLE, "headers": HIDDEN, "metadata": HIDDEN, "budget": HIDDEN}
+        filters = {"tools": ALWAYS_VISIBLE, "system": ALWAYS_VISIBLE, "metadata": HIDDEN}
 
-        strips, block_strip_map = render_turn_to_strips(
+        strips, block_strip_map, _ = render_turn_to_strips(
             blocks, filters, console, width=80,
         )
 
@@ -942,7 +942,7 @@ class TestRenderTurnToStripsToolLevels:
         """Helper: render blocks and extract plain text from strips."""
         from rich.console import Console
         console = Console(width=80, force_terminal=True)
-        strips, _ = render_turn_to_strips(blocks, filters, console, width=80)
+        strips, _, _ = render_turn_to_strips(blocks, filters, console, width=80)
         return "".join(seg.text for strip in strips for seg in strip._segments)
 
     def test_tool_result_full_collapsed_header_only(self):

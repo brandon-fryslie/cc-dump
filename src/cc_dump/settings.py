@@ -124,20 +124,19 @@ _H = VisState(False, False, False)  # hidden
 _SC = VisState(True, False, False)  # summary, collapsed
 _FC = VisState(True, True, False)   # full, collapsed
 
-def _fs(user, assistant, tools, system, budget, metadata, headers):
+def _fs(user, assistant, tools, system, metadata, thinking):
     return {"user": user, "assistant": assistant, "tools": tools,
-            "system": system, "budget": budget, "metadata": metadata,
-            "headers": headers}
+            "system": system, "metadata": metadata, "thinking": thinking}
 
 DEFAULT_FILTERSETS: dict[str, dict[str, VisState]] = {
-    "1": _fs(_FC, _FC, _H,  _H,  _H,  _H,  _H),   # Conversation
-    "2": _fs(_SC, _SC, _SC, _SC, _SC, _SC, _SC),    # Overview
-    "4": _fs(_SC, _SC, _FC, _H,  _H,  _H,  _H),    # Tools
-    "5": _fs(_SC, _SC, _H,  _FC, _H,  _FC, _FC),    # System
-    "6": _fs(_SC, _SC, _SC, _H,  _FC, _FC, _H),     # Cost
-    "7": _fs(_FC, _FC, _FC, _FC, _FC, _FC, _FC),    # Full Debug
-    "8": _fs(_H,  _FC, _H,  _H,  _H,  _H,  _H),    # Assistant
-    "9": _fs(_SC, _SC, _SC, _H,  _H,  _H,  _H),    # Minimal
+    "1": _fs(_FC, _FC, _H,  _H,  _H,  _H),    # Conversation
+    "2": _fs(_SC, _SC, _SC, _SC, _SC, _SC),     # Overview
+    "4": _fs(_SC, _SC, _FC, _H,  _H,  _H),     # Tools
+    "5": _fs(_SC, _SC, _H,  _FC, _FC, _H),      # System
+    "6": _fs(_SC, _SC, _SC, _H,  _FC, _H),      # Cost
+    "7": _fs(_FC, _FC, _FC, _FC, _FC, _FC),     # Full Debug
+    "8": _fs(_H,  _FC, _H,  _H,  _H,  _H),     # Assistant
+    "9": _fs(_SC, _SC, _SC, _H,  _H,  _H),      # Minimal
 }
 
 

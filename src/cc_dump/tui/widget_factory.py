@@ -84,11 +84,12 @@ class TurnData:
     """Pre-rendered turn data for Line API storage."""
 
     turn_index: int
-    blocks: list  # list[FormattedBlock] - source of truth
+    blocks: list  # list[FormattedBlock] - hierarchical source of truth
     strips: list  # list[Strip] - pre-rendered lines
     block_strip_map: dict = field(
         default_factory=dict
     )  # block_index → first strip line
+    _flat_blocks: list = field(default_factory=list)  # flattened block list for click resolution
     relevant_filter_keys: set = field(default_factory=set)
     line_offset: int = 0  # start line in virtual space
     _last_filter_snapshot: dict = field(default_factory=dict)
@@ -113,12 +114,17 @@ class TurnData:
 
         Uses get_category() for lookup so blocks created before a
         hot-reload still match after the module is reloaded.
+        Walks children recursively to capture categories from container blocks.
         """
         keys = set()
-        for block in self.blocks:
-            cat = cc_dump.tui.rendering.get_category(block)
-            if cat is not None:
-                keys.add(cat.value)
+        def _walk(blocks):
+            for block in blocks:
+                cat = cc_dump.tui.rendering.get_category(block)
+                if cat is not None:
+                    keys.add(cat.value)
+                for child in getattr(block, "children", []):
+                    _walk([child])
+        _walk(self.blocks)
         self.relevant_filter_keys = keys
 
     def re_render(
@@ -144,7 +150,7 @@ class TurnData:
             return False
         self._last_filter_snapshot = snapshot
         self._pending_filter_snapshot = None  # clear deferred state
-        self.strips, self.block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
+        self.strips, self.block_strip_map, self._flat_blocks = cc_dump.tui.rendering.render_turn_to_strips(
             self.blocks,
             filters,
             console,
@@ -490,7 +496,7 @@ class ConversationView(ScrollView):
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
 
-        strips, block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
+        strips, block_strip_map, flat_blocks = cc_dump.tui.rendering.render_turn_to_strips(
             blocks, filters, console, width, block_cache=self._block_strip_cache
         )
         td = TurnData(
@@ -498,6 +504,7 @@ class ConversationView(ScrollView):
             blocks=blocks,
             strips=strips,
             block_strip_map=block_strip_map,
+            _flat_blocks=flat_blocks,
         )
         td._widest_strip = _compute_widest(strips)
         td.compute_relevant_keys()
@@ -553,7 +560,7 @@ class ConversationView(ScrollView):
         )
 
         # Canonical rendering path — same as completed turns
-        delta_strips, _ = cc_dump.tui.rendering.render_turn_to_strips(
+        delta_strips, _, _ = cc_dump.tui.rendering.render_turn_to_strips(
             [synthetic], self._last_filters, console, width, is_streaming=True
         )
 
@@ -578,7 +585,7 @@ class ConversationView(ScrollView):
         )
 
         # Canonical rendering path
-        delta_strips, _ = cc_dump.tui.rendering.render_turn_to_strips(
+        delta_strips, _, _ = cc_dump.tui.rendering.render_turn_to_strips(
             [synthetic], filters, console, width, is_streaming=True
         )
 
@@ -680,7 +687,7 @@ class ConversationView(ScrollView):
         # Full re-render from consolidated blocks
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
-        strips, block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
+        strips, block_strip_map, flat_blocks = cc_dump.tui.rendering.render_turn_to_strips(
             consolidated,
             self._last_filters,
             console,
@@ -692,6 +699,7 @@ class ConversationView(ScrollView):
         td.blocks = consolidated
         td.strips = strips
         td.block_strip_map = block_strip_map
+        td._flat_blocks = flat_blocks
         td._widest_strip = _compute_widest(td.strips)
         td.is_streaming = False
         td._text_delta_buffer.clear()
@@ -808,7 +816,7 @@ class ConversationView(ScrollView):
                 # Skip re-rendering streaming turns on resize
                 if td.is_streaming:
                     continue
-                td.strips, td.block_strip_map = (
+                td.strips, td.block_strip_map, td._flat_blocks = (
                     cc_dump.tui.rendering.render_turn_to_strips(
                         td.blocks,
                         self._last_filters,
@@ -1050,7 +1058,7 @@ class ConversationView(ScrollView):
         if turn is None:
             return None
         block_idx = self._block_index_at_line(turn, content_y)
-        if block_idx is None or block_idx >= len(turn.blocks):
+        if block_idx is None or block_idx >= len(turn._flat_blocks):
             return None
 
         # Fast path: segment metadata
@@ -1062,7 +1070,7 @@ class ConversationView(ScrollView):
                     meta.get(cc_dump.tui.rendering.META_TOGGLE_REGION))
 
         # Coordinate fallback for gutter clicks on region tag lines
-        block = turn.blocks[block_idx]
+        block = turn._flat_blocks[block_idx]
         region_idx = self._region_tag_at_line(turn, block, block_idx, content_y)
         if region_idx is not None:
             return (turn, block_idx, cc_dump.tui.rendering.META_TOGGLE_REGION, region_idx)
@@ -1131,7 +1139,7 @@ class ConversationView(ScrollView):
         turn, block_idx, meta_type, meta_value = target
 
         if meta_type == cc_dump.tui.rendering.META_TOGGLE_BLOCK:
-            if self._is_expandable_block(turn.blocks[block_idx]):
+            if self._is_expandable_block(turn._flat_blocks[block_idx]):
                 self._toggle_block_expand(turn, block_idx)
         elif meta_type == cc_dump.tui.rendering.META_TOGGLE_REGION:
             self._toggle_region(turn, block_idx, meta_value)
@@ -1195,7 +1203,7 @@ class ConversationView(ScrollView):
         // [LAW:dataflow-not-control-flow] content_regions[i].expanded is the value;
         // None = default (expanded). False = collapsed.
         """
-        block = turn.blocks[block_idx]
+        block = turn._flat_blocks[block_idx]
 
         if region_idx >= len(block.content_regions):
             return
@@ -1225,7 +1233,7 @@ class ConversationView(ScrollView):
 
     def _toggle_block_expand(self, turn: TurnData, block_idx: int):
         """Toggle expand state for a single block and re-render its turn."""
-        block = turn.blocks[block_idx]
+        block = turn._flat_blocks[block_idx]
 
         # [LAW:dataflow-not-control-flow] Coalesce None to default, then toggle
         cat = cc_dump.tui.rendering.get_category(block)
@@ -1355,7 +1363,7 @@ class ConversationView(ScrollView):
                 console = self.app.console
 
                 # Render blocks to get initial strips
-                strips, block_strip_map = cc_dump.tui.rendering.render_turn_to_strips(
+                strips, block_strip_map, flat_blocks = cc_dump.tui.rendering.render_turn_to_strips(
                     block_list,
                     filters,
                     console,
@@ -1368,6 +1376,7 @@ class ConversationView(ScrollView):
                     blocks=block_list,
                     strips=strips,
                     block_strip_map=block_strip_map,
+                    _flat_blocks=flat_blocks,
                     is_streaming=True,
                     _text_delta_buffer=s["text_delta_buffer"],
                     _stable_strip_count=s["stable_strip_count"],

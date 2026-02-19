@@ -44,9 +44,14 @@ def dump_conversation(app) -> None:
                 f.write(f"TURN {turn_idx + 1}\n")
                 f.write(f"{'─' * 80}\n\n")
 
-                for block_idx, block in enumerate(turn_data.blocks):
-                    write_block_text(f, block, block_idx, log_fn=app._app_log)
-                    f.write("\n")
+                block_counter = [0]  # mutable counter for nested blocks
+                def _dump_blocks(blocks):
+                    for block in blocks:
+                        write_block_text(f, block, block_counter[0], log_fn=app._app_log)
+                        f.write("\n")
+                        block_counter[0] += 1
+                        _dump_blocks(getattr(block, "children", []))
+                _dump_blocks(turn_data.blocks)
 
         app._app_log("INFO", f"Conversation dumped to: {tmp_path}")
         app.notify(f"Exported to: {tmp_path}")

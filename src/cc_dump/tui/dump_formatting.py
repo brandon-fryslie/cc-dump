@@ -125,6 +125,41 @@ def write_block_text(f, block, block_idx: int, log_fn=None) -> None:
         if block.budget.actual_cache_read_tokens:
             f.write(f"  Cache read: {block.budget.actual_cache_read_tokens}\n")
 
+    elif isinstance(block, cc_dump.formatting.MetadataSection):
+        f.write("  METADATA\n")
+
+    elif isinstance(block, cc_dump.formatting.ToolDefsSection):
+        count = len(getattr(block, "children", []))
+        f.write(f"  TOOL DEFINITIONS ({count} tools)\n")
+
+    elif isinstance(block, cc_dump.formatting.SystemSection):
+        f.write("  SYSTEM\n")
+
+    elif isinstance(block, cc_dump.formatting.MessageBlock):
+        role = getattr(block, "role", "")
+        idx = getattr(block, "msg_index", 0)
+        f.write(f"  {role.upper()} [{idx}]\n")
+        timestamp = getattr(block, "timestamp", "")
+        if timestamp:
+            f.write(f"  Timestamp: {timestamp}\n")
+
+    elif isinstance(block, cc_dump.formatting.ResponseMetadataSection):
+        f.write("  RESPONSE METADATA\n")
+
+    elif isinstance(block, cc_dump.formatting.ResponseMessageBlock):
+        f.write("  RESPONSE\n")
+
+    elif isinstance(block, cc_dump.formatting.ToolDefBlock):
+        f.write(f"  Tool: {block.name}\n")
+        if getattr(block, "token_count", 0):
+            f.write(f"  Tokens: {block.token_count}\n")
+
+    elif isinstance(block, cc_dump.formatting.SkillDefChild):
+        f.write(f"  Skill: {block.name}\n")
+
+    elif isinstance(block, cc_dump.formatting.AgentDefChild):
+        f.write(f"  Agent: {block.name}\n")
+
     elif isinstance(block, cc_dump.formatting.SeparatorBlock):
         f.write(f"  (separator: {block.style})\n")
 

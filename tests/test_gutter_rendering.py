@@ -43,7 +43,7 @@ def test_gutter_on_all_lines_multiline_block():
     # Set tools to FULL level so content is displayed
     filters = {"tools": type("VisState", (), {"visible": True, "full": True, "expanded": True})()}
 
-    strips, _ = render_turn_to_strips(
+    strips, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters,
         console=console,
@@ -91,7 +91,7 @@ def test_gutter_on_truncated_blocks():
     # Set tools to FULL but collapsed (will truncate to 4 lines)
     filters = {"tools": type("VisState", (), {"visible": True, "full": True, "expanded": False})()}
 
-    strips, _ = render_turn_to_strips(
+    strips, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters,
         console=console,
@@ -124,7 +124,7 @@ def test_blocks_without_category_neutral_gutter():
     console = Console()
     filters = {}
 
-    strips, _ = render_turn_to_strips(
+    strips, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters,
         console=console,
@@ -160,7 +160,7 @@ def test_content_renders_at_reduced_width():
     filters = {"user": type("VisState", (), {"visible": True, "full": True, "expanded": True})()}
 
     # Render at width=50 (≥ MIN_WIDTH_FOR_RIGHT_GUTTER, so both gutters)
-    strips_50, _ = render_turn_to_strips(
+    strips_50, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters,
         console=console,
@@ -192,7 +192,7 @@ def test_expandable_arrow_changes():
     filters_collapsed = {
         "assistant": type("VisState", (), {"visible": True, "full": True, "expanded": False})()
     }
-    strips_collapsed, _ = render_turn_to_strips(
+    strips_collapsed, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters_collapsed,
         console=console,
@@ -203,7 +203,7 @@ def test_expandable_arrow_changes():
     filters_expanded = {
         "assistant": type("VisState", (), {"visible": True, "full": True, "expanded": True})()
     }
-    strips_expanded, _ = render_turn_to_strips(
+    strips_expanded, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters_expanded,
         console=console,
@@ -237,7 +237,7 @@ def test_right_gutter_appears_above_min_width():
     filters = {"user": type("VisState", (), {"visible": True, "full": True, "expanded": True})()}
 
     # Above threshold: right gutter should appear
-    strips_wide, _ = render_turn_to_strips(
+    strips_wide, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters,
         console=console,
@@ -248,7 +248,7 @@ def test_right_gutter_appears_above_min_width():
     assert segments[-1].text == "▐", "Right gutter should appear at width=50"
 
     # Below threshold: right gutter should NOT appear
-    strips_narrow, _ = render_turn_to_strips(
+    strips_narrow, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters,
         console=console,
@@ -289,7 +289,7 @@ def test_arrow_state_matches_visstate():
         filters = {
             "tools": type("VisState", (), {"visible": True, "full": full, "expanded": expanded})()
         }
-        strips, _ = render_turn_to_strips(
+        strips, _, _ = render_turn_to_strips(
             blocks=[block],
             filters=filters,
             console=console,
@@ -317,16 +317,16 @@ def test_summary_level_arrows():
     block = HttpHeadersBlock(
         header_type="request",
         headers={f"X-Header-{i}": f"value{i}" for i in range(10)},
-        category=Category.HEADERS,
+        category=Category.METADATA,
     )
 
     console = Console()
 
     # Test summary level collapsed
     filters_collapsed = {
-        "headers": type("VisState", (), {"visible": True, "full": False, "expanded": False})()
+        "metadata": type("VisState", (), {"visible": True, "full": False, "expanded": False})()
     }
-    strips_collapsed, _ = render_turn_to_strips(
+    strips_collapsed, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters_collapsed,
         console=console,
@@ -343,9 +343,9 @@ def test_summary_level_arrows():
 
     # Test summary level expanded
     filters_expanded = {
-        "headers": type("VisState", (), {"visible": True, "full": False, "expanded": True})()
+        "metadata": type("VisState", (), {"visible": True, "full": False, "expanded": True})()
     }
-    strips_expanded, _ = render_turn_to_strips(
+    strips_expanded, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters_expanded,
         console=console,
@@ -372,7 +372,7 @@ def test_neutral_gutter_for_newline_and_error():
 
     # Test NewlineBlock
     newline_block = NewlineBlock()
-    strips_newline, _ = render_turn_to_strips(
+    strips_newline, _, _ = render_turn_to_strips(
         blocks=[newline_block],
         filters=filters,
         console=console,
@@ -388,7 +388,7 @@ def test_neutral_gutter_for_newline_and_error():
 
     # Test ErrorBlock
     error_block = ErrorBlock(code=500, reason="Internal Server Error")
-    strips_error, _ = render_turn_to_strips(
+    strips_error, _, _ = render_turn_to_strips(
         blocks=[error_block],
         filters=filters,
         console=console,
@@ -458,7 +458,7 @@ def test_filter_indicators_adapt_to_theme():
         theme_filter_colors[theme_name] = dict(tc.filter_colors)
         theme_surfaces[theme_name] = tc.surface
 
-    filter_names = ["headers", "tools", "system", "user", "assistant"]
+    filter_names = ["tools", "system", "metadata", "user", "assistant", "thinking"]
 
     # 1. Colors should differ between themes for each filter
     for name in filter_names:

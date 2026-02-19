@@ -432,7 +432,7 @@ def test_xml_block_renders_with_content_regions():
     console = Console()
     filters = {"assistant": ALWAYS_VISIBLE}
 
-    strips, _ = render_turn_to_strips(
+    strips, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters,
         console=console,
@@ -469,7 +469,7 @@ def test_xml_collapsed_fewer_strips():
     # Expanded (default)
     block_expanded = TextContentBlock(content=text, category=Category.ASSISTANT)
     populate_content_regions(block_expanded)
-    strips_expanded, _ = render_turn_to_strips(
+    strips_expanded, _, _ = render_turn_to_strips(
         blocks=[block_expanded],
         filters=filters,
         console=console,
@@ -482,7 +482,7 @@ def test_xml_collapsed_fewer_strips():
     # Find the XML region and collapse it
     xml_idx = next(i for i, r in enumerate(block_collapsed.content_regions) if r.kind == "xml_block")
     block_collapsed.content_regions[xml_idx].expanded = False
-    strips_collapsed, _ = render_turn_to_strips(
+    strips_collapsed, _, _ = render_turn_to_strips(
         blocks=[block_collapsed],
         filters=filters,
         console=console,
@@ -518,7 +518,7 @@ def test_xml_expanded_survives_rerender():
     filters = {"assistant": ALWAYS_VISIBLE}
 
     # First render
-    strips1, _ = render_turn_to_strips(
+    strips1, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters,
         console=console,
@@ -529,7 +529,7 @@ def test_xml_expanded_survives_rerender():
     assert block.content_regions[1].expanded is False
 
     # Second render (same block, should use same state)
-    strips2, _ = render_turn_to_strips(
+    strips2, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters,
         console=console,
@@ -553,7 +553,7 @@ def test_xml_strips_have_gutter():
     console = Console()
     filters = {"assistant": ALWAYS_VISIBLE}
 
-    strips, _ = render_turn_to_strips(
+    strips, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters,
         console=console,
@@ -580,7 +580,7 @@ def test_form_a_renders_as_xml_block():
     console = Console()
     filters = {"assistant": ALWAYS_VISIBLE}
 
-    strips, _ = render_turn_to_strips(
+    strips, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters,
         console=console,
@@ -602,7 +602,7 @@ def test_form_c_renders_as_xml_block():
     console = Console()
     filters = {"assistant": ALWAYS_VISIBLE}
 
-    strips, _ = render_turn_to_strips(
+    strips, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters,
         console=console,

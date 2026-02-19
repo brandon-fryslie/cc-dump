@@ -163,7 +163,7 @@ def _launch_cc_dump(port=0, timeout=10):
             # Footer keywords indicate the TUI is fully rendered
             if content and any(
                 kw in content.lower()
-                for kw in ("headers", "tools", "system", "quit")
+                for kw in ("metadata", "tools", "system", "quit")
             ):
                 break
         else:

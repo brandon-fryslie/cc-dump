@@ -193,9 +193,14 @@ async def test_dump_all_block_types():
                 f.write("TURN 1\n")
                 f.write(f"{'─' * 80}\n\n")
 
-                for idx, block in enumerate(turn.blocks):
-                    app._write_block_text(f, block, idx)
-                    f.write("\n")
+                counter = [0]
+                def _write_all(blocks):
+                    for block in blocks:
+                        app._write_block_text(f, block, counter[0])
+                        f.write("\n")
+                        counter[0] += 1
+                        _write_all(getattr(block, "children", []))
+                _write_all(turn.blocks)
 
             # Read back and verify
             content = Path(tmp_path).read_text()
@@ -208,14 +213,16 @@ async def test_dump_all_block_types():
             assert "Model:" in content
             assert "Max tokens:" in content
 
-            assert "SystemLabelBlock" in content
-            assert "SYSTEM:" in content
+            # Containers replaced flat label blocks
+            assert "MetadataSection" in content
+            assert "SystemSection" in content
+            assert "SYSTEM" in content
 
             assert "TrackedContentBlock" in content
             assert "Status:" in content
 
-            assert "RoleBlock" in content
-            assert "Role:" in content
+            assert "MessageBlock" in content
+            assert "USER [" in content or "ASSISTANT [" in content
 
             assert "TextContentBlock" in content
 

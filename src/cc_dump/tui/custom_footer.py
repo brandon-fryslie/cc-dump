@@ -44,9 +44,8 @@ class StatusFooter(Static):
         ("2", "assistant"),
         ("3", "tools"),
         ("4", "system"),
-        ("5", "budget"),
-        ("6", "metadata"),
-        ("7", "headers"),
+        ("5", "metadata"),
+        ("6", "thinking"),
     ]
 
     _COMMAND_ITEMS = [("/", "search")]

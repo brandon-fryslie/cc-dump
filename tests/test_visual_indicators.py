@@ -12,7 +12,7 @@ class TestIndicatorHelperFunction:
         from cc_dump.tui import rendering
         assert isinstance(rendering.FILTER_INDICATORS, dict)
 
-        expected_filters = ["headers", "tools", "system", "budget", "metadata"]
+        expected_filters = ["tools", "system", "metadata", "user", "assistant", "thinking"]
         for filter_name in expected_filters:
             assert filter_name in rendering.FILTER_INDICATORS
 
@@ -30,7 +30,7 @@ class TestIndicatorHelperFunction:
         from rich.text import Text
 
         text = Text("Hello World")
-        result = rendering._add_filter_indicator(text, "headers")
+        result = rendering._add_filter_indicator(text, "tools")
 
         assert isinstance(result, Text)
         assert "Hello" in str(result.plain)

@@ -9,18 +9,23 @@ from cc_dump.formatting import (
     HeaderBlock,
     HttpHeadersBlock,
     ImageBlock,
+    MessageBlock,
     MetadataBlock,
+    MetadataSection,
     NewlineBlock,
     ProxyErrorBlock,
+    ResponseMetadataSection,
     RoleBlock,
     SeparatorBlock,
     StopReasonBlock,
     StreamInfoBlock,
     StreamToolUseBlock,
     SystemLabelBlock,
+    SystemSection,
     TextContentBlock,
     TextDeltaBlock,
     ToolDefinitionsBlock,
+    ToolDefsSection,
     ToolResultBlock,
     ToolUseBlock,
     TrackedContentBlock,
@@ -39,6 +44,22 @@ from cc_dump.formatting import (
 from cc_dump.event_types import parse_sse_event
 
 
+def _find_blocks(blocks, block_type):
+    """Recursively find all blocks of a given type in the hierarchy."""
+    result = []
+    for block in blocks:
+        if isinstance(block, block_type):
+            result.append(block)
+        for child in getattr(block, "children", []):
+            result.extend(_find_blocks([child], block_type))
+    return result
+
+
+def _has_block(blocks, block_type):
+    """Check if any block of given type exists in the hierarchy."""
+    return len(_find_blocks(blocks, block_type)) > 0
+
+
 # ─── format_request Tests ─────────────────────────────────────────────────────
 
 
@@ -54,9 +75,9 @@ def test_format_request_minimal(fresh_state):
     # Should have header, metadata, etc.
     assert len(blocks) > 0
 
-    # Check for specific block types
+    # Check for specific block types (MetadataBlock is inside MetadataSection container)
     has_header = any(isinstance(b, HeaderBlock) for b in blocks)
-    has_metadata = any(isinstance(b, MetadataBlock) for b in blocks)
+    has_metadata = _has_block(blocks, MetadataBlock)
 
     assert has_header
     assert has_metadata
@@ -75,12 +96,12 @@ def test_format_request_with_system(fresh_state):
     }
     blocks = format_request(body, fresh_state)
 
-    # Should have SystemLabelBlock
-    has_system_label = any(isinstance(b, SystemLabelBlock) for b in blocks)
-    assert has_system_label
+    # Should have SystemSection container
+    has_system_section = any(isinstance(b, SystemSection) for b in blocks)
+    assert has_system_section
 
-    # Should have tracked content for system prompt
-    has_tracked = any(isinstance(b, TrackedContentBlock) for b in blocks)
+    # Should have tracked content inside SystemSection
+    has_tracked = _has_block(blocks, TrackedContentBlock)
     assert has_tracked
 
 
@@ -97,12 +118,12 @@ def test_format_request_with_system_list(fresh_state):
     }
     blocks = format_request(body, fresh_state)
 
-    # Should have SystemLabelBlock
-    has_system_label = any(isinstance(b, SystemLabelBlock) for b in blocks)
-    assert has_system_label
+    # Should have SystemSection container
+    has_system_section = any(isinstance(b, SystemSection) for b in blocks)
+    assert has_system_section
 
-    # Should have tracked content blocks
-    tracked_blocks = [b for b in blocks if isinstance(b, TrackedContentBlock)]
+    # Should have tracked content blocks inside SystemSection
+    tracked_blocks = _find_blocks(blocks, TrackedContentBlock)
     assert len(tracked_blocks) >= 2
 
 
@@ -118,14 +139,14 @@ def test_format_request_with_messages(fresh_state):
     }
     blocks = format_request(body, fresh_state)
 
-    # Should have RoleBlocks
-    role_blocks = [b for b in blocks if isinstance(b, RoleBlock)]
-    assert len(role_blocks) == 2
-    assert role_blocks[0].role == "user"
-    assert role_blocks[1].role == "assistant"
+    # Should have MessageBlocks (containers replacing RoleBlock)
+    msg_blocks = _find_blocks(blocks, MessageBlock)
+    assert len(msg_blocks) == 2
+    assert msg_blocks[0].role == "user"
+    assert msg_blocks[1].role == "assistant"
 
-    # Should have TextContentBlocks
-    text_blocks = [b for b in blocks if isinstance(b, TextContentBlock)]
+    # Should have TextContentBlocks inside MessageBlocks
+    text_blocks = _find_blocks(blocks, TextContentBlock)
     assert len(text_blocks) >= 2
 
 
@@ -150,8 +171,8 @@ def test_format_request_with_tool_use(fresh_state):
     }
     blocks = format_request(body, fresh_state)
 
-    # Should have ToolUseBlock
-    tool_blocks = [b for b in blocks if isinstance(b, ToolUseBlock)]
+    # Should have ToolUseBlock inside MessageBlock
+    tool_blocks = _find_blocks(blocks, ToolUseBlock)
     assert len(tool_blocks) == 1
     assert tool_blocks[0].name == "get_weather"
     assert tool_blocks[0].input_size > 0
@@ -177,8 +198,8 @@ def test_format_request_with_tool_result(fresh_state):
     }
     blocks = format_request(body, fresh_state)
 
-    # Should have ToolResultBlock
-    result_blocks = [b for b in blocks if isinstance(b, ToolResultBlock)]
+    # Should have ToolResultBlock inside MessageBlock
+    result_blocks = _find_blocks(blocks, ToolResultBlock)
     assert len(result_blocks) == 1
     assert result_blocks[0].size > 0
     assert result_blocks[0].is_error is False
@@ -205,7 +226,7 @@ def test_format_request_with_tool_result_error(fresh_state):
     }
     blocks = format_request(body, fresh_state)
 
-    result_blocks = [b for b in blocks if isinstance(b, ToolResultBlock)]
+    result_blocks = _find_blocks(blocks, ToolResultBlock)
     assert len(result_blocks) == 1
     assert result_blocks[0].is_error is True
 
@@ -229,7 +250,7 @@ def test_format_request_with_image(fresh_state):
     }
     blocks = format_request(body, fresh_state)
 
-    image_blocks = [b for b in blocks if isinstance(b, ImageBlock)]
+    image_blocks = _find_blocks(blocks, ImageBlock)
     assert len(image_blocks) == 1
     assert image_blocks[0].media_type == "image/png"
 
@@ -250,7 +271,7 @@ def test_format_request_with_unknown_type(fresh_state):
     }
     blocks = format_request(body, fresh_state)
 
-    unknown_blocks = [b for b in blocks if isinstance(b, UnknownTypeBlock)]
+    unknown_blocks = _find_blocks(blocks, UnknownTypeBlock)
     assert len(unknown_blocks) == 1
     assert unknown_blocks[0].block_type == "unknown_type"
 
@@ -379,29 +400,35 @@ def test_format_request_headers_with_headers():
 
 
 def test_format_response_headers_empty():
-    """Empty headers dict still emits HeaderBlock + HttpHeadersBlock (status code is informative)."""
+    """Empty headers dict still emits ResponseMetadataSection with children."""
     blocks = format_response_headers(200, {})
-    assert len(blocks) == 2
-    assert isinstance(blocks[0], HeaderBlock)
-    assert blocks[0].header_type == "response"
-    assert blocks[0].label == "RESPONSE"
-    assert isinstance(blocks[1], HttpHeadersBlock)
-    assert blocks[1].headers == {}
-    assert blocks[1].status_code == 200
+    assert len(blocks) == 1
+    assert isinstance(blocks[0], ResponseMetadataSection)
+    children = blocks[0].children
+    assert len(children) == 2
+    assert isinstance(children[0], HeaderBlock)
+    assert children[0].header_type == "response"
+    assert children[0].label == "RESPONSE"
+    assert isinstance(children[1], HttpHeadersBlock)
+    assert children[1].headers == {}
+    assert children[1].status_code == 200
 
 
 def test_format_response_headers_with_headers():
-    """Response headers formatted as HeaderBlock + HttpHeadersBlock with status code."""
+    """Response headers formatted as ResponseMetadataSection with HeaderBlock + HttpHeadersBlock."""
     headers = {"Content-Type": "text/event-stream", "x-request-id": "abc123"}
     blocks = format_response_headers(200, headers)
 
-    assert len(blocks) == 2
-    assert isinstance(blocks[0], HeaderBlock)
-    assert blocks[0].header_type == "response"
-    assert isinstance(blocks[1], HttpHeadersBlock)
-    assert blocks[1].headers == headers
-    assert blocks[1].header_type == "response"
-    assert blocks[1].status_code == 200
+    assert len(blocks) == 1
+    assert isinstance(blocks[0], ResponseMetadataSection)
+    children = blocks[0].children
+    assert len(children) == 2
+    assert isinstance(children[0], HeaderBlock)
+    assert children[0].header_type == "response"
+    assert isinstance(children[1], HttpHeadersBlock)
+    assert children[1].headers == headers
+    assert children[1].header_type == "response"
+    assert children[1].status_code == 200
 
 
 def test_http_headers_block_instantiation():
@@ -767,7 +794,7 @@ class TestToolUseBlockDetail:
             ],
         }
         blocks = format_request(body, fresh_state)
-        tool_blocks = [b for b in blocks if isinstance(b, ToolUseBlock)]
+        tool_blocks = _find_blocks(blocks, ToolUseBlock)
         assert len(tool_blocks) == 1
         assert "file.ts" in tool_blocks[0].detail
         assert tool_blocks[0].detail.startswith("...")
@@ -792,7 +819,7 @@ class TestToolUseBlockDetail:
             ],
         }
         blocks = format_request(body, fresh_state)
-        tool_blocks = [b for b in blocks if isinstance(b, ToolUseBlock)]
+        tool_blocks = _find_blocks(blocks, ToolUseBlock)
         assert len(tool_blocks) == 1
         assert tool_blocks[0].detail == "/a/b.ts"
 
@@ -816,7 +843,7 @@ class TestToolUseBlockDetail:
             ],
         }
         blocks = format_request(body, fresh_state)
-        tool_blocks = [b for b in blocks if isinstance(b, ToolUseBlock)]
+        tool_blocks = _find_blocks(blocks, ToolUseBlock)
         assert len(tool_blocks) == 1
         assert tool_blocks[0].detail == "commit"
 
@@ -840,7 +867,7 @@ class TestToolUseBlockDetail:
             ],
         }
         blocks = format_request(body, fresh_state)
-        tool_blocks = [b for b in blocks if isinstance(b, ToolUseBlock)]
+        tool_blocks = _find_blocks(blocks, ToolUseBlock)
         assert len(tool_blocks) == 1
         assert tool_blocks[0].detail == "git status"
 
@@ -864,7 +891,7 @@ class TestToolUseBlockDetail:
             ],
         }
         blocks = format_request(body, fresh_state)
-        tool_blocks = [b for b in blocks if isinstance(b, ToolUseBlock)]
+        tool_blocks = _find_blocks(blocks, ToolUseBlock)
         assert len(tool_blocks) == 1
         assert tool_blocks[0].detail == ""
 
@@ -896,8 +923,8 @@ class TestToolCorrelation:
             ],
         }
         blocks = format_request(body, fresh_state)
-        tool_uses = [b for b in blocks if isinstance(b, ToolUseBlock)]
-        tool_results = [b for b in blocks if isinstance(b, ToolResultBlock)]
+        tool_uses = _find_blocks(blocks, ToolUseBlock)
+        tool_results = _find_blocks(blocks, ToolResultBlock)
 
         assert len(tool_uses) == 1
         assert len(tool_results) == 1
@@ -925,7 +952,7 @@ class TestToolCorrelation:
             ],
         }
         blocks = format_request(body, fresh_state)
-        tool_results = [b for b in blocks if isinstance(b, ToolResultBlock)]
+        tool_results = _find_blocks(blocks, ToolResultBlock)
 
         assert len(tool_results) == 1
         assert tool_results[0].tool_name == "Read"
@@ -951,7 +978,7 @@ class TestToolCorrelation:
             ],
         }
         blocks = format_request(body, fresh_state)
-        tool_results = [b for b in blocks if isinstance(b, ToolResultBlock)]
+        tool_results = _find_blocks(blocks, ToolResultBlock)
 
         assert len(tool_results) == 1
         assert tool_results[0].detail != ""
@@ -980,8 +1007,8 @@ class TestToolCorrelation:
             ],
         }
         blocks = format_request(body, fresh_state)
-        uses = {b.tool_use_id: b for b in blocks if isinstance(b, ToolUseBlock)}
-        results = {b.tool_use_id: b for b in blocks if isinstance(b, ToolResultBlock)}
+        uses = {b.tool_use_id: b for b in _find_blocks(blocks, ToolUseBlock)}
+        results = {b.tool_use_id: b for b in _find_blocks(blocks, ToolResultBlock)}
 
         # Matching pairs share color
         assert uses["tu_1"].msg_color_idx == results["tu_1"].msg_color_idx
@@ -1013,12 +1040,12 @@ class TestToolCorrelation:
 
         # Format twice
         blocks1 = format_request(body, fresh_state)
-        uses1 = [b for b in blocks1 if isinstance(b, ToolUseBlock)]
+        uses1 = _find_blocks(blocks1, ToolUseBlock)
 
         # Reset state but format again
         fresh_state["request_counter"] = 0
         blocks2 = format_request(body, fresh_state)
-        uses2 = [b for b in blocks2 if isinstance(b, ToolUseBlock)]
+        uses2 = _find_blocks(blocks2, ToolUseBlock)
 
         # Should have same color
         assert uses1[0].msg_color_idx == uses2[0].msg_color_idx
@@ -1038,7 +1065,7 @@ class TestToolCorrelation:
             ],
         }
         blocks = format_request(body, fresh_state)
-        tool_results = [b for b in blocks if isinstance(b, ToolResultBlock)]
+        tool_results = _find_blocks(blocks, ToolResultBlock)
 
         assert len(tool_results) == 1
         # Should have tool_use_id set but tool_name empty
@@ -1100,52 +1127,48 @@ SAMPLE_TOOLS = [
 
 
 class TestToolDefinitionsBlock:
-    """Tests for ToolDefinitionsBlock creation and fields."""
+    """Tests for ToolDefsSection creation and fields."""
 
     def test_tool_definitions_block_created(self, fresh_state):
-        """ToolDefinitionsBlock created when tools present."""
+        """ToolDefsSection created when tools present."""
         body = _make_body_with_tools(SAMPLE_TOOLS)
         blocks = format_request(body, fresh_state)
-        tool_def_blocks = [b for b in blocks if isinstance(b, ToolDefinitionsBlock)]
-        assert len(tool_def_blocks) == 1
-        tdb = tool_def_blocks[0]
-        assert len(tdb.tools) == 2
-        assert tdb.tools[0]["name"] == "Read"
-        assert tdb.tools[1]["name"] == "Write"
+        tool_def_sections = [b for b in blocks if isinstance(b, ToolDefsSection)]
+        assert len(tool_def_sections) == 1
+        tds = tool_def_sections[0]
+        assert tds.tool_count == 2
+        assert len(tds.children) == 2
+        assert tds.children[0].name == "Read"
+        assert tds.children[1].name == "Write"
 
     def test_tool_definitions_block_token_estimates(self, fresh_state):
-        """ToolDefinitionsBlock has per-tool token estimates."""
+        """ToolDefsSection children have per-tool token estimates."""
         body = _make_body_with_tools(SAMPLE_TOOLS)
         blocks = format_request(body, fresh_state)
-        tdb = [b for b in blocks if isinstance(b, ToolDefinitionsBlock)][0]
-        assert len(tdb.tool_tokens) == 2
-        assert all(t > 0 for t in tdb.tool_tokens)
-        assert tdb.total_tokens == sum(tdb.tool_tokens)
+        tds = [b for b in blocks if isinstance(b, ToolDefsSection)][0]
+        assert len(tds.children) == 2
+        assert all(child.token_estimate > 0 for child in tds.children)
+        assert tds.total_tokens == sum(child.token_estimate for child in tds.children)
 
     def test_tool_definitions_block_content_regions(self, fresh_state):
-        """ToolDefinitionsBlock has pre-populated content_regions with kind and tags."""
+        """ToolDefsSection children capture tool name and schema."""
         body = _make_body_with_tools(SAMPLE_TOOLS)
         blocks = format_request(body, fresh_state)
-        tdb = [b for b in blocks if isinstance(b, ToolDefinitionsBlock)][0]
-        assert len(tdb.content_regions) == 2
-        assert all(isinstance(r, ContentRegion) for r in tdb.content_regions)
-        # Default collapsed
-        assert all(r.expanded is False for r in tdb.content_regions)
-        assert tdb.content_regions[0].index == 0
-        assert tdb.content_regions[1].index == 1
-        # kind and tags
-        assert all(r.kind == "tool_def" for r in tdb.content_regions)
-        assert tdb.content_regions[0].tags == ["Read"]
-        assert tdb.content_regions[1].tags == ["Write"]
+        tds = [b for b in blocks if isinstance(b, ToolDefsSection)][0]
+        assert len(tds.children) == 2
+        assert tds.children[0].name == "Read"
+        assert tds.children[1].name == "Write"
+        assert tds.children[0].description == "Read a file from disk"
+        assert tds.children[1].description == "Write content to a file"
 
     def test_tool_definitions_block_with_empty_tools(self, fresh_state):
-        """ToolDefinitionsBlock created even with empty tools list."""
+        """ToolDefsSection created even with empty tools list."""
         body = _make_body_with_tools([])
         blocks = format_request(body, fresh_state)
-        tool_def_blocks = [b for b in blocks if isinstance(b, ToolDefinitionsBlock)]
-        assert len(tool_def_blocks) == 1
-        assert tool_def_blocks[0].tools == []
-        assert tool_def_blocks[0].total_tokens == 0
+        tool_def_sections = [b for b in blocks if isinstance(b, ToolDefsSection)]
+        assert len(tool_def_sections) == 1
+        assert tool_def_sections[0].children == []
+        assert tool_def_sections[0].total_tokens == 0
 
     def test_tool_descriptions_stored_in_state(self, fresh_state):
         """state['tool_descriptions'] populated after format_request."""
@@ -1191,7 +1214,7 @@ class TestToolUseBlockDescription:
             ],
         }
         blocks = format_request(body, fresh_state)
-        tool_uses = [b for b in blocks if isinstance(b, ToolUseBlock)]
+        tool_uses = _find_blocks(blocks, ToolUseBlock)
         assert len(tool_uses) == 1
         assert tool_uses[0].description == "Read a file from disk"
 
@@ -1215,7 +1238,7 @@ class TestToolUseBlockDescription:
             ],
         }
         blocks = format_request(body, fresh_state)
-        tool_uses = [b for b in blocks if isinstance(b, ToolUseBlock)]
+        tool_uses = _find_blocks(blocks, ToolUseBlock)
         assert len(tool_uses) == 1
         assert tool_uses[0].description == ""
 
@@ -1240,6 +1263,6 @@ class TestToolUseBlockDescription:
             ],
         }
         blocks = format_request(body, fresh_state)
-        tool_uses = [b for b in blocks if isinstance(b, ToolUseBlock)]
+        tool_uses = _find_blocks(blocks, ToolUseBlock)
         assert len(tool_uses) == 1
         assert tool_uses[0].description == ""

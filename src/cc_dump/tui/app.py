@@ -511,8 +511,11 @@ class CcDumpApp(App):
                 )
                 # // [LAW:one-source-of-truth] Stamp response blocks with current session
                 current_session = self._state.get("current_session", "")
-                for block in response_blocks:
-                    block.session_id = current_session
+                def _stamp_session(blocks):
+                    for block in blocks:
+                        block.session_id = current_session
+                        _stamp_session(getattr(block, "children", []))
+                _stamp_session(response_blocks)
                 conv.add_turn(response_blocks, self.active_filters)
 
                 if stats:

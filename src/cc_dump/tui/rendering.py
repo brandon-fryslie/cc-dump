@@ -313,13 +313,14 @@ _MARKDOWN_CATEGORIES = {Category.USER, Category.ASSISTANT, Category.SYSTEM}
 
 # Static mapping: block type name → category (or None for context-dependent/always-visible).
 # [LAW:one-source-of-truth] Replaces BLOCK_FILTER_KEY.
+# METADATA consolidates former BUDGET, METADATA, and HEADERS categories.
 BLOCK_CATEGORY: dict[str, Category | None] = {
-    "SeparatorBlock": Category.HEADERS,
-    "HeaderBlock": Category.HEADERS,
-    "HttpHeadersBlock": Category.HEADERS,
+    "SeparatorBlock": Category.METADATA,
+    "HeaderBlock": Category.METADATA,
+    "HttpHeadersBlock": Category.METADATA,
     "MetadataBlock": Category.METADATA,
     "NewSessionBlock": Category.METADATA,
-    "TurnBudgetBlock": Category.BUDGET,
+    "TurnBudgetBlock": Category.METADATA,
     "SystemLabelBlock": Category.SYSTEM,
     "TrackedContentBlock": Category.SYSTEM,
     "ToolDefinitionsBlock": Category.TOOLS,
@@ -329,6 +330,19 @@ BLOCK_CATEGORY: dict[str, Category | None] = {
     "StreamInfoBlock": Category.METADATA,
     "StreamToolUseBlock": Category.TOOLS,
     "StopReasonBlock": Category.METADATA,
+    # Hierarchical container blocks
+    "ThinkingBlock": Category.THINKING,
+    "ConfigContentBlock": None,  # Inherits from parent (USER)
+    "HookOutputBlock": None,     # Inherits from parent (USER)
+    "MessageBlock": None,        # Context-dependent (USER or ASSISTANT)
+    "MetadataSection": Category.METADATA,
+    "SystemSection": Category.SYSTEM,
+    "ToolDefsSection": Category.TOOLS,
+    "ToolDefBlock": Category.TOOLS,
+    "SkillDefChild": Category.TOOLS,
+    "AgentDefChild": Category.TOOLS,
+    "ResponseMetadataSection": Category.METADATA,
+    "ResponseMessageBlock": None,  # Context-dependent (ASSISTANT)
     # Context-dependent (use block.category field):
     "RoleBlock": None,
     "TextContentBlock": None,
@@ -395,7 +409,8 @@ def _build_filter_indicators(tc: ThemeColors) -> dict[str, tuple[str, str]]:
     // [LAW:one-source-of-truth] Filter indicator colors derived from theme via tc.filter_colors.
     // [LAW:single-enforcer] Rebuilt by set_theme() alongside TAG_STYLES/MSG_COLORS.
     """
-    names = ["headers", "tools", "system", "budget", "metadata", "user", "assistant"]
+    # // [LAW:one-source-of-truth] 6 categories matching Category enum.
+    names = ["tools", "system", "metadata", "user", "assistant", "thinking"]
     # [LAW:one-source-of-truth] Use chip_bg (element [1]) to match footer chip colors.
     return {name: ("\u258c", tc.filter_colors[name][1]) for name in names}
 
@@ -1454,6 +1469,155 @@ def _render_turn_budget_oneliner(block: TurnBudgetBlock) -> Text | None:
     return t
 
 
+# ─── Hierarchical block renderers (Phase 2 stubs) ─────────────────────────────
+# // [LAW:dataflow-not-control-flow] Stubs render placeholder content;
+# container expansion logic will be added in Phase 4.
+
+
+def _render_thinking(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render thinking block — full content with dim italic style."""
+    t = Text()
+    t.append("[thinking] ", style="bold dim")
+    content = getattr(block, "content", "")
+    if content:
+        t.append(content, style="dim italic")
+    return t
+
+
+def _render_thinking_summary(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render thinking block summary — line count only."""
+    content = getattr(block, "content", "")
+    line_count = len(content.splitlines()) if content else 0
+    t = Text()
+    t.append("[thinking]", style="bold dim")
+    t.append(f" ({line_count} lines)", style="dim")
+    return t
+
+
+def _render_config_content(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render config content block — full content with source label."""
+    t = Text()
+    source = getattr(block, "source", "unknown")
+    t.append(f"[config: {source}] ", style="bold dim")
+    content = getattr(block, "content", "")
+    if content:
+        t.append(content, style="dim")
+    return t
+
+
+def _render_config_content_summary(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render config content block summary — source and line count."""
+    source = getattr(block, "source", "unknown")
+    content = getattr(block, "content", "")
+    line_count = len(content.splitlines()) if content else 0
+    t = Text()
+    t.append(f"[config: {source}]", style="bold dim")
+    t.append(f" ({line_count} lines)", style="dim")
+    return t
+
+
+def _render_hook_output(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render hook output block — full content with hook name."""
+    t = Text()
+    hook_name = getattr(block, "hook_name", "")
+    t.append(f"[hook: {hook_name}] ", style="bold dim")
+    content = getattr(block, "content", "")
+    if content:
+        t.append(content, style="dim")
+    return t
+
+
+def _render_hook_output_summary(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render hook output block summary — hook name and line count."""
+    hook_name = getattr(block, "hook_name", "")
+    content = getattr(block, "content", "")
+    line_count = len(content.splitlines()) if content else 0
+    t = Text()
+    t.append(f"[hook: {hook_name}]", style="bold dim")
+    t.append(f" ({line_count} lines)", style="dim")
+    return t
+
+
+def _render_message_block(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render message container header (replaces RoleBlock rendering)."""
+    role = getattr(block, "role", "")
+    idx = getattr(block, "msg_index", 0)
+    timestamp = getattr(block, "timestamp", "")
+    role_lower = role.lower()
+    style = ROLE_STYLES.get(role_lower, "bold magenta")
+    label = role.upper().replace("_", " ")
+    t = Text(f"{label} [{idx}]", style=style)
+    if timestamp:
+        t.append(f"  {timestamp}", style="dim")
+    return t
+
+
+def _render_metadata_section(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render metadata section container header."""
+    return Text("METADATA", style="bold dim")
+
+
+def _render_system_section(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render system section container header."""
+    return Text("SYSTEM", style="bold dim")
+
+
+def _render_tool_defs_section(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render tool defs section container header."""
+    count = getattr(block, "tool_count", 0)
+    tokens = getattr(block, "total_tokens", 0)
+    t = Text()
+    t.append(f"{count} tools", style="bold dim")
+    if tokens:
+        t.append(f" / {_fmt_tokens(tokens)} tokens", style="dim")
+    return t
+
+
+def _render_tool_def(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render individual tool definition."""
+    name = getattr(block, "name", "")
+    tokens = getattr(block, "token_estimate", 0)
+    t = Text()
+    t.append(name, style="bold")
+    if tokens:
+        t.append(f" ({_fmt_tokens(tokens)} tokens)", style="dim")
+    return t
+
+
+def _render_skill_def_child(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render skill definition child."""
+    name = getattr(block, "name", "")
+    desc = getattr(block, "description", "")
+    t = Text()
+    t.append(name, style="bold")
+    if desc:
+        preview = desc[:60] + "..." if len(desc) > 60 else desc
+        t.append(f' — "{preview}"', style="dim")
+    return t
+
+
+def _render_agent_def_child(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render agent definition child."""
+    name = getattr(block, "name", "")
+    desc = getattr(block, "description", "")
+    t = Text()
+    t.append(name, style="bold")
+    if desc:
+        preview = desc[:60] + "..." if len(desc) > 60 else desc
+        t.append(f' — "{preview}"', style="dim")
+    return t
+
+
+def _render_response_metadata_section(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render response metadata section container header."""
+    return Text("RESPONSE METADATA", style="bold dim")
+
+
+def _render_response_message_block(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render response message container header."""
+    return Text("ASSISTANT", style="bold dim")
+
+
 # ─── Registries ────────────────────────────────────────────────────────────────
 
 # Full content renderers. Signature: (block) -> ConsoleRenderable | None
@@ -1481,6 +1645,19 @@ BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], ConsoleRenderable | None]]
     "ErrorBlock": _render_error,
     "ProxyErrorBlock": _render_proxy_error,
     "NewlineBlock": _render_newline,
+    # Hierarchical block renderers
+    "ThinkingBlock": _render_thinking,
+    "ConfigContentBlock": _render_config_content,
+    "HookOutputBlock": _render_hook_output,
+    "MessageBlock": _render_message_block,
+    "MetadataSection": _render_metadata_section,
+    "SystemSection": _render_system_section,
+    "ToolDefsSection": _render_tool_defs_section,
+    "ToolDefBlock": _render_tool_def,
+    "SkillDefChild": _render_skill_def_child,
+    "AgentDefChild": _render_agent_def_child,
+    "ResponseMetadataSection": _render_response_metadata_section,
+    "ResponseMessageBlock": _render_response_message_block,
 }
 
 # State-specific renderers (override full renderers for specific vis_states)
@@ -1507,6 +1684,15 @@ BLOCK_STATE_RENDERERS: dict[
     ("ToolDefinitionsBlock", True, False, True): _render_tool_defs_summary_expanded,
     ("ToolDefinitionsBlock", True, True, False): _render_tool_defs_full_collapsed,
     # No entry for (True, True, True) → falls through to region rendering
+    # ThinkingBlock: summary at both summary levels
+    ("ThinkingBlock", True, False, False): _render_thinking_summary,
+    ("ThinkingBlock", True, False, True): _render_thinking_summary,
+    # ConfigContentBlock: summary at summary levels
+    ("ConfigContentBlock", True, False, False): _render_config_content_summary,
+    ("ConfigContentBlock", True, False, True): _render_config_content_summary,
+    # HookOutputBlock: summary at summary levels
+    ("HookOutputBlock", True, False, False): _render_hook_output_summary,
+    ("HookOutputBlock", True, False, True): _render_hook_output_summary,
 }
 
 
@@ -1596,14 +1782,51 @@ def collapse_tool_runs(
     return result
 
 
+def _flatten_hierarchy(
+    blocks: list[FormattedBlock], filters: dict
+) -> list[FormattedBlock]:
+    """Flatten container hierarchy for rendering.
+
+    Containers always appear in output (their renderer handles summary vs full).
+    Children appear only when container is expanded and visible.
+    Children's own visibility is checked separately in the main loop.
+
+    // [LAW:dataflow-not-control-flow] Always runs; blocks without children pass through unchanged.
+    """
+    flat: list[FormattedBlock] = []
+    for block in blocks:
+        flat.append(block)
+        children = getattr(block, "children", None)
+        if not children:
+            continue
+        vis = _resolve_visibility(block, filters)
+        # Apply per-block expansion override
+        expanded = block.expanded if block.expanded is not None else vis.expanded
+        if not vis.visible:
+            continue  # hidden container → skip children
+        if not expanded:
+            continue  # collapsed container → summary only, no children
+        for child in children:
+            flat.append(child)
+            # Depth 2: ToolDefBlock → SkillDefChild/AgentDefChild
+            grandchildren = getattr(child, "children", None)
+            if grandchildren:
+                child_vis = _resolve_visibility(child, filters)
+                child_expanded = child.expanded if child.expanded is not None else child_vis.expanded
+                if child_vis.visible and child_expanded:
+                    flat.extend(grandchildren)
+    return flat
+
+
 def _prepare_blocks(blocks: list, filters: dict) -> list[tuple[int, FormattedBlock]]:
-    """Pre-pass: apply tool summarization based on tools level.
+    """Pre-pass: flatten hierarchy then apply tool summarization.
 
     // [LAW:dataflow-not-control-flow] tools_on is a value, not a branch.
     """
+    flat = _flatten_hierarchy(blocks, filters)
     tools_filter = filters.get("tools", ALWAYS_VISIBLE)
     tools_on = tools_filter.full  # individual tools at FULL level
-    return collapse_tool_runs(blocks, tools_on)
+    return collapse_tool_runs(flat, tools_on)
 
 
 # ─── Truncation and collapse indicator ─────────────────────────────────────────
@@ -1802,7 +2025,7 @@ def render_turn_to_strips(
     is_streaming: bool = False,
     search_ctx=None,
     turn_index: int = -1,
-) -> tuple[list, dict[int, int]]:
+) -> tuple[list, dict[int, int], list[FormattedBlock]]:
     """Render blocks to Strip objects for Line API storage.
 
     # [LAW:single-enforcer] All visibility logic happens here.
@@ -1819,8 +2042,9 @@ def render_turn_to_strips(
         turn_index: Turn index for search match correlation
 
     Returns:
-        (strips, block_strip_map) — pre-rendered lines and a dict mapping
-        block index to its first strip line index.
+        (strips, block_strip_map, flat_blocks) — pre-rendered lines, a dict mapping
+        block index to its first strip line index, and the flattened block list
+        for click resolution.
     """
     from rich.segment import Segment
     from textual.strip import Strip
@@ -1839,6 +2063,9 @@ def render_turn_to_strips(
 
     all_strips: list[Strip] = []
     block_strip_map: dict[int, int] = {}
+    # // [LAW:one-source-of-truth] flat_blocks tracks which blocks rendered,
+    # keyed in parallel with block_strip_map for click resolution.
+    flat_blocks: list[FormattedBlock] = []
 
     prepared = _prepare_blocks(blocks, filters)
 
@@ -1960,6 +2187,7 @@ def render_turn_to_strips(
             _apply_search_highlights(text, search_ctx, turn_index, orig_idx)
 
         block_strip_map[orig_idx] = len(all_strips)
+        flat_blocks.append(block)
 
         # Standard rendering path (non-region or when text is a renderable)
         if not has_regions:
@@ -2050,7 +2278,7 @@ def render_turn_to_strips(
         )
         all_strips.extend(final_strips)
 
-    return all_strips, block_strip_map
+    return all_strips, block_strip_map, flat_blocks
 
 
 def _apply_search_highlights(

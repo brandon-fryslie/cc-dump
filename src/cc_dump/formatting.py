@@ -79,15 +79,18 @@ ALWAYS_VISIBLE = VisState(visible=True, full=True, expanded=True)
 
 
 class Category(Enum):
-    """Block category — groups blocks for visibility control."""
+    """Block category — groups blocks for visibility control.
+
+    6 categories: USER, ASSISTANT, TOOLS, SYSTEM, METADATA, THINKING.
+    METADATA consolidates former BUDGET, METADATA, and HEADERS categories.
+    """
 
     USER = "user"
     ASSISTANT = "assistant"
     TOOLS = "tools"
     SYSTEM = "system"
-    BUDGET = "budget"
     METADATA = "metadata"
-    HEADERS = "headers"
+    THINKING = "thinking"
 
 
 # ─── Structured IR ────────────────────────────────────────────────────────────
@@ -395,6 +398,147 @@ class NewlineBlock(FormattedBlock):
     pass
 
 
+# ─── Hierarchical container blocks ───────────────────────────────────────────
+# // [LAW:one-type-per-behavior] All containers share the same children pattern.
+# // [LAW:dataflow-not-control-flow] Containers always have children; emptiness
+# // is expressed via empty list, not absence of the field.
+
+
+@dataclass
+class ThinkingBlock(FormattedBlock):
+    """Extended thinking content block.
+
+    Represents {"type": "thinking", "thinking": "..."} in API response.
+    """
+
+    content: str = ""
+    indent: str = "    "
+
+
+@dataclass
+class ConfigContentBlock(FormattedBlock):
+    """Injected configuration content within a user message.
+
+    Detected from CLAUDE.md, plugin content, agent instructions.
+    Source tagging identifies the origin when detectable.
+    """
+
+    content: str = ""
+    source: str = ""  # e.g., "project CLAUDE.md", "plugin: do", "unknown"
+    indent: str = "    "
+
+
+@dataclass
+class HookOutputBlock(FormattedBlock):
+    """Hook output injected into user messages.
+
+    Detected from <user-prompt-submit-hook>, <system-reminder> tags.
+    """
+
+    content: str = ""
+    hook_name: str = ""  # e.g., "UserPromptSubmit", "system-reminder"
+    indent: str = "    "
+
+
+@dataclass
+class MessageBlock(FormattedBlock):
+    """Container for one entry in messages[] array.
+
+    Renders its own header ("USER [0]" / "ASSISTANT [3]") and holds
+    child content blocks (TextContentBlock, ToolUseBlock, etc.).
+    // [LAW:one-source-of-truth] Replaces RoleBlock + flat block list.
+    """
+
+    role: str = ""  # "user" or "assistant"
+    msg_index: int = 0
+    timestamp: str = ""
+    children: list[FormattedBlock] = field(default_factory=list)
+
+
+@dataclass
+class MetadataSection(FormattedBlock):
+    """Container for combined request metadata.
+
+    Children: ModelParamsBlock, HttpHeadersBlock, TokenBudgetBlock.
+    """
+
+    children: list[FormattedBlock] = field(default_factory=list)
+
+
+@dataclass
+class SystemSection(FormattedBlock):
+    """Container for the system field from the request body.
+
+    Children: TrackedContentBlock instances.
+    """
+
+    children: list[FormattedBlock] = field(default_factory=list)
+
+
+@dataclass
+class ToolDefsSection(FormattedBlock):
+    """Container for the tools array from the request body.
+
+    Children: ToolDefBlock instances.
+    """
+
+    tool_count: int = 0
+    total_tokens: int = 0
+    children: list[FormattedBlock] = field(default_factory=list)
+
+
+@dataclass
+class ToolDefBlock(FormattedBlock):
+    """Individual tool definition (child of ToolDefsSection).
+
+    For known compound tools (Skill, Task), has its own children.
+    """
+
+    name: str = ""
+    description: str = ""
+    input_schema: dict = field(default_factory=dict)
+    token_estimate: int = 0
+    children: list[FormattedBlock] = field(default_factory=list)
+
+
+@dataclass
+class SkillDefChild(FormattedBlock):
+    """Individual skill within the Skill tool definition."""
+
+    name: str = ""
+    description: str = ""
+    plugin_source: str = ""  # e.g., "do", "plugin-dev"
+
+
+@dataclass
+class AgentDefChild(FormattedBlock):
+    """Individual agent type within the Task tool definition."""
+
+    name: str = ""
+    description: str = ""
+    available_tools: str = ""  # e.g., "All tools"
+
+
+@dataclass
+class ResponseMetadataSection(FormattedBlock):
+    """Container for response HTTP headers + model info.
+
+    Children: HttpHeadersBlock, StreamInfoBlock.
+    """
+
+    children: list[FormattedBlock] = field(default_factory=list)
+
+
+@dataclass
+class ResponseMessageBlock(FormattedBlock):
+    """Container for the assistant's response content blocks.
+
+    Children: same content block types as MessageBlock children.
+    """
+
+    children: list[FormattedBlock] = field(default_factory=list)
+
+
 # ─── Content tracking (stateful) ─────────────────────────────────────────────
 
 
@@ -673,29 +817,117 @@ def _format_unknown_content(cblock, ctx: _ContentContext) -> list:
     return [UnknownTypeBlock(block_type=btype)]
 
 
+def _format_thinking_content(cblock, ctx: _ContentContext) -> list:
+    """Format a thinking content block."""
+    text = cblock.get("thinking", "")
+    return [ThinkingBlock(content=text, indent=ctx.indent, category=Category.THINKING)]
+
+
 _CONTENT_BLOCK_FACTORIES = {
     "text": _format_text_content,
     "tool_use": _format_tool_use_content,
     "tool_result": _format_tool_result_content,
     "image": _format_image_content,
+    "thinking": _format_thinking_content,
 }
+
+
+# ─── Compound tool decomposition ─────────────────────────────────────────────
+# // [LAW:one-source-of-truth] Known compound tools parsed into children.
+# Hardcoded for Skill (→ skills) and Task (→ agents). Extensible list.
+
+
+def _parse_skill_children(description: str) -> list["FormattedBlock"]:
+    """Parse Skill tool description into SkillDefChild blocks.
+
+    Extracts skill entries from the description's "user-invocable skills" section
+    and from lines matching '- skill_name: description' pattern.
+    """
+    children: list[FormattedBlock] = []
+    # Look for lines matching "- name: description" or "- plugin:name: description"
+    for line in description.splitlines():
+        line = line.strip()
+        if line.startswith("- ") and ":" in line[2:]:
+            # Extract name and description
+            rest = line[2:]  # Remove "- "
+            # Handle "name: description" or "plugin:name: description"
+            # Find the first ": " that's likely a separator (not part of plugin:name)
+            colon_idx = rest.find(": ")
+            if colon_idx > 0:
+                name = rest[:colon_idx].strip()
+                desc = rest[colon_idx + 2:].strip().strip('"')
+                # Detect plugin source from name
+                plugin_source = ""
+                if ":" in name:
+                    parts = name.split(":", 1)
+                    plugin_source = parts[0]
+                children.append(SkillDefChild(
+                    name=name,
+                    description=desc,
+                    plugin_source=plugin_source,
+                    category=Category.TOOLS,
+                ))
+    return children
+
+
+def _parse_agent_children(description: str) -> list["FormattedBlock"]:
+    """Parse Task tool description into AgentDefChild blocks.
+
+    Extracts agent type entries from the description's "Available agent types" section.
+    Looks for '- AgentName: description' pattern within the description text.
+    """
+    children: list[FormattedBlock] = []
+    # Look for lines matching "- Name: description (Tools: ...)"
+    for line in description.splitlines():
+        line = line.strip()
+        if line.startswith("- ") and ":" in line[2:]:
+            rest = line[2:]
+            colon_idx = rest.find(": ")
+            if colon_idx > 0:
+                name = rest[:colon_idx].strip()
+                desc_part = rest[colon_idx + 2:].strip()
+                # Extract tools list if present
+                tools_str = ""
+                if "(Tools:" in desc_part:
+                    tools_start = desc_part.index("(Tools:")
+                    tools_str = desc_part[tools_start + 7:].rstrip(")")
+                    desc_part = desc_part[:tools_start].strip()
+                children.append(AgentDefChild(
+                    name=name,
+                    description=desc_part.strip('"'),
+                    available_tools=tools_str.strip(),
+                    category=Category.TOOLS,
+                ))
+    return children
+
+
+# // [LAW:one-source-of-truth] Known compound tools and their child parsers.
+_COMPOUND_TOOL_PARSERS: dict[str, "Callable[[str], list[FormattedBlock]]"] = {
+    "Skill": _parse_skill_children,
+    "Task": _parse_agent_children,
+}
+
 
 
 def format_request(body, state, request_headers: dict | None = None):
     """Format a full API request as a list of FormattedBlock.
 
+    Produces hierarchical container blocks (MetadataSection, ToolDefsSection,
+    SystemSection, MessageBlock). Top-level blocks contain children; the
+    rendering pipeline flattens them for display.
+
     Args:
         body: Request body dict
         state: Content tracking state dict
-        request_headers: Optional HTTP request headers to include after MetadataBlock
+        request_headers: Optional HTTP request headers to include in MetadataSection
 
     Returns:
-        List of FormattedBlock objects
+        List of FormattedBlock objects (hierarchical — containers with children)
     """
     state["request_counter"] += 1
     request_num = state["request_counter"]
 
-    blocks = []
+    blocks: list[FormattedBlock] = []
     blocks.append(NewlineBlock())
     blocks.append(SeparatorBlock(style="heavy"))
     blocks.append(
@@ -733,20 +965,19 @@ def format_request(body, state, request_headers: dict | None = None):
         blocks.append(NewSessionBlock())
         state["current_session"] = session_id
 
-    blocks.append(
-        MetadataBlock(
-            model=str(model),
-            max_tokens=str(max_tokens),
-            stream=stream,
-            tool_count=len(tools),
-            user_hash=user_hash,
-            account_id=account_id,
-        )
+    # MetadataSection container — groups model params, HTTP headers, budget
+    # // [LAW:one-source-of-truth] Single container for all request metadata.
+    metadata_block = MetadataBlock(
+        model=str(model),
+        max_tokens=str(max_tokens),
+        stream=stream,
+        tool_count=len(tools),
+        user_hash=user_hash,
+        account_id=account_id,
     )
 
     # [LAW:one-source-of-truth] Header injection happens here, not in callers
-    # format_request_headers({}) returns [], so extend is always safe
-    blocks.extend(format_request_headers(request_headers or {}))
+    header_blocks = format_request_headers(request_headers or {})
 
     # Store tool descriptions in state for ToolUseBlock enrichment
     # // [LAW:one-source-of-truth] tool_descriptions populated here, consumed by _format_tool_use_content
@@ -758,37 +989,63 @@ def format_request(body, state, request_headers: dict | None = None):
     budget = compute_turn_budget(body)
     messages = body.get("messages", [])
     breakdown = tool_result_breakdown(messages)
-    blocks.append(TurnBudgetBlock(budget=budget, tool_result_by_name=breakdown))
+    budget_block = TurnBudgetBlock(budget=budget, tool_result_by_name=breakdown)
 
-    # Tool definitions block
+    # Emit MetadataSection container (children flattened by rendering pipeline)
+    blocks.append(MetadataSection(
+        children=[metadata_block] + header_blocks + [budget_block],
+        category=Category.METADATA,
+    ))
+
+    # ToolDefsSection container — groups tool definitions
     # [LAW:dataflow-not-control-flow] Always create block, renderer handles empty list
     per_tool_tokens = [estimate_tokens(json.dumps(t)) for t in tools]
-    tool_def_block = ToolDefinitionsBlock(
-        tools=tools,
-        tool_tokens=per_tool_tokens,
-        total_tokens=sum(per_tool_tokens),
-    )
-    if tools:  # Only set regions if tools are present
-        tool_def_block.content_regions = [
-            ContentRegion(index=i, kind="tool_def", tags=[tool.get("name", "?")], expanded=False)
-            for i, tool in enumerate(tools)
-        ]
-    blocks.append(tool_def_block)
+    total_tool_tokens = sum(per_tool_tokens)
+
+    # // [LAW:one-source-of-truth] Compound tools parsed into children via _COMPOUND_TOOL_PARSERS.
+    tool_def_children: list[FormattedBlock] = []
+    for i, tool in enumerate(tools):
+        tool_name = tool.get("name", "?")
+        tool_desc = tool.get("description", "")
+        # Parse compound tools into children
+        parser = _COMPOUND_TOOL_PARSERS.get(tool_name)
+        compound_children = parser(tool_desc) if parser else []
+        tool_def_children.append(ToolDefBlock(
+            name=tool_name,
+            description=tool_desc,
+            input_schema=tool.get("input_schema", {}),
+            token_estimate=per_tool_tokens[i] if i < len(per_tool_tokens) else 0,
+            children=compound_children,
+            category=Category.TOOLS,
+        ))
+
+    # Emit ToolDefsSection container
+    blocks.append(ToolDefsSection(
+        tool_count=len(tools),
+        total_tokens=total_tool_tokens,
+        children=tool_def_children,
+        category=Category.TOOLS,
+    ))
 
     blocks.append(SeparatorBlock(style="thin"))
 
-    # System prompt(s)
+    # SystemSection container — groups system prompt blocks
     system = body.get("system", "")
+    system_children: list[FormattedBlock] = []
     if system:
-        blocks.append(SystemLabelBlock())
         if isinstance(system, str):
-            blocks.append(track_content(system, "system:0", state))
+            system_children.append(track_content(system, "system:0", state))
         elif isinstance(system, list):
-            for i, block in enumerate(system):
-                text = block.get("text", "") if isinstance(block, dict) else str(block)
-                pos_key = "system:{}".format(i)
-                blocks.append(track_content(text, pos_key, state))
-        blocks.append(SeparatorBlock(style="thin"))
+            for i, sblock in enumerate(system):
+                text = sblock.get("text", "") if isinstance(sblock, dict) else str(sblock)
+                system_children.append(track_content(text, "system:{}".format(i), state))
+
+    # Emit SystemSection container (always — renderer handles empty children)
+    blocks.append(SystemSection(
+        children=system_children,
+        category=Category.SYSTEM,
+    ))
+    blocks.append(SeparatorBlock(style="thin"))
 
     # Tool correlation state (per-request, not persistent)
     tool_id_map: dict[
@@ -796,7 +1053,7 @@ def format_request(body, state, request_headers: dict | None = None):
     ] = {}  # tool_use_id -> (name, color_idx, detail, tool_input)
     tool_color_counter = 0
 
-    # Messages
+    # Messages — each wrapped in a MessageBlock container
     messages = body.get("messages", [])
     for i, msg in enumerate(messages):
         role = msg.get("role", "?")
@@ -813,12 +1070,6 @@ def format_request(body, state, request_headers: dict | None = None):
             "system": Category.SYSTEM,
         }.get(role.lower())
 
-        blocks.append(
-            RoleBlock(
-                role=role, msg_index=i, timestamp=_get_timestamp(), category=role_cat
-            )
-        )
-
         # Create shared context for content block formatters
         ctx = _ContentContext(
             role_cat=role_cat,
@@ -829,15 +1080,18 @@ def format_request(body, state, request_headers: dict | None = None):
             indent="    ",
         )
 
+        # Build children for this message
+        msg_children: list[FormattedBlock] = []
+
         if isinstance(content, str):
             if content:
-                blocks.append(
+                msg_children.append(
                     TextContentBlock(content=content, indent="    ", category=role_cat)
                 )
         elif isinstance(content, list):
             for cblock in content:
                 if isinstance(cblock, str):
-                    blocks.append(
+                    msg_children.append(
                         TextContentBlock(
                             content=cblock[:200], indent="    ", category=role_cat
                         )
@@ -845,22 +1099,30 @@ def format_request(body, state, request_headers: dict | None = None):
                     continue
                 btype = cblock.get("type", "?")
                 factory = _CONTENT_BLOCK_FACTORIES.get(btype, _format_unknown_content)
-                blocks.extend(factory(cblock, ctx))
+                msg_children.extend(factory(cblock, ctx))
 
         # Extract updated tool_color_counter from context
         tool_color_counter = ctx.tool_color_counter
 
+        # // [LAW:one-source-of-truth] MessageBlock container replaces RoleBlock + flat children.
+        blocks.append(MessageBlock(
+            role=role,
+            msg_index=i,
+            timestamp=_get_timestamp(),
+            children=msg_children,
+            category=role_cat,
+        ))
+
     blocks.append(NewlineBlock())
 
-    # Eagerly populate content_regions for all text blocks
-    # // [LAW:single-enforcer] populate_content_regions is idempotent —
-    # ToolDefinitionsBlock regions (created inline above) are preserved.
-    for block in blocks:
-        populate_content_regions(block)
-
-    # // [LAW:one-source-of-truth] Stamp all blocks with session_id
-    for block in blocks:
-        block.session_id = session_id
+    # Eagerly populate content_regions for all text blocks (recursive tree walk)
+    # // [LAW:single-enforcer] populate_content_regions is idempotent.
+    def _walk_blocks(block_list):
+        for block in block_list:
+            populate_content_regions(block)
+            block.session_id = session_id
+            _walk_blocks(getattr(block, "children", []))
+    _walk_blocks(blocks)
 
     return blocks
 
@@ -926,10 +1188,19 @@ def _complete_tool_use_block(block: dict) -> list:
     return [StreamToolUseBlock(name=tool_name)]
 
 
+def _complete_thinking_block(block: dict) -> list:
+    """Create blocks for thinking content."""
+    text = block.get("thinking", "")
+    if text:
+        return [ThinkingBlock(content=text, category=Category.THINKING)]
+    return []
+
+
 # [LAW:dataflow-not-control-flow] Complete response content block factories
 _COMPLETE_RESPONSE_FACTORIES = {
     "text": _complete_text_block,
     "tool_use": _complete_tool_use_block,
+    "thinking": _complete_thinking_block,
 }
 
 
@@ -937,7 +1208,8 @@ def format_complete_response(complete_message):
     """Format a complete (non-streaming) Claude message as FormattedBlocks.
 
     This is used for replay mode - takes a complete message and builds the blocks
-    directly without going through streaming events.
+    directly without going through streaming events. Wraps content in a
+    ResponseMessageBlock container.
 
     Args:
         complete_message: Complete Claude API message dict
@@ -945,24 +1217,27 @@ def format_complete_response(complete_message):
     Returns:
         List of FormattedBlock objects
     """
-    blocks = []
+    children: list[FormattedBlock] = []
 
     # Model info
     model = complete_message.get("model", "?")
-    blocks.append(StreamInfoBlock(model=model))
+    children.append(StreamInfoBlock(model=model))
 
     # [LAW:dataflow-not-control-flow] Content blocks via dispatch table
     content = complete_message.get("content", [])
     for block in content:
         block_type = block.get("type", "")
         factory: Callable[[_ContentBlockDict], list[FormattedBlock]] = _COMPLETE_RESPONSE_FACTORIES.get(block_type, lambda _: [])
-        blocks.extend(factory(block))
+        children.extend(factory(block))
 
     # [LAW:dataflow-not-control-flow] Always create block, let renderer handle empty
     stop_reason = complete_message.get("stop_reason", "")
-    blocks.append(StopReasonBlock(reason=stop_reason))
+    children.append(StopReasonBlock(reason=stop_reason))
 
-    return blocks
+    return [ResponseMessageBlock(
+        children=children,
+        category=Category.ASSISTANT,
+    )]
 
 
 def format_request_headers(headers_dict: dict) -> list:
@@ -972,19 +1247,24 @@ def format_request_headers(headers_dict: dict) -> list:
 
 
 def format_response_headers(status_code: int, headers_dict: dict) -> list:
-    """Format HTTP response headers as blocks."""
-    # [LAW:dataflow-not-control-flow] Always emit both blocks;
+    """Format HTTP response headers as a ResponseMetadataSection container."""
+    # [LAW:dataflow-not-control-flow] Always emit container;
     # empty headers dict → HttpHeadersBlock with no entries (status code still shown)
     return [
-        HeaderBlock(
-            label="RESPONSE",
-            request_num=0,
-            timestamp=_get_timestamp(),
-            header_type="response",
-        ),
-        HttpHeadersBlock(
-            headers=headers_dict or {},
-            header_type="response",
-            status_code=status_code,
-        ),
+        ResponseMetadataSection(
+            children=[
+                HeaderBlock(
+                    label="RESPONSE",
+                    request_num=0,
+                    timestamp=_get_timestamp(),
+                    header_type="response",
+                ),
+                HttpHeadersBlock(
+                    headers=headers_dict or {},
+                    header_type="response",
+                    status_code=status_code,
+                ),
+            ],
+            category=Category.METADATA,
+        )
     ]

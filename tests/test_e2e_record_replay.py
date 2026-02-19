@@ -205,6 +205,7 @@ def normalize_blocks_for_comparison(blocks: list) -> list:
     - TextDeltaBlock count may differ (live: multiple chunks, replay: consolidated)
 
     This function normalizes blocks for semantic comparison.
+    Recurses into container children.
 
     Args:
         blocks: List of FormattedBlock objects
@@ -216,6 +217,11 @@ def normalize_blocks_for_comparison(blocks: list) -> list:
     pending_text_deltas = []
 
     for block in blocks:
+        # Recurse into container children
+        children = getattr(block, "children", None)
+        if children:
+            block.children = normalize_blocks_for_comparison(children)
+
         # Skip response headers (known divergence: live SSE vs replay JSON)
         if isinstance(block, fmt.HttpHeadersBlock) and block.header_type == 'response':
             continue
@@ -245,11 +251,50 @@ def normalize_blocks_for_comparison(blocks: list) -> list:
     return normalized
 
 
+def _compare_block_pair(live_block, replay_block, path: str) -> None:
+    """Compare a single pair of blocks, recursing into children."""
+    assert type(live_block) == type(replay_block), \
+        f"{path}: type mismatch: {type(live_block).__name__} != {type(replay_block).__name__}"
+
+    # For MetadataBlock, allow stream flag to differ (known HAR format decision)
+    if isinstance(live_block, fmt.MetadataBlock):
+        assert live_block.model == replay_block.model
+        assert live_block.max_tokens == replay_block.max_tokens
+        assert live_block.tool_count == replay_block.tool_count
+        return
+
+    # Recurse into container children
+    live_children = getattr(live_block, "children", None)
+    replay_children = getattr(replay_block, "children", None)
+    if live_children or replay_children:
+        live_children = live_children or []
+        replay_children = replay_children or []
+        assert len(live_children) == len(replay_children), \
+            f"{path}: children count mismatch: {len(live_children)} != {len(replay_children)}"
+        for j, (lc, rc) in enumerate(zip(live_children, replay_children)):
+            _compare_block_pair(lc, rc, f"{path}.children[{j}]")
+        # Compare container itself without children (clear children for repr)
+        live_copy = type(live_block)(**{
+            k: v for k, v in live_block.__dict__.items() if k != "children"
+        })
+        replay_copy = type(replay_block)(**{
+            k: v for k, v in replay_block.__dict__.items() if k != "children"
+        })
+        assert repr(live_copy) == repr(replay_copy), \
+            f"{path}: container mismatch:\nLive: {live_copy!r}\nReplay: {replay_copy!r}"
+        return
+
+    # Leaf blocks: require exact equality
+    assert repr(live_block) == repr(replay_block), \
+        f"{path}: content mismatch:\nLive: {live_block!r}\nReplay: {replay_block!r}"
+
+
 def compare_blocks(live_blocks: list, replay_blocks: list) -> None:
     """Compare two lists of blocks for semantic equality.
 
     Handles expected divergences from HAR format decisions while ensuring
     that the actual content and structure are preserved.
+    Recurses into container children.
 
     Args:
         live_blocks: Blocks from live processing
@@ -262,27 +307,11 @@ def compare_blocks(live_blocks: list, replay_blocks: list) -> None:
     live_norm = normalize_blocks_for_comparison(live_blocks)
     replay_norm = normalize_blocks_for_comparison(replay_blocks)
 
-    # Compare block types
     assert len(live_norm) == len(replay_norm), \
         f"Block count mismatch: live={len(live_norm)}, replay={len(replay_norm)}"
 
     for i, (live_block, replay_block) in enumerate(zip(live_norm, replay_norm)):
-        # Types must match
-        assert type(live_block) == type(replay_block), \
-            f"Block {i}: type mismatch: {type(live_block).__name__} != {type(replay_block).__name__}"
-
-        # For MetadataBlock, allow stream flag to differ (known HAR format decision)
-        if isinstance(live_block, fmt.MetadataBlock):
-            # Compare all fields except stream
-            assert live_block.model == replay_block.model
-            assert live_block.max_tokens == replay_block.max_tokens
-            assert live_block.tool_count == replay_block.tool_count
-            # stream flag may differ (live: true, replay: false in HAR)
-            continue
-
-        # For all other blocks, require exact equality
-        assert repr(live_block) == repr(replay_block), \
-            f"Block {i}: content mismatch:\nLive: {live_block!r}\nReplay: {replay_block!r}"
+        _compare_block_pair(live_block, replay_block, f"Block[{i}]")
 
 
 def test_record_replay_text_response(tmp_path, fresh_state):

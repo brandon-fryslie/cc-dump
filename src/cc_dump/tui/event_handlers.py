@@ -174,7 +174,7 @@ def handle_response_done(event: ResponseDoneEvent, state, widgets, app_state, lo
             stats.refresh_from_store(analytics_store, current_turn=None)
 
         # Re-render to show cache data in budget blocks
-        budget_vis = filters.get("budget", cc_dump.formatting.HIDDEN)
+        budget_vis = filters.get("metadata", cc_dump.formatting.HIDDEN)
         if budget_vis.visible:
             conv.rerender(filters)
 

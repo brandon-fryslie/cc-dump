@@ -39,14 +39,13 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         "ctrl+d": "half_page_down",
         "ctrl+u": "half_page_up",
 
-        # Visibility toggles (number keys)
+        # Visibility toggles (number keys) — 6 categories
         "1": "toggle_vis('user')",
         "2": "toggle_vis('assistant')",
         "3": "toggle_vis('tools')",
         "4": "toggle_vis('system')",
-        "5": "toggle_vis('budget')",
-        "6": "toggle_vis('metadata')",
-        "7": "toggle_vis('headers')",
+        "5": "toggle_vis('metadata')",
+        "6": "toggle_vis('thinking')",
 
         # Detail toggles (shifted numbers - try both literal and descriptive names)
         "!": "toggle_detail('user')",
@@ -57,30 +56,26 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         "number_sign": "toggle_detail('tools')",
         "$": "toggle_detail('system')",
         "dollar_sign": "toggle_detail('system')",
-        "%": "toggle_detail('budget')",
-        "percent_sign": "toggle_detail('budget')",
-        "^": "toggle_detail('metadata')",
-        "circumflex_accent": "toggle_detail('metadata')",
-        "&": "toggle_detail('headers')",
-        "ampersand": "toggle_detail('headers')",
+        "%": "toggle_detail('metadata')",
+        "percent_sign": "toggle_detail('metadata')",
+        "^": "toggle_detail('thinking')",
+        "circumflex_accent": "toggle_detail('thinking')",
 
         # Detail toggles (shifted letters - same as shifted numbers)
         "Q": "toggle_detail('user')",
         "W": "toggle_detail('assistant')",
         "E": "toggle_detail('tools')",
         "R": "toggle_detail('system')",
-        "T": "toggle_detail('budget')",
-        "Y": "toggle_detail('metadata')",
-        "U": "toggle_detail('headers')",
+        "T": "toggle_detail('metadata')",
+        "Y": "toggle_detail('thinking')",
 
-        # Expand toggles (q-u for categories 1-7)
+        # Expand toggles (q-y for categories 1-6)
         "q": "toggle_expand('user')",
         "w": "toggle_expand('assistant')",
         "e": "toggle_expand('tools')",
         "r": "toggle_expand('system')",
-        "t": "toggle_expand('budget')",
-        "y": "toggle_expand('metadata')",
-        "u": "toggle_expand('headers')",
+        "t": "toggle_expand('metadata')",
+        "y": "toggle_expand('thinking')",
 
         # Panels
         ".": "cycle_panel",
@@ -172,9 +167,9 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
 # These are shown in the custom footer based on current mode.
 FOOTER_KEYS: dict[InputMode, list[tuple[str, str]]] = {
     InputMode.NORMAL: [
-        ("1-7", "filters"),
-        ("qwertyu", "expand"),
-        ("QWERTYU", "detail"),
+        ("1-6", "filters"),
+        ("qwerty", "expand"),
+        ("QWERTY", "detail"),
         (".", "panel"),
         (",", "mode"),
         ("f", "follow"),
@@ -228,9 +223,9 @@ KEY_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("^F/^B", "Full page"),
     ]),
     ("Categories", [
-        ("1-7", "Toggle on/off"),
-        ("Q-U", "Detail level"),
-        ("q-u", "Expand all"),
+        ("1-6", "Toggle on/off"),
+        ("Q-Y", "Detail level"),
+        ("q-y", "Expand all"),
     ]),
     ("Panels", [
         (".", "Cycle panel"),

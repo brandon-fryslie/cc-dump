@@ -19,7 +19,7 @@ def get_vis_state(app: CcDumpApp, category: str) -> VisState:
 
 def get_all_vis_states(app: CcDumpApp, categories=None) -> dict[str, VisState]:
     """Read all category visibility states."""
-    categories = categories or ["user", "assistant", "tools", "system", "budget", "metadata", "headers"]
+    categories = categories or ["user", "assistant", "tools", "system", "metadata", "thinking"]
     return {cat: get_vis_state(app, cat) for cat in categories}
 
 

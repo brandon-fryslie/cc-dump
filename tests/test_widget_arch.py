@@ -70,11 +70,11 @@ class TestBlockCategoryCompleteness:
         BLOCK_CATEGORY uses class name strings as keys (for hot-reload safety).
         """
         # Blocks that check specific filters
-        assert BLOCK_CATEGORY["SeparatorBlock"] == Category.HEADERS
-        assert BLOCK_CATEGORY["HeaderBlock"] == Category.HEADERS
-        assert BLOCK_CATEGORY["HttpHeadersBlock"] == Category.HEADERS
+        assert BLOCK_CATEGORY["SeparatorBlock"] == Category.METADATA
+        assert BLOCK_CATEGORY["HeaderBlock"] == Category.METADATA
+        assert BLOCK_CATEGORY["HttpHeadersBlock"] == Category.METADATA
         assert BLOCK_CATEGORY["MetadataBlock"] == Category.METADATA
-        assert BLOCK_CATEGORY["TurnBudgetBlock"] == Category.BUDGET
+        assert BLOCK_CATEGORY["TurnBudgetBlock"] == Category.METADATA
         assert BLOCK_CATEGORY["SystemLabelBlock"] == Category.SYSTEM
         assert BLOCK_CATEGORY["TrackedContentBlock"] == Category.SYSTEM
         assert BLOCK_CATEGORY["ToolUseBlock"] == Category.TOOLS
@@ -106,7 +106,7 @@ class TestRenderTurnToStrips:
         filters = {}
         blocks = []
 
-        strips, block_map = render_turn_to_strips(blocks, filters, console, width=80)
+        strips, block_map, _ = render_turn_to_strips(blocks, filters, console, width=80)
 
         assert strips == []
         assert block_map == {}
@@ -114,13 +114,13 @@ class TestRenderTurnToStrips:
     def test_filtered_out_blocks_return_fewer_strips(self):
         """Blocks at EXISTENCE level are fully hidden (0 lines)."""
         console = Console()
-        filters = {"headers": HIDDEN}  # Fully hidden
+        filters = {"metadata": HIDDEN}  # Fully hidden
         blocks = [
             SeparatorBlock(style="light"),
             HeaderBlock(header_type="request", label="REQUEST 1", timestamp="12:00:00"),
         ]
 
-        strips, block_map = render_turn_to_strips(blocks, filters, console, width=80)
+        strips, block_map, _ = render_turn_to_strips(blocks, filters, console, width=80)
 
         # At EXISTENCE with default expanded=False, blocks are fully hidden
         assert len(strips) == 0
@@ -134,7 +134,7 @@ class TestRenderTurnToStrips:
             TextContentBlock(content="Hello, world!", indent=""),
         ]
 
-        strips, block_map = render_turn_to_strips(blocks, filters, console, width=80)
+        strips, block_map, _ = render_turn_to_strips(blocks, filters, console, width=80)
 
         # Should produce at least one strip
         assert len(strips) > 0
@@ -151,7 +151,7 @@ class TestRenderTurnToStrips:
             TextContentBlock(content="Line 1\nLine 2\nLine 3", indent=""),
         ]
 
-        strips, block_map = render_turn_to_strips(blocks, filters, console, width=80)
+        strips, block_map, _ = render_turn_to_strips(blocks, filters, console, width=80)
 
         # Should produce 3 strips (one per line)
         assert len(strips) == 3
@@ -160,14 +160,14 @@ class TestRenderTurnToStrips:
     def test_mixed_filtered_and_visible_blocks(self):
         """Mix of filtered and visible blocks should only render visible ones."""
         console = Console()
-        filters = {"headers": HIDDEN, "tools": ALWAYS_VISIBLE}
+        filters = {"metadata": HIDDEN, "tools": ALWAYS_VISIBLE}
         blocks = [
             HeaderBlock(header_type="request", label="REQUEST 1", timestamp="12:00:00"),  # hidden at EXISTENCE
             TextContentBlock(content="User message", indent=""),  # visible
             ToolUseBlock(name="read_file", input_size=100, msg_color_idx=0),  # visible
         ]
 
-        strips, block_map = render_turn_to_strips(blocks, filters, console, width=80)
+        strips, block_map, _ = render_turn_to_strips(blocks, filters, console, width=80)
 
         # Header is hidden at EXISTENCE level, so 2 strips (text + tool)
         assert len(strips) == 2
@@ -191,10 +191,9 @@ class TestTurnDataReRender:
         td = TurnData(turn_index=0, blocks=blocks, strips=[])
         td.compute_relevant_keys()
 
-        # Should find "tools" and "metadata" but not "headers" or "system"
+        # Should find "tools" and "metadata" but not "system"
         assert "tools" in td.relevant_filter_keys
         assert "metadata" in td.relevant_filter_keys
-        assert "headers" not in td.relevant_filter_keys
         assert "system" not in td.relevant_filter_keys
 
     def test_re_render_skips_when_irrelevant_filter_changes(self):
@@ -203,19 +202,19 @@ class TestTurnDataReRender:
             TextContentBlock(content="Hello", indent=""),
         ]
         console = Console()
-        filters1 = {"headers": HIDDEN, "tools": HIDDEN}
+        filters1 = {"metadata": HIDDEN, "tools": HIDDEN}
 
         td = TurnData(
             turn_index=0,
             blocks=blocks,
-            strips=render_turn_to_strips(blocks, filters1, console, width=80),
+            strips=render_turn_to_strips(blocks, filters1, console, width=80)[0],
         )
         td.compute_relevant_keys()
         # Initial render
         td.re_render(filters1, console, 80)
 
         # Change a filter that doesn't affect this turn
-        filters2 = {"headers": ALWAYS_VISIBLE, "tools": HIDDEN}  # headers changed, but no header blocks
+        filters2 = {"metadata": ALWAYS_VISIBLE, "tools": HIDDEN}  # metadata changed, but no metadata blocks in this turn
         result = td.re_render(filters2, console, 80)
 
         # Should skip re-render (return False)
@@ -233,7 +232,7 @@ class TestTurnDataReRender:
         td = TurnData(
             turn_index=0,
             blocks=blocks,
-            strips=render_turn_to_strips(blocks, filters1, console, width=80),
+            strips=render_turn_to_strips(blocks, filters1, console, width=80)[0],
         )
         td.compute_relevant_keys()
         # Initial render
@@ -257,7 +256,7 @@ class TestTurnDataReRender:
         td = TurnData(
             turn_index=0,
             blocks=blocks,
-            strips=render_turn_to_strips(blocks, filters1, console, width=80),
+            strips=render_turn_to_strips(blocks, filters1, console, width=80)[0],
         )
         td.compute_relevant_keys()
         td.re_render(filters1, console, 80)
@@ -424,7 +423,7 @@ class TestScrollPreservation:
         conv = ConversationView()
 
         for i, blocks in enumerate(turns_blocks):
-            strips, block_strip_map = render_turn_to_strips(blocks, filters, console, width=80)
+            strips, block_strip_map, _ = render_turn_to_strips(blocks, filters, console, width=80)
             td = TurnData(
                 turn_index=i,
                 blocks=blocks,
@@ -842,7 +841,7 @@ class TestViewportOnlyRerender:
                 TextContentBlock(content=f"Turn {i}", indent=""),
                 ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
             ]
-            strips, block_strip_map = render_turn_to_strips(blocks, filters, console, width=80)
+            strips, block_strip_map, _ = render_turn_to_strips(blocks, filters, console, width=80)
             td = TurnData(
                 turn_index=i,
                 blocks=blocks,
@@ -970,7 +969,7 @@ class TestLazyRerenderInRenderLine:
         filters = {"tools": ALWAYS_VISIBLE}
 
         # Build a turn manually
-        strips, block_strip_map = render_turn_to_strips(blocks, filters, console, width=80)
+        strips, block_strip_map, _ = render_turn_to_strips(blocks, filters, console, width=80)
         td = TurnData(
             turn_index=0,
             blocks=blocks,
@@ -1007,7 +1006,7 @@ class TestLazyRerenderInRenderLine:
         blocks = [TextContentBlock(content="Hello", indent="")]
         filters = {}
 
-        strips, block_strip_map = render_turn_to_strips(blocks, filters, console, width=80)
+        strips, block_strip_map, _ = render_turn_to_strips(blocks, filters, console, width=80)
         td = TurnData(
             turn_index=0,
             blocks=blocks,

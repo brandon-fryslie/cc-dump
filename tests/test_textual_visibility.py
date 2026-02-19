@@ -20,31 +20,30 @@ FULL_EXPANDED = VisState(True, True, True)
 
 
 async def test_default_visibility_levels():
-    """All 7 categories start at expected default levels."""
+    """All 6 categories start at expected default levels."""
     async with run_app() as (pilot, app):
         states = get_all_vis_states(app)
-        assert states["headers"] == HIDDEN
         assert states["user"] == ALWAYS_VISIBLE
         assert states["assistant"] == ALWAYS_VISIBLE
         assert states["tools"] == SUMMARY_COLLAPSED
         assert states["system"] == SUMMARY_COLLAPSED
-        assert states["budget"] == HIDDEN
         assert states["metadata"] == HIDDEN
+        assert states["thinking"] == SUMMARY_COLLAPSED
 
 
-async def test_toggle_headers_off_on():
-    """Press '7' toggles headers visibility: hidden -> visible -> hidden."""
+async def test_toggle_metadata_off_on():
+    """Press '5' toggles metadata visibility: hidden -> visible -> hidden."""
     async with run_app() as (pilot, app):
-        # Headers start hidden
-        assert get_vis_state(app, "headers") == HIDDEN
+        # Metadata starts hidden
+        assert get_vis_state(app, "metadata") == HIDDEN
 
         # Toggle visible: should show at summary-collapsed
-        await press_and_settle(pilot, "7")
-        assert get_vis_state(app, "headers") == SUMMARY_COLLAPSED
+        await press_and_settle(pilot, "5")
+        assert get_vis_state(app, "metadata") == SUMMARY_COLLAPSED
 
         # Toggle hidden: back to hidden
-        await press_and_settle(pilot, "7")
-        assert get_vis_state(app, "headers") == HIDDEN
+        await press_and_settle(pilot, "5")
+        assert get_vis_state(app, "metadata") == HIDDEN
 
 
 async def test_toggle_user_off_on():
@@ -63,23 +62,23 @@ async def test_toggle_user_off_on():
 
 
 async def test_detail_toggle_shifts_summary_full():
-    """Shift+7 (&) toggles detail between SUMMARY and FULL. Need to show headers first."""
+    """Shift+5 (%) toggles detail between SUMMARY and FULL. Need to show metadata first."""
     async with run_app() as (pilot, app):
-        # Headers start hidden. Show them first with '7'
-        await press_and_settle(pilot, "7")
-        assert get_vis_state(app, "headers") == SUMMARY_COLLAPSED
+        # Metadata starts hidden. Show it first with '5'
+        await press_and_settle(pilot, "5")
+        assert get_vis_state(app, "metadata") == SUMMARY_COLLAPSED
 
-        # Press &: toggle to FULL (preserves collapsed state)
-        await press_and_settle(pilot, "&")
-        assert get_vis_state(app, "headers") == FULL_COLLAPSED
+        # Press %: toggle to FULL (preserves collapsed state)
+        await press_and_settle(pilot, "%")
+        assert get_vis_state(app, "metadata") == FULL_COLLAPSED
 
-        # Press & again: toggle to SUMMARY (preserves collapsed state)
-        await press_and_settle(pilot, "&")
-        assert get_vis_state(app, "headers") == SUMMARY_COLLAPSED
+        # Press % again: toggle to SUMMARY (preserves collapsed state)
+        await press_and_settle(pilot, "%")
+        assert get_vis_state(app, "metadata") == SUMMARY_COLLAPSED
 
-        # Press & again: toggle to FULL (preserves collapsed state)
-        await press_and_settle(pilot, "&")
-        assert get_vis_state(app, "headers") == FULL_COLLAPSED
+        # Press % again: toggle to FULL (preserves collapsed state)
+        await press_and_settle(pilot, "%")
+        assert get_vis_state(app, "metadata") == FULL_COLLAPSED
 
 
 async def test_toggle_remembers_detail_level():
@@ -108,9 +107,8 @@ async def test_toggle_remembers_detail_level():
         ("2", "assistant"),
         ("3", "tools"),
         ("4", "system"),
-        ("5", "budget"),
-        ("6", "metadata"),
-        ("7", "headers"),
+        ("5", "metadata"),
+        ("6", "thinking"),
     ],
 )
 async def test_category_toggle(key, category):
@@ -130,34 +128,34 @@ async def test_category_toggle(key, category):
 async def test_cycle_vis_five_state_cycle():
     """Click-to-cycle progresses through 5 states: hidden → summary-collapsed → summary-expanded → full-collapsed → full-expanded → hidden."""
     async with run_app() as (pilot, app):
-        # Start with headers hidden
-        assert get_vis_state(app, "headers") == HIDDEN
+        # Start with metadata hidden
+        assert get_vis_state(app, "metadata") == HIDDEN
 
         # Cycle 1: Hidden → Summary Collapsed
-        app.action_cycle_vis("headers")
-        assert get_vis_state(app, "headers") == SUMMARY_COLLAPSED
+        app.action_cycle_vis("metadata")
+        assert get_vis_state(app, "metadata") == SUMMARY_COLLAPSED
 
         # Cycle 2: Summary Collapsed → Summary Expanded
-        app.action_cycle_vis("headers")
-        assert get_vis_state(app, "headers") == SUMMARY_EXPANDED
+        app.action_cycle_vis("metadata")
+        assert get_vis_state(app, "metadata") == SUMMARY_EXPANDED
 
         # Cycle 3: Summary Expanded → Full Collapsed
-        app.action_cycle_vis("headers")
-        assert get_vis_state(app, "headers") == FULL_COLLAPSED
+        app.action_cycle_vis("metadata")
+        assert get_vis_state(app, "metadata") == FULL_COLLAPSED
 
         # Cycle 4: Full Collapsed → Full Expanded
-        app.action_cycle_vis("headers")
-        assert get_vis_state(app, "headers") == FULL_EXPANDED
+        app.action_cycle_vis("metadata")
+        assert get_vis_state(app, "metadata") == FULL_EXPANDED
 
         # Cycle 5: Full Expanded → Hidden (wraps)
-        app.action_cycle_vis("headers")
-        assert get_vis_state(app, "headers") == HIDDEN
+        app.action_cycle_vis("metadata")
+        assert get_vis_state(app, "metadata") == HIDDEN
 
 
 async def test_cycle_vis_all_categories():
-    """cycle_vis works for all 7 categories and doesn't affect keyboard toggle behavior."""
+    """cycle_vis works for all 6 categories and doesn't affect keyboard toggle behavior."""
     async with run_app() as (pilot, app):
-        categories = ["user", "assistant", "tools", "system", "budget", "metadata", "headers"]
+        categories = ["user", "assistant", "tools", "system", "metadata", "thinking"]
 
         for cat in categories:
             initial = get_vis_state(app, cat)
