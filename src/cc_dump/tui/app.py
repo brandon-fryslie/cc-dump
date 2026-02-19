@@ -147,6 +147,13 @@ class CcDumpApp(App):
         self._settings_fields: list = []  # list[FieldState] from settings_panel
         self._settings_active_field: int = 0
 
+        # Launch config panel state
+        self._launch_config_panel_open: bool = False
+        self._launch_configs: list = []          # list[LaunchConfig]
+        self._launch_config_selected: int = 0    # selected index in list
+        self._launch_config_fields: list = []    # list[FieldState] for selected config
+        self._launch_config_active_field: int = 0
+
         # Exception tracking for error indicator
         self._exception_items: list = []
 
@@ -163,6 +170,8 @@ class CcDumpApp(App):
     def _input_mode(self):
         """// [LAW:one-source-of-truth] InputMode derived from app state."""
         InputMode = cc_dump.tui.input_modes.InputMode
+        if self._launch_config_panel_open:
+            return InputMode.LAUNCH_CONFIG
         if self._settings_panel_open:
             return InputMode.SETTINGS
         SearchPhase = cc_dump.tui.search.SearchPhase
@@ -403,6 +412,7 @@ class CcDumpApp(App):
                     cc_dump.tmux_controller.TmuxState.READY,
                     cc_dump.tmux_controller.TmuxState.CLAUDE_RUNNING,
                 }
+                import cc_dump.launch_config
                 state = {
                     **self.active_filters,
                     "active_panel": self.active_panel,
@@ -411,6 +421,7 @@ class CcDumpApp(App):
                     "tmux_available": tmux is not None and tmux.state in _TMUX_ACTIVE,
                     "tmux_auto_zoom": tmux.auto_zoom if tmux is not None else False,
                     "tmux_zoomed": tmux._is_zoomed if tmux is not None else False,
+                    "active_launch_config_name": cc_dump.launch_config.load_active_name(),
                 }
                 footer.update_display(state)
             self._update_error_indicator()
@@ -673,7 +684,11 @@ class CcDumpApp(App):
             else:
                 self.notify("Failed to focus claude pane", severity="error")
         elif tmux.state == cc_dump.tmux_controller.TmuxState.READY:
-            if tmux.launch_claude():
+            import cc_dump.launch_config
+            config = cc_dump.launch_config.get_active_config()
+            session_id = self._session_id if config.auto_resume else ""
+            extra_args = cc_dump.launch_config.build_command_args(config, session_id or "")
+            if tmux.launch_claude(extra_args=extra_args):
                 self.notify("Launched claude in tmux pane")
                 self._update_footer_state()
             else:
@@ -782,6 +797,215 @@ class CcDumpApp(App):
         if panels:
             panels.first().update_display(
                 self._settings_fields, self._settings_active_field
+            )
+
+    # Launch configs
+    def action_toggle_launch_config(self):
+        _actions.toggle_launch_config(self)
+
+    def _open_launch_config(self):
+        """Open launch config panel, populating state from saved configs."""
+        import cc_dump.launch_config
+        import cc_dump.tui.launch_config_panel
+
+        self._launch_configs = cc_dump.launch_config.load_configs()
+        self._launch_config_selected = 0
+        self._launch_config_fields = cc_dump.tui.launch_config_panel.make_field_states(
+            self._launch_configs[0]
+        )
+        self._launch_config_active_field = 0
+        self._launch_config_panel_open = True
+
+        panel = cc_dump.tui.launch_config_panel.create_launch_config_panel()
+        self.screen.mount(panel)
+        self._update_launch_config_panel_display()
+        self._update_footer_state()
+
+    def _close_launch_config(self, save: bool) -> None:
+        """Close launch config panel, optionally saving changes."""
+        import cc_dump.launch_config
+        import cc_dump.tui.launch_config_panel
+
+        if save:
+            # Apply field edits to the selected config before saving
+            selected = self._launch_config_selected
+            if selected < len(self._launch_configs):
+                cc_dump.tui.launch_config_panel.apply_fields_to_config(
+                    self._launch_configs[selected], self._launch_config_fields
+                )
+            cc_dump.launch_config.save_configs(self._launch_configs)
+
+        # Remove panel widget
+        for panel in self.screen.query(cc_dump.tui.launch_config_panel.LaunchConfigPanel):
+            panel.remove()
+        self._launch_config_panel_open = False
+        self._launch_configs = []
+        self._launch_config_fields = []
+        self._update_footer_state()
+
+    def _select_launch_config(self, idx: int) -> None:
+        """Switch selected config, saving edits to previous and loading new fields."""
+        import cc_dump.tui.launch_config_panel
+
+        # Save edits to current selection
+        old_idx = self._launch_config_selected
+        if old_idx < len(self._launch_configs):
+            cc_dump.tui.launch_config_panel.apply_fields_to_config(
+                self._launch_configs[old_idx], self._launch_config_fields
+            )
+
+        # Load fields for new selection
+        self._launch_config_selected = idx
+        self._launch_config_fields = cc_dump.tui.launch_config_panel.make_field_states(
+            self._launch_configs[idx]
+        )
+        self._launch_config_active_field = 0
+
+    def _launch_with_config(self, config) -> None:
+        """Build args from config + session_id, launch via tmux."""
+        import cc_dump.launch_config
+
+        tmux = self._tmux_controller
+        if tmux is None:
+            self.notify("Tmux not available", severity="warning")
+            return
+        import cc_dump.tmux_controller
+        if tmux.state not in (
+            cc_dump.tmux_controller.TmuxState.READY,
+            cc_dump.tmux_controller.TmuxState.CLAUDE_RUNNING,
+        ):
+            self.notify("Tmux not available", severity="warning")
+            return
+
+        session_id = self._session_id if config.auto_resume else ""
+        extra_args = cc_dump.launch_config.build_command_args(config, session_id or "")
+
+        # If already running, focus; otherwise launch fresh
+        if tmux.state == cc_dump.tmux_controller.TmuxState.CLAUDE_RUNNING:
+            tmux.focus_claude()
+            self.notify("Focused claude pane")
+        else:
+            if tmux.launch_claude(extra_args=extra_args):
+                self.notify("Launched: {}".format(config.name))
+            else:
+                self.notify("Failed to launch claude", severity="error")
+        self._update_footer_state()
+
+    def _handle_launch_config_key(self, event) -> None:
+        """Handle key events in LAUNCH_CONFIG mode."""
+        import cc_dump.launch_config
+        import cc_dump.tui.launch_config_panel
+
+        key = event.key
+        configs = self._launch_configs
+        idx = self._launch_config_selected
+
+        # Quick-launch by number (1-9)
+        if key in "123456789":
+            num = int(key) - 1
+            if num < len(configs):
+                # Save current edits, then launch
+                cc_dump.tui.launch_config_panel.apply_fields_to_config(
+                    configs[idx], self._launch_config_fields
+                )
+                cc_dump.launch_config.save_configs(configs)
+                cc_dump.launch_config.save_active_name(configs[num].name)
+                self._close_launch_config(save=False)  # already saved
+                self._launch_with_config(configs[num])
+            return
+
+        # Navigate config list
+        if key in ("j", "down"):
+            new_idx = min(idx + 1, len(configs) - 1)
+            if new_idx != idx:
+                self._select_launch_config(new_idx)
+                self._update_launch_config_panel_display()
+            return
+        if key in ("k", "up"):
+            new_idx = max(idx - 1, 0)
+            if new_idx != idx:
+                self._select_launch_config(new_idx)
+                self._update_launch_config_panel_display()
+            return
+
+        # Cycle field
+        if key == "tab":
+            fields = self._launch_config_fields
+            self._launch_config_active_field = (self._launch_config_active_field + 1) % len(fields)
+            self._update_launch_config_panel_display()
+            return
+        if key == "shift+tab":
+            fields = self._launch_config_fields
+            self._launch_config_active_field = (self._launch_config_active_field - 1) % len(fields)
+            self._update_launch_config_panel_display()
+            return
+
+        # Activate selected config
+        if key == "a":
+            cc_dump.tui.launch_config_panel.apply_fields_to_config(
+                configs[idx], self._launch_config_fields
+            )
+            cc_dump.launch_config.save_active_name(configs[idx].name)
+            cc_dump.launch_config.save_configs(configs)
+            self.notify("Active: {}".format(configs[idx].name))
+            self._update_launch_config_panel_display()
+            self._update_footer_state()
+            return
+
+        # New config
+        if key == "n":
+            cc_dump.tui.launch_config_panel.apply_fields_to_config(
+                configs[idx], self._launch_config_fields
+            )
+            new_config = cc_dump.launch_config.LaunchConfig(
+                name="config-{}".format(len(configs) + 1)
+            )
+            configs.append(new_config)
+            self._select_launch_config(len(configs) - 1)
+            self._update_launch_config_panel_display()
+            return
+
+        # Delete selected (prevent deleting last)
+        if key == "d":
+            if len(configs) <= 1:
+                self.notify("Cannot delete last config", severity="warning")
+                return
+            configs.pop(idx)
+            new_idx = min(idx, len(configs) - 1)
+            self._select_launch_config(new_idx)
+            self._update_launch_config_panel_display()
+            return
+
+        # Save and close
+        if key == "enter":
+            self._close_launch_config(save=True)
+            self.notify("Launch configs saved")
+            return
+
+        # Cancel and close
+        if key == "escape":
+            self._close_launch_config(save=False)
+            return
+
+        # Delegate to active field
+        fields = self._launch_config_fields
+        field_idx = self._launch_config_active_field
+        fields[field_idx].handle_key(key, event.character)
+        self._update_launch_config_panel_display()
+
+    def _update_launch_config_panel_display(self) -> None:
+        """Push current editing state to the launch config panel widget."""
+        import cc_dump.launch_config
+        import cc_dump.tui.launch_config_panel
+
+        panels = self.screen.query(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+        if panels:
+            panels.first().update_display(
+                self._launch_configs,
+                self._launch_config_selected,
+                self._launch_config_fields,
+                self._launch_config_active_field,
+                cc_dump.launch_config.load_active_name(),
             )
 
     # Navigation
@@ -895,7 +1119,11 @@ class CcDumpApp(App):
         MODE_KEYMAP = cc_dump.tui.input_modes.MODE_KEYMAP
         InputMode = cc_dump.tui.input_modes.InputMode
 
-        if mode == InputMode.SETTINGS:
+        if mode == InputMode.LAUNCH_CONFIG:
+            event.prevent_default()
+            self._handle_launch_config_key(event)
+            return
+        elif mode == InputMode.SETTINGS:
             event.prevent_default()
             self._handle_settings_key(event)
             return

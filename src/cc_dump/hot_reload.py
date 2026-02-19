@@ -20,6 +20,7 @@ _RELOAD_ORDER = [
     "cc_dump.analysis",  # no deps within project
     "cc_dump.formatting",  # depends on: colors, analysis
     "cc_dump.tui.action_config",  # depends on: formatting (VisState), pure data
+    "cc_dump.launch_config",  # depends on: settings (pure data + persistence)
     "cc_dump.segmentation",  # depends on: nothing (pure parser, before rendering)
     "cc_dump.router",  # depends on: nothing within reloadable set
     "cc_dump.tui.search",  # depends on: palette
@@ -32,6 +33,7 @@ _RELOAD_ORDER = [
     "cc_dump.tui.info_panel",  # depends on: palette, panel_renderers
     "cc_dump.tui.keys_panel",  # depends on: panel_renderers
     "cc_dump.tui.settings_panel",  # depends on: palette
+    "cc_dump.tui.launch_config_panel",  # depends on: palette, settings_panel
     "cc_dump.tui.session_panel",  # depends on: panel_renderers
     "cc_dump.tui.widget_factory",  # depends on: analysis, rendering, panel_renderers, error_indicator
 ]

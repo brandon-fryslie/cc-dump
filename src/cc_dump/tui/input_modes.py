@@ -18,6 +18,7 @@ class InputMode(Enum):
     SEARCH_EDIT = auto()
     SEARCH_NAV = auto()
     SETTINGS = auto()
+    LAUNCH_CONFIG = auto()
 
 
 # [LAW:one-source-of-truth] Key→action mapping per mode.
@@ -128,6 +129,9 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         # Settings panel
         "S": "toggle_settings",
 
+        # Launch config panel
+        "C": "toggle_launch_config",
+
         # Theme (try both key names - Textual might use descriptive names)
         "[": "prev_theme",
         "left_square_bracket": "prev_theme",
@@ -155,6 +159,10 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
 
     InputMode.SETTINGS: {
         # Empty - all keys consumed for field editing
+    },
+
+    InputMode.LAUNCH_CONFIG: {
+        # Empty - all keys consumed for config editing
     },
 }
 
@@ -196,6 +204,16 @@ FOOTER_KEYS: dict[InputMode, list[tuple[str, str]]] = {
         ("enter", "save"),
         ("esc", "cancel"),
     ],
+    InputMode.LAUNCH_CONFIG: [
+        ("1-9", "launch"),
+        ("j/k", "select"),
+        ("tab", "field"),
+        ("a", "activate"),
+        ("n", "new"),
+        ("d", "delete"),
+        ("enter", "save"),
+        ("esc", "close"),
+    ],
 }
 
 
@@ -231,6 +249,7 @@ KEY_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ("Other", [
         ("[/]", "Cycle theme"),
         ("c", "Claude (tmux)"),
+        ("C", "Run configs"),
         ("z/Z", "Zoom (tmux)"),
         ("S", "Settings"),
         ("^C ^C", "Quit"),

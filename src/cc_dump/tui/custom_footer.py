@@ -118,6 +118,10 @@ class StatusFooter(Static):
             line2.append(" ", style=claude_click)
             line2.append("claude", style=Style.parse("") + claude_click)
 
+            active_config_name = state.get("active_launch_config_name", "")
+            if active_config_name and active_config_name != "default":
+                line2.append(" [{}]".format(active_config_name), style="dim italic")
+
             zoom_click = _click("app.toggle_tmux_zoom")
             line2.append("  ")
             zoom_style = "bold reverse" if tmux_zoomed else "dim"

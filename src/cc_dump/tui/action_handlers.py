@@ -173,6 +173,21 @@ def toggle_settings(app) -> None:
         app._open_settings()
 
 
+def toggle_launch_config(app) -> None:
+    """Toggle the launch config panel via mount/remove.
+
+    On open: loads configs from settings.json into app editing state.
+    """
+    import cc_dump.tui.launch_config_panel
+
+    panel_class = cc_dump.tui.launch_config_panel.LaunchConfigPanel
+    existing = app.screen.query(panel_class)
+    if existing:
+        app._close_launch_config(save=False)
+    else:
+        app._open_launch_config()
+
+
 # ─── Filterset actions ─────────────────────────────────────────────────
 
 

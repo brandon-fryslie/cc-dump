@@ -181,11 +181,12 @@ class TmuxController:
             self._claude_pane = found
             self.state = TmuxState.CLAUDE_RUNNING
 
-    def launch_claude(self) -> bool:
+    def launch_claude(self, extra_args: str = "") -> bool:
         """Split pane and launch claude with ANTHROPIC_BASE_URL pointing at our proxy.
 
         Idempotent: if claude pane already exists, focuses it instead.
         Resilient: detects dead panes and pre-existing Claude processes.
+        extra_args: additional CLI flags appended after the base command.
         Returns True on success.
         """
         if self.state not in (TmuxState.READY, TmuxState.CLAUDE_RUNNING):
@@ -210,16 +211,28 @@ class TmuxController:
             import libtmux
 
             window = self._our_pane.window
+            shell = "ANTHROPIC_BASE_URL=http://127.0.0.1:{} {} {}".format(
+                self._port, self._claude_command, extra_args
+            ).rstrip()
             self._claude_pane = window.split(
                 direction=libtmux.constants.PaneDirection.Below,
-                shell="ANTHROPIC_BASE_URL=http://127.0.0.1:{} {}".format(
-                    self._port, self._claude_command
-                ),
+                shell=shell,
             )
             self.state = TmuxState.CLAUDE_RUNNING
             return True
         except Exception as e:
             _log("launch_claude error: {}".format(e))
+            return False
+
+    def focus_self(self) -> bool:
+        """Select the cc-dump pane."""
+        if self._our_pane is None:
+            return False
+        try:
+            self._our_pane.select()
+            return True
+        except Exception as e:
+            _log("focus_self error: {}".format(e))
             return False
 
     def focus_claude(self) -> bool:
