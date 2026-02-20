@@ -220,11 +220,30 @@ def render_timeline_panel(budgets: list[cc_dump.analysis.TurnBudget]) -> str:
     return "\n".join(lines)
 
 
+def _format_age(age_s: float) -> str:
+    """Format an age in seconds to a human-readable string.
+
+    Tiered formatting:
+    - <60s: per-second ("42s ago")
+    - <3600s: per-minute ("~3 min ago")
+    - <43200s: 30-min resolution ("~2.5hr ago")
+    - >=43200s: capped ("12+ hours ago")
+    """
+    if age_s < 60:
+        return "{:.0f}s ago".format(age_s)
+    if age_s < 3600:
+        return "~{:.0f} min ago".format(age_s / 60)
+    if age_s < 43200:
+        hours = round(age_s / 1800) / 2
+        return "~{:g}hr ago".format(hours)
+    return "12+ hours ago"
+
+
 def render_session_panel(
     connected: bool,
     session_id: str | None,
     last_message_time: float | None,
-) -> Text:
+) -> tuple[Text, tuple[int, int] | None]:
     """Render the session panel display text.
 
     // [LAW:dataflow-not-control-flow] All fields always rendered; connected drives indicator style.
@@ -233,12 +252,16 @@ def render_session_panel(
         connected: Whether a Claude Code client is considered connected
         session_id: Current session UUID (or None)
         last_message_time: monotonic time of last message (or None)
+
+    Returns:
+        Tuple of (Rich Text, session_id_span or None).
+        session_id_span is (start, end) char offsets of the session ID text for click detection.
     """
     import time
 
     p = cc_dump.palette.PALETTE
 
-    # Indicator
+    # Indicator + age inline
     result = Text()
     indicator = "\u25cf" if connected else "\u25cb"
     indicator_style = f"bold {p.info}" if connected else "dim"
@@ -247,26 +270,25 @@ def render_session_panel(
     result.append(" ")
     result.append(label, style=indicator_style)
 
-    # Session ID
-    session_display = session_id[:8] + "..." if session_id else "--"
-    result.append(" | Session: ")
-    result.append(session_display, style=f"{p.info}" if session_id else "dim")
-
-    # Last message age
-    result.append(" | Last: ")
+    # Age in parens after connection status
+    age_str = "--"
     if last_message_time is not None:
         age_s = time.monotonic() - last_message_time
-        if age_s < 60:
-            age_str = "{:.0f}s ago".format(age_s)
-        elif age_s < 3600:
-            age_str = "{:.0f}m ago".format(age_s / 60)
-        else:
-            age_str = "{:.0f}h ago".format(age_s / 3600)
-        result.append(age_str)
-    else:
-        result.append("--", style="dim")
+        age_str = _format_age(age_s)
+    result.append(" (")
+    result.append(age_str, style="" if last_message_time is not None else "dim")
+    result.append(")")
 
-    return result
+    # Session ID — full, with span tracking for click-to-copy
+    result.append(" | Session: ")
+    session_display = session_id or "--"
+    span_start = len(result)
+    result.append(session_display, style=f"{p.info}" if session_id else "dim")
+    span_end = len(result)
+
+    session_id_span = (span_start, span_end) if session_id else None
+
+    return result, session_id_span
 
 
 def render_info_panel(info: dict) -> Text:

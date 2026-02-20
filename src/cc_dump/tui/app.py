@@ -572,6 +572,9 @@ class CcDumpApp(App):
             self._session_id = current_session
             self.post_message(NewSession(current_session))
             self.notify(f"New session: {current_session[:8]}...")
+            info = self._get_info()
+            if info is not None:
+                info.update_info(self._build_server_info())
 
     # ─── Delegates to extracted modules ────────────────────────────────
     # Textual requires action_* and watch_* as methods on the App class.
