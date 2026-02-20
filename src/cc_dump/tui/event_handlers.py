@@ -7,13 +7,13 @@ but the actual behavior can be hot-swapped.
 
 import cc_dump.analysis
 import cc_dump.formatting
-from cc_dump.formatting import NewSessionBlock
 from cc_dump.event_types import (
     PipelineEventKind,
     RequestHeadersEvent,
     RequestBodyEvent,
     ResponseHeadersEvent,
     ResponseSSEEvent,
+    ResponseNonStreamingEvent,
     ResponseDoneEvent,
     ErrorEvent,
     ProxyErrorEvent,
@@ -48,12 +48,6 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
         # [LAW:one-source-of-truth] Header injection moved into format_request
         pending_headers = app_state.pop("pending_request_headers", None)
         blocks = cc_dump.formatting.format_request(body, state, request_headers=pending_headers)
-
-        # Check for new session — signal to app for notification/message
-        for block in blocks:
-            if isinstance(block, NewSessionBlock):
-                app_state["new_session_id"] = block.session_id
-                break
 
         conv = widgets["conv"]
         stats = widgets["stats"]
@@ -234,6 +228,51 @@ def handle_log(event: LogEvent, state, widgets, app_state, log_fn):
     return app_state
 
 
+def handle_response_non_streaming(event: ResponseNonStreamingEvent, state, widgets, app_state, log_fn):
+    """Handle a complete (non-streaming) HTTP response.
+
+    // [LAW:one-source-of-truth] Uses the same format_complete_response as replay.
+    """
+    try:
+        conv = widgets["conv"]
+        stats = widgets["stats"]
+        filters = widgets["filters"]
+        refresh_callbacks = widgets.get("refresh_callbacks", {})
+        analytics_store = widgets.get("analytics_store")
+
+        # Response header blocks
+        response_blocks = list(
+            cc_dump.formatting.format_response_headers(event.status_code, event.headers)
+        )
+
+        # Complete message blocks
+        response_blocks.extend(
+            cc_dump.formatting.format_complete_response(event.body)
+        )
+
+        # // [LAW:one-source-of-truth] Stamp with current session
+        current_session = state.get("current_session", "")
+        for block in response_blocks:
+            block.session_id = current_session
+
+        conv.add_turn(response_blocks, filters)
+
+        # Refresh stats and panels (same as response_done)
+        if analytics_store is not None:
+            stats.refresh_from_store(analytics_store, current_turn=None)
+        for cb_name in ("refresh_economics", "refresh_timeline", "refresh_session"):
+            cb = refresh_callbacks.get(cb_name)
+            if cb:
+                cb()
+
+        log_fn("DEBUG", f"Complete response: HTTP {event.status_code}")
+    except Exception as e:
+        log_fn("ERROR", f"Error handling complete response: {e}")
+        raise
+
+    return app_state
+
+
 def _noop(event, state, widgets, app_state, log_fn):
     """No-op handler for events that need no action."""
     return app_state
@@ -245,6 +284,7 @@ EVENT_HANDLERS = {
     PipelineEventKind.REQUEST: handle_request,
     PipelineEventKind.RESPONSE_HEADERS: handle_response_headers,
     PipelineEventKind.RESPONSE_EVENT: handle_response_event,
+    PipelineEventKind.RESPONSE_NON_STREAMING: handle_response_non_streaming,
     PipelineEventKind.RESPONSE_DONE: handle_response_done,
     PipelineEventKind.ERROR: handle_error,
     PipelineEventKind.PROXY_ERROR: handle_proxy_error,

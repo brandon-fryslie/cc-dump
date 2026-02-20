@@ -64,7 +64,6 @@ class TurnUsage(TypedDict, total=False):
 class AppState(TypedDict, total=False):
     current_turn_usage: TurnUsage
     pending_request_headers: dict[str, str]
-    new_session_id: str
 
 
 class NewSession(Message):
@@ -479,12 +478,9 @@ class CcDumpApp(App):
         if not self._replay_data:
             return
 
+        import cc_dump.har_replayer
+
         self._app_log("INFO", f"Processing {len(self._replay_data)} request/response pairs")
-        conv = self._get_conv()
-        stats = self._get_stats()
-        if conv is None:
-            self._app_log("ERROR", "Cannot process replay: conversation widget not found")
-            return
 
         for (
             req_headers,
@@ -494,37 +490,14 @@ class CcDumpApp(App):
             complete_message,
         ) in self._replay_data:
             try:
-                request_blocks = cc_dump.formatting.format_request(
-                    req_body, self._state, request_headers=req_headers
+                # // [LAW:one-source-of-truth] Replay uses the same event pipeline as live.
+                events = cc_dump.har_replayer.convert_to_events(
+                    req_headers, req_body, resp_status, resp_headers, complete_message
                 )
-                conv.add_turn(request_blocks, self.active_filters)
-
-                # [LAW:dataflow-not-control-flow] Always emit response header blocks;
-                # format_response_headers handles empty headers via empty dict
-                response_blocks = list(
-                    cc_dump.formatting.format_response_headers(
-                        resp_status, resp_headers or {}
-                    )
-                )
-                response_blocks.extend(
-                    cc_dump.formatting.format_complete_response(complete_message)
-                )
-                # // [LAW:one-source-of-truth] Stamp response blocks with current session
-                current_session = self._state.get("current_session", "")
-                def _stamp_session(blocks):
-                    for block in blocks:
-                        block.session_id = current_session
-                        _stamp_session(getattr(block, "children", []))
-                _stamp_session(response_blocks)
-                conv.add_turn(response_blocks, self.active_filters)
-
-                if stats:
-                    stats.update_stats(requests=self._state["request_counter"])
+                for event in events:
+                    self._handle_event(event)
             except Exception as e:
                 self._app_log("ERROR", f"Error processing replay pair: {e}")
-
-        if stats and self._analytics_store:
-            stats.refresh_from_store(self._analytics_store)
 
         self._app_log(
             "INFO",
@@ -591,12 +564,14 @@ class CcDumpApp(App):
             event, self._state, widgets, self._app_state, self._app_log
         )
 
-        # Check for new session signal from handler
-        new_session_id = self._app_state.pop("new_session_id", None)
-        if new_session_id:
-            self._session_id = new_session_id
-            self.post_message(NewSession(new_session_id))
-            self.notify(f"New session: {new_session_id[:8]}...")
+        # // [LAW:one-source-of-truth] Session ID comes from formatting state,
+        # not from blocks or app_state side-channels.
+        current_session = self._state.get("current_session", "")
+        if current_session and current_session != self._session_id:
+            self._app_log("INFO", f"Session detected: {current_session}")
+            self._session_id = current_session
+            self.post_message(NewSession(current_session))
+            self.notify(f"New session: {current_session[:8]}...")
 
     # ─── Delegates to extracted modules ────────────────────────────────
     # Textual requires action_* and watch_* as methods on the App class.
@@ -688,6 +663,7 @@ class CcDumpApp(App):
             config = cc_dump.launch_config.get_active_config()
             session_id = self._session_id if config.auto_resume else ""
             extra_args = cc_dump.launch_config.build_command_args(config, session_id or "")
+            self._app_log("INFO", f"Launching claude: config={config.name!r}, session_id={self._session_id!r}, auto_resume={config.auto_resume}, extra_args={extra_args!r}")
             if tmux.launch_claude(extra_args=extra_args):
                 self.notify("Launched claude in tmux pane")
                 self._update_footer_state()

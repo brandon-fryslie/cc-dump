@@ -1207,9 +1207,9 @@ _COMPLETE_RESPONSE_FACTORIES = {
 def format_complete_response(complete_message):
     """Format a complete (non-streaming) Claude message as FormattedBlocks.
 
-    This is used for replay mode - takes a complete message and builds the blocks
-    directly without going through streaming events. Wraps content in a
-    ResponseMessageBlock container.
+    Produces the same flat block list as the streaming path after finalization:
+    StreamInfoBlock, TextDeltaBlock/StreamToolUseBlock/..., StopReasonBlock.
+    // [LAW:one-source-of-truth] One block structure for responses, regardless of transport.
 
     Args:
         complete_message: Complete Claude API message dict
@@ -1217,27 +1217,24 @@ def format_complete_response(complete_message):
     Returns:
         List of FormattedBlock objects
     """
-    children: list[FormattedBlock] = []
+    blocks: list[FormattedBlock] = []
 
     # Model info
     model = complete_message.get("model", "?")
-    children.append(StreamInfoBlock(model=model))
+    blocks.append(StreamInfoBlock(model=model))
 
     # [LAW:dataflow-not-control-flow] Content blocks via dispatch table
     content = complete_message.get("content", [])
     for block in content:
         block_type = block.get("type", "")
         factory: Callable[[_ContentBlockDict], list[FormattedBlock]] = _COMPLETE_RESPONSE_FACTORIES.get(block_type, lambda _: [])
-        children.extend(factory(block))
+        blocks.extend(factory(block))
 
     # [LAW:dataflow-not-control-flow] Always create block, let renderer handle empty
     stop_reason = complete_message.get("stop_reason", "")
-    children.append(StopReasonBlock(reason=stop_reason))
+    blocks.append(StopReasonBlock(reason=stop_reason))
 
-    return [ResponseMessageBlock(
-        children=children,
-        category=Category.ASSISTANT,
-    )]
+    return blocks
 
 
 def format_request_headers(headers_dict: dict) -> list:

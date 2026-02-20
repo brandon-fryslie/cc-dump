@@ -26,6 +26,7 @@ class PipelineEventKind(Enum):
     REQUEST = "request"
     RESPONSE_HEADERS = "response_headers"
     RESPONSE_EVENT = "response_event"
+    RESPONSE_NON_STREAMING = "response_non_streaming"
     RESPONSE_DONE = "response_done"
     ERROR = "error"
     PROXY_ERROR = "proxy_error"
@@ -191,6 +192,16 @@ class ResponseSSEEvent(PipelineEvent):
 
     sse_event: SSEEvent
     kind: PipelineEventKind = field(default=PipelineEventKind.RESPONSE_EVENT, init=False)
+
+
+@dataclass(frozen=True)
+class ResponseNonStreamingEvent(PipelineEvent):
+    """A complete (non-streaming) HTTP response."""
+
+    status_code: int
+    headers: dict[str, str]
+    body: dict
+    kind: PipelineEventKind = field(default=PipelineEventKind.RESPONSE_NON_STREAMING, init=False)
 
 
 @dataclass(frozen=True)

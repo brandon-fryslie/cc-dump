@@ -19,6 +19,7 @@ from cc_dump.event_types import (
     RequestHeadersEvent,
     ResponseDoneEvent,
     ResponseHeadersEvent,
+    ResponseNonStreamingEvent,
     ResponseSSEEvent,
     parse_sse_event,
 )
@@ -331,6 +332,17 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         else:
             data = resp.read()
             self.wfile.write(data)
+            # Emit non-streaming response to pipeline
+            safe_resp_headers = _safe_headers(resp.headers)
+            try:
+                body = json.loads(data)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                body = {}
+            self.event_queue.put(ResponseNonStreamingEvent(
+                status_code=resp.status,
+                headers=safe_resp_headers,
+                body=body,
+            ))
 
     def _send_synthetic_response(self, response_text: str, body: dict) -> None:
         """Send a synthetic SSE response and emit pipeline events.
