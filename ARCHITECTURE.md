@@ -248,7 +248,7 @@ Modules are classified as **stable** (never reload) or **reloadable** (reload on
 
 | Stable boundaries | Reloadable modules |
 |---|---|
-| `proxy.py`, `cli.py`, `hot_reload.py` | `palette.py`, `colors.py`, `analysis.py` |
+| `proxy.py`, `cli.py`, `hot_reload.py` | `palette.py`, `analysis.py` |
 | `tui/app.py` | `formatting.py`, `tui/rendering.py` |
 | `har_recorder.py`, `har_replayer.py` | `tui/event_handlers.py`, `tui/widget_factory.py` |
 | `sessions.py` | `tui/panel_renderers.py`, `tui/custom_footer.py` |
@@ -270,13 +270,12 @@ Stable layer:
 
 Reloadable layer (reload order):
   1. palette.py
-  2. colors.py → palette
-  3. analysis.py (no deps)
-  4. formatting.py → {colors, analysis}
-  5. rendering.py → {formatting, palette}
-  6. panel_renderers.py → analysis
-  7. event_handlers.py → {formatting, analysis}
-  8. widget_factory.py → {rendering, analysis, panel_renderers, db_queries}
+  2. analysis.py (no deps)
+  3. formatting.py → {palette, analysis}
+  4. rendering.py → {formatting, palette}
+  5. panel_renderers.py → analysis
+  6. event_handlers.py → {formatting, analysis}
+  7. widget_factory.py → {rendering, analysis, panel_renderers, db_queries}
 
 Database layer:
   schema.py (no deps)

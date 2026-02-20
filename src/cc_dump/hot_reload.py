@@ -1,7 +1,7 @@
 """Hot-reload watcher for non-proxy modules.
 
 This module monitors Python source files and reloads them when changes are detected.
-Only pure-function modules are reloaded (formatting, rendering, analysis, colors).
+Only pure-function modules are reloaded (formatting, rendering, analysis, palette).
 Live instances (tui/app.py) and stable boundaries (proxy.py) are never reloaded.
 """
 
@@ -16,15 +16,14 @@ from pathlib import Path
 _RELOAD_ORDER = [
     "cc_dump.palette",  # no deps within project, base for all colors
     "cc_dump.tui.input_modes",  # no deps within project, pure data
-    "cc_dump.colors",  # depends on: palette
     "cc_dump.analysis",  # no deps within project
-    "cc_dump.formatting",  # depends on: colors, analysis
+    "cc_dump.formatting",  # depends on: palette, analysis
     "cc_dump.tui.action_config",  # depends on: formatting (VisState), pure data
     "cc_dump.launch_config",  # depends on: settings (pure data + persistence)
     "cc_dump.segmentation",  # depends on: nothing (pure parser, before rendering)
     "cc_dump.router",  # depends on: nothing within reloadable set
     "cc_dump.tui.search",  # depends on: palette
-    "cc_dump.tui.rendering",  # depends on: formatting, colors
+    "cc_dump.tui.rendering",  # depends on: formatting, palette
     "cc_dump.tui.dump_formatting",  # depends on: formatting
     "cc_dump.tui.custom_footer",  # depends on: palette, rendering
     "cc_dump.tui.panel_renderers",  # depends on: analysis

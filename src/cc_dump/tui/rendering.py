@@ -282,7 +282,7 @@ def set_theme(textual_theme) -> None:
     }
 
     p = cc_dump.palette.PALETTE
-    TAG_STYLES = [p.fg_on_bg_for_mode(i, tc.dark) for i in range(min(p.count, 12))]
+    TAG_STYLES = [p.fg_on_bg_for_mode(i, tc.dark) for i in range(min(p.count, cc_dump.palette.TAG_COLOR_COUNT))]
     MSG_COLORS = [p.msg_color_for_mode(i, tc.dark) for i in range(6)]
     FILTER_INDICATORS = _build_filter_indicators(tc)
 

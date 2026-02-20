@@ -43,14 +43,14 @@ class TestHotReloadErrorResilience:
         hr = self._setup_and_trigger()
 
         def failing_reload(mod):
-            if mod.__name__ == "cc_dump.colors":
+            if mod.__name__ == "cc_dump.palette":
                 raise SyntaxError("simulated syntax error")
             return mod  # Don't actually reload — avoids polluting sys.modules
 
         with patch.object(importlib, "reload", side_effect=failing_reload):
             reloaded = hr.check_and_get_reloaded()
 
-        assert "cc_dump.colors" not in reloaded, "Broken module should be skipped"
+        assert "cc_dump.palette" not in reloaded, "Broken module should be skipped"
         assert len(reloaded) > 0, "Other modules should still reload"
 
     def test_survives_import_error_in_module(self):
@@ -415,10 +415,10 @@ class TestHotReloadModuleStructure:
     def test_reload_order_respects_dependencies(self):
         from cc_dump.hot_reload import _RELOAD_ORDER
 
-        colors_idx = _RELOAD_ORDER.index("cc_dump.colors")
+        palette_idx = _RELOAD_ORDER.index("cc_dump.palette")
         analysis_idx = _RELOAD_ORDER.index("cc_dump.analysis")
         formatting_idx = _RELOAD_ORDER.index("cc_dump.formatting")
-        assert formatting_idx > colors_idx, "formatting should come after colors"
+        assert formatting_idx > palette_idx, "formatting should come after palette"
         assert formatting_idx > analysis_idx, "formatting should come after analysis"
 
         rendering_idx = _RELOAD_ORDER.index("cc_dump.tui.rendering")

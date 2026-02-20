@@ -56,12 +56,11 @@ These modules contain pure functions and class definitions. They can be safely r
 
 | Module | Dependencies | Purpose |
 |--------|--------------|---------|
-| `colors.py` | (none) | Color scheme definitions |
 | `analysis.py` | (none) | Request/response analysis functions |
 | `tui/protocols.py` | (none) | Protocol definitions for hot-swappable widgets |
 | `router.py` | (none) | Request routing / event fan-out |
-| `formatting.py` | colors, analysis | Format requests/responses to structured blocks |
-| `tui/rendering.py` | formatting, colors | Render blocks to Rich Text objects |
+| `formatting.py` | palette, analysis | Format requests/responses to structured blocks |
+| `tui/rendering.py` | formatting, palette | Render blocks to Rich Text objects |
 | `tui/panel_renderers.py` | analysis | Render stats/economics/timeline panels |
 | `tui/event_handlers.py` | analysis, formatting | Event processing logic |
 | `tui/widget_factory.py` | analysis, rendering, panel_renderers, protocols | Widget class definitions and factory functions |
@@ -149,7 +148,7 @@ Example:
 ```python
 # In hot_reload.py
 _RELOAD_ORDER = [
-    "cc_dump.colors",
+    "cc_dump.palette",
     "cc_dump.analysis",
     "cc_dump.tui.protocols",
     "cc_dump.your_new_module",  # <-- Add here if it depends on analysis

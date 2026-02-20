@@ -14,6 +14,10 @@ import os
 
 GOLDEN_ANGLE = 137.508
 
+# Canonical count of tag colors used for message-color indexing.
+# [LAW:one-source-of-truth] Single source for the "12 tag colors" constant.
+TAG_COLOR_COUNT = 12
+
 # Semantic target hues (degrees) for perceptually-stable roles
 _SEMANTIC_TARGETS = {
     "error": 0.0,  # red

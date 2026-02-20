@@ -28,7 +28,7 @@ from cc_dump.event_types import (
 )
 
 from cc_dump.analysis import TurnBudget, compute_turn_budget, estimate_tokens, tool_result_breakdown
-from cc_dump.colors import TAG_COLORS
+from cc_dump.palette import TAG_COLOR_COUNT
 
 # Type alias for content block dicts from the API response
 _ContentBlockDict = dict[str, str | int | dict | list | None]
@@ -564,7 +564,7 @@ def track_content(content, position_key, state, indent="    "):
                 color_idx = pos["color_idx"]
                 break
         if color_idx is None:
-            color_idx = state["next_color"] % len(TAG_COLORS)
+            color_idx = state["next_color"] % TAG_COLOR_COUNT
             state["next_color"] += 1
         tag_id = known_hashes[h]
         positions[position_key] = {
@@ -612,7 +612,7 @@ def track_content(content, position_key, state, indent="    "):
         )
 
     # Completely new
-    color_idx = state["next_color"] % len(TAG_COLORS)
+    color_idx = state["next_color"] % TAG_COLOR_COUNT
     state["next_color"] += 1
     state["next_id"] += 1
     tag_id = "sp-{}".format(state["next_id"])
