@@ -9,7 +9,6 @@
 
 import os
 import queue
-import time
 import threading
 from typing import Optional, TypedDict
 
@@ -72,6 +71,14 @@ class NewSession(Message):
 
     def __init__(self, session_id: str) -> None:
         self.session_id = session_id
+        super().__init__()
+
+
+class _ProxyEvent(Message, bubble=False):
+    """Thread-safe bridge: drain thread → app message pump."""
+
+    def __init__(self, event) -> None:
+        self.event = event
         super().__init__()
 
 
@@ -159,6 +166,8 @@ class CcDumpApp(App):
 
         # Exception tracking for error indicator
         self._exception_items: list = []
+        # Buffered error log — dumped to stderr after TUI exits
+        self._error_log: list[str] = []
 
         self._conv_id = "conversation-view"
         self._search_bar_id = "search-bar"
@@ -172,14 +181,14 @@ class CcDumpApp(App):
     @property
     def _input_mode(self):
         """// [LAW:one-source-of-truth] InputMode derived from focus ancestry + app state."""
+        import cc_dump.tui.launch_config_panel
+        import cc_dump.tui.settings_panel
         InputMode = cc_dump.tui.input_modes.InputMode
         if self._side_channel_panel_open:
             return InputMode.SIDE_CHANNEL
         # // [LAW:one-source-of-truth] Panel mode from focus ancestry (standard Textual).
         focused = self.screen.focused
         if focused is not None:
-            import cc_dump.tui.launch_config_panel
-            import cc_dump.tui.settings_panel
             for ancestor in focused.ancestors_with_self:
                 if isinstance(ancestor, cc_dump.tui.launch_config_panel.LaunchConfigPanel):
                     return InputMode.LAUNCH_CONFIG
@@ -387,6 +396,10 @@ class CcDumpApp(App):
         # Get normal Python traceback (not Textual's verbose one)
         tb = "".join(traceback.format_exception(type(error), error, error.__traceback__))
 
+        # Buffer for post-exit dump
+        self._error_log.append(f"EXCEPTION: {error}")
+        self._error_log.append(tb)
+
         # Log to LogsPanel
         self._app_log("ERROR", f"Unhandled exception: {error}")
         for line in tb.split("\n"):
@@ -407,6 +420,8 @@ class CcDumpApp(App):
     # ─── Helpers ───────────────────────────────────────────────────────
 
     def _app_log(self, level: str, message: str):
+        if level == "ERROR":
+            self._error_log.append(f"[{level}] {message}")
         if self.is_running:
             logs = self._get_logs()
             if logs is not None:
@@ -518,48 +533,40 @@ class CcDumpApp(App):
         self._replay_complete.set()
 
     def _drain_events(self):
+        """Bridge thread: queue.get → post_message into Textual's message pump.
+
+        Uses post_message (thread-safe, non-blocking) instead of call_from_thread
+        so events flow through the normal message pump and don't interfere with
+        _wait_for_screen settling in pilot tests.
+        """
         self._replay_complete.wait()
-        last_reload_check = 0.0
         while not self._closing:
             try:
                 event = self._event_queue.get(timeout=1.0)
             except queue.Empty:
-                self.call_from_thread(self._check_hot_reload)
-                last_reload_check = time.monotonic()
                 continue
             except Exception as e:
                 if self._closing:
                     break
-                self.call_from_thread(self._app_log, "ERROR", f"Event queue error: {e}")
+                import sys
+                print(f"Event queue error: {e}", file=sys.__stderr__)
                 continue
 
-            now = time.monotonic()
-            if now - last_reload_check >= 1.0:
-                self.call_from_thread(self._check_hot_reload)
-                last_reload_check = now
+            self.post_message(_ProxyEvent(event))
 
-            # Batch: drain all immediately available events
-            batch = [event]
-            while True:
-                try:
-                    batch.append(self._event_queue.get_nowait())
-                except queue.Empty:
-                    break
-
-            self.call_from_thread(self._handle_event_batch, batch)
-
-    def _handle_event_batch(self, events: list):
-        for event in events:
-            self._handle_event(event)
+    def on__proxy_event(self, message: _ProxyEvent):
+        self._handle_event(message.event)
 
     def _handle_event(self, event):
         try:
             self._handle_event_inner(event)
         except Exception as e:
-            self._app_log("ERROR", f"Uncaught exception handling event: {e}")
             import traceback
 
             tb = traceback.format_exc()
+            self._error_log.append(f"CRASH in _handle_event: {e}")
+            self._error_log.append(tb)
+            self._app_log("ERROR", f"Uncaught exception handling event: {e}")
             for line in tb.split("\n"):
                 if line:
                     self._app_log("ERROR", f"  {line}")

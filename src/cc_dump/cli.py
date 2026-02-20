@@ -259,6 +259,13 @@ def main():
     try:
         app.run()
     finally:
+        # Dump buffered errors to stderr (TUI is gone, terminal is restored)
+        if app._error_log:
+            print("\n[cc-dump] Errors during session:", file=sys.stderr)
+            for line in app._error_log:
+                print(f"  {line}", file=sys.stderr)
+            sys.stderr.flush()
+
         # Clean up tmux state (unzoom)
         if tmux_ctrl:
             tmux_ctrl.cleanup()
