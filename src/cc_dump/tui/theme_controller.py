@@ -7,6 +7,7 @@ Not hot-reloadable (accesses app console and theme state).
 """
 
 import cc_dump.tui.rendering
+from rich.theme import Theme as RichTheme
 
 
 def cycle_theme(app, direction: int) -> None:
@@ -43,7 +44,6 @@ def apply_markdown_theme(app) -> None:
         return
 
     tc = cc_dump.tui.rendering.get_theme_colors()
-    from rich.theme import Theme as RichTheme
 
     # Pop old markdown theme if we pushed one before
     if app._markdown_theme_pushed:

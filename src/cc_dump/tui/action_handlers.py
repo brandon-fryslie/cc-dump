@@ -14,6 +14,12 @@ import cc_dump.tui.rendering
 
 # [LAW:one-source-of-truth] Panel order derived from registry
 from cc_dump.tui.panel_registry import PANEL_ORDER
+from snarfx import transaction
+import cc_dump.tui.keys_panel
+import cc_dump.tui.settings_panel
+import cc_dump.tui.launch_config_panel
+import cc_dump.tui.side_channel_panel
+import cc_dump.tui.widget_factory
 
 
 # ─── Visibility actions ────────────────────────────────────────────────
@@ -21,8 +27,6 @@ from cc_dump.tui.panel_registry import PANEL_ORDER
 
 def _toggle_vis_dicts(app, category: str, spec_key: str) -> None:
     """// [LAW:one-type-per-behavior] Single function for all visibility mutations."""
-    from snarfx import transaction
-
     store = app._view_store
     # Clear overrides BEFORE transaction so autorun sees clean block state
     clear_overrides(app, category)
@@ -75,8 +79,6 @@ def cycle_vis(app, category: str) -> None:
     // [LAW:dataflow-not-control-flow] State progression driven by _VIS_CYCLE list.
     // [LAW:one-type-per-behavior] Single function for all category visibility cycling.
     """
-    from snarfx import transaction
-
     store = app._view_store
     # Get current state from store
     current = cc_dump.formatting.VisState(
@@ -163,7 +165,6 @@ def toggle_info(app) -> None:
 
 def toggle_keys(app) -> None:
     """Toggle the keys panel via mount/remove."""
-    import cc_dump.tui.keys_panel
     panel_class = cc_dump.tui.keys_panel.KeysPanel
     existing = app.screen.query(panel_class)
     if existing:
@@ -174,8 +175,6 @@ def toggle_keys(app) -> None:
 
 def toggle_settings(app) -> None:
     """Toggle the settings panel via mount/remove."""
-    import cc_dump.tui.settings_panel
-
     panel_class = cc_dump.tui.settings_panel.SettingsPanel
     existing = app.screen.query(panel_class)
     if existing:
@@ -186,8 +185,6 @@ def toggle_settings(app) -> None:
 
 def toggle_launch_config(app) -> None:
     """Toggle the launch config panel via mount/remove."""
-    import cc_dump.tui.launch_config_panel
-
     panel_class = cc_dump.tui.launch_config_panel.LaunchConfigPanel
     existing = app.screen.query(panel_class)
     if existing:
@@ -198,8 +195,6 @@ def toggle_launch_config(app) -> None:
 
 def toggle_side_channel(app) -> None:
     """Toggle the side-channel AI panel via mount/remove."""
-    import cc_dump.tui.side_channel_panel
-
     panel_class = cc_dump.tui.side_channel_panel.SideChannelPanel
     existing = app.screen.query(panel_class)
     if existing:
@@ -264,7 +259,6 @@ def toggle_follow(app) -> None:
 
 def go_top(app) -> None:
     def _go(c):
-        import cc_dump.tui.widget_factory
         # // [LAW:dataflow-not-control-flow] Deactivate via table lookup.
         c._follow_state = cc_dump.tui.widget_factory._FOLLOW_DEACTIVATE[c._follow_state]
         c.scroll_home(animate=False)

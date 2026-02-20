@@ -5,7 +5,9 @@ Each subscriber can choose how to receive events (queue-based or direct callback
 """
 
 import queue
+import sys
 import threading
+import traceback
 from typing import Protocol
 
 from cc_dump.event_types import PipelineEvent
@@ -77,9 +79,6 @@ class EventRouter:
                     sub.on_event(event)
                 except Exception as e:
                     # Don't let one subscriber's error kill the router
-                    import sys
-                    import traceback
-
                     sys.stderr.write("[router] subscriber error: {}\n".format(e))
                     traceback.print_exc(file=sys.stderr)
                     sys.stderr.flush()

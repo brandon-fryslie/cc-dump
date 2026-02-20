@@ -4,7 +4,10 @@ This module is RELOADABLE. When it reloads, the app can create new widget
 instances from the updated class definitions and swap them in.
 """
 
+import datetime
 import json
+import sys
+import traceback
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
@@ -14,7 +17,7 @@ from textual.scroll_view import ScrollView
 from textual.selection import Selection
 from textual.strip import Strip
 from textual.cache import LRUCache
-from textual.geometry import Size
+from textual.geometry import Size, Offset
 from rich.segment import Segment
 from rich.text import Text
 
@@ -316,7 +319,6 @@ class ConversationView(ScrollView):
             )
             return strip
         except Exception as exc:
-            import sys, traceback
             sys.stderr.write("[render] " + traceback.format_exc())
             sys.stderr.flush()
             # Show in error indicator overlay (deduplicate by exception type+message)
@@ -373,8 +375,6 @@ class ConversationView(ScrollView):
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
         """Extract plain text from the selection range, stripping gutters."""
-        from textual.geometry import Offset
-
         # [LAW:one-source-of-truth] Gutter sizing from rendering module
         left = cc_dump.tui.rendering.GUTTER_WIDTH
         has_right = self.size.width >= cc_dump.tui.rendering.MIN_WIDTH_FOR_RIGHT_GUTTER
@@ -647,17 +647,10 @@ class ConversationView(ScrollView):
 
         Returns the final block list.
         """
-        # Import the CURRENT classes (post-reload) for creating new blocks
-        from cc_dump.formatting import TextContentBlock, MessageBlock
-
         if not self._turns or not self._turns[-1].is_streaming:
             return []
 
         td = self._turns[-1]
-
-        # Consolidate consecutive TextDeltaBlock runs into TextContentBlock
-        # Use class name for hot-reload safety
-        from cc_dump.formatting import Category
 
         consolidated = []
         delta_buffer = []
@@ -670,7 +663,7 @@ class ConversationView(ScrollView):
                 if delta_buffer:
                     combined_text = "".join(delta_buffer)
                     consolidated.append(
-                        TextContentBlock(content=combined_text, category=Category.ASSISTANT)
+                        cc_dump.formatting.TextContentBlock(content=combined_text, category=cc_dump.formatting.Category.ASSISTANT)
                     )
                     delta_buffer.clear()
                 # Add the non-delta block
@@ -680,7 +673,7 @@ class ConversationView(ScrollView):
         if delta_buffer:
             combined_text = "".join(delta_buffer)
             consolidated.append(
-                TextContentBlock(content=combined_text, category=Category.ASSISTANT)
+                cc_dump.formatting.TextContentBlock(content=combined_text, category=cc_dump.formatting.Category.ASSISTANT)
             )
 
         # // [LAW:one-source-of-truth] Wrap content in MessageBlock, matching request-side structure.
@@ -688,11 +681,11 @@ class ConversationView(ScrollView):
         _metadata_types = {"StreamInfoBlock", "StopReasonBlock"}
         content_children = [b for b in consolidated if type(b).__name__ not in _metadata_types]
         metadata = [b for b in consolidated if type(b).__name__ in _metadata_types]
-        consolidated = metadata[:1] + [MessageBlock(
+        consolidated = metadata[:1] + [cc_dump.formatting.MessageBlock(
             role="assistant",
             msg_index=0,
             children=content_children,
-            category=Category.ASSISTANT,
+            category=cc_dump.formatting.Category.ASSISTANT,
         )] + metadata[1:]
 
         # Eagerly populate content_regions for all text blocks (recursive tree walk)
@@ -1102,8 +1095,6 @@ class ConversationView(ScrollView):
         (chain==2), which normally selects ALL text. We narrow to the block
         under the cursor using the position stored from the most recent click.
         """
-        from textual.geometry import Offset
-
         content_y = getattr(self, "_last_click_content_y", None)
         if content_y is None:
             super().text_select_all()
@@ -1710,8 +1701,6 @@ class LogsPanel(RichLog):
             level: Log level (DEBUG, INFO, WARNING, ERROR)
             message: Log message
         """
-        import datetime
-
         timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
         log_text = Text()

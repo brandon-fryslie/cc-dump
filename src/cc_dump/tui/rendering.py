@@ -57,6 +57,14 @@ from cc_dump.formatting import (
 
 import cc_dump.palette
 
+import re
+import os
+from rich.segment import Segment
+from rich.style import Style
+from textual.strip import Strip
+from textual.color import Color
+import cc_dump.segmentation
+
 # Click-target meta keys — the sole identifiers for interactive segments.
 # // [LAW:one-source-of-truth] Canonical constants; widget_factory reads these via module import.
 META_TOGGLE_BLOCK = "toggle_block"
@@ -142,7 +150,6 @@ def _normalize_color(color: str | None, fallback: str) -> str:
     if color.startswith("#") and len(color) == 7:
         return color
     try:
-        from textual.color import Color
         c = Color.parse(color)
         r, g, b = c.rgb
         return "#{:02X}{:02X}{:02X}".format(r, g, b)
@@ -460,7 +467,6 @@ def _render_xml_tag(tag_text: str) -> Text:
     // [LAW:one-source-of-truth] Single function for all XML tag rendering.
     // [LAW:one-type-per-behavior] All XML tags render identically — one function.
     """
-    import re
 
     tc = get_theme_colors()
     t = Text()
@@ -685,55 +691,48 @@ def _render_role(block: RoleBlock) -> Text | None:
 def _get_or_segment(block):
     """Lazy segmentation, cached on the block object."""
     if not hasattr(block, "_segment_result"):
-        from cc_dump.segmentation import segment
 
-        block._segment_result = segment(block.content)
+        block._segment_result = cc_dump.segmentation.segment(block.content)
     return block._segment_result
 
 
 def _render_text_as_markdown(text: str, seg=None) -> ConsoleRenderable:
     """Render text string as Markdown using SubBlock segmentation.
 
-    // [LAW:dataflow-not-control-flow] Dispatch via SubBlockKind match.
+    // [LAW:dataflow-not-control-flow] Dispatch via cc_dump.segmentation.SubBlockKind match.
 
     Extracted from _render_segmented_block to enable reuse for TrackedContentBlock.
     Accepts optional pre-computed segmentation to avoid double work.
     """
-    from cc_dump.segmentation import (
-        segment,
-        SubBlockKind,
-        wrap_tags_in_backticks,
-        wrap_tags_outside_fences,
-    )
 
     tc = get_theme_colors()
     if seg is None:
-        seg = segment(text)
+        seg = cc_dump.segmentation.segment(text)
 
     # Single SubBlock of kind MD: fast path — just Markdown with tag wrapping
-    if len(seg.sub_blocks) == 1 and seg.sub_blocks[0].kind == SubBlockKind.MD:
-        return Markdown(wrap_tags_in_backticks(text), code_theme=tc.code_theme)
+    if len(seg.sub_blocks) == 1 and seg.sub_blocks[0].kind == cc_dump.segmentation.SubBlockKind.MD:
+        return Markdown(cc_dump.segmentation.wrap_tags_in_backticks(text), code_theme=tc.code_theme)
 
     parts: list[ConsoleRenderable] = []
     for sb in seg.sub_blocks:
         text_slice = text[sb.span.start : sb.span.end]
 
-        if sb.kind == SubBlockKind.MD:
-            wrapped = wrap_tags_in_backticks(text_slice)
+        if sb.kind == cc_dump.segmentation.SubBlockKind.MD:
+            wrapped = cc_dump.segmentation.wrap_tags_in_backticks(text_slice)
             if wrapped.strip():
                 parts.append(Markdown(wrapped, code_theme=tc.code_theme))
 
-        elif sb.kind == SubBlockKind.MD_FENCE:
+        elif sb.kind == cc_dump.segmentation.SubBlockKind.MD_FENCE:
             inner = text[sb.meta.inner_span.start : sb.meta.inner_span.end]
-            wrapped = wrap_tags_in_backticks(inner)
+            wrapped = cc_dump.segmentation.wrap_tags_in_backticks(inner)
             if wrapped.strip():
                 parts.append(Markdown(wrapped, code_theme=tc.code_theme))
 
-        elif sb.kind == SubBlockKind.CODE_FENCE:
+        elif sb.kind == cc_dump.segmentation.SubBlockKind.CODE_FENCE:
             inner = text[sb.meta.inner_span.start : sb.meta.inner_span.end]
             parts.append(Syntax(inner, sb.meta.info or "", theme=tc.code_theme))
 
-        elif sb.kind == SubBlockKind.XML_BLOCK:
+        elif sb.kind == cc_dump.segmentation.SubBlockKind.XML_BLOCK:
             m = sb.meta
             start_tag = text[m.start_tag_span.start : m.start_tag_span.end].rstrip("\n")
             end_tag = text[m.end_tag_span.start : m.end_tag_span.end].rstrip("\n")
@@ -742,7 +741,7 @@ def _render_text_as_markdown(text: str, seg=None) -> ConsoleRenderable:
             if inner.strip():
                 xml_parts.append(
                     Markdown(
-                        wrap_tags_outside_fences(inner),
+                        cc_dump.segmentation.wrap_tags_outside_fences(inner),
                         code_theme=tc.code_theme,
                     )
                 )
@@ -750,7 +749,7 @@ def _render_text_as_markdown(text: str, seg=None) -> ConsoleRenderable:
             parts.append(Group(*xml_parts))
 
     if not parts:
-        return Markdown(wrap_tags_in_backticks(text), code_theme=tc.code_theme)
+        return Markdown(cc_dump.segmentation.wrap_tags_in_backticks(text), code_theme=tc.code_theme)
     if len(parts) == 1:
         return parts[0]
     return Group(*parts)
@@ -759,7 +758,7 @@ def _render_text_as_markdown(text: str, seg=None) -> ConsoleRenderable:
 def _render_segmented_block(block) -> ConsoleRenderable:
     """Render a text block using SubBlock segmentation.
 
-    // [LAW:dataflow-not-control-flow] Dispatch via SubBlockKind match.
+    // [LAW:dataflow-not-control-flow] Dispatch via cc_dump.segmentation.SubBlockKind match.
     """
     # Use cached segmentation on the block object for efficiency
     seg = _get_or_segment(block)
@@ -797,11 +796,6 @@ def _render_region_parts(
     Returns:
         List of (renderable, region_idx) tuples.
     """
-    from cc_dump.segmentation import (
-        SubBlockKind,
-        wrap_tags_in_backticks,
-        wrap_tags_outside_fences,
-    )
 
     text = block.content
     regions = block.content_regions
@@ -817,18 +811,18 @@ def _render_region_parts(
         region_idx = region.index if region else None
         text_slice = text[sb.span.start : sb.span.end]
 
-        if sb.kind == SubBlockKind.MD:
-            wrapped = wrap_tags_in_backticks(text_slice)
+        if sb.kind == cc_dump.segmentation.SubBlockKind.MD:
+            wrapped = cc_dump.segmentation.wrap_tags_in_backticks(text_slice)
             if wrapped.strip():
                 parts.append((Markdown(wrapped, code_theme=tc.code_theme), region_idx))
 
-        elif sb.kind == SubBlockKind.MD_FENCE:
+        elif sb.kind == cc_dump.segmentation.SubBlockKind.MD_FENCE:
             inner = text[sb.meta.inner_span.start : sb.meta.inner_span.end]
-            wrapped = wrap_tags_in_backticks(inner)
+            wrapped = cc_dump.segmentation.wrap_tags_in_backticks(inner)
             if wrapped.strip():
                 parts.append((Markdown(wrapped, code_theme=tc.code_theme), region_idx))
 
-        elif sb.kind == SubBlockKind.CODE_FENCE:
+        elif sb.kind == cc_dump.segmentation.SubBlockKind.CODE_FENCE:
             inner = text[sb.meta.inner_span.start : sb.meta.inner_span.end]
             # FUTURE: collapsible code fences — add "code_fence" to COLLAPSIBLE_REGION_KINDS
             parts.append(
@@ -838,7 +832,7 @@ def _render_region_parts(
                 )
             )
 
-        elif sb.kind == SubBlockKind.XML_BLOCK:
+        elif sb.kind == cc_dump.segmentation.SubBlockKind.XML_BLOCK:
             # expanded=None or True means expanded; False means collapsed
             is_expanded = (region is None) or (region.expanded is not False)
 
@@ -861,7 +855,7 @@ def _render_region_parts(
                 if inner.strip():
                     xml_parts_with_header.append(
                         Markdown(
-                            wrap_tags_outside_fences(inner),
+                            cc_dump.segmentation.wrap_tags_outside_fences(inner),
                             code_theme=tc.code_theme,
                         )
                     )
@@ -946,7 +940,6 @@ def _infer_lang_from_path(path: str) -> str:
     Returns empty string for unknown extensions (Syntax falls back to plain text).
     // [LAW:one-source-of-truth] _EXT_TO_LANG is the sole mapping.
     """
-    import os
 
     _, ext = os.path.splitext(path)
     return _EXT_TO_LANG.get(ext.lower(), "")
@@ -1723,9 +1716,6 @@ RENDERERS = _build_renderer_registry()
 
 def _make_collapse_indicator(hidden_lines: int, content_width: int):
     """Create a dim '... N more lines' strip at content width (gutter added separately)."""
-    from rich.segment import Segment
-    from rich.style import Style
-    from textual.strip import Strip
 
     text = "    \u00b7\u00b7\u00b7 {} more lines".format(hidden_lines)
     seg = Segment(text, style=Style(dim=True))
@@ -1780,9 +1770,6 @@ def _add_gutter_to_strips(
     if not block_strips:
         return block_strips
 
-    from rich.segment import Segment
-    from rich.style import Style
-    from textual.strip import Strip
 
     # Neutral mode: dim gutters, no arrow
     if neutral:
@@ -1939,8 +1926,6 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
     // [LAW:single-enforcer] All visibility logic in this function.
     // [LAW:dataflow-not-control-flow] Same operations every call; values decide outcomes.
     """
-    from rich.segment import Segment
-    from textual.strip import Strip
 
     vis = _resolve_visibility(block, ctx.filters)
     max_lines = TRUNCATION_LIMITS[vis]
@@ -2162,9 +2147,6 @@ def render_streaming_preview(text: str, console, width: int) -> list:
     Used by _refresh_streaming_delta() for O(n) rendering of accumulated text,
     replacing the O(n^2) full pipeline that re-ran all visibility/dispatch logic.
     """
-    from rich.segment import Segment
-    from rich.markdown import Markdown
-    from textual.strip import Strip
 
     # // [LAW:one-source-of-truth] Reuse gutter constants from this module
     show_right = width >= MIN_WIDTH_FOR_RIGHT_GUTTER
@@ -2287,7 +2269,6 @@ def _apply_search_highlights(
     Uses identity matching (block is current.block) when block is provided,
     falling back to index comparison for backwards compatibility.
     """
-    from rich.style import Style
 
     tc = get_theme_colors()
 

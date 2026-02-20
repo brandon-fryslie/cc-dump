@@ -10,6 +10,7 @@ for hot-reload preservation.
 
 import json
 import sys
+import traceback
 from dataclasses import dataclass, field
 
 from cc_dump.event_types import (
@@ -80,8 +81,6 @@ class AnalyticsStore:
         try:
             self._handle(event)
         except Exception as e:
-            import traceback
-
             sys.stderr.write("[analytics] error: {}\n".format(e))
             traceback.print_exc(file=sys.stderr)
             sys.stderr.flush()

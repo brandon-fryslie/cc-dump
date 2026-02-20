@@ -11,6 +11,23 @@ from datetime import datetime
 from cc_dump.proxy import ProxyHandler
 from cc_dump.router import EventRouter, QueueSubscriber, DirectSubscriber
 from cc_dump.analytics_store import AnalyticsStore
+import cc_dump.stderr_tee
+import cc_dump.palette
+import cc_dump.sessions
+from cc_dump.event_types import PipelineEvent
+import cc_dump.har_replayer
+import cc_dump.har_recorder
+import cc_dump.settings
+import cc_dump.tmux_controller
+import cc_dump.settings_store
+import cc_dump.launch_config
+import cc_dump.side_channel
+import cc_dump.data_dispatcher
+import cc_dump.sentinel
+from cc_dump.proxy import RequestPipeline
+import cc_dump.view_store
+import cc_dump.hot_reload
+from cc_dump.tui.app import CcDumpApp
 
 
 def main():
@@ -63,26 +80,19 @@ def main():
     args = parser.parse_args()
 
     # Install stderr tee before anything else writes to stderr
-    import cc_dump.stderr_tee
     cc_dump.stderr_tee.install()
 
     # Initialize color palette before anything else imports it
-    import cc_dump.palette
-
     cc_dump.palette.init_palette(args.seed_hue)
 
     # Resolve --continue to load latest recording
     if args.continue_session:
-        import cc_dump.sessions
-
         latest = cc_dump.sessions.get_latest_recording()
         if latest is None:
             print("No recordings found to continue from.")
             return
         args.replay = latest
         print(f"🔄 Continuing from: {latest}")
-
-    from cc_dump.event_types import PipelineEvent
 
     event_q: queue.Queue[PipelineEvent] = queue.Queue()
 
@@ -92,8 +102,6 @@ def main():
 
     if args.replay:
         # Load HAR file (complete messages, NO event conversion)
-        import cc_dump.har_replayer
-
         print(f"   Loading replay: {args.replay}")
 
         try:
@@ -154,8 +162,6 @@ def main():
     har_recorder = None
     record_path = None
     if not args.no_record:
-        import cc_dump.har_recorder
-
         # [LAW:one-source-of-truth] Recordings organized by session name
         record_dir = os.path.expanduser("~/.local/share/cc-dump/recordings")
         session_dir = os.path.join(record_dir, session_name)
@@ -170,17 +176,12 @@ def main():
         print("   Recording: disabled (--no-record)")
 
     # Tmux integration (optional — no-op when not in tmux or libtmux missing)
-    import cc_dump.settings
-    import cc_dump.tmux_controller
-
     # Create settings store (reactive, hot-reloadable)
-    import cc_dump.settings_store
     settings_store = cc_dump.settings_store.create()
 
     tmux_ctrl = None
     TmuxState = cc_dump.tmux_controller.TmuxState
     if cc_dump.tmux_controller.is_available():
-        import cc_dump.launch_config
         active_config = cc_dump.launch_config.get_active_config()
         auto_zoom = bool(settings_store.get("auto_zoom_default"))
         tmux_ctrl = cc_dump.tmux_controller.TmuxController(claude_command=active_config.claude_command, auto_zoom=auto_zoom)
@@ -200,18 +201,12 @@ def main():
     print(f"   Tmux: {_TMUX_STATUS[tmux_state]}")
 
     # Side channel (AI enrichment via claude -p)
-    import cc_dump.side_channel
-    import cc_dump.data_dispatcher
-
     sc_enabled = bool(settings_store.get("side_channel_enabled"))
     side_channel_mgr = cc_dump.side_channel.SideChannelManager()
     side_channel_mgr.enabled = sc_enabled
     data_dispatcher = cc_dump.data_dispatcher.DataDispatcher(side_channel_mgr)
 
     # Request pipeline — transforms + interceptors run before forwarding
-    import cc_dump.sentinel
-    from cc_dump.proxy import RequestPipeline
-
     pipeline = RequestPipeline(
         transforms=[],
         interceptors=[cc_dump.sentinel.make_interceptor(tmux_ctrl)],
@@ -221,7 +216,6 @@ def main():
     router.start()
 
     # Create view store (reactive, hot-reloadable)
-    import cc_dump.view_store
     view_store = cc_dump.view_store.create()
 
     # Wire settings store reactions (after all consumers are created)
@@ -235,14 +229,10 @@ def main():
     )
 
     # Initialize hot-reload watcher
-    import cc_dump.hot_reload
-
     package_dir = os.path.dirname(os.path.abspath(__file__))
     cc_dump.hot_reload.init(package_dir)
 
     # Launch TUI with database context
-    from cc_dump.tui.app import CcDumpApp
-
     app = CcDumpApp(
         display_sub.queue,
         state,

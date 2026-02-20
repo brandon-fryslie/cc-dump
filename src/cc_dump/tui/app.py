@@ -7,18 +7,22 @@
 //   active_filters is a Computed on the view store.
 """
 
+import importlib
 import os
 import queue
+import sys
 import threading
+import time
+import traceback
 from typing import Optional, TypedDict
 
+import textual
 from textual.app import App, ComposeResult, SystemCommand
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Header
 
-from cc_dump.tui.category_config import CATEGORY_CONFIG
 
 # Module-level imports for hot-reload (never use `from` for these)
 import cc_dump.formatting
@@ -40,6 +44,20 @@ from cc_dump.tui import dump_export as _dump
 from cc_dump.tui import theme_controller as _theme
 from cc_dump.tui import hot_reload_controller as _hot_reload
 
+# Additional module-level imports
+import cc_dump.palette
+import cc_dump.launch_config
+import cc_dump.tmux_controller
+import cc_dump.tui.error_indicator
+import cc_dump.tui.settings_panel
+import cc_dump.tui.launch_config_panel
+import cc_dump.tui.side_channel_panel
+import cc_dump.har_replayer
+import cc_dump.sessions
+
+from cc_dump.stderr_tee import get_tee as _get_tee
+from snarfx import transaction
+
 
 def _resolve_factory(dotted_path: str):
     """Resolve a dotted factory path like 'cc_dump.tui.widget_factory.create_stats_panel'.
@@ -49,7 +67,6 @@ def _resolve_factory(dotted_path: str):
     """
     parts = dotted_path.rsplit(".", 1)
     module_path, func_name = parts[0], parts[1]
-    import importlib
     mod = importlib.import_module(module_path)
     return getattr(mod, func_name)
 
@@ -134,7 +151,6 @@ class CcDumpApp(App):
         self._quit_requested_at: float | None = None
         self._replacing_widgets = False
         self._markdown_theme_pushed = False
-        import cc_dump.palette
 
         self.sub_title = f"[{cc_dump.palette.PALETTE.info}]session: {session_name}[/]"
 
@@ -302,7 +318,6 @@ class CcDumpApp(App):
 
         # Connect stderr tee to LogsPanel (flushes buffered pre-TUI messages)
         # stderr_tee is a stable boundary — safe to use `from` import
-        from cc_dump.stderr_tee import get_tee as _get_tee
         tee = _get_tee()
         if tee is not None:
             def _drain(level, source, message):
@@ -340,8 +355,7 @@ class CcDumpApp(App):
 
         # Seed external state into view store for reactive footer
         self._sync_tmux_to_store()
-        import cc_dump.launch_config as _lc
-        self._view_store.set("active_launch_config_name", _lc.load_active_name())
+        self._view_store.set("active_launch_config_name", cc_dump.launch_config.load_active_name())
         # Initial footer hydration (reactions may not fire since is_running just became True)
         footer = self._get_footer()
         if footer:
@@ -351,7 +365,6 @@ class CcDumpApp(App):
             self._process_replay_data()
 
     def action_quit(self) -> None:
-        import time
         now = time.monotonic()
         if self._quit_requested_at is not None and (now - self._quit_requested_at) < 1.0:
             self.exit()
@@ -361,7 +374,6 @@ class CcDumpApp(App):
 
     def on_unmount(self):
         # Disconnect stderr tee before teardown
-        from cc_dump.stderr_tee import get_tee as _get_tee
         tee = _get_tee()
         if tee is not None:
             tee.disconnect()
@@ -376,9 +388,6 @@ class CcDumpApp(App):
         Logs unhandled exceptions with normal Python traceback. Adds exception
         to error indicator. Does NOT crash to keep proxy server running.
         """
-        import traceback
-        import cc_dump.tui.error_indicator
-
         # Get normal Python traceback (not Textual's verbose one)
         tb = "".join(traceback.format_exception(type(error), error, error.__traceback__))
 
@@ -415,7 +424,6 @@ class CcDumpApp(App):
     def _sync_tmux_to_store(self):
         """Mirror tmux controller state to view store for reactive footer updates."""
         tmux = self._tmux_controller
-        import cc_dump.tmux_controller
         _TMUX_ACTIVE = {cc_dump.tmux_controller.TmuxState.READY, cc_dump.tmux_controller.TmuxState.CLAUDE_RUNNING}
         self._view_store.update({
             "tmux:available": tmux is not None and tmux.state in _TMUX_ACTIVE,
@@ -425,10 +433,6 @@ class CcDumpApp(App):
 
     def _build_server_info(self) -> dict:
         """// [LAW:one-source-of-truth] All server info derived from constructor params."""
-        import sys
-        import textual
-        import cc_dump.sessions
-
         proxy_url = "http://{}:{}".format(self._host, self._port)
         proxy_mode = "forward" if not self._target else "reverse"
 
@@ -457,8 +461,6 @@ class CcDumpApp(App):
     def _process_replay_data(self):
         if not self._replay_data:
             return
-
-        import cc_dump.har_replayer
 
         self._app_log("INFO", f"Processing {len(self._replay_data)} request/response pairs")
 
@@ -501,7 +503,6 @@ class CcDumpApp(App):
             except Exception as e:
                 if self._closing:
                     break
-                import sys
                 print(f"Event queue error: {e}", file=sys.__stderr__)
                 continue
 
@@ -514,8 +515,6 @@ class CcDumpApp(App):
         try:
             self._handle_event_inner(event)
         except Exception as e:
-            import traceback
-
             tb = traceback.format_exc()
             self._error_log.append(f"CRASH in _handle_event: {e}")
             self._error_log.append(tb)
@@ -646,8 +645,6 @@ class CcDumpApp(App):
         if tmux is None:
             self.notify("Tmux not available", severity="warning")
             return
-        import cc_dump.tmux_controller
-        import cc_dump.launch_config
         config = cc_dump.launch_config.get_active_config()
         session_id = self._session_id if config.auto_resume else ""
         command = cc_dump.launch_config.build_full_command(config, session_id)
@@ -657,6 +654,8 @@ class CcDumpApp(App):
         if result.success:
             self.notify("{}: {}".format(result.action.value, result.detail))
             self._sync_tmux_to_store()
+            if result.action == cc_dump.tmux_controller.LaunchAction.LAUNCHED:
+                self._start_exit_monitoring()
         else:
             self.notify("Launch failed: {}".format(result.detail), severity="error")
 
@@ -684,8 +683,6 @@ class CcDumpApp(App):
 
     def _open_settings(self):
         """Open settings panel, populating from settings store."""
-        import cc_dump.tui.settings_panel
-
         initial_values = {}
         for field_def in cc_dump.tui.settings_panel.SETTINGS_FIELDS:
             val = self._settings_store.get(field_def.key) if self._settings_store else None
@@ -697,8 +694,6 @@ class CcDumpApp(App):
 
     def _close_settings(self) -> None:
         """Close settings panel."""
-        import cc_dump.tui.settings_panel
-
         for panel in self.screen.query(cc_dump.tui.settings_panel.SettingsPanel):
             panel.remove()
         self._view_store.set("panel:settings", False)
@@ -720,9 +715,6 @@ class CcDumpApp(App):
 
     def _open_launch_config(self):
         """Open launch config panel, populating state from saved configs."""
-        import cc_dump.launch_config
-        import cc_dump.tui.launch_config_panel
-
         configs = cc_dump.launch_config.load_configs()
         active_name = cc_dump.launch_config.load_active_name()
 
@@ -734,16 +726,12 @@ class CcDumpApp(App):
 
     def _close_launch_config(self) -> None:
         """Close launch config panel."""
-        import cc_dump.tui.launch_config_panel
-
         for panel in self.screen.query(cc_dump.tui.launch_config_panel.LaunchConfigPanel):
             panel.remove()
         self._view_store.set("panel:launch_config", False)
 
     def _launch_with_config(self, config) -> None:
         """Build args from config + session_id, launch via tmux."""
-        import cc_dump.launch_config
-
         tmux = self._tmux_controller
         if tmux is None:
             self.notify("Tmux not available", severity="warning")
@@ -756,14 +744,14 @@ class CcDumpApp(App):
         self._app_log("INFO", "launch_with_config: {}".format(result))
         if result.success:
             self.notify("{}: {}".format(result.action.value, result.detail))
+            if result.action == cc_dump.tmux_controller.LaunchAction.LAUNCHED:
+                self._start_exit_monitoring()
         else:
             self.notify("Launch failed: {}".format(result.detail), severity="error")
         self._sync_tmux_to_store()
 
     def on_launch_config_panel_saved(self, msg) -> None:
         """Handle LaunchConfigPanel.Saved — persist configs."""
-        import cc_dump.launch_config
-
         cc_dump.launch_config.save_configs(msg.configs)
         cc_dump.launch_config.save_active_name(msg.active_name)
         self._close_launch_config()
@@ -775,8 +763,6 @@ class CcDumpApp(App):
 
     def on_launch_config_panel_quick_launch(self, msg) -> None:
         """Handle LaunchConfigPanel.QuickLaunch — save, close, launch."""
-        import cc_dump.launch_config
-
         cc_dump.launch_config.save_configs(msg.configs)
         cc_dump.launch_config.save_active_name(msg.active_name)
         self._close_launch_config()
@@ -784,8 +770,6 @@ class CcDumpApp(App):
 
     def on_launch_config_panel_activated(self, msg) -> None:
         """Handle LaunchConfigPanel.Activated — save active name, notify."""
-        import cc_dump.launch_config
-
         cc_dump.launch_config.save_configs(msg.configs)
         cc_dump.launch_config.save_active_name(msg.name)
         self._view_store.set("active_launch_config_name", msg.name)
@@ -797,9 +781,6 @@ class CcDumpApp(App):
 
     def _open_side_channel(self):
         """Open side-channel AI panel."""
-        import cc_dump.tui.side_channel_panel
-        from snarfx import transaction
-
         self._view_store.set("panel:side_channel", True)
         panel = cc_dump.tui.side_channel_panel.create_side_channel_panel()
         self.screen.mount(panel)
@@ -814,8 +795,6 @@ class CcDumpApp(App):
 
     def _close_side_channel(self):
         """Close side-channel AI panel."""
-        import cc_dump.tui.side_channel_panel
-
         for panel in self.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel):
             panel.remove()
         self._view_store.set("panel:side_channel", False)
@@ -852,7 +831,6 @@ class CcDumpApp(App):
 
     def _on_side_channel_result(self, result):
         """Callback from worker thread with AI result."""
-        from snarfx import transaction
         with transaction():
             self._view_store.set("sc:loading", False)
             self._view_store.set("sc:result_text", result.text)

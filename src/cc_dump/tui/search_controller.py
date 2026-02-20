@@ -9,12 +9,11 @@ Not hot-reloadable (accesses app state and widgets).
 
 import cc_dump.formatting
 import cc_dump.tui.search
+from cc_dump.tui.category_config import CATEGORY_CONFIG
 
 
 def start_search(app) -> None:
     """Transition: INACTIVE → EDITING. Save filter state and scroll position."""
-    from cc_dump.tui.category_config import CATEGORY_CONFIG
-
     SearchPhase = cc_dump.tui.search.SearchPhase
     state = app._search_state
     state.phase = SearchPhase.EDITING

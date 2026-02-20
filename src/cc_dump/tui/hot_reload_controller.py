@@ -17,6 +17,13 @@ import cc_dump.tui.info_panel
 import cc_dump.tui.keys_panel
 import cc_dump.tui.settings_panel
 import cc_dump.tui.custom_footer
+import cc_dump.settings_store
+import cc_dump.view_store
+import cc_dump.tui.launch_config_panel
+import cc_dump.tui.side_channel_panel
+from cc_dump.tui.search_controller import clear_search_expand, run_search, navigate_to_current, update_search_bar
+from cc_dump.tui.theme_controller import apply_markdown_theme
+from cc_dump.tui.category_config import CATEGORY_CONFIG
 
 from cc_dump.tui.panel_registry import PANEL_REGISTRY
 
@@ -89,7 +96,6 @@ async def _do_hot_reload(app) -> None:
     if old_search.debounce_timer is not None:
         old_search.debounce_timer.stop()
     if search_was_active:
-        from cc_dump.tui.search_controller import clear_search_expand
         clear_search_expand(app)
 
     # Reset to fresh state (matches, expanded_blocks, debounce_timer discarded)
@@ -100,15 +106,12 @@ async def _do_hot_reload(app) -> None:
 
     # Rebuild theme state after modules reload (before any rendering)
     cc_dump.tui.rendering.set_theme(app.current_theme)
-    from cc_dump.tui.theme_controller import apply_markdown_theme
-
     apply_markdown_theme(app)
 
     # Reconcile settings store (values survive, reactions re-register)
     settings_store = getattr(app, "_settings_store", None)
     if settings_store is not None:
         try:
-            import cc_dump.settings_store
             settings_store.reconcile(
                 cc_dump.settings_store.SCHEMA,
                 lambda store: cc_dump.settings_store.setup_reactions(
@@ -122,7 +125,6 @@ async def _do_hot_reload(app) -> None:
     view_store = getattr(app, "_view_store", None)
     if view_store is not None:
         try:
-            import cc_dump.view_store
             view_store.reconcile(
                 cc_dump.view_store.SCHEMA,
                 lambda store: cc_dump.view_store.setup_reactions(
@@ -148,13 +150,6 @@ async def _do_hot_reload(app) -> None:
 
     # Restore search state after successful widget replacement
     if search_was_active and saved_query:
-        from cc_dump.tui.category_config import CATEGORY_CONFIG
-        from cc_dump.tui.search_controller import (
-            run_search,
-            navigate_to_current,
-            update_search_bar,
-        )
-
         state = app._search_state
         state.query = saved_query
         state.modes = saved_modes
@@ -263,13 +258,11 @@ async def _replace_all_widgets_inner(app) -> None:
     app._view_store.set("panel:settings", False)
 
     # Remove launch config panel if mounted (stateless, no state transfer needed)
-    import cc_dump.tui.launch_config_panel
     for panel in app.screen.query(cc_dump.tui.launch_config_panel.LaunchConfigPanel):
         await panel.remove()
     app._view_store.set("panel:launch_config", False)
 
     # Remove side-channel panel if mounted (stateless, no state transfer needed)
-    import cc_dump.tui.side_channel_panel
     for panel in app.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel):
         await panel.remove()
     app._view_store.set("panel:side_channel", False)

@@ -7,6 +7,8 @@
 import logging
 
 import cc_dump.settings
+from snarfx.hot_reload import HotReloadStore
+from snarfx import reaction
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +22,6 @@ SCHEMA: dict[str, object] = {
 
 def create(initial_overrides: dict | None = None):
     """Create settings store, seeded from disk."""
-    from snarfx.hot_reload import HotReloadStore
-
     disk_data = cc_dump.settings.load_settings()
     # Filter disk data to known keys only
     merged = {k: disk_data.get(k, default) for k, default in SCHEMA.items()}
@@ -36,8 +36,6 @@ def setup_reactions(store, context=None):
     Called on create and on hot-reload reconcile.
     context: dict with live component refs (side_channel_manager, tmux_controller)
     """
-    from snarfx import reaction
-
     disposers = []
 
     # Persistence: any setting change writes to disk

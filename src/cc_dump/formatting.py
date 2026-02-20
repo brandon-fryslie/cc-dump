@@ -29,6 +29,7 @@ from cc_dump.event_types import (
 
 from cc_dump.analysis import TurnBudget, compute_turn_budget, estimate_tokens, tool_result_breakdown
 from cc_dump.palette import TAG_COLOR_COUNT
+import cc_dump.segmentation
 
 # Type alias for content block dicts from the API response
 _ContentBlockDict = dict[str, str | int | dict | list | None]
@@ -128,9 +129,6 @@ def populate_content_regions(block: "FormattedBlock") -> None:
     FUTURE: content-derived tags — scan region text for identifiable content
     (e.g., "CLAUDE.md" in system-reminder text) and add to tags list.
     """
-    from cc_dump.segmentation import segment, SubBlockKind
-
-    # Already populated — idempotent (preserves ToolDefinitionsBlock's inline creation)
     if block.content_regions:
         return
 
@@ -138,7 +136,7 @@ def populate_content_regions(block: "FormattedBlock") -> None:
     if not text:
         return
 
-    seg = segment(text)
+    seg = cc_dump.segmentation.segment(text)
     if not seg.sub_blocks:
         return
 
@@ -147,11 +145,10 @@ def populate_content_regions(block: "FormattedBlock") -> None:
         kind = sb.kind.value  # "md", "code_fence", "md_fence", "xml_block"
 
         tags: list[str] = []
-        if sb.kind == SubBlockKind.XML_BLOCK:
+        if sb.kind == cc_dump.segmentation.SubBlockKind.XML_BLOCK:
             tags = [sb.meta.tag_name]
-        elif sb.kind == SubBlockKind.CODE_FENCE and sb.meta.info:
+        elif sb.kind == cc_dump.segmentation.SubBlockKind.CODE_FENCE and sb.meta.info:
             tags = [sb.meta.info]
-        # MD and MD_FENCE: no tags (not navigable)
 
         regions.append(ContentRegion(index=i, kind=kind, tags=tags))
 

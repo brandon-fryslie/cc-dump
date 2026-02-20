@@ -8,6 +8,7 @@ Import as: import cc_dump.settings
 """
 
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -103,7 +104,6 @@ def get_filterset(slot: str) -> Optional[dict[str, VisState]]:
     if saved is not None:
         saved_keys = {k for k, v in saved.items() if isinstance(v, list) and len(v) == 3}
         if saved_keys != _VALID_CATEGORY_KEYS:
-            import logging
             logging.getLogger(__name__).warning(
                 "Ignoring stale filterset slot %s: expected keys %s, got %s",
                 slot, sorted(_VALID_CATEGORY_KEYS), sorted(saved_keys),

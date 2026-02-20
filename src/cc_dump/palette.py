@@ -11,6 +11,7 @@ Two lightness levels per hue:
 
 import colorsys
 import os
+import sys
 
 GOLDEN_ANGLE = 137.508
 
@@ -462,7 +463,6 @@ def _get_seed_hue() -> float:
         try:
             return float(env)
         except ValueError:
-            import sys
 
             sys.stderr.write(
                 f"[palette] invalid CC_DUMP_SEED_HUE={env!r}, using default\n"

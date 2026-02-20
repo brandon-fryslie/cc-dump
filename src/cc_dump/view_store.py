@@ -8,6 +8,13 @@
 import cc_dump.formatting
 
 from cc_dump.tui.category_config import CATEGORY_CONFIG
+from snarfx.hot_reload import HotReloadStore
+from snarfx import computed, ObservableList, autorun, reaction
+import cc_dump.tui.widget_factory
+import cc_dump.tui.error_indicator
+import cc_dump.tui.side_channel_panel
+import cc_dump.tui.custom_footer
+from cc_dump.tui import action_handlers as _actions
 
 
 # [LAW:one-source-of-truth] Schema built programmatically from CATEGORY_CONFIG + panel/follow
@@ -43,9 +50,6 @@ SCHEMA["sc:result_elapsed_ms"] = 0
 
 def create():
     """Create view store with defaults from CATEGORY_CONFIG."""
-    from snarfx.hot_reload import HotReloadStore
-    from snarfx import computed, ObservableList
-
     store = HotReloadStore(SCHEMA)
 
     # [LAW:one-source-of-truth] Computed assembles VisState dict from 18 observables.
@@ -70,7 +74,6 @@ def create():
     # // [LAW:single-enforcer] footer_state Computed reads all footer inputs from store.
     @computed
     def footer_state():
-        import cc_dump.tui.widget_factory
         return {
             **store.active_filters.get(),
             "active_panel": store.get("panel:active"),
@@ -88,7 +91,6 @@ def create():
     # // [LAW:single-enforcer] error_items Computed combines stale files + exceptions.
     @computed
     def error_items():
-        import cc_dump.tui.error_indicator
         ErrorItem = cc_dump.tui.error_indicator.ErrorItem
         items = [ErrorItem("stale", "\u274c", s.split("/")[-1]) for s in store.stale_files]
         items.extend(store.exception_items)
@@ -100,7 +102,6 @@ def create():
     @computed
     def sc_panel_state():
         settings = getattr(store, '_settings_store', None)
-        import cc_dump.tui.side_channel_panel
         return cc_dump.tui.side_channel_panel.SideChannelPanelState(
             enabled=settings.get("side_channel_enabled") if settings else False,
             loading=store.get("sc:loading"),
@@ -120,8 +121,6 @@ def setup_reactions(store, context=None):
     Called on create and on hot-reload reconcile.
     context: dict with "app", optional "settings_store" keys.
     """
-    from snarfx import autorun, reaction
-
     disposers = []
 
     if context:
@@ -172,7 +171,6 @@ def _on_active_panel_changed(app, value):
     """
     if not app.is_running or app._replacing_widgets:
         return
-    from cc_dump.tui import action_handlers as _actions
     app._sync_panel_display(value)
     _actions.refresh_active_panel(app, value)
 
@@ -181,7 +179,6 @@ def _push_footer(app, state):
     """Effect: push footer state to StatusFooter widget."""
     if not app.is_running or app._replacing_widgets:
         return
-    import cc_dump.tui.custom_footer
     try:
         footer = app.query_one(cc_dump.tui.custom_footer.StatusFooter)
     except Exception:
@@ -202,7 +199,6 @@ def _push_sc_panel(app, state):
     """Effect: push side-channel panel state to SideChannelPanel widget."""
     if not app.is_running or app._replacing_widgets:
         return
-    import cc_dump.tui.side_channel_panel
     panels = app.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel)
     if panels:
         panels.first().update_display(state)

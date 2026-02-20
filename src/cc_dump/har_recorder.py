@@ -8,6 +8,7 @@ import json
 import os
 import sys
 from datetime import datetime, timezone
+import traceback
 from typing import TypedDict
 
 from cc_dump.event_types import (
@@ -413,7 +414,6 @@ class HARRecordingSubscriber:
             self._events_received[kind_name] = self._events_received.get(kind_name, 0) + 1
             self._handle(event)
         except Exception as e:
-            import traceback
 
             sys.stderr.write(f"[har] error: {e}\n")
             traceback.print_exc(file=sys.stderr)
