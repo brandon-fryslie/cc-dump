@@ -173,11 +173,15 @@ def main():
     import cc_dump.settings
     import cc_dump.tmux_controller
 
+    # Create settings store (reactive, hot-reloadable)
+    import cc_dump.settings_store
+    settings_store = cc_dump.settings_store.create()
+
     tmux_ctrl = None
     TmuxState = cc_dump.tmux_controller.TmuxState
     if cc_dump.tmux_controller.is_available():
-        claude_cmd = cc_dump.settings.load_claude_command()
-        auto_zoom = cc_dump.settings.load_auto_zoom_default()
+        claude_cmd = settings_store.get("claude_command") or "claude"
+        auto_zoom = bool(settings_store.get("auto_zoom_default"))
         tmux_ctrl = cc_dump.tmux_controller.TmuxController(claude_command=claude_cmd, auto_zoom=auto_zoom)
         tmux_ctrl.set_port(actual_port)
         # Subscribe for both READY and CLAUDE_RUNNING (adoption case)
@@ -198,7 +202,7 @@ def main():
     import cc_dump.side_channel
     import cc_dump.data_dispatcher
 
-    sc_enabled = cc_dump.settings.load_side_channel_enabled()
+    sc_enabled = bool(settings_store.get("side_channel_enabled"))
     side_channel_mgr = cc_dump.side_channel.SideChannelManager()
     side_channel_mgr.enabled = sc_enabled
     data_dispatcher = cc_dump.data_dispatcher.DataDispatcher(side_channel_mgr)
@@ -214,6 +218,15 @@ def main():
     ProxyHandler.request_pipeline = pipeline
 
     router.start()
+
+    # Wire settings store reactions (after all consumers are created)
+    store_context = {
+        "side_channel_manager": side_channel_mgr,
+        "tmux_controller": tmux_ctrl,
+    }
+    settings_store._reaction_disposers = cc_dump.settings_store.setup_reactions(
+        settings_store, store_context
+    )
 
     # Initialize hot-reload watcher
     import cc_dump.hot_reload
@@ -239,6 +252,8 @@ def main():
         tmux_controller=tmux_ctrl,
         side_channel_manager=side_channel_mgr,
         data_dispatcher=data_dispatcher,
+        settings_store=settings_store,
+        store_context=store_context,
     )
     try:
         app.run()

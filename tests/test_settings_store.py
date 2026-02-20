@@ -1,0 +1,164 @@
+"""Tests for settings_store — reactive settings with persistence and consumer sync."""
+
+import json
+from unittest.mock import MagicMock
+
+import pytest
+
+import cc_dump.settings_store
+from snarfx import autorun
+
+
+@pytest.fixture
+def tmp_settings(tmp_path, monkeypatch):
+    """Redirect settings file to a temp directory."""
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(
+        "cc_dump.settings.get_config_path",
+        lambda: settings_file,
+    )
+    return settings_file
+
+
+class TestCreate:
+    def test_creates_store_with_schema_defaults(self, tmp_settings):
+        store = cc_dump.settings_store.create()
+        assert store.get("claude_command") == "claude"
+        assert store.get("auto_zoom_default") is False
+        assert store.get("side_channel_enabled") is True
+        assert store.get("theme") is None
+
+    def test_seeds_from_disk(self, tmp_settings):
+        tmp_settings.write_text(json.dumps({
+            "claude_command": "my-claude",
+            "theme": "gruvbox",
+        }))
+        store = cc_dump.settings_store.create()
+        assert store.get("claude_command") == "my-claude"
+        assert store.get("theme") == "gruvbox"
+        # Unset keys get schema defaults
+        assert store.get("auto_zoom_default") is False
+
+    def test_initial_overrides(self, tmp_settings):
+        store = cc_dump.settings_store.create(initial_overrides={"theme": "dark"})
+        assert store.get("theme") == "dark"
+
+    def test_disk_overrides_schema_but_initial_overrides_disk(self, tmp_settings):
+        tmp_settings.write_text(json.dumps({"theme": "from-disk"}))
+        store = cc_dump.settings_store.create(initial_overrides={"theme": "override"})
+        assert store.get("theme") == "override"
+
+
+class TestSetupReactions:
+    def test_persistence_reaction(self, tmp_settings):
+        store = cc_dump.settings_store.create()
+        disposers = cc_dump.settings_store.setup_reactions(store)
+        store._reaction_disposers = disposers
+
+        store.set("claude_command", "custom-claude")
+
+        data = json.loads(tmp_settings.read_text())
+        assert data["claude_command"] == "custom-claude"
+
+    def test_side_channel_sync(self, tmp_settings):
+        store = cc_dump.settings_store.create()
+        mgr = MagicMock()
+        mgr.enabled = True
+        context = {"side_channel_manager": mgr}
+        disposers = cc_dump.settings_store.setup_reactions(store, context)
+        store._reaction_disposers = disposers
+
+        # fire_immediately syncs initial value
+        assert mgr.enabled is True
+
+        store.set("side_channel_enabled", False)
+        assert mgr.enabled is False
+
+    def test_tmux_command_sync(self, tmp_settings):
+        store = cc_dump.settings_store.create()
+        tmux = MagicMock()
+        context = {"tmux_controller": tmux}
+        disposers = cc_dump.settings_store.setup_reactions(store, context)
+        store._reaction_disposers = disposers
+
+        # fire_immediately syncs initial value
+        tmux.set_claude_command.assert_called_with("claude")
+
+        store.set("claude_command", "my-claude")
+        tmux.set_claude_command.assert_called_with("my-claude")
+
+    def test_tmux_auto_zoom_sync(self, tmp_settings):
+        store = cc_dump.settings_store.create()
+        tmux = MagicMock()
+        tmux.auto_zoom = False
+        context = {"tmux_controller": tmux}
+        disposers = cc_dump.settings_store.setup_reactions(store, context)
+        store._reaction_disposers = disposers
+
+        store.set("auto_zoom_default", True)
+        assert tmux.auto_zoom is True
+
+    def test_no_context_still_persists(self, tmp_settings):
+        store = cc_dump.settings_store.create()
+        disposers = cc_dump.settings_store.setup_reactions(store)
+        store._reaction_disposers = disposers
+
+        store.set("theme", "gruvbox")
+        data = json.loads(tmp_settings.read_text())
+        assert data["theme"] == "gruvbox"
+
+
+class TestReconcile:
+    def test_reconcile_preserves_values(self, tmp_settings):
+        store = cc_dump.settings_store.create()
+        store.set("claude_command", "preserved-cmd")
+
+        store.reconcile(
+            cc_dump.settings_store.SCHEMA,
+            lambda s: cc_dump.settings_store.setup_reactions(s),
+        )
+        assert store.get("claude_command") == "preserved-cmd"
+
+    def test_reconcile_adds_new_keys(self, tmp_settings):
+        store = cc_dump.settings_store.create()
+        extended_schema = {**cc_dump.settings_store.SCHEMA, "new_key": "default_val"}
+
+        store.reconcile(extended_schema, lambda s: [])
+        assert store.get("new_key") == "default_val"
+
+    def test_reconcile_re_registers_reactions(self, tmp_settings):
+        store = cc_dump.settings_store.create()
+        disposers = cc_dump.settings_store.setup_reactions(store)
+        store._reaction_disposers = disposers
+
+        store.set("theme", "first")
+        data1 = json.loads(tmp_settings.read_text())
+        assert data1["theme"] == "first"
+
+        # Reconcile re-registers
+        store.reconcile(
+            cc_dump.settings_store.SCHEMA,
+            lambda s: cc_dump.settings_store.setup_reactions(s),
+        )
+        store.set("theme", "second")
+        data2 = json.loads(tmp_settings.read_text())
+        assert data2["theme"] == "second"
+
+
+class TestReactiveTracking:
+    def test_autorun_tracks_store_gets(self, tmp_settings):
+        store = cc_dump.settings_store.create()
+        log = []
+        autorun(lambda: log.append(store.get("theme")))
+        assert log == [None]
+        store.set("theme", "dark")
+        assert log == [None, "dark"]
+
+    def test_update_batches(self, tmp_settings):
+        store = cc_dump.settings_store.create()
+        log = []
+        autorun(lambda: log.append((store.get("claude_command"), store.get("theme"))))
+        assert log == [("claude", None)]
+        store.update({"claude_command": "x", "theme": "y"})
+        # Single batch, not two separate updates
+        assert log == [("claude", None), ("x", "y")]

@@ -106,6 +106,8 @@ class CcDumpApp(App):
         tmux_controller=None,
         side_channel_manager=None,
         data_dispatcher=None,
+        settings_store=None,
+        store_context=None,
     ):
         super().__init__()
         self._event_queue = event_queue
@@ -123,6 +125,8 @@ class CcDumpApp(App):
         self._tmux_controller = tmux_controller
         self._side_channel_manager = side_channel_manager
         self._data_dispatcher = data_dispatcher
+        self._settings_store = settings_store
+        self._store_context = store_context
         self._closing = False
         self._quit_requested_at: float | None = None
         self._replacing_widgets = False
@@ -301,7 +305,7 @@ class CcDumpApp(App):
 
     def on_mount(self):
         # [LAW:one-source-of-truth] Restore persisted theme choice
-        saved = cc_dump.settings.load_theme()
+        saved = self._settings_store.get("theme") if self._settings_store else None
         if saved and saved in self.available_themes:
             self.theme = saved
         cc_dump.tui.rendering.set_theme(self.current_theme)
@@ -698,14 +702,13 @@ class CcDumpApp(App):
         _actions.toggle_settings(self)
 
     def _open_settings(self):
-        """Open settings panel, populating from saved settings."""
+        """Open settings panel, populating from settings store."""
         import cc_dump.tui.settings_panel
 
         initial_values = {}
         for field_def in cc_dump.tui.settings_panel.SETTINGS_FIELDS:
-            initial_values[field_def.key] = cc_dump.settings.load_setting(
-                field_def.key, field_def.default
-            )
+            val = self._settings_store.get(field_def.key) if self._settings_store else None
+            initial_values[field_def.key] = val if val is not None else field_def.default
         self._settings_panel_open = True
 
         panel = cc_dump.tui.settings_panel.create_settings_panel(initial_values)
@@ -722,21 +725,9 @@ class CcDumpApp(App):
         self._update_footer_state()
 
     def on_settings_panel_saved(self, msg) -> None:
-        """Handle SettingsPanel.Saved — persist values and apply side effects."""
-        values = msg.values
-        for key, value in values.items():
-            cc_dump.settings.save_setting(key, value)
-
-        # Apply side effects
-        if "side_channel_enabled" in values and self._side_channel_manager is not None:
-            self._side_channel_manager.enabled = values["side_channel_enabled"]
-        tmux = self._tmux_controller
-        if tmux is not None:
-            if "claude_command" in values:
-                tmux.set_claude_command(values["claude_command"])
-            if "auto_zoom_default" in values:
-                tmux.auto_zoom = values["auto_zoom_default"]
-
+        """Handle SettingsPanel.Saved — update store (reactions handle persistence + side effects)."""
+        if self._settings_store is not None:
+            self._settings_store.update(msg.values)
         self._close_settings()
         self.notify("Settings saved")
 
@@ -910,12 +901,11 @@ class CcDumpApp(App):
         return self._app_state.get("recent_messages", [])[-count:]
 
     def _side_channel_toggle_enabled(self):
-        """Toggle side-channel AI on/off."""
-        if self._side_channel_manager is None:
+        """Toggle side-channel AI on/off via settings store."""
+        if self._settings_store is None:
             return
-        new_val = not self._side_channel_manager.enabled
-        self._side_channel_manager.enabled = new_val
-        cc_dump.settings.save_setting("side_channel_enabled", new_val)
+        current = self._settings_store.get("side_channel_enabled")
+        self._settings_store.set("side_channel_enabled", not current)
         self._update_side_channel_panel_display()
 
     def on_button_pressed(self, event) -> None:

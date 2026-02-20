@@ -38,7 +38,9 @@ class FieldDef:
 
 
 # ─── Field registry ──────────────────────────────────────────────────────────
-# // [LAW:one-source-of-truth] Adding a new setting = adding an entry here.
+# // [LAW:one-source-of-truth] Defaults from settings_store.SCHEMA.
+
+import cc_dump.settings_store
 
 SETTINGS_FIELDS: list[FieldDef] = [
     FieldDef(
@@ -46,21 +48,21 @@ SETTINGS_FIELDS: list[FieldDef] = [
         label="Claude Command",
         description="Command to launch Claude in tmux pane",
         kind="text",
-        default="claude",
+        default=cc_dump.settings_store.SCHEMA["claude_command"],
     ),
     FieldDef(
         key="auto_zoom_default",
         label="Auto-Zoom Default",
         description="Start with tmux auto-zoom enabled",
         kind="bool",
-        default=False,
+        default=cc_dump.settings_store.SCHEMA["auto_zoom_default"],
     ),
     FieldDef(
         key="side_channel_enabled",
         label="AI Summaries",
         description="Enable AI-powered summaries via claude -p",
         kind="bool",
-        default=True,
+        default=cc_dump.settings_store.SCHEMA["side_channel_enabled"],
     ),
 ]
 

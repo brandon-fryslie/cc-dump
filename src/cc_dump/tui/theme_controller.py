@@ -7,7 +7,6 @@ Not hot-reloadable (accesses app console and theme state).
 """
 
 import cc_dump.tui.rendering
-import cc_dump.settings
 
 
 def cycle_theme(app, direction: int) -> None:
@@ -22,7 +21,8 @@ def cycle_theme(app, direction: int) -> None:
     new_index = (current_index + direction) % len(names)
     new_name = names[new_index]
     app.theme = new_name
-    cc_dump.settings.save_theme(new_name)
+    if app._settings_store is not None:
+        app._settings_store.set("theme", new_name)
     app.notify(f"Theme: {new_name}")
 
 

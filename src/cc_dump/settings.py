@@ -71,38 +71,6 @@ def save_setting(key: str, value) -> None:
     save_settings(data)
 
 
-def load_claude_command() -> str:
-    """Load the configured Claude command for tmux integration."""
-    return load_setting("claude_command", "claude")
-
-
-def save_claude_command(command: str) -> None:
-    """Save the Claude command for tmux integration."""
-    save_setting("claude_command", command)
-
-
-def load_auto_zoom_default() -> bool:
-    """Load the configured auto-zoom default for tmux integration."""
-    return bool(load_setting("auto_zoom_default", False))
-
-
-def load_side_channel_enabled() -> bool:
-    """Load whether side-channel AI enrichment is enabled."""
-    return bool(load_setting("side_channel_enabled", True))  # True for dev
-
-
-def save_theme(theme_name: str) -> None:
-    """Persist theme choice to settings."""
-    data = load_settings()
-    data["theme"] = theme_name
-    save_settings(data)
-
-
-def load_theme() -> Optional[str]:
-    """Load saved theme name, or None if unset."""
-    return load_settings().get("theme")
-
-
 # [LAW:one-source-of-truth] Built-in filterset defaults.
 _H = VisState(False, False, False)  # hidden
 _SC = VisState(True, False, False)  # summary, collapsed

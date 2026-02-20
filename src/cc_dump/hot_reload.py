@@ -20,6 +20,7 @@ _RELOAD_ORDER = [
     "cc_dump.formatting",  # depends on: palette, analysis
     "cc_dump.tui.action_config",  # depends on: formatting (VisState), pure data
     "cc_dump.launch_config",  # depends on: settings (pure data + persistence)
+    "cc_dump.settings_store",  # depends on: settings (schema + reactions)
     "cc_dump.segmentation",  # depends on: nothing (pure parser, before rendering)
     "cc_dump.router",  # depends on: nothing within reloadable set
     "cc_dump.tui.search",  # depends on: palette

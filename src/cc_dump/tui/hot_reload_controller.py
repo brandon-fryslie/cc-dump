@@ -102,6 +102,20 @@ async def _do_hot_reload(app) -> None:
 
     apply_markdown_theme(app)
 
+    # Reconcile settings store (values survive, reactions re-register)
+    settings_store = getattr(app, "_settings_store", None)
+    if settings_store is not None:
+        try:
+            import cc_dump.settings_store
+            settings_store.reconcile(
+                cc_dump.settings_store.SCHEMA,
+                lambda store: cc_dump.settings_store.setup_reactions(
+                    store, getattr(app, "_store_context", None)
+                ),
+            )
+        except Exception as e:
+            app._app_log("ERROR", f"Hot-reload: settings store reconcile failed: {e}")
+
     # Any file change triggers full widget replacement
     # // [LAW:dataflow-not-control-flow] Unconditional — all reloads take same path
     try:
