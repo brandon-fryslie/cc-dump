@@ -574,7 +574,7 @@ class TestAutoResume:
 
         session_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         config = LaunchConfig(auto_resume=True)
-        full_command = build_full_command(config, "claude", session_id)
+        full_command = build_full_command(config, session_id)
 
         result = ctrl.launch_claude(command=full_command)
 
@@ -602,7 +602,7 @@ class TestAutoResume:
         )
 
         config = LaunchConfig(auto_resume=True)
-        full_command = build_full_command(config, "claude", "")
+        full_command = build_full_command(config, "")
 
         result = ctrl.launch_claude(command=full_command)
 
@@ -628,7 +628,7 @@ class TestAutoResume:
         )
 
         config = LaunchConfig(auto_resume=False)
-        full_command = build_full_command(config, "claude", "some-session-id")
+        full_command = build_full_command(config, "some-session-id")
 
         result = ctrl.launch_claude(command=full_command)
 
@@ -662,7 +662,7 @@ class TestAutoResume:
         assert session_id == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
         config = LaunchConfig(auto_resume=True)
-        cmd = build_full_command(config, "claude", session_id)
+        cmd = build_full_command(config, session_id)
         assert cmd == "claude --resume aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 

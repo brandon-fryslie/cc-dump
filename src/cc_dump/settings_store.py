@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 # [LAW:one-source-of-truth] All known settings and their defaults
 SCHEMA: dict[str, object] = {
-    "claude_command": "claude",
     "auto_zoom_default": False,
     "side_channel_enabled": True,
     "theme": None,
@@ -59,11 +58,6 @@ def setup_reactions(store, context=None):
 
         tmux = context.get("tmux_controller")
         if tmux is not None:
-            disposers.append(reaction(
-                lambda: store.get("claude_command"),
-                lambda val, t=tmux: t.set_claude_command(val),
-                fire_immediately=True,
-            ))
             disposers.append(reaction(
                 lambda: store.get("auto_zoom_default"),
                 lambda val, t=tmux: setattr(t, "auto_zoom", val),

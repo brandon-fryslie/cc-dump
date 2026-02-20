@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.message import Message
 from textual.widgets import Input, Label, Select, Static, Switch
 
@@ -43,13 +43,6 @@ class FieldDef:
 import cc_dump.settings_store
 
 SETTINGS_FIELDS: list[FieldDef] = [
-    FieldDef(
-        key="claude_command",
-        label="Claude Command",
-        description="Command to launch Claude in tmux pane",
-        kind="text",
-        default=cc_dump.settings_store.SCHEMA["claude_command"],
-    ),
     FieldDef(
         key="auto_zoom_default",
         label="Auto-Zoom Default",
@@ -99,30 +92,50 @@ class SettingsPanel(VerticalScroll):
         min-width: 30;
         max-width: 50;
         border-left: solid $accent;
-        padding: 1;
+        padding: 0 1;
         height: 1fr;
     }
-    SettingsPanel .field-label {
-        margin-top: 1;
+    SettingsPanel .panel-title {
         text-style: bold;
+        margin-bottom: 0;
+    }
+    SettingsPanel .field-row {
+        height: auto;
+        width: 100%;
+        margin-top: 1;
+    }
+    SettingsPanel .field-label {
+        width: 1fr;
+        text-style: bold;
+        content-align-vertical: middle;
     }
     SettingsPanel .field-desc {
         color: $text-muted;
         text-style: italic;
-    }
-    SettingsPanel .panel-title {
-        text-style: bold;
-        margin-bottom: 1;
+        padding-left: 2;
+        margin-bottom: 0;
     }
     SettingsPanel .panel-footer {
         margin-top: 1;
         color: $text-muted;
     }
+    SettingsPanel Switch {
+        width: auto;
+        height: auto;
+        border: none;
+        padding: 0 1;
+    }
     SettingsPanel Input {
-        width: 100%;
+        width: 1fr;
+        height: 1;
+        border: none;
+        padding: 0;
+    }
+    SettingsPanel Input:focus {
+        border: none;
     }
     SettingsPanel Select {
-        width: 100%;
+        width: 1fr;
     }
     """
 
@@ -146,8 +159,9 @@ class SettingsPanel(VerticalScroll):
 
         for field in SETTINGS_FIELDS:
             value = self._initial_values.get(field.key, field.default)
-            yield Label(field.label, classes="field-label")
-            yield _make_widget(field, value)
+            with Horizontal(classes="field-row"):
+                yield Label(field.label, classes="field-label")
+                yield _make_widget(field, value)
             yield Static(field.description, classes="field-desc")
 
         yield Static(
@@ -156,6 +170,12 @@ class SettingsPanel(VerticalScroll):
             ),
             classes="panel-footer",
         )
+
+    def on_mount(self) -> None:
+        """Focus first input widget on mount (standard Textual pattern)."""
+        focusable = self.query("Input, Switch, Select, OptionList")
+        if focusable:
+            focusable.first().focus()
 
     def collect_values(self) -> dict:
         """Read current widget values into a dict keyed by field key."""

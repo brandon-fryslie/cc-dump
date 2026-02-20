@@ -1,12 +1,11 @@
 """Launch configuration model for Claude tmux integration.
 
-Manages named run configurations that add flags on top of the base
-claude_command from settings. Configs are persisted in settings.json.
+Manages named run configurations with their own claude command and flags.
+Configs are persisted in settings.json.
 
 This module is RELOADABLE — pure data + persistence, no widget deps.
 
-// [LAW:one-source-of-truth] claude_command in settings.py is the base executable.
-//   LaunchConfig adds flags on top. No duplication of the executable path.
+// [LAW:one-source-of-truth] claude_command lives in LaunchConfig (per-config).
 """
 
 from __future__ import annotations
@@ -26,6 +25,7 @@ class LaunchConfig:
     """A named run configuration for launching Claude."""
 
     name: str = "default"
+    claude_command: str = "claude"  # executable name (e.g. "claude", "clod")
     model: str = ""           # e.g. "haiku", "opus" — empty = no --model flag
     auto_resume: bool = True  # pass --resume <session_id> when relaunching
     # NOTE: --resume <id> (not --continue) because --continue always resumes
@@ -42,6 +42,7 @@ def _dict_to_config(d: dict) -> LaunchConfig:
     shell = d.get("shell", "")
     return LaunchConfig(
         name=d.get("name", "default"),
+        claude_command=d.get("claude_command", "claude"),
         model=d.get("model", ""),
         auto_resume=bool(d.get("auto_resume", True)),
         shell=shell if shell in SHELL_OPTIONS else "",
@@ -83,14 +84,14 @@ def get_active_config() -> LaunchConfig:
     return by_name.get(active_name, configs[0])
 
 
-def build_full_command(config: LaunchConfig, base_command: str, session_id: str = "") -> str:
+def build_full_command(config: LaunchConfig, session_id: str = "") -> str:
     """Build the complete command string including shell wrapper if configured.
 
     // [LAW:one-source-of-truth] Sole place where command + args + shell wrapper are assembled.
+    //   Uses config.claude_command as the executable.
 
     Args:
-        config: Launch configuration with model, resume, shell, extra_flags.
-        base_command: The claude executable (e.g. "claude", "clod").
+        config: Launch configuration with claude_command, model, resume, shell, extra_flags.
         session_id: Session ID for --resume (empty = no resume).
 
     Returns:
@@ -107,7 +108,7 @@ def build_full_command(config: LaunchConfig, base_command: str, session_id: str 
     if config.extra_flags:
         args.append(config.extra_flags)
 
-    inner_command = " ".join([base_command] + args)
+    inner_command = " ".join([config.claude_command] + args)
 
     # // [LAW:dataflow-not-control-flow] shell wrapping is a transformation of the
     # command value, not a branch that skips assembly.

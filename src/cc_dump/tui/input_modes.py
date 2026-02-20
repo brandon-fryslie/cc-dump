@@ -147,14 +147,6 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         # Empty - all keys handled specially for text input
     },
 
-    InputMode.SETTINGS: {
-        # Empty - all keys consumed for field editing
-    },
-
-    InputMode.LAUNCH_CONFIG: {
-        # Empty - all keys consumed for config editing
-    },
-
     InputMode.SIDE_CHANNEL: {
         # Empty - all keys handled specially for panel interaction
     },
@@ -192,21 +184,6 @@ FOOTER_KEYS: dict[InputMode, list[tuple[str, str]]] = {
         ("esc", "keep"),
         ("q", "cancel"),
         ("jk", "scroll"),
-    ],
-    InputMode.SETTINGS: [
-        ("tab", "next"),
-        ("enter", "save"),
-        ("esc", "cancel"),
-    ],
-    InputMode.LAUNCH_CONFIG: [
-        ("1-9", "launch"),
-        ("j/k", "select"),
-        ("tab", "field"),
-        ("a", "activate"),
-        ("n", "new"),
-        ("d", "delete"),
-        ("enter", "save"),
-        ("esc", "close"),
     ],
     InputMode.SIDE_CHANNEL: [
         ("s", "summarize"),

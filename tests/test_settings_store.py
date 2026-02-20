@@ -23,18 +23,15 @@ def tmp_settings(tmp_path, monkeypatch):
 class TestCreate:
     def test_creates_store_with_schema_defaults(self, tmp_settings):
         store = cc_dump.settings_store.create()
-        assert store.get("claude_command") == "claude"
         assert store.get("auto_zoom_default") is False
         assert store.get("side_channel_enabled") is True
         assert store.get("theme") is None
 
     def test_seeds_from_disk(self, tmp_settings):
         tmp_settings.write_text(json.dumps({
-            "claude_command": "my-claude",
             "theme": "gruvbox",
         }))
         store = cc_dump.settings_store.create()
-        assert store.get("claude_command") == "my-claude"
         assert store.get("theme") == "gruvbox"
         # Unset keys get schema defaults
         assert store.get("auto_zoom_default") is False
@@ -55,10 +52,10 @@ class TestSetupReactions:
         disposers = cc_dump.settings_store.setup_reactions(store)
         store._reaction_disposers = disposers
 
-        store.set("claude_command", "custom-claude")
+        store.set("theme", "custom-theme")
 
         data = json.loads(tmp_settings.read_text())
-        assert data["claude_command"] == "custom-claude"
+        assert data["theme"] == "custom-theme"
 
     def test_side_channel_sync(self, tmp_settings):
         store = cc_dump.settings_store.create()
@@ -73,19 +70,6 @@ class TestSetupReactions:
 
         store.set("side_channel_enabled", False)
         assert mgr.enabled is False
-
-    def test_tmux_command_sync(self, tmp_settings):
-        store = cc_dump.settings_store.create()
-        tmux = MagicMock()
-        context = {"tmux_controller": tmux}
-        disposers = cc_dump.settings_store.setup_reactions(store, context)
-        store._reaction_disposers = disposers
-
-        # fire_immediately syncs initial value
-        tmux.set_claude_command.assert_called_with("claude")
-
-        store.set("claude_command", "my-claude")
-        tmux.set_claude_command.assert_called_with("my-claude")
 
     def test_tmux_auto_zoom_sync(self, tmp_settings):
         store = cc_dump.settings_store.create()
@@ -111,13 +95,13 @@ class TestSetupReactions:
 class TestReconcile:
     def test_reconcile_preserves_values(self, tmp_settings):
         store = cc_dump.settings_store.create()
-        store.set("claude_command", "preserved-cmd")
+        store.set("theme", "preserved-theme")
 
         store.reconcile(
             cc_dump.settings_store.SCHEMA,
             lambda s: cc_dump.settings_store.setup_reactions(s),
         )
-        assert store.get("claude_command") == "preserved-cmd"
+        assert store.get("theme") == "preserved-theme"
 
     def test_reconcile_adds_new_keys(self, tmp_settings):
         store = cc_dump.settings_store.create()
@@ -157,8 +141,8 @@ class TestReactiveTracking:
     def test_update_batches(self, tmp_settings):
         store = cc_dump.settings_store.create()
         log = []
-        autorun(lambda: log.append((store.get("claude_command"), store.get("theme"))))
-        assert log == [("claude", None)]
-        store.update({"claude_command": "x", "theme": "y"})
+        autorun(lambda: log.append((store.get("auto_zoom_default"), store.get("theme"))))
+        assert log == [(False, None)]
+        store.update({"auto_zoom_default": True, "theme": "y"})
         # Single batch, not two separate updates
-        assert log == [("claude", None), ("x", "y")]
+        assert log == [(False, None), (True, "y")]

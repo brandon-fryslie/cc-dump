@@ -243,13 +243,11 @@ async def _replace_all_widgets_inner(app) -> None:
     # Remove settings panel if mounted (stateless, no state transfer needed)
     for panel in app.screen.query(cc_dump.tui.settings_panel.SettingsPanel):
         await panel.remove()
-    app._settings_panel_open = False
 
     # Remove launch config panel if mounted (stateless, no state transfer needed)
     import cc_dump.tui.launch_config_panel
     for panel in app.screen.query(cc_dump.tui.launch_config_panel.LaunchConfigPanel):
         await panel.remove()
-    app._launch_config_panel_open = False
 
     # Remove side-channel panel if mounted (stateless, no state transfer needed)
     import cc_dump.tui.side_channel_panel

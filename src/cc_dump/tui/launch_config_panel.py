@@ -11,7 +11,7 @@ removed during hot-reload (stateless, user can re-open with C).
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Input, Label, OptionList, Select, Static, Switch
@@ -23,6 +23,13 @@ from cc_dump.tui.settings_panel import FieldDef
 
 # [LAW:one-source-of-truth] Field definitions for a LaunchConfig.
 CONFIG_FIELDS: list[FieldDef] = [
+    FieldDef(
+        key="claude_command",
+        label="Command",
+        kind="text",
+        default="claude",
+        description="Claude binary (e.g. claude, clod)",
+    ),
     FieldDef(
         key="name",
         label="Name",
@@ -84,29 +91,36 @@ class LaunchConfigPanel(VerticalScroll):
     DEFAULT_CSS = """
     LaunchConfigPanel {
         dock: right;
-        width: 40%;
-        min-width: 34;
-        max-width: 56;
+        width: 35%;
+        min-width: 30;
+        max-width: 50;
         border-left: solid $accent;
-        padding: 1;
+        padding: 0 1;
         height: 1fr;
     }
     LaunchConfigPanel .panel-title {
         text-style: bold;
-        margin-bottom: 1;
+        margin-bottom: 0;
     }
     LaunchConfigPanel .section-title {
         text-style: bold;
         margin-top: 1;
-        margin-bottom: 1;
+    }
+    LaunchConfigPanel .field-row {
+        height: auto;
+        width: 100%;
+        margin-top: 1;
     }
     LaunchConfigPanel .field-label {
-        margin-top: 1;
+        width: 1fr;
         text-style: bold;
+        content-align-vertical: middle;
     }
     LaunchConfigPanel .field-desc {
         color: $text-muted;
         text-style: italic;
+        padding-left: 2;
+        margin-bottom: 0;
     }
     LaunchConfigPanel .panel-footer {
         margin-top: 1;
@@ -116,11 +130,23 @@ class LaunchConfigPanel(VerticalScroll):
         height: auto;
         max-height: 10;
     }
+    LaunchConfigPanel Switch {
+        width: auto;
+        height: auto;
+        border: none;
+        padding: 0 1;
+    }
     LaunchConfigPanel Input {
-        width: 100%;
+        width: 1fr;
+        height: 1;
+        border: none;
+        padding: 0;
+    }
+    LaunchConfigPanel Input:focus {
+        border: none;
     }
     LaunchConfigPanel Select {
-        width: 100%;
+        width: 1fr;
     }
     LaunchConfigPanel #lc-edit-section {
         height: auto;
@@ -179,8 +205,9 @@ class LaunchConfigPanel(VerticalScroll):
         with Vertical(id="lc-edit-section"):
             yield Static("", id="lc-edit-title", classes="section-title")
             for field in CONFIG_FIELDS:
-                yield Label(field.label, classes="field-label")
-                yield _make_widget(field, field.default)
+                with Horizontal(classes="field-row"):
+                    yield Label(field.label, classes="field-label")
+                    yield _make_widget(field, field.default)
                 yield Static(field.description, classes="field-desc")
 
         yield Static(
@@ -192,9 +219,13 @@ class LaunchConfigPanel(VerticalScroll):
         )
 
     def on_mount(self) -> None:
-        """Populate the config list and form after mount."""
+        """Populate the config list and form after mount, then focus first widget."""
         self._refresh_config_list()
         self._populate_form(self._configs[0] if self._configs else None)
+        # Focus the OptionList so keyboard commands (a/n/d/1-9) work immediately
+        focusable = self.query("OptionList")
+        if focusable:
+            focusable.first().focus()
 
     def _refresh_config_list(self) -> None:
         """Rebuild OptionList options from config list."""

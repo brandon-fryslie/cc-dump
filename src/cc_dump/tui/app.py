@@ -9,6 +9,7 @@
 
 import os
 import queue
+import time
 import threading
 from typing import Optional, TypedDict
 
@@ -149,18 +150,12 @@ class CcDumpApp(App):
         self._search_state = cc_dump.tui.search.SearchState()
         self._active_filterset_slot = None
 
-        # Settings panel state
-        self._settings_panel_open: bool = False
-
         # Side channel panel state
         self._side_channel_panel_open: bool = False
         self._side_channel_loading: bool = False
         self._side_channel_result_text: str = ""
         self._side_channel_result_source: str = ""
         self._side_channel_result_elapsed_ms: int = 0
-
-        # Launch config panel state
-        self._launch_config_panel_open: bool = False
 
         # Exception tracking for error indicator
         self._exception_items: list = []
@@ -176,14 +171,20 @@ class CcDumpApp(App):
 
     @property
     def _input_mode(self):
-        """// [LAW:one-source-of-truth] InputMode derived from app state."""
+        """// [LAW:one-source-of-truth] InputMode derived from focus ancestry + app state."""
         InputMode = cc_dump.tui.input_modes.InputMode
         if self._side_channel_panel_open:
             return InputMode.SIDE_CHANNEL
-        if self._launch_config_panel_open:
-            return InputMode.LAUNCH_CONFIG
-        if self._settings_panel_open:
-            return InputMode.SETTINGS
+        # // [LAW:one-source-of-truth] Panel mode from focus ancestry (standard Textual).
+        focused = self.screen.focused
+        if focused is not None:
+            import cc_dump.tui.launch_config_panel
+            import cc_dump.tui.settings_panel
+            for ancestor in focused.ancestors_with_self:
+                if isinstance(ancestor, cc_dump.tui.launch_config_panel.LaunchConfigPanel):
+                    return InputMode.LAUNCH_CONFIG
+                if isinstance(ancestor, cc_dump.tui.settings_panel.SettingsPanel):
+                    return InputMode.SETTINGS
         SearchPhase = cc_dump.tui.search.SearchPhase
         phase = self._search_state.phase
         if phase == SearchPhase.EDITING:
@@ -518,19 +519,38 @@ class CcDumpApp(App):
 
     def _drain_events(self):
         self._replay_complete.wait()
+        last_reload_check = 0.0
         while not self._closing:
             try:
                 event = self._event_queue.get(timeout=1.0)
             except queue.Empty:
                 self.call_from_thread(self._check_hot_reload)
+                last_reload_check = time.monotonic()
                 continue
             except Exception as e:
                 if self._closing:
                     break
                 self.call_from_thread(self._app_log, "ERROR", f"Event queue error: {e}")
                 continue
-            self.call_from_thread(self._check_hot_reload)
-            self.call_from_thread(self._handle_event, event)
+
+            now = time.monotonic()
+            if now - last_reload_check >= 1.0:
+                self.call_from_thread(self._check_hot_reload)
+                last_reload_check = now
+
+            # Batch: drain all immediately available events
+            batch = [event]
+            while True:
+                try:
+                    batch.append(self._event_queue.get_nowait())
+                except queue.Empty:
+                    break
+
+            self.call_from_thread(self._handle_event_batch, batch)
+
+    def _handle_event_batch(self, events: list):
+        for event in events:
+            self._handle_event(event)
 
     def _handle_event(self, event):
         try:
@@ -670,7 +690,8 @@ class CcDumpApp(App):
         import cc_dump.launch_config
         config = cc_dump.launch_config.get_active_config()
         session_id = self._session_id if config.auto_resume else ""
-        command = cc_dump.launch_config.build_full_command(config, tmux.claude_command, session_id)
+        command = cc_dump.launch_config.build_full_command(config, session_id)
+        tmux.set_claude_command(config.claude_command)
         result = tmux.launch_claude(command=command)
         self._app_log("INFO", "launch_claude: {}".format(result))
         if result.success:
@@ -709,19 +730,17 @@ class CcDumpApp(App):
         for field_def in cc_dump.tui.settings_panel.SETTINGS_FIELDS:
             val = self._settings_store.get(field_def.key) if self._settings_store else None
             initial_values[field_def.key] = val if val is not None else field_def.default
-        self._settings_panel_open = True
 
         panel = cc_dump.tui.settings_panel.create_settings_panel(initial_values)
         self.screen.mount(panel)
         self._update_footer_state()
 
     def _close_settings(self) -> None:
-        """Close settings panel (remove widget, reset flag)."""
+        """Close settings panel."""
         import cc_dump.tui.settings_panel
 
         for panel in self.screen.query(cc_dump.tui.settings_panel.SettingsPanel):
             panel.remove()
-        self._settings_panel_open = False
         self._update_footer_state()
 
     def on_settings_panel_saved(self, msg) -> None:
@@ -746,7 +765,6 @@ class CcDumpApp(App):
 
         configs = cc_dump.launch_config.load_configs()
         active_name = cc_dump.launch_config.load_active_name()
-        self._launch_config_panel_open = True
 
         panel = cc_dump.tui.launch_config_panel.create_launch_config_panel(
             configs, active_name
@@ -755,12 +773,11 @@ class CcDumpApp(App):
         self._update_footer_state()
 
     def _close_launch_config(self) -> None:
-        """Close launch config panel (remove widget, reset flag)."""
+        """Close launch config panel."""
         import cc_dump.tui.launch_config_panel
 
         for panel in self.screen.query(cc_dump.tui.launch_config_panel.LaunchConfigPanel):
             panel.remove()
-        self._launch_config_panel_open = False
         self._update_footer_state()
 
     def _launch_with_config(self, config) -> None:
@@ -773,7 +790,8 @@ class CcDumpApp(App):
             return
 
         session_id = self._session_id if config.auto_resume else ""
-        command = cc_dump.launch_config.build_full_command(config, tmux.claude_command, session_id)
+        command = cc_dump.launch_config.build_full_command(config, session_id)
+        tmux.set_claude_command(config.claude_command)
         result = tmux.launch_claude(command=command)
         self._app_log("INFO", "launch_with_config: {}".format(result))
         if result.success:
