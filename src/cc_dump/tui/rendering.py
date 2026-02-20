@@ -1776,53 +1776,6 @@ def collapse_tool_runs(
     return result
 
 
-def _flatten_hierarchy(
-    blocks: list[FormattedBlock], filters: dict
-) -> list[FormattedBlock]:
-    """Flatten container hierarchy for rendering.
-
-    Containers always appear in output (their renderer handles summary vs full).
-    Children appear only when container is expanded and visible.
-    Children's own visibility is checked separately in the main loop.
-
-    // [LAW:dataflow-not-control-flow] Always runs; blocks without children pass through unchanged.
-    """
-    flat: list[FormattedBlock] = []
-    for block in blocks:
-        flat.append(block)
-        children = getattr(block, "children", None)
-        if not children:
-            continue
-        vis = _resolve_visibility(block, filters)
-        # Apply per-block expansion override
-        expanded = block.expanded if block.expanded is not None else vis.expanded
-        if not vis.visible:
-            continue  # hidden container → skip children
-        if not expanded:
-            continue  # collapsed container → summary only, no children
-        for child in children:
-            flat.append(child)
-            # Depth 2: ToolDefBlock → SkillDefChild/AgentDefChild
-            grandchildren = getattr(child, "children", None)
-            if grandchildren:
-                child_vis = _resolve_visibility(child, filters)
-                child_expanded = child.expanded if child.expanded is not None else child_vis.expanded
-                if child_vis.visible and child_expanded:
-                    flat.extend(grandchildren)
-    return flat
-
-
-def _prepare_blocks(blocks: list, filters: dict) -> list[tuple[int, FormattedBlock]]:
-    """Pre-pass: flatten hierarchy then apply tool summarization.
-
-    // [LAW:dataflow-not-control-flow] tools_on is a value, not a branch.
-    """
-    flat = _flatten_hierarchy(blocks, filters)
-    tools_filter = filters.get("tools", ALWAYS_VISIBLE)
-    tools_on = tools_filter.full  # individual tools at FULL level
-    return collapse_tool_runs(flat, tools_on)
-
-
 # ─── Truncation and collapse indicator ─────────────────────────────────────────
 
 
@@ -1954,6 +1907,307 @@ _REGION_PART_RENDERERS: dict[str, Callable] = {
 }
 
 
+# ─── Recursive tree rendering context ─────────────────────────────────────────
+
+
+@dataclass
+class _RenderContext:
+    """Bundles accumulators for recursive block tree rendering.
+
+    // [LAW:no-shared-mutable-globals] All mutable state is scoped to one render pass.
+    """
+
+    all_strips: list
+    flat_blocks: list
+    block_strip_map: dict
+    console: object
+    render_options: object
+    render_width: int
+    width: int
+    block_cache: object
+    is_streaming: bool
+    search_ctx: object
+    turn_index: int
+    show_right: bool
+    filters: dict
+
+
+def _collapse_children(
+    children: list[FormattedBlock], tools_on: bool
+) -> list[FormattedBlock]:
+    """Return new list with consecutive ToolUse/ToolResult runs collapsed.
+
+    Non-mutating — original children list preserved for search indexing.
+    Same flush-based logic as collapse_tool_runs() but returns blocks
+    directly (no index tuples) since indices are managed by the tree walker.
+
+    // [LAW:dataflow-not-control-flow] tools_on is a value; both paths always run.
+    """
+    if tools_on:
+        return list(children)
+
+    _tool_types = {"ToolUseBlock", "ToolResultBlock"}
+    result: list[FormattedBlock] = []
+    pending: list[FormattedBlock] = []
+
+    def flush():
+        if not pending:
+            return
+        # Blocks with search overrides are emitted individually
+        if any(getattr(b, "_force_vis", None) is not None for b in pending):
+            result.extend(pending)
+            pending.clear()
+            return
+        use_blocks = [b for b in pending if type(b).__name__ == "ToolUseBlock"]
+        # Orphaned ToolResultBlocks without a preceding ToolUseBlock are dropped
+        if not use_blocks:
+            pending.clear()
+            return
+        counts = Counter(b.name for b in use_blocks)
+        result.append(
+            ToolUseSummaryBlock(
+                tool_counts=dict(counts),
+                total=len(use_blocks),
+            )
+        )
+        pending.clear()
+
+    for block in children:
+        if type(block).__name__ in _tool_types:
+            pending.append(block)
+        else:
+            flush()
+            result.append(block)
+
+    flush()
+    return result
+
+
+def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
+    """Recursively render a block and its children into ctx accumulators.
+
+    For each block:
+    1. Resolve visibility — skip if hidden (max_lines == 0)
+    2. Render block's own content (renderer dispatch, cache, search, regions)
+    3. Compute _expandable (has children OR different expanded renderer OR exceeds limit)
+    4. Apply truncation, add gutter
+    5. Record in ctx.block_strip_map/flat_blocks using sequential key
+    6. If block has expanded children: collapse them, recurse
+
+    // [LAW:single-enforcer] All visibility logic in this function.
+    // [LAW:dataflow-not-control-flow] Same operations every call; values decide outcomes.
+    """
+    from rich.segment import Segment
+    from textual.strip import Strip
+
+    vis = _resolve_visibility(block, ctx.filters)
+    max_lines = TRUNCATION_LIMITS[vis]
+
+    # Hidden blocks produce 0 lines
+    if max_lines == 0:
+        return
+
+    type_name = type(block).__name__
+    children = getattr(block, "children", None) or []
+
+    # Check if this block has search matches
+    block_has_matches = False
+    search_hash = None
+    if ctx.search_ctx is not None:
+        # Use identity-based matching (block= kwarg)
+        block_matches = ctx.search_ctx.matches_in_block(
+            ctx.turn_index, 0, block=block
+        )
+        block_has_matches = bool(block_matches)
+        search_hash = ctx.search_ctx.pattern_str if block_has_matches else None
+
+    # Resolve category indicator name
+    indicator_name = _category_indicator_name(block)
+
+    # Single unified renderer lookup
+    # // [LAW:dataflow-not-control-flow] One lookup replaces conditional dispatch
+    state_key = (type_name, vis.visible, vis.full, vis.expanded)
+    renderer = RENDERERS.get(state_key)
+    state_override = state_key in BLOCK_STATE_RENDERERS
+
+    # Detect blocks with content regions for per-part rendering
+    has_regions = bool(block.content_regions)
+
+    # Precedence: state-specific renderer > region rendering > default renderer
+    if has_regions and not state_override:
+        region_renderer = _REGION_PART_RENDERERS.get(type_name, _render_region_parts)
+        region_parts = region_renderer(block)
+
+        region_cache_state = tuple(
+            (r.index, r.expanded) for r in block.content_regions
+        )
+        cache_key = (
+            id(block),
+            ctx.render_width,
+            vis,
+            search_hash,
+            region_cache_state,
+        )
+
+        if ctx.block_cache is not None and cache_key in ctx.block_cache:
+            block_strips = ctx.block_cache[cache_key]
+        else:
+            block_strips = []
+
+            for part_renderable, region_idx in region_parts:
+                part_start = len(block_strips)
+                part_segments = ctx.console.render(
+                    part_renderable, ctx.render_options
+                )
+                part_lines = list(Segment.split_lines(part_segments))
+                if part_lines:
+                    part_strips = [
+                        s.adjust_cell_length(ctx.render_width)
+                        for s in Strip.from_lines(part_lines)
+                    ]
+                    block_strips.extend(part_strips)
+
+                if region_idx is not None:
+                    region = block.content_regions[region_idx]
+                    region._strip_range = (part_start, len(block_strips))
+                    if (
+                        region.kind in COLLAPSIBLE_REGION_KINDS
+                        and part_start < len(block_strips)
+                    ):
+                        region_meta = {META_TOGGLE_REGION: region_idx}
+                        block_strips[part_start] = block_strips[
+                            part_start
+                        ].apply_meta(region_meta)
+                        last_i = len(block_strips) - 1
+                        if last_i != part_start:
+                            block_strips[last_i] = block_strips[
+                                last_i
+                            ].apply_meta(region_meta)
+
+            if ctx.block_cache is not None:
+                ctx.block_cache[cache_key] = block_strips
+
+        text = True  # sentinel — we already have block_strips
+
+    elif renderer:
+        if block_has_matches and isinstance(renderer(block), Markdown):
+            plain_text = ""
+            if hasattr(block, "content"):
+                plain_text = block.content
+            text = Text(plain_text)
+        else:
+            text = renderer(block)
+    else:
+        text = None
+
+    if text is None:
+        return
+
+    # Apply search highlights (only on Text objects)
+    if block_has_matches and isinstance(text, Text):
+        _apply_search_highlights(
+            text, ctx.search_ctx, ctx.turn_index, 0, block=block
+        )
+
+    # Record using sequential key: block_strip_map[i] corresponds to flat_blocks[i]
+    seq_key = len(ctx.flat_blocks)
+    ctx.block_strip_map[seq_key] = len(ctx.all_strips)
+    ctx.flat_blocks.append(block)
+
+    # Standard rendering path (non-region)
+    if not has_regions:
+        cache_key = (
+            id(block),
+            ctx.render_width,
+            vis,
+            search_hash,
+        )
+
+        if ctx.block_cache is not None and cache_key in ctx.block_cache:
+            cached = ctx.block_cache[cache_key]
+            if isinstance(cached, tuple):
+                block_strips = cached[0]
+            else:
+                block_strips = cached
+        else:
+            segments = ctx.console.render(text, ctx.render_options)
+            lines = list(Segment.split_lines(segments))
+            if lines:
+                block_strips = [
+                    s.adjust_cell_length(ctx.render_width)
+                    for s in Strip.from_lines(lines)
+                ]
+            else:
+                block_strips = []
+
+            if ctx.block_cache is not None:
+                ctx.block_cache[cache_key] = block_strips
+
+    # Track expandability: children make a block expandable, as does
+    # having a different expanded renderer or exceeding truncation limit
+    # // [LAW:single-enforcer] _expandable enables click-to-expand interaction
+    collapsed_limit = TRUNCATION_LIMITS[VisState(True, vis.full, False)]
+    collapsed_key = (type_name, vis.visible, vis.full, False)
+    expanded_key = (type_name, vis.visible, vis.full, True)
+    has_different_expanded = RENDERERS.get(collapsed_key) is not RENDERERS.get(
+        expanded_key
+    )
+    block._expandable = bool(children) or has_different_expanded or (
+        collapsed_limit is not None
+        and collapsed_limit > 0
+        and len(block_strips) > collapsed_limit
+    )
+
+    # Truncation
+    # // [LAW:dataflow-not-control-flow] No should_truncate flag, just max_lines value
+    is_truncated = (
+        not ctx.is_streaming
+        and max_lines is not None
+        and len(block_strips) > max_lines
+    )
+
+    if is_truncated:
+        assert max_lines is not None
+        hidden = len(block_strips) - max_lines
+        truncated_strips = list(block_strips[:max_lines])
+        truncated_strips.append(
+            _make_collapse_indicator(hidden, ctx.render_width)
+        )
+        block_strips_for_gutter = truncated_strips
+        arrow = (
+            GUTTER_ARROWS.get((vis.full, False), "")
+            if block._expandable
+            else ""
+        )
+    else:
+        block_strips_for_gutter = list(block_strips)
+        arrow = (
+            GUTTER_ARROWS.get((vis.full, vis.expanded), "")
+            if block._expandable
+            else ""
+        )
+
+    # Unified gutter path
+    is_neutral = indicator_name is None
+    final_strips = _add_gutter_to_strips(
+        block_strips_for_gutter,
+        indicator_name,
+        block._expandable,
+        arrow,
+        ctx.width,
+        neutral=is_neutral,
+        show_right=ctx.show_right,
+    )
+    ctx.all_strips.extend(final_strips)
+
+    # Recurse into children when container is visible and expanded
+    if children and vis.visible and vis.expanded:
+        tools_filter = ctx.filters.get("tools", ALWAYS_VISIBLE)
+        collapsed = _collapse_children(children, tools_filter.full)
+        for child in collapsed:
+            _render_block_tree(child, ctx)
+
+
 # ─── Core rendering ───────────────────────────────────────────────────────────
 
 
@@ -1982,8 +2236,8 @@ def render_blocks(
     Returns:
         List of (block_index, Text) pairs.
     """
-    prepared = _prepare_blocks(blocks, filters)
-
+    tools_filter = filters.get("tools", ALWAYS_VISIBLE)
+    prepared = collapse_tool_runs(blocks, tools_filter.full)
 
     rendered: list[tuple[int, Text]] = []
     for orig_idx, block in prepared:
@@ -2022,11 +2276,14 @@ def render_turn_to_strips(
 ) -> tuple[list, dict[int, int], list[FormattedBlock]]:
     """Render blocks to Strip objects for Line API storage.
 
-    # [LAW:single-enforcer] All visibility logic happens here.
+    Recursively walks the block tree. Each block's own content is rendered,
+    then children are rendered (when the container is expanded and visible).
+
+    # [LAW:single-enforcer] All visibility logic happens here (via _render_block_tree).
 
     Args:
-        blocks: FormattedBlock list for one turn
-        filters: Current filter state (category name -> Level)
+        blocks: FormattedBlock list for one turn (hierarchical)
+        filters: Current filter state (category name -> VisState)
         console: Rich Console instance
         width: Render width in cells
         wrap: Enable word wrapping
@@ -2037,12 +2294,9 @@ def render_turn_to_strips(
 
     Returns:
         (strips, block_strip_map, flat_blocks) — pre-rendered lines, a dict mapping
-        block index to its first strip line index, and the flattened block list
-        for click resolution.
+        sequential block index to its first strip line index, and the flattened
+        block list for click resolution.
     """
-    from rich.segment import Segment
-    from textual.strip import Strip
-
     base_render_options = console.options
     if not wrap:
         base_render_options = base_render_options.update(
@@ -2055,224 +2309,26 @@ def render_turn_to_strips(
     render_width = max(1, width - total_gutter)
     base_render_options = base_render_options.update_width(render_width)
 
-    all_strips: list[Strip] = []
-    block_strip_map: dict[int, int] = {}
-    # // [LAW:one-source-of-truth] flat_blocks tracks which blocks rendered,
-    # keyed in parallel with block_strip_map for click resolution.
-    flat_blocks: list[FormattedBlock] = []
+    ctx = _RenderContext(
+        all_strips=[],
+        flat_blocks=[],
+        block_strip_map={},
+        console=console,
+        render_options=base_render_options,
+        render_width=render_width,
+        width=width,
+        block_cache=block_cache,
+        is_streaming=is_streaming,
+        search_ctx=search_ctx,
+        turn_index=turn_index,
+        show_right=show_right,
+        filters=filters,
+    )
 
-    prepared = _prepare_blocks(blocks, filters)
+    for block in blocks:
+        _render_block_tree(block, ctx)
 
-
-    for orig_idx, block in prepared:
-        vis = _resolve_visibility(block, filters)
-        max_lines = TRUNCATION_LIMITS[vis]
-
-        # Hidden blocks produce 0 lines — skip early
-        if max_lines == 0:
-            continue
-
-        type_name = type(block).__name__
-
-        # Check if this block has search matches
-        block_has_matches = False
-        search_hash = None
-        if search_ctx is not None:
-            block_matches = search_ctx.matches_in_block(turn_index, orig_idx, block=block)
-            block_has_matches = bool(block_matches)
-            search_hash = search_ctx.pattern_str if block_has_matches else None
-
-        # Resolve category indicator name
-        indicator_name = _category_indicator_name(block)
-
-        # Single unified renderer lookup
-        # // [LAW:dataflow-not-control-flow] One lookup replaces conditional dispatch
-        state_key = (type_name, vis.visible, vis.full, vis.expanded)
-        renderer = RENDERERS.get(state_key)
-        state_override = state_key in BLOCK_STATE_RENDERERS
-
-        # Detect blocks with content regions for per-part rendering
-        # // [LAW:dataflow-not-control-flow] content_regions are eagerly populated
-        # by populate_content_regions() in formatting.py. Streaming blocks
-        # (TextDeltaBlock) won't have regions — their text is incomplete fragments.
-        has_regions = bool(block.content_regions)
-
-        # Precedence: state-specific renderer > region rendering > default renderer
-        # // [LAW:dataflow-not-control-flow] state_override is a value, not a branch
-        if has_regions and not state_override:
-            # Per-part region rendering path: render each segment separately
-            # so we can track strip ranges for click-to-collapse
-            region_renderer = _REGION_PART_RENDERERS.get(type_name, _render_region_parts)
-            region_parts = region_renderer(block)
-
-            # Include region expanded state in cache key
-            region_cache_state = tuple(
-                (r.index, r.expanded) for r in block.content_regions
-            )
-            cache_key = (
-                id(block),
-                render_width,
-                vis,
-                search_hash,
-                region_cache_state,
-            )
-
-            if block_cache is not None and cache_key in block_cache:
-                block_strips = block_cache[cache_key]
-            else:
-                # Render each part and assemble strips with range tracking
-                block_strips = []
-
-                for part_renderable, region_idx in region_parts:
-                    part_start = len(block_strips)
-                    part_segments = console.render(part_renderable, base_render_options)
-                    part_lines = list(Segment.split_lines(part_segments))
-                    if part_lines:
-                        part_strips = [
-                            s.adjust_cell_length(render_width)
-                            for s in Strip.from_lines(part_lines)
-                        ]
-                        block_strips.extend(part_strips)
-
-                    # Track region strip ranges and apply toggle meta
-                    # // [LAW:single-enforcer] Meta on tag strips is the region toggle trigger
-                    if region_idx is not None:
-                        region = block.content_regions[region_idx]
-                        region._strip_range = (part_start, len(block_strips))
-                        # Only apply toggle meta to collapsible region kinds
-                        if region.kind in COLLAPSIBLE_REGION_KINDS and part_start < len(block_strips):
-                            region_meta = {META_TOGGLE_REGION: region_idx}
-                            # First strip: start tag or collapsed indicator
-                            block_strips[part_start] = block_strips[
-                                part_start
-                            ].apply_meta(region_meta)
-                            # Last strip: end tag (same as first when collapsed)
-                            last_i = len(block_strips) - 1
-                            if last_i != part_start:
-                                block_strips[last_i] = block_strips[
-                                    last_i
-                                ].apply_meta(region_meta)
-
-                if block_cache is not None:
-                    block_cache[cache_key] = block_strips
-
-            # Set text to non-None so the rest of the pipeline proceeds
-            text = True  # sentinel — we already have block_strips
-
-        elif renderer:
-            # For Markdown blocks with search matches, render as plain Text
-            # so highlight_regex works correctly
-            if block_has_matches and isinstance(renderer(block), Markdown):
-                # Re-render as plain Text for search highlighting
-                plain_text = ""
-                if hasattr(block, "content"):
-                    plain_text = block.content
-                text = Text(plain_text)
-            else:
-                text = renderer(block)
-        else:
-            text = None
-
-        if text is None:
-            continue
-
-        # Apply search highlights (only on Text objects)
-        if block_has_matches and isinstance(text, Text):
-            _apply_search_highlights(text, search_ctx, turn_index, orig_idx, block=block)
-
-        block_strip_map[orig_idx] = len(all_strips)
-        flat_blocks.append(block)
-
-        # Standard rendering path (non-region or when text is a renderable)
-        if not has_regions:
-            # Cache key uses render_width (content width without gutter)
-            cache_key = (
-                id(block),
-                render_width,
-                vis,
-                search_hash,
-            )
-
-            # Check cache first
-            if block_cache is not None and cache_key in block_cache:
-                cached = block_cache[cache_key]
-                # Handle both old (list) and new (tuple) cache formats
-                if isinstance(cached, tuple):
-                    block_strips = cached[0]
-                else:
-                    block_strips = cached
-            else:
-                # Render block at render_width (all blocks use same width)
-                segments = console.render(text, base_render_options)
-                lines = list(Segment.split_lines(segments))
-                if lines:
-                    # // [LAW:no-shared-mutable-globals] adjust_cell_length returns
-                    # a NEW Strip; build a fresh list so no reader sees unpadded data.
-                    block_strips = [
-                        s.adjust_cell_length(render_width)
-                        for s in Strip.from_lines(lines)
-                    ]
-                else:
-                    block_strips = []
-
-                # Cache result
-                if block_cache is not None:
-                    block_cache[cache_key] = block_strips
-
-        # Track expandability: always check against collapsed limit for this detail level
-        # // [LAW:single-enforcer] _expandable enables click-to-expand interaction
-        # // [LAW:dataflow-not-control-flow] Check if renderers differ, not if expansion "would happen"
-        collapsed_limit = TRUNCATION_LIMITS[VisState(True, vis.full, False)]
-        collapsed_key = (type_name, vis.visible, vis.full, False)
-        expanded_key = (type_name, vis.visible, vis.full, True)
-        has_different_expanded = RENDERERS.get(collapsed_key) is not RENDERERS.get(
-            expanded_key
-        )
-        block._expandable = has_different_expanded or (
-            collapsed_limit is not None
-            and collapsed_limit > 0
-            and len(block_strips) > collapsed_limit
-        )
-
-        # Truncation: ALWAYS applies when max_lines < strip count (not streaming)
-        # // [LAW:dataflow-not-control-flow] No should_truncate flag, just max_lines value
-        is_truncated = (
-            not is_streaming and max_lines is not None and len(block_strips) > max_lines
-        )
-
-        if is_truncated:
-            assert max_lines is not None  # implied by is_truncated
-            hidden = len(block_strips) - max_lines
-            truncated_strips = list(block_strips[:max_lines])
-            truncated_strips.append(_make_collapse_indicator(hidden, render_width))
-            block_strips_for_gutter = truncated_strips
-            # Arrow: truncated blocks are collapsed
-            arrow = (
-                GUTTER_ARROWS.get((vis.full, False), "") if block._expandable else ""
-            )
-        else:
-            block_strips_for_gutter = list(block_strips)
-            # Arrow: non-truncated blocks use actual expanded state
-            arrow = (
-                GUTTER_ARROWS.get((vis.full, vis.expanded), "")
-                if block._expandable
-                else ""
-            )
-
-        # Unified gutter path — all blocks go through here
-        is_neutral = indicator_name is None
-        final_strips = _add_gutter_to_strips(
-            block_strips_for_gutter,
-            indicator_name,
-            block._expandable,
-            arrow,
-            width,
-            neutral=is_neutral,
-            show_right=show_right,
-        )
-        all_strips.extend(final_strips)
-
-    return all_strips, block_strip_map, flat_blocks
+    return ctx.all_strips, ctx.block_strip_map, ctx.flat_blocks
 
 
 def _apply_search_highlights(

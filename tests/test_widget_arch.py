@@ -167,14 +167,16 @@ class TestRenderTurnToStrips:
             ToolUseBlock(name="read_file", input_size=100, msg_color_idx=0),  # visible
         ]
 
-        strips, block_map, _ = render_turn_to_strips(blocks, filters, console, width=80)
+        strips, block_map, flat_blocks = render_turn_to_strips(blocks, filters, console, width=80)
 
         # Header is hidden at EXISTENCE level, so 2 strips (text + tool)
         assert len(strips) == 2
-        # Only visible blocks in map
-        assert 0 not in block_map  # header hidden
-        assert 1 in block_map  # text visible
-        assert 2 in block_map  # tool visible
+        # Sequential keys: 0 and 1 for the two visible blocks
+        assert len(block_map) == 2
+        assert 0 in block_map  # first visible block (text)
+        assert 1 in block_map  # second visible block (tool)
+        # flat_blocks corresponds to block_map keys
+        assert len(flat_blocks) == 2
 
 
 class TestTurnDataReRender:

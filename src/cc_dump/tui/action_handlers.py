@@ -32,18 +32,26 @@ def _toggle_vis_dicts(app, category: str, spec_key: str) -> None:
 
 
 def clear_overrides(app, category_name: str) -> None:
-    """Reset per-block expanded overrides and content region states for a category."""
+    """Reset per-block expanded overrides and content region states for a category.
+
+    Recursively walks children so container blocks' nested content is also cleared.
+    """
     cat = cc_dump.formatting.Category(category_name)
     conv = app._get_conv()
     if conv is None:
         return
-    for td in conv._turns:
-        for block in td.blocks:
+
+    def _walk_clear(blocks):
+        for block in blocks:
             block_cat = cc_dump.tui.rendering.get_category(block)
             if block_cat == cat:
                 block.expanded = None
                 for region in block.content_regions:
                     region.expanded = None
+            _walk_clear(getattr(block, "children", []))
+
+    for td in conv._turns:
+        _walk_clear(td.blocks)
 
 
 def toggle_vis(app, category: str) -> None:
