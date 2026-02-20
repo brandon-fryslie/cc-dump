@@ -145,16 +145,7 @@ class CcDumpApp(App):
         self._app_state: AppState = {"current_turn_usage": {}}
 
         self._search_state = cc_dump.tui.search.SearchState()
-        self._active_filterset_slot = None
 
-        # Side channel panel state
-        self._side_channel_loading: bool = False
-        self._side_channel_result_text: str = ""
-        self._side_channel_result_source: str = ""
-        self._side_channel_result_elapsed_ms: int = 0
-
-        # Exception tracking for error indicator
-        self._exception_items: list = []
         # Buffered error log — dumped to stderr after TUI exits
         self._error_log: list[str] = []
 
@@ -347,7 +338,14 @@ class CcDumpApp(App):
             info.display = self.show_info
             info.update_info(self._build_server_info())
 
-        self._update_footer_state()
+        # Seed external state into view store for reactive footer
+        self._sync_tmux_to_store()
+        import cc_dump.launch_config as _lc
+        self._view_store.set("active_launch_config_name", _lc.load_active_name())
+        # Initial footer hydration (reactions may not fire since is_running just became True)
+        footer = self._get_footer()
+        if footer:
+            footer.update_display(self._view_store.footer_state.get())
 
         if self._replay_data:
             self._process_replay_data()
@@ -400,8 +398,7 @@ class CcDumpApp(App):
             icon="💥",
             summary=f"{type(error).__name__}: {error}"
         )
-        self._exception_items.append(exc_item)
-        self._update_error_indicator()
+        self._view_store.exception_items.append(exc_item)
 
         # DON'T call super() - keep running, hot reload will fix it
 
@@ -415,47 +412,16 @@ class CcDumpApp(App):
             if logs is not None:
                 logs.app_log(level, message)
 
-    def _update_footer_state(self):
-        if self.is_running:
-            footer = self._get_footer()
-            if footer is not None:
-                conv = self._get_conv()
-                tmux = self._tmux_controller
-                import cc_dump.tmux_controller
-                _TMUX_ACTIVE = {
-                    cc_dump.tmux_controller.TmuxState.READY,
-                    cc_dump.tmux_controller.TmuxState.CLAUDE_RUNNING,
-                }
-                import cc_dump.launch_config
-                state = {
-                    **self.active_filters,
-                    "active_panel": self.active_panel,
-                    "follow_state": conv._follow_state if conv is not None else cc_dump.tui.widget_factory.FollowState.ACTIVE,
-                    "active_filterset": self._active_filterset_slot,
-                    "tmux_available": tmux is not None and tmux.state in _TMUX_ACTIVE,
-                    "tmux_auto_zoom": tmux.auto_zoom if tmux is not None else False,
-                    "tmux_zoomed": tmux._is_zoomed if tmux is not None else False,
-                    "active_launch_config_name": cc_dump.launch_config.load_active_name(),
-                }
-                footer.update_display(state)
-            self._update_error_indicator()
-
-    def _update_error_indicator(self):
-        """Push stale-file and exception errors to ConversationView's overlay indicator."""
-        conv = self._get_conv()
-        if conv is None:
-            return
-        stale = getattr(self, "_stale_files", [])
-        import cc_dump.tui.error_indicator
-        ErrorItem = cc_dump.tui.error_indicator.ErrorItem
-        # // [LAW:dataflow-not-control-flow] Always build items list; empty list = no indicator.
-        items = [
-            ErrorItem("stale", "\u274c", s.split("/")[-1])
-            for s in stale
-        ]
-        # Add caught exceptions
-        items.extend(self._exception_items)
-        conv.update_error_items(items)
+    def _sync_tmux_to_store(self):
+        """Mirror tmux controller state to view store for reactive footer updates."""
+        tmux = self._tmux_controller
+        import cc_dump.tmux_controller
+        _TMUX_ACTIVE = {cc_dump.tmux_controller.TmuxState.READY, cc_dump.tmux_controller.TmuxState.CLAUDE_RUNNING}
+        self._view_store.update({
+            "tmux:available": tmux is not None and tmux.state in _TMUX_ACTIVE,
+            "tmux:auto_zoom": tmux.auto_zoom if tmux is not None else False,
+            "tmux:zoomed": tmux._is_zoomed if tmux is not None else False,
+        })
 
     def _build_server_info(self) -> dict:
         """// [LAW:one-source-of-truth] All server info derived from constructor params."""
@@ -485,7 +451,6 @@ class CcDumpApp(App):
             conv = self._get_conv()
             if conv is not None:
                 conv.rerender(self.active_filters)
-            self._update_footer_state()
 
     # ─── Event pipeline ────────────────────────────────────────────────
 
@@ -691,7 +656,7 @@ class CcDumpApp(App):
         self._app_log("INFO", "launch_claude: {}".format(result))
         if result.success:
             self.notify("{}: {}".format(result.action.value, result.detail))
-            self._update_footer_state()
+            self._sync_tmux_to_store()
         else:
             self.notify("Launch failed: {}".format(result.detail), severity="error")
 
@@ -701,7 +666,7 @@ class CcDumpApp(App):
             self.notify("Tmux not available", severity="warning")
             return
         tmux.toggle_zoom()
-        self._update_footer_state()
+        self._sync_tmux_to_store()
 
     def action_toggle_auto_zoom(self):
         tmux = self._tmux_controller
@@ -711,7 +676,7 @@ class CcDumpApp(App):
         tmux.toggle_auto_zoom()
         label = "on" if tmux.auto_zoom else "off"
         self.notify("Auto-zoom: {}".format(label))
-        self._update_footer_state()
+        self._sync_tmux_to_store()
 
     # Settings
     def action_toggle_settings(self):
@@ -729,7 +694,6 @@ class CcDumpApp(App):
         self._view_store.set("panel:settings", True)
         panel = cc_dump.tui.settings_panel.create_settings_panel(initial_values)
         self.screen.mount(panel)
-        self._update_footer_state()
 
     def _close_settings(self) -> None:
         """Close settings panel."""
@@ -738,7 +702,6 @@ class CcDumpApp(App):
         for panel in self.screen.query(cc_dump.tui.settings_panel.SettingsPanel):
             panel.remove()
         self._view_store.set("panel:settings", False)
-        self._update_footer_state()
 
     def on_settings_panel_saved(self, msg) -> None:
         """Handle SettingsPanel.Saved — update store (reactions handle persistence + side effects)."""
@@ -768,7 +731,6 @@ class CcDumpApp(App):
             configs, active_name
         )
         self.screen.mount(panel)
-        self._update_footer_state()
 
     def _close_launch_config(self) -> None:
         """Close launch config panel."""
@@ -777,7 +739,6 @@ class CcDumpApp(App):
         for panel in self.screen.query(cc_dump.tui.launch_config_panel.LaunchConfigPanel):
             panel.remove()
         self._view_store.set("panel:launch_config", False)
-        self._update_footer_state()
 
     def _launch_with_config(self, config) -> None:
         """Build args from config + session_id, launch via tmux."""
@@ -797,7 +758,7 @@ class CcDumpApp(App):
             self.notify("{}: {}".format(result.action.value, result.detail))
         else:
             self.notify("Launch failed: {}".format(result.detail), severity="error")
-        self._update_footer_state()
+        self._sync_tmux_to_store()
 
     def on_launch_config_panel_saved(self, msg) -> None:
         """Handle LaunchConfigPanel.Saved — persist configs."""
@@ -827,8 +788,8 @@ class CcDumpApp(App):
 
         cc_dump.launch_config.save_configs(msg.configs)
         cc_dump.launch_config.save_active_name(msg.name)
+        self._view_store.set("active_launch_config_name", msg.name)
         self.notify("Active: {}".format(msg.name))
-        self._update_footer_state()
 
     # Side channel
     def action_toggle_side_channel(self):
@@ -837,17 +798,19 @@ class CcDumpApp(App):
     def _open_side_channel(self):
         """Open side-channel AI panel."""
         import cc_dump.tui.side_channel_panel
+        from snarfx import transaction
 
         self._view_store.set("panel:side_channel", True)
-        self._side_channel_loading = False
-        self._side_channel_result_text = ""
-        self._side_channel_result_source = ""
-        self._side_channel_result_elapsed_ms = 0
-
         panel = cc_dump.tui.side_channel_panel.create_side_channel_panel()
         self.screen.mount(panel)
-        self._update_side_channel_panel_display()
-        self._update_footer_state()
+        # Reset sc state — reaction pushes to panel
+        with transaction():
+            self._view_store.set("sc:loading", False)
+            self._view_store.set("sc:result_text", "")
+            self._view_store.set("sc:result_source", "")
+            self._view_store.set("sc:result_elapsed_ms", 0)
+        # Initial hydration — reaction may not fire if values unchanged from defaults
+        panel.update_display(self._view_store.sc_panel_state.get())
 
     def _close_side_channel(self):
         """Close side-channel AI panel."""
@@ -856,22 +819,6 @@ class CcDumpApp(App):
         for panel in self.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel):
             panel.remove()
         self._view_store.set("panel:side_channel", False)
-        self._update_footer_state()
-
-    def _update_side_channel_panel_display(self):
-        """Push current state to the side-channel panel widget."""
-        import cc_dump.tui.side_channel_panel
-
-        panels = self.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel)
-        if panels:
-            state = cc_dump.tui.side_channel_panel.SideChannelPanelState(
-                enabled=self._side_channel_manager.enabled if self._side_channel_manager else False,
-                loading=self._side_channel_loading,
-                result_text=self._side_channel_result_text,
-                result_source=self._side_channel_result_source,
-                result_elapsed_ms=self._side_channel_result_elapsed_ms,
-            )
-            panels.first().update_display(state)
 
     def _handle_side_channel_key(self, event) -> None:
         """Handle key events in SIDE_CHANNEL mode.
@@ -884,18 +831,16 @@ class CcDumpApp(App):
 
     def _side_channel_summarize(self):
         """Request AI summary of recent messages. Runs in worker thread."""
-        if self._side_channel_loading or self._data_dispatcher is None:
+        if self._view_store.get("sc:loading") or self._data_dispatcher is None:
             return
 
         messages = self._collect_recent_messages(10)
         if not messages:
-            self._side_channel_result_text = "No messages to summarize."
-            self._side_channel_result_source = "fallback"
-            self._update_side_channel_panel_display()
+            self._view_store.set("sc:result_text", "No messages to summarize.")
+            self._view_store.set("sc:result_source", "fallback")
             return
 
-        self._side_channel_loading = True
-        self._update_side_channel_panel_display()
+        self._view_store.set("sc:loading", True)
 
         dispatcher = self._data_dispatcher
 
@@ -907,11 +852,12 @@ class CcDumpApp(App):
 
     def _on_side_channel_result(self, result):
         """Callback from worker thread with AI result."""
-        self._side_channel_loading = False
-        self._side_channel_result_text = result.text
-        self._side_channel_result_source = result.source
-        self._side_channel_result_elapsed_ms = result.elapsed_ms
-        self._update_side_channel_panel_display()
+        from snarfx import transaction
+        with transaction():
+            self._view_store.set("sc:loading", False)
+            self._view_store.set("sc:result_text", result.text)
+            self._view_store.set("sc:result_source", result.source)
+            self._view_store.set("sc:result_elapsed_ms", result.elapsed_ms)
 
     def _collect_recent_messages(self, count: int) -> list[dict]:
         """Extract last N messages from captured API traffic."""
@@ -923,7 +869,7 @@ class CcDumpApp(App):
             return
         current = self._settings_store.get("side_channel_enabled")
         self._settings_store.set("side_channel_enabled", not current)
-        self._update_side_channel_panel_display()
+        # sc_panel_state Computed reads settings_store → reaction fires automatically
 
     def on_button_pressed(self, event) -> None:
         """Handle button presses from side-channel panel."""
@@ -1009,7 +955,8 @@ class CcDumpApp(App):
             return
         cc_dump.tui.rendering.set_theme(self.current_theme)
         self._apply_markdown_theme()
-        self._update_footer_state()
+        gen = self._view_store.get("theme_generation")
+        self._view_store.set("theme_generation", gen + 1)
         conv = self._get_conv()
         if conv is not None:
             conv._block_strip_cache.clear()

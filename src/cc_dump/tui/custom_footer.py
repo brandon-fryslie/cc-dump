@@ -51,7 +51,7 @@ class StatusFooter(Static):
     _COMMAND_ITEMS = [("/", "search")]
 
     def update_display(self, state: dict) -> None:
-        """Render footer from state. Called by app._update_footer_state()."""
+        """Render footer from state dict. Called by footer_state reaction."""
         self.update(self._render_footer(state))
 
     def _render_footer(self, state: dict) -> Text:

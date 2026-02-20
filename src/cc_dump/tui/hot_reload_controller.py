@@ -39,10 +39,12 @@ async def check_hot_reload(app) -> None:
 
     # Check excluded files for staleness on every tick (cheap mtime scan)
     stale = cc_dump.hot_reload.get_stale_excluded()
-    old_stale = getattr(app, "_stale_files", [])
+    store = app._view_store
+    old_stale = list(store.stale_files)
     if stale != old_stale:
-        app._stale_files = stale
-        app._update_footer_state()
+        store.stale_files.clear()
+        if stale:
+            store.stale_files.extend(stale)
 
     if not changed:
         return
@@ -309,10 +311,10 @@ async def _replace_all_widgets_inner(app) -> None:
     await app.mount(new_logs, after=new_conv)
     await app.mount(new_info, after=new_logs)
 
-    # StatusFooter is stateless — create fresh and push current visibility state
+    # StatusFooter is stateless — create fresh and hydrate from store
     new_footer = cc_dump.tui.custom_footer.StatusFooter()
     await app.mount(new_footer, after=new_info)
-    app._update_footer_state()
+    new_footer.update_display(app._view_store.footer_state.get())
 
     # 5. Re-render with current filters
     new_conv.rerender(app.active_filters)

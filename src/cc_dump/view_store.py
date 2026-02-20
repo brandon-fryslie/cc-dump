@@ -1,8 +1,8 @@
-"""View store — category visibility + panel/follow state. RELOADABLE.
+"""View store — category visibility + panel/follow + footer/error/side-channel state. RELOADABLE.
 
-// [LAW:one-source-of-truth] Schema derived from CATEGORY_CONFIG + panel/follow keys.
+// [LAW:one-source-of-truth] Schema derived from CATEGORY_CONFIG + panel/follow + footer/error/sc keys.
 // [LAW:single-enforcer] Single autorun triggers re-render on any visibility change.
-// [LAW:single-enforcer] Single reaction drives panel display sync.
+// [LAW:single-enforcer] Single reaction per widget push (panel, footer, error, side-channel).
 """
 
 import cc_dump.formatting
@@ -26,11 +26,25 @@ SCHEMA["panel:launch_config"] = False
 # changes on reload; string comparison is stable across reloads.
 SCHEMA["follow"] = "active"
 
+# Footer inputs (previously app attributes or external reads)
+SCHEMA["active_filterset"] = None           # str|None — was app._active_filterset_slot
+SCHEMA["tmux:available"] = False            # bool — mirrored from tmux controller
+SCHEMA["tmux:auto_zoom"] = False            # bool — mirrored from tmux controller
+SCHEMA["tmux:zoomed"] = False               # bool — mirrored from tmux controller
+SCHEMA["active_launch_config_name"] = ""    # str — was load_active_name() file I/O each call
+SCHEMA["theme_generation"] = 0              # int — bumped on theme change to invalidate footer
+
+# Side-channel panel state (previously app._side_channel_* attributes)
+SCHEMA["sc:loading"] = False
+SCHEMA["sc:result_text"] = ""
+SCHEMA["sc:result_source"] = ""
+SCHEMA["sc:result_elapsed_ms"] = 0
+
 
 def create():
     """Create view store with defaults from CATEGORY_CONFIG."""
     from snarfx.hot_reload import HotReloadStore
-    from snarfx import computed
+    from snarfx import computed, ObservableList
 
     store = HotReloadStore(SCHEMA)
 
@@ -48,6 +62,55 @@ def create():
         }
 
     store.active_filters = active_filters
+
+    # ObservableLists — tracked by SnarfX auto-tracking in Computeds
+    store.stale_files = ObservableList()       # list[str] — was app._stale_files
+    store.exception_items = ObservableList()   # list[ErrorItem] — was app._exception_items
+
+    # // [LAW:single-enforcer] footer_state Computed reads all footer inputs from store.
+    @computed
+    def footer_state():
+        import cc_dump.tui.widget_factory
+        return {
+            **store.active_filters.get(),
+            "active_panel": store.get("panel:active"),
+            "follow_state": cc_dump.tui.widget_factory.FollowState(store.get("follow")),
+            "active_filterset": store.get("active_filterset"),
+            "tmux_available": store.get("tmux:available"),
+            "tmux_auto_zoom": store.get("tmux:auto_zoom"),
+            "tmux_zoomed": store.get("tmux:zoomed"),
+            "active_launch_config_name": store.get("active_launch_config_name"),
+            "_gen": store.get("theme_generation"),
+        }
+
+    store.footer_state = footer_state
+
+    # // [LAW:single-enforcer] error_items Computed combines stale files + exceptions.
+    @computed
+    def error_items():
+        import cc_dump.tui.error_indicator
+        ErrorItem = cc_dump.tui.error_indicator.ErrorItem
+        items = [ErrorItem("stale", "\u274c", s.split("/")[-1]) for s in store.stale_files]
+        items.extend(store.exception_items)
+        return items
+
+    store.error_items = error_items
+
+    # // [LAW:single-enforcer] sc_panel_state Computed combines side-channel fields.
+    @computed
+    def sc_panel_state():
+        settings = getattr(store, '_settings_store', None)
+        import cc_dump.tui.side_channel_panel
+        return cc_dump.tui.side_channel_panel.SideChannelPanelState(
+            enabled=settings.get("side_channel_enabled") if settings else False,
+            loading=store.get("sc:loading"),
+            result_text=store.get("sc:result_text"),
+            result_source=store.get("sc:result_source"),
+            result_elapsed_ms=store.get("sc:result_elapsed_ms"),
+        )
+
+    store.sc_panel_state = sc_panel_state
+
     return store
 
 
@@ -55,7 +118,7 @@ def setup_reactions(store, context=None):
     """Register reactions. Returns list of disposers.
 
     Called on create and on hot-reload reconcile.
-    context: dict with "app" key for re-render autorun.
+    context: dict with "app", optional "settings_store" keys.
     """
     from snarfx import autorun, reaction
 
@@ -63,6 +126,12 @@ def setup_reactions(store, context=None):
 
     if context:
         app = context.get("app")
+        settings_store = context.get("settings_store")
+
+        # Wire settings_store ref for sc_panel_state Computed cross-store access
+        if settings_store is not None:
+            store._settings_store = settings_store
+
         if app is not None:
             disposers.append(autorun(
                 lambda: (store.active_filters.get(), app._rerender_if_mounted())
@@ -74,20 +143,69 @@ def setup_reactions(store, context=None):
                 lambda value: _on_active_panel_changed(app, value),
             ))
 
+            # // [LAW:single-enforcer] Footer reaction
+            disposers.append(reaction(
+                lambda: store.footer_state.get(),
+                lambda state: _push_footer(app, state),
+            ))
+
+            # // [LAW:single-enforcer] Error indicator reaction
+            disposers.append(reaction(
+                lambda: store.error_items.get(),
+                lambda items: _push_error_items(app, items),
+            ))
+
+            # // [LAW:single-enforcer] Side-channel panel reaction
+            disposers.append(reaction(
+                lambda: store.sc_panel_state.get(),
+                lambda state: _push_sc_panel(app, state),
+            ))
+
     return disposers
 
 
 def _on_active_panel_changed(app, value):
-    """Effect: sync panel widget display, refresh data, update footer.
+    """Effect: sync panel widget display, refresh data.
 
     Guard against firing during hot-reload widget swap or before app is running.
+    Footer update handled by footer_state reaction (panel:active is a dependency).
     """
     if not app.is_running or app._replacing_widgets:
         return
     from cc_dump.tui import action_handlers as _actions
     app._sync_panel_display(value)
     _actions.refresh_active_panel(app, value)
-    app._update_footer_state()
+
+
+def _push_footer(app, state):
+    """Effect: push footer state to StatusFooter widget."""
+    if not app.is_running or app._replacing_widgets:
+        return
+    import cc_dump.tui.custom_footer
+    try:
+        footer = app.query_one(cc_dump.tui.custom_footer.StatusFooter)
+    except Exception:
+        return
+    footer.update_display(state)
+
+
+def _push_error_items(app, items):
+    """Effect: push error items to ConversationView's overlay indicator."""
+    if not app.is_running or app._replacing_widgets:
+        return
+    conv = app._get_conv()
+    if conv is not None:
+        conv.update_error_items(items)
+
+
+def _push_sc_panel(app, state):
+    """Effect: push side-channel panel state to SideChannelPanel widget."""
+    if not app.is_running or app._replacing_widgets:
+        return
+    import cc_dump.tui.side_channel_panel
+    panels = app.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel)
+    if panels:
+        panels.first().update_display(state)
 
 
 def get_category_state(store, name: str) -> "cc_dump.formatting.VisState":

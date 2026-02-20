@@ -81,3 +81,22 @@ async def test_panels_initial_state():
         for name in PANEL_ORDER[1:]:
             assert not is_panel_visible(app, name)
         assert not is_panel_visible(app, "logs")
+
+
+async def test_on_mount_seeds_footer_state():
+    """on_mount must seed view store and hydrate footer without UnboundLocalError.
+
+    Regression: importing cc_dump.launch_config inside on_mount shadowed the
+    module-level `cc_dump` binding, causing UnboundLocalError on earlier lines
+    that use cc_dump.tui.rendering etc.
+    """
+    async with run_app() as (pilot, app):
+        # App started successfully (no UnboundLocalError in on_mount)
+        assert app.is_running
+
+        # Footer state was seeded — active_launch_config_name is in store
+        assert app._view_store.get("active_launch_config_name") is not None
+
+        # Footer widget exists and was hydrated
+        footer = app._get_footer()
+        assert footer is not None
