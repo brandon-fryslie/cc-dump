@@ -20,6 +20,8 @@ from cc_dump.event_types import (
     TextDeltaEvent,
 )
 from cc_dump.tmux_controller import (
+    LaunchAction,
+    LaunchResult,
     TmuxController,
     TmuxState,
     _ZOOM_DECISIONS,
@@ -154,7 +156,9 @@ class TestTmuxControllerStates:
 
     def test_not_in_tmux_cannot_launch(self, make_controller):
         ctrl = make_controller()
-        assert ctrl.launch_claude() is False
+        result = ctrl.launch_claude()
+        assert result.action == LaunchAction.BLOCKED
+        assert not result.success
 
     def test_not_in_tmux_zoom_is_noop(self, make_controller):
         ctrl = make_controller()
@@ -511,7 +515,8 @@ class TestLaunchWithDeadPane:
         import libtmux.constants
         result = ctrl.launch_claude()
 
-        assert result is True
+        assert result.action == LaunchAction.LAUNCHED
+        assert result.success
         assert ctrl._claude_pane is new_pane
         assert ctrl.state == TmuxState.CLAUDE_RUNNING
 
@@ -536,10 +541,129 @@ class TestLaunchWithDeadPane:
         )
 
         result = ctrl.launch_claude()
-        assert result is True
+        assert result.action == LaunchAction.FOCUSED
+        assert result.success
         assert ctrl._claude_pane is existing_claude
         assert ctrl.state == TmuxState.CLAUDE_RUNNING
         existing_claude.select.assert_called_once()
+
+
+# ─── Auto-resume: session_id → --resume in launch command ────────────────
+
+
+class TestAutoResume:
+    """End-to-end: session_id extraction → build_command_args → launch_claude exec."""
+
+    def test_resume_flag_in_launched_command(self, make_controller):
+        """When auto_resume is True and session_id is known, --resume appears in the command."""
+        from cc_dump.launch_config import LaunchConfig, build_command_args
+
+        our_pane = MagicMock()
+        our_pane.pane_id = "%0"
+        window = MagicMock()
+        window.panes = [our_pane]
+        our_pane.window = window
+        new_pane = MagicMock()
+        window.split.return_value = new_pane
+
+        ctrl = make_controller(
+            state=TmuxState.READY,
+            _our_pane=our_pane,
+            _port=3344,
+        )
+
+        session_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        config = LaunchConfig(auto_resume=True)
+        extra_args = build_command_args(config, session_id)
+
+        result = ctrl.launch_claude(extra_args=extra_args)
+
+        assert result.action == LaunchAction.LAUNCHED
+        assert result.success
+        assert "--resume {}".format(session_id) in result.command
+        assert "ANTHROPIC_BASE_URL" in result.command
+
+    def test_no_resume_without_session_id(self, make_controller):
+        """Without a session_id, --resume is not in the command."""
+        from cc_dump.launch_config import LaunchConfig, build_command_args
+
+        our_pane = MagicMock()
+        our_pane.pane_id = "%0"
+        window = MagicMock()
+        window.panes = [our_pane]
+        our_pane.window = window
+        new_pane = MagicMock()
+        window.split.return_value = new_pane
+
+        ctrl = make_controller(
+            state=TmuxState.READY,
+            _our_pane=our_pane,
+            _port=3344,
+        )
+
+        config = LaunchConfig(auto_resume=True)
+        extra_args = build_command_args(config, "")
+
+        result = ctrl.launch_claude(extra_args=extra_args)
+
+        assert result.action == LaunchAction.LAUNCHED
+        assert "--resume" not in result.command
+
+    def test_no_resume_when_disabled(self, make_controller):
+        """With auto_resume=False, --resume is not in the command even with session_id."""
+        from cc_dump.launch_config import LaunchConfig, build_command_args
+
+        our_pane = MagicMock()
+        our_pane.pane_id = "%0"
+        window = MagicMock()
+        window.panes = [our_pane]
+        our_pane.window = window
+        new_pane = MagicMock()
+        window.split.return_value = new_pane
+
+        ctrl = make_controller(
+            state=TmuxState.READY,
+            _our_pane=our_pane,
+            _port=3344,
+        )
+
+        config = LaunchConfig(auto_resume=False)
+        extra_args = build_command_args(config, "some-session-id")
+
+        result = ctrl.launch_claude(extra_args=extra_args)
+
+        assert result.action == LaunchAction.LAUNCHED
+        assert "--resume" not in result.command
+
+    def test_session_id_from_metadata_to_launch(self):
+        """Full chain: metadata.user_id → format_request → state → build_command_args."""
+        from cc_dump.formatting import format_request
+        from cc_dump.launch_config import LaunchConfig, build_command_args
+
+        state = {
+            "request_counter": 0,
+            "positions": {},
+            "known_hashes": {},
+            "next_id": 1,
+            "next_color": 0,
+        }
+        body = {
+            "model": "claude-3-opus-20240229",
+            "max_tokens": 4096,
+            "messages": [{"role": "user", "content": "Hello"}],
+            "metadata": {
+                "user_id": "user_abc123def_account_11111111-2222-3333-4444-555555555555_session_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+            },
+        }
+
+        format_request(body, state)
+
+        session_id = state["current_session"]
+        assert session_id == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+        config = LaunchConfig(auto_resume=True)
+        args = build_command_args(config, session_id)
+        assert args == "--resume aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 
 # ─── on_event with dead pane ─────────────────────────────────────────────

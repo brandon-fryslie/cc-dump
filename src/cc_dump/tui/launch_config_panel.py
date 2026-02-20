@@ -11,11 +11,14 @@ from __future__ import annotations
 from textual.widgets import Static
 
 import cc_dump.palette
+from cc_dump.launch_config import SHELL_OPTIONS
 from cc_dump.tui.settings_panel import (
     TextFieldDef,
     BoolFieldDef,
+    SelectFieldDef,
     TextFieldState,
     BoolFieldState,
+    SelectFieldState,
     FieldDef,
     FieldState,
 )
@@ -40,6 +43,13 @@ CONFIG_FIELDS: list[FieldDef] = [
         label="Auto-Resume",
         default=True,
         description="Pass --resume <session_id>",
+    ),
+    SelectFieldDef(
+        key="shell",
+        label="Shell",
+        description="Wrap command in shell -c 'source rc; ...'",
+        options=SHELL_OPTIONS,
+        default="",
     ),
     TextFieldDef(
         key="extra_flags",
@@ -130,6 +140,8 @@ class LaunchConfigPanel(Static):
                 _render_text_field(text, field_state, is_active_field)
             elif isinstance(field_state, BoolFieldState):
                 _render_bool_field(text, field_state, is_active_field)
+            elif isinstance(field_state, SelectFieldState):
+                _render_select_field(text, field_state, is_active_field)
             text.append("\n")
 
             text.append("  ")
@@ -184,6 +196,18 @@ def _render_bool_field(text, state: BoolFieldState, is_active: bool) -> None:
     text.append(" ", style=style)
     label = "Enabled" if state.value else "Disabled"
     text.append(label, style=style)
+
+
+def _render_select_field(text, state: SelectFieldState, is_active: bool) -> None:
+    """Render select field with left/right arrows when active."""
+    style = "bold" if is_active else "dim"
+    display = state.value or "None"
+    if is_active:
+        text.append("\u25c0 ", style=style)
+        text.append(display, style="bold reverse" if is_active else style)
+        text.append(" \u25b6", style=style)
+    else:
+        text.append(display or "None", style=style)
 
 
 def create_launch_config_panel() -> LaunchConfigPanel:

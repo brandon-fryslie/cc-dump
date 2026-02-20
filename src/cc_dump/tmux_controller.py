@@ -35,6 +35,38 @@ class TmuxState(Enum):
     CLAUDE_RUNNING = auto()
 
 
+# ─── Launch result ────────────────────────────────────────────────────────────
+
+
+class LaunchAction(Enum):
+    """What launch_claude decided to do."""
+    LAUNCHED = "launched"
+    FOCUSED = "focused"
+    BLOCKED = "blocked"
+
+
+class LaunchResult:
+    """Result of launch_claude — what happened and why.
+
+    // [LAW:dataflow-not-control-flow] The decision is a value, not hidden in branches.
+    """
+    __slots__ = ("action", "detail", "success", "command")
+
+    def __init__(self, action: LaunchAction, detail: str, success: bool, command: str = ""):
+        self.action = action
+        self.detail = detail
+        self.success = success
+        self.command = command  # the shell command, if launched
+
+    def __repr__(self) -> str:
+        parts = "action={}, detail={!r}, success={}".format(
+            self.action.value, self.detail, self.success
+        )
+        if self.command:
+            parts += ", command={!r}".format(self.command)
+        return "LaunchResult({})".format(parts)
+
+
 # ─── Zoom decision table ─────────────────────────────────────────────────────
 # Key: (PipelineEventKind, StopReason | None)
 # Value: True = zoom, False = unzoom, None = no-op
@@ -181,48 +213,81 @@ class TmuxController:
             self._claude_pane = found
             self.state = TmuxState.CLAUDE_RUNNING
 
-    def launch_claude(self, extra_args: str = "") -> bool:
-        """Split pane and launch claude with ANTHROPIC_BASE_URL pointing at our proxy.
+    @property
+    def claude_command(self) -> str:
+        """The base claude command (e.g. 'claude', 'clod')."""
+        return self._claude_command
 
-        Idempotent: if claude pane already exists, focuses it instead.
-        Resilient: detects dead panes and pre-existing Claude processes.
-        extra_args: additional CLI flags appended after the base command.
-        Returns True on success.
+    def launch_claude(self, command: str = "") -> LaunchResult:
+        """Evaluate preconditions, derive action, log, execute.
+
+        Args:
+            command: Full command to run (e.g. 'claude --resume abc' or
+                     'zsh -c "source ~/.zshrc; clod --resume abc"').
+                     If empty, falls back to self._claude_command.
+
+        // [LAW:dataflow-not-control-flow] All preconditions evaluated unconditionally.
+        // Action is a value derived from the preconditions, not hidden in branches.
         """
-        if self.state not in (TmuxState.READY, TmuxState.CLAUDE_RUNNING):
-            return False
+        resolved_command = command or self._claude_command
 
-        # Validate existing reference (detect death)
-        if self._claude_pane is not None:
-            if self._validate_claude_pane():
-                return self.focus_claude()
-            # Dead pane — fall through to re-detect or re-launch
+        # ── Evaluate all preconditions unconditionally ──
+        state_ok = self.state in (TmuxState.READY, TmuxState.CLAUDE_RUNNING)
 
-        # Check for pre-existing Claude in sibling panes
-        self._try_adopt_existing()
-        if self._claude_pane is not None:
-            return self.focus_claude()
+        pane_alive = (
+            self._validate_claude_pane() if self._claude_pane is not None
+            else False
+        )
+        if not pane_alive:
+            self._try_adopt_existing()
+            pane_alive = self._claude_pane is not None
 
-        if self._port is None:
-            _log("port not set, cannot launch claude")
-            return False
+        port_ok = self._port is not None
 
+        # ── Derive action from preconditions ──
+        action: LaunchAction
+        detail: str
+        if not state_ok:
+            action, detail = LaunchAction.BLOCKED, "state={}".format(self.state)
+        elif pane_alive:
+            pane_id = getattr(self._claude_pane, "pane_id", "?")
+            action, detail = LaunchAction.FOCUSED, "existing pane {}".format(pane_id)
+        elif not port_ok:
+            action, detail = LaunchAction.BLOCKED, "port not set"
+        else:
+            action, detail = LaunchAction.LAUNCHED, resolved_command
+
+        _log("launch_claude: {} ({})".format(action.value, detail))
+
+        # ── Execute ──
+        if action == LaunchAction.FOCUSED:
+            ok = self.focus_claude()
+            return LaunchResult(action, detail, ok)
+
+        if action == LaunchAction.LAUNCHED:
+            return self._exec_launch(resolved_command)
+
+        return LaunchResult(action, detail, success=False)
+
+    def _exec_launch(self, command: str) -> LaunchResult:
+        """Split pane and run the command with ANTHROPIC_BASE_URL set."""
         try:
             import libtmux
 
             window = self._our_pane.window
-            shell = "ANTHROPIC_BASE_URL=http://127.0.0.1:{} {} {}".format(
-                self._port, self._claude_command, extra_args
-            ).rstrip()
+            shell = "ANTHROPIC_BASE_URL=http://127.0.0.1:{} {}".format(
+                self._port, command
+            )
+            _log("exec: {}".format(shell))
             self._claude_pane = window.split(
                 direction=libtmux.constants.PaneDirection.Below,
                 shell=shell,
             )
             self.state = TmuxState.CLAUDE_RUNNING
-            return True
+            return LaunchResult(LaunchAction.LAUNCHED, command, success=True, command=shell)
         except Exception as e:
-            _log("launch_claude error: {}".format(e))
-            return False
+            _log("launch error: {}".format(e))
+            return LaunchResult(LaunchAction.BLOCKED, str(e), success=False)
 
     def focus_self(self) -> bool:
         """Select the cc-dump pane."""

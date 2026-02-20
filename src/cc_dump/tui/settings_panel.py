@@ -104,7 +104,45 @@ class BoolFieldState:
         return self.value
 
 
-FieldState = TextFieldState | BoolFieldState
+@dataclass(frozen=True)
+class SelectFieldDef:
+    key: str
+    label: str
+    description: str
+    options: tuple[str, ...]  # ordered choices
+    default: str
+
+    def make_state(self, value: object) -> "SelectFieldState":
+        s = str(value) if value else self.default
+        # Clamp to valid option
+        idx = self.options.index(s) if s in self.options else 0
+        return SelectFieldState(key=self.key, options=self.options, selected=idx)
+
+
+@dataclass
+class SelectFieldState:
+    key: str
+    options: tuple[str, ...]
+    selected: int
+
+    def handle_key(self, key: str, character: str | None) -> None:
+        """Left/right or space cycles through options."""
+        if key in ("space", "right"):
+            self.selected = (self.selected + 1) % len(self.options)
+        elif key == "left":
+            self.selected = (self.selected - 1) % len(self.options)
+
+    @property
+    def value(self) -> str:
+        return self.options[self.selected]
+
+    @property
+    def save_value(self) -> str:
+        return self.options[self.selected]
+
+
+FieldDef = TextFieldDef | BoolFieldDef | SelectFieldDef
+FieldState = TextFieldState | BoolFieldState | SelectFieldState
 
 
 # ─── Field registry ──────────────────────────────────────────────────────────

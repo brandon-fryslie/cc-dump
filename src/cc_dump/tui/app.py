@@ -656,24 +656,17 @@ class CcDumpApp(App):
             self.notify("Tmux not available", severity="warning")
             return
         import cc_dump.tmux_controller
-        if tmux.state == cc_dump.tmux_controller.TmuxState.CLAUDE_RUNNING:
-            if tmux.focus_claude():
-                self.notify("Focused claude pane")
-            else:
-                self.notify("Failed to focus claude pane", severity="error")
-        elif tmux.state == cc_dump.tmux_controller.TmuxState.READY:
-            import cc_dump.launch_config
-            config = cc_dump.launch_config.get_active_config()
-            session_id = self._session_id if config.auto_resume else ""
-            extra_args = cc_dump.launch_config.build_command_args(config, session_id or "")
-            self._app_log("INFO", f"Launching claude: config={config.name!r}, session_id={self._session_id!r}, auto_resume={config.auto_resume}, extra_args={extra_args!r}")
-            if tmux.launch_claude(extra_args=extra_args):
-                self.notify("Launched claude in tmux pane")
-                self._update_footer_state()
-            else:
-                self.notify("Failed to launch claude", severity="error")
+        import cc_dump.launch_config
+        config = cc_dump.launch_config.get_active_config()
+        session_id = self._session_id if config.auto_resume else ""
+        command = cc_dump.launch_config.build_full_command(config, tmux.claude_command, session_id)
+        result = tmux.launch_claude(command=command)
+        self._app_log("INFO", "launch_claude: {}".format(result))
+        if result.success:
+            self.notify("{}: {}".format(result.action.value, result.detail))
+            self._update_footer_state()
         else:
-            self.notify("Tmux not available", severity="warning")
+            self.notify("Launch failed: {}".format(result.detail), severity="error")
 
     def action_toggle_tmux_zoom(self):
         tmux = self._tmux_controller
@@ -848,26 +841,15 @@ class CcDumpApp(App):
         if tmux is None:
             self.notify("Tmux not available", severity="warning")
             return
-        import cc_dump.tmux_controller
-        if tmux.state not in (
-            cc_dump.tmux_controller.TmuxState.READY,
-            cc_dump.tmux_controller.TmuxState.CLAUDE_RUNNING,
-        ):
-            self.notify("Tmux not available", severity="warning")
-            return
 
         session_id = self._session_id if config.auto_resume else ""
-        extra_args = cc_dump.launch_config.build_command_args(config, session_id or "")
-
-        # If already running, focus; otherwise launch fresh
-        if tmux.state == cc_dump.tmux_controller.TmuxState.CLAUDE_RUNNING:
-            tmux.focus_claude()
-            self.notify("Focused claude pane")
+        command = cc_dump.launch_config.build_full_command(config, tmux.claude_command, session_id)
+        result = tmux.launch_claude(command=command)
+        self._app_log("INFO", "launch_with_config: {}".format(result))
+        if result.success:
+            self.notify("{}: {}".format(result.action.value, result.detail))
         else:
-            if tmux.launch_claude(extra_args=extra_args):
-                self.notify("Launched: {}".format(config.name))
-            else:
-                self.notify("Failed to launch claude", severity="error")
+            self.notify("Launch failed: {}".format(result.detail), severity="error")
         self._update_footer_state()
 
     def _handle_launch_config_key(self, event) -> None:

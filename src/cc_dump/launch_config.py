@@ -11,9 +11,14 @@ This module is RELOADABLE — pure data + persistence, no widget deps.
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass, asdict
 
 import cc_dump.settings
+
+
+SHELL_OPTIONS = ("", "bash", "zsh")
+"""Valid values for LaunchConfig.shell. Empty string = no shell wrapper."""
 
 
 @dataclass
@@ -23,6 +28,9 @@ class LaunchConfig:
     name: str = "default"
     model: str = ""           # e.g. "haiku", "opus" — empty = no --model flag
     auto_resume: bool = True  # pass --resume <session_id> when relaunching
+    # NOTE: --resume <id> (not --continue) because --continue always resumes
+    # the most recent session, which breaks concurrent multi-session workflows.
+    shell: str = ""           # "", "bash", or "zsh" — wraps in shell -c "source rc; cmd"
     extra_flags: str = ""     # freeform, appended to command
 
 
@@ -31,10 +39,12 @@ def _config_to_dict(config: LaunchConfig) -> dict:
 
 
 def _dict_to_config(d: dict) -> LaunchConfig:
+    shell = d.get("shell", "")
     return LaunchConfig(
         name=d.get("name", "default"),
         model=d.get("model", ""),
         auto_resume=bool(d.get("auto_resume", True)),
+        shell=shell if shell in SHELL_OPTIONS else "",
         extra_flags=d.get("extra_flags", ""),
     )
 
@@ -73,17 +83,37 @@ def get_active_config() -> LaunchConfig:
     return by_name.get(active_name, configs[0])
 
 
-def build_command_args(config: LaunchConfig, session_id: str = "") -> str:
-    """Build extra CLI args from a config + optional session_id.
+def build_full_command(config: LaunchConfig, base_command: str, session_id: str = "") -> str:
+    """Build the complete command string including shell wrapper if configured.
 
-    Returns a string to append after the base claude command.
-    // [LAW:one-source-of-truth] This is the sole place args are assembled.
+    // [LAW:one-source-of-truth] Sole place where command + args + shell wrapper are assembled.
+
+    Args:
+        config: Launch configuration with model, resume, shell, extra_flags.
+        base_command: The claude executable (e.g. "claude", "clod").
+        session_id: Session ID for --resume (empty = no resume).
+
+    Returns:
+        Complete command string ready for tmux. When shell is set, the command
+        and all args are wrapped inside ``shell -c 'source ~/.<shell>rc; ...'``
+        with proper shlex escaping.
     """
-    parts: list[str] = []
+    # Build the arg list
+    args: list[str] = []
     if config.model:
-        parts.append("--model {}".format(config.model))
+        args.extend(["--model", config.model])
     if config.auto_resume and session_id:
-        parts.append("--resume {}".format(session_id))
+        args.extend(["--resume", session_id])
     if config.extra_flags:
-        parts.append(config.extra_flags)
-    return " ".join(parts)
+        args.append(config.extra_flags)
+
+    inner_command = " ".join([base_command] + args)
+
+    # // [LAW:dataflow-not-control-flow] shell wrapping is a transformation of the
+    # command value, not a branch that skips assembly.
+    if not config.shell:
+        return inner_command
+
+    rc_file = "~/.{}rc".format(config.shell)
+    inner_script = "source {}; {}".format(rc_file, inner_command)
+    return "{} -c {}".format(config.shell, shlex.quote(inner_script))
