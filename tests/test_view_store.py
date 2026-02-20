@@ -1,4 +1,4 @@
-"""Tests for view_store — reactive category visibility state."""
+"""Tests for view_store — reactive category visibility + panel/follow state."""
 
 from unittest.mock import MagicMock
 
@@ -11,8 +11,9 @@ from snarfx import autorun, transaction
 
 
 class TestSchema:
-    def test_schema_has_18_keys(self):
-        assert len(cc_dump.view_store.SCHEMA) == 18  # 6 categories × 3 axes
+    def test_schema_has_23_keys(self):
+        # 6 categories × 3 axes + 5 panel/follow keys
+        assert len(cc_dump.view_store.SCHEMA) == 23
 
     def test_schema_keys_from_category_config(self):
         for _, name, _, _ in CATEGORY_CONFIG:
@@ -168,3 +169,111 @@ class TestSetupReactions:
         store = cc_dump.view_store.create()
         disposers = cc_dump.view_store.setup_reactions(store, {})
         assert disposers == []
+
+
+class TestPanelAndFollowSchema:
+    def test_panel_active_default(self):
+        assert cc_dump.view_store.SCHEMA["panel:active"] == "session"
+
+    def test_panel_booleans_default_false(self):
+        assert cc_dump.view_store.SCHEMA["panel:side_channel"] is False
+        assert cc_dump.view_store.SCHEMA["panel:settings"] is False
+        assert cc_dump.view_store.SCHEMA["panel:launch_config"] is False
+
+    def test_follow_default(self):
+        assert cc_dump.view_store.SCHEMA["follow"] == "active"
+
+    def test_store_has_panel_keys(self):
+        store = cc_dump.view_store.create()
+        assert store.get("panel:active") == "session"
+        assert store.get("panel:side_channel") is False
+        assert store.get("panel:settings") is False
+        assert store.get("panel:launch_config") is False
+        assert store.get("follow") == "active"
+
+    def test_panel_active_set_and_get(self):
+        store = cc_dump.view_store.create()
+        store.set("panel:active", "stats")
+        assert store.get("panel:active") == "stats"
+
+    def test_follow_set_and_get(self):
+        store = cc_dump.view_store.create()
+        store.set("follow", "off")
+        assert store.get("follow") == "off"
+
+
+class TestPanelActiveReaction:
+    def test_reaction_fires_on_panel_change(self):
+        store = cc_dump.view_store.create()
+        app = MagicMock()
+        app.is_running = True
+        app._replacing_widgets = False
+        app._rerender_if_mounted = MagicMock()
+        app._sync_panel_display = MagicMock()
+        app._update_footer_state = MagicMock()
+        context = {"app": app}
+
+        disposers = cc_dump.view_store.setup_reactions(store, context)
+
+        app._sync_panel_display.reset_mock()
+        app._update_footer_state.reset_mock()
+
+        store.set("panel:active", "stats")
+
+        app._sync_panel_display.assert_called_with("stats")
+        app._update_footer_state.assert_called()
+
+    def test_reaction_guarded_during_widget_replacement(self):
+        store = cc_dump.view_store.create()
+        app = MagicMock()
+        app.is_running = True
+        app._replacing_widgets = True
+        app._rerender_if_mounted = MagicMock()
+        app._sync_panel_display = MagicMock()
+        context = {"app": app}
+
+        disposers = cc_dump.view_store.setup_reactions(store, context)
+        app._sync_panel_display.reset_mock()
+
+        store.set("panel:active", "timeline")
+
+        app._sync_panel_display.assert_not_called()
+
+    def test_reaction_guarded_before_running(self):
+        store = cc_dump.view_store.create()
+        app = MagicMock()
+        app.is_running = False
+        app._replacing_widgets = False
+        app._rerender_if_mounted = MagicMock()
+        app._sync_panel_display = MagicMock()
+        context = {"app": app}
+
+        disposers = cc_dump.view_store.setup_reactions(store, context)
+        app._sync_panel_display.reset_mock()
+
+        store.set("panel:active", "economics")
+
+        app._sync_panel_display.assert_not_called()
+
+
+class TestReconcileWithNewKeys:
+    def test_reconcile_preserves_panel_values(self):
+        store = cc_dump.view_store.create()
+        store.set("panel:active", "timeline")
+        store.set("follow", "off")
+
+        store.reconcile(cc_dump.view_store.SCHEMA, lambda s: [])
+
+        assert store.get("panel:active") == "timeline"
+        assert store.get("follow") == "off"
+
+    def test_reconcile_adds_new_keys_with_defaults(self):
+        """First reconcile after Phase 3 adds 5 keys with defaults."""
+        store = cc_dump.view_store.create()
+        # Simulate reconcile (which normally happens after hot-reload)
+        store.reconcile(cc_dump.view_store.SCHEMA, lambda s: [])
+
+        # All keys present with defaults
+        assert store.get("panel:active") == "session"
+        assert store.get("panel:side_channel") is False
+        assert store.get("follow") == "active"

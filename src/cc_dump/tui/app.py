@@ -88,8 +88,6 @@ class CcDumpApp(App):
     CSS_PATH = "styles.css"
 
     # Panel visibility
-    # [LAW:one-source-of-truth] active_panel cycles through PANEL_ORDER
-    active_panel = reactive("session")
     show_logs = reactive(False)
     show_info = reactive(False)
 
@@ -150,7 +148,6 @@ class CcDumpApp(App):
         self._active_filterset_slot = None
 
         # Side channel panel state
-        self._side_channel_panel_open: bool = False
         self._side_channel_loading: bool = False
         self._side_channel_result_text: str = ""
         self._side_channel_result_source: str = ""
@@ -170,22 +167,26 @@ class CcDumpApp(App):
 
     # ─── Derived state ─────────────────────────────────────────────────
 
+    # [LAW:one-source-of-truth] active_panel from view store, not Textual reactive
+    @property
+    def active_panel(self):
+        return self._view_store.get("panel:active")
+
+    @active_panel.setter
+    def active_panel(self, value):
+        self._view_store.set("panel:active", value)
+
     @property
     def _input_mode(self):
-        """// [LAW:one-source-of-truth] InputMode derived from focus ancestry + app state."""
-        import cc_dump.tui.launch_config_panel
-        import cc_dump.tui.settings_panel
+        """// [LAW:one-source-of-truth] InputMode derived from store booleans + search state."""
         InputMode = cc_dump.tui.input_modes.InputMode
-        if self._side_channel_panel_open:
+        # // [LAW:one-source-of-truth] Panel mode from store booleans (stable across reload).
+        if self._view_store.get("panel:side_channel"):
             return InputMode.SIDE_CHANNEL
-        # // [LAW:one-source-of-truth] Panel mode from focus ancestry (standard Textual).
-        focused = self.screen.focused
-        if focused is not None:
-            for ancestor in focused.ancestors_with_self:
-                if isinstance(ancestor, cc_dump.tui.launch_config_panel.LaunchConfigPanel):
-                    return InputMode.LAUNCH_CONFIG
-                if isinstance(ancestor, cc_dump.tui.settings_panel.SettingsPanel):
-                    return InputMode.SETTINGS
+        if self._view_store.get("panel:launch_config"):
+            return InputMode.LAUNCH_CONFIG
+        if self._view_store.get("panel:settings"):
+            return InputMode.SETTINGS
         SearchPhase = cc_dump.tui.search.SearchPhase
         phase = self._search_state.phase
         if phase == SearchPhase.EDITING:
@@ -282,7 +283,7 @@ class CcDumpApp(App):
             widget.id = self._panel_ids[spec.name]
             yield widget
 
-        conv = cc_dump.tui.widget_factory.create_conversation_view()
+        conv = cc_dump.tui.widget_factory.create_conversation_view(view_store=self._view_store)
         conv.id = self._conv_id
         yield conv
 
@@ -725,6 +726,7 @@ class CcDumpApp(App):
             val = self._settings_store.get(field_def.key) if self._settings_store else None
             initial_values[field_def.key] = val if val is not None else field_def.default
 
+        self._view_store.set("panel:settings", True)
         panel = cc_dump.tui.settings_panel.create_settings_panel(initial_values)
         self.screen.mount(panel)
         self._update_footer_state()
@@ -735,6 +737,7 @@ class CcDumpApp(App):
 
         for panel in self.screen.query(cc_dump.tui.settings_panel.SettingsPanel):
             panel.remove()
+        self._view_store.set("panel:settings", False)
         self._update_footer_state()
 
     def on_settings_panel_saved(self, msg) -> None:
@@ -760,6 +763,7 @@ class CcDumpApp(App):
         configs = cc_dump.launch_config.load_configs()
         active_name = cc_dump.launch_config.load_active_name()
 
+        self._view_store.set("panel:launch_config", True)
         panel = cc_dump.tui.launch_config_panel.create_launch_config_panel(
             configs, active_name
         )
@@ -772,6 +776,7 @@ class CcDumpApp(App):
 
         for panel in self.screen.query(cc_dump.tui.launch_config_panel.LaunchConfigPanel):
             panel.remove()
+        self._view_store.set("panel:launch_config", False)
         self._update_footer_state()
 
     def _launch_with_config(self, config) -> None:
@@ -833,7 +838,7 @@ class CcDumpApp(App):
         """Open side-channel AI panel."""
         import cc_dump.tui.side_channel_panel
 
-        self._side_channel_panel_open = True
+        self._view_store.set("panel:side_channel", True)
         self._side_channel_loading = False
         self._side_channel_result_text = ""
         self._side_channel_result_source = ""
@@ -850,7 +855,7 @@ class CcDumpApp(App):
 
         for panel in self.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel):
             panel.remove()
-        self._side_channel_panel_open = False
+        self._view_store.set("panel:side_channel", False)
         self._update_footer_state()
 
     def _update_side_channel_panel_display(self):
@@ -985,11 +990,6 @@ class CcDumpApp(App):
         _search.update_search_bar(self)
 
     # ─── Reactive watchers ─────────────────────────────────────────────
-
-    def watch_active_panel(self, value):
-        self._sync_panel_display(value)
-        _actions.refresh_active_panel(self, value)
-        self._update_footer_state()
 
     def _sync_panel_display(self, active: str):
         """// [LAW:one-source-of-truth] Panel visibility driven by PANEL_ORDER from registry."""

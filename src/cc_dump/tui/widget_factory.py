@@ -196,8 +196,9 @@ class ConversationView(ScrollView):
     }
     """
 
-    def __init__(self):
+    def __init__(self, view_store=None):
         super().__init__()
+        self._view_store = view_store
         self._turns: list[TurnData] = []
         self._total_lines: int = 0
         self._widest_line: int = 0
@@ -211,11 +212,28 @@ class ConversationView(ScrollView):
         self._last_filters: dict = {}
         self._last_width: int = 78
         self._last_search_ctx = None  # Store search context for lazy rerenders
-        self._follow_state: FollowState = FollowState.ACTIVE
+        # Local fallback for tests that don't pass a view_store
+        self._follow_state_fallback: FollowState = FollowState.ACTIVE
         self._pending_restore: dict | None = None
         self._scrolling_programmatically: bool = False
         self._scroll_anchor: ScrollAnchor | None = None
         self._indicator = cc_dump.tui.error_indicator.IndicatorState()
+
+    # // [LAW:one-source-of-truth] Follow state stored as string in view store.
+    # String comparison is stable across hot-reloads (enum class identity changes).
+    # Falls back to local attribute when no store (tests).
+    @property
+    def _follow_state(self) -> FollowState:
+        if self._view_store is not None:
+            return FollowState(self._view_store.get("follow"))
+        return self._follow_state_fallback
+
+    @_follow_state.setter
+    def _follow_state(self, value: FollowState):
+        if self._view_store is not None:
+            self._view_store.set("follow", value.value)
+        else:
+            self._follow_state_fallback = value
 
     @contextmanager
     def _programmatic_scroll(self):
@@ -1717,9 +1735,9 @@ class LogsPanel(RichLog):
 
 
 # Factory functions for creating widgets
-def create_conversation_view() -> ConversationView:
+def create_conversation_view(view_store=None) -> ConversationView:
     """Create a new ConversationView instance."""
-    return ConversationView()
+    return ConversationView(view_store=view_store)
 
 
 def create_stats_panel() -> StatsPanel:

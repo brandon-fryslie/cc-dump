@@ -234,7 +234,7 @@ async def _replace_all_widgets_inner(app) -> None:
     info_visible = old_info.display if old_info else app.show_info
 
     # 2. Create ALL new widgets (without IDs yet — set after mounting).
-    new_conv = cc_dump.tui.widget_factory.create_conversation_view()
+    new_conv = cc_dump.tui.widget_factory.create_conversation_view(view_store=app._view_store)
     new_conv.restore_state(conv_state)
 
     # [LAW:one-source-of-truth] Create cycling panels from registry
@@ -258,17 +258,19 @@ async def _replace_all_widgets_inner(app) -> None:
     # Remove settings panel if mounted (stateless, no state transfer needed)
     for panel in app.screen.query(cc_dump.tui.settings_panel.SettingsPanel):
         await panel.remove()
+    app._view_store.set("panel:settings", False)
 
     # Remove launch config panel if mounted (stateless, no state transfer needed)
     import cc_dump.tui.launch_config_panel
     for panel in app.screen.query(cc_dump.tui.launch_config_panel.LaunchConfigPanel):
         await panel.remove()
+    app._view_store.set("panel:launch_config", False)
 
     # Remove side-channel panel if mounted (stateless, no state transfer needed)
     import cc_dump.tui.side_channel_panel
     for panel in app.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel):
         await panel.remove()
-    app._side_channel_panel_open = False
+    app._view_store.set("panel:side_channel", False)
 
     # 3. Remove old widgets
     await old_conv.remove()
