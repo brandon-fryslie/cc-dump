@@ -147,8 +147,6 @@ class CcDumpApp(App):
 
         # Settings panel state
         self._settings_panel_open: bool = False
-        self._settings_fields: list = []  # list[FieldState] from settings_panel
-        self._settings_active_field: int = 0
 
         # Side channel panel state
         self._side_channel_panel_open: bool = False
@@ -159,10 +157,6 @@ class CcDumpApp(App):
 
         # Launch config panel state
         self._launch_config_panel_open: bool = False
-        self._launch_configs: list = []          # list[LaunchConfig]
-        self._launch_config_selected: int = 0    # selected index in list
-        self._launch_config_fields: list = []    # list[FieldState] for selected config
-        self._launch_config_active_field: int = 0
 
         # Exception tracking for error indicator
         self._exception_items: list = []
@@ -704,88 +698,51 @@ class CcDumpApp(App):
         _actions.toggle_settings(self)
 
     def _open_settings(self):
-        """Open settings panel, populating editing state from saved settings."""
+        """Open settings panel, populating from saved settings."""
         import cc_dump.tui.settings_panel
 
-        fields = []
+        initial_values = {}
         for field_def in cc_dump.tui.settings_panel.SETTINGS_FIELDS:
-            value = cc_dump.settings.load_setting(field_def.key, field_def.default)
-            fields.append(field_def.make_state(value))
-        self._settings_fields = fields
-        self._settings_active_field = 0
+            initial_values[field_def.key] = cc_dump.settings.load_setting(
+                field_def.key, field_def.default
+            )
         self._settings_panel_open = True
 
-        panel = cc_dump.tui.settings_panel.create_settings_panel()
+        panel = cc_dump.tui.settings_panel.create_settings_panel(initial_values)
         self.screen.mount(panel)
-        self._update_settings_panel_display()
         self._update_footer_state()
 
-    def _close_settings(self, save: bool) -> None:
-        """Close settings panel, optionally saving changes."""
+    def _close_settings(self) -> None:
+        """Close settings panel (remove widget, reset flag)."""
         import cc_dump.tui.settings_panel
 
-        if save:
-            for field_state in self._settings_fields:
-                cc_dump.settings.save_setting(field_state.key, field_state.save_value)
-            # Apply side effects for specific settings
-            for field_state in self._settings_fields:
-                if field_state.key == "side_channel_enabled" and self._side_channel_manager is not None:
-                    self._side_channel_manager.enabled = field_state.save_value
-            tmux = self._tmux_controller
-            if tmux is not None:
-                for field_state in self._settings_fields:
-                    if field_state.key == "claude_command":
-                        tmux.set_claude_command(field_state.save_value)
-                    elif field_state.key == "auto_zoom_default":
-                        tmux.auto_zoom = field_state.save_value
-
-        # Remove panel widget
         for panel in self.screen.query(cc_dump.tui.settings_panel.SettingsPanel):
             panel.remove()
         self._settings_panel_open = False
-        self._settings_fields = []
         self._update_footer_state()
 
-    def _handle_settings_key(self, event) -> None:
-        """Handle key events in SETTINGS mode."""
-        key = event.key
-        fields = self._settings_fields
-        idx = self._settings_active_field
+    def on_settings_panel_saved(self, msg) -> None:
+        """Handle SettingsPanel.Saved — persist values and apply side effects."""
+        values = msg.values
+        for key, value in values.items():
+            cc_dump.settings.save_setting(key, value)
 
-        # Navigation between fields
-        if key == "tab":
-            self._settings_active_field = (idx + 1) % len(fields)
-            self._update_settings_panel_display()
-            return
-        if key == "shift+tab":
-            self._settings_active_field = (idx - 1) % len(fields)
-            self._update_settings_panel_display()
-            return
+        # Apply side effects
+        if "side_channel_enabled" in values and self._side_channel_manager is not None:
+            self._side_channel_manager.enabled = values["side_channel_enabled"]
+        tmux = self._tmux_controller
+        if tmux is not None:
+            if "claude_command" in values:
+                tmux.set_claude_command(values["claude_command"])
+            if "auto_zoom_default" in values:
+                tmux.auto_zoom = values["auto_zoom_default"]
 
-        # Save and close
-        if key == "enter":
-            self._close_settings(save=True)
-            self.notify("Settings saved")
-            return
+        self._close_settings()
+        self.notify("Settings saved")
 
-        # Cancel and close
-        if key == "escape":
-            self._close_settings(save=False)
-            return
-
-        # Delegate to the active field's handle_key
-        fields[idx].handle_key(key, event.character)
-        self._update_settings_panel_display()
-
-    def _update_settings_panel_display(self) -> None:
-        """Push current editing state to the settings panel widget."""
-        import cc_dump.tui.settings_panel
-
-        panels = self.screen.query(cc_dump.tui.settings_panel.SettingsPanel)
-        if panels:
-            panels.first().update_display(
-                self._settings_fields, self._settings_active_field
-            )
+    def on_settings_panel_cancelled(self, msg) -> None:
+        """Handle SettingsPanel.Cancelled — close without saving."""
+        self._close_settings()
 
     # Launch configs
     def action_toggle_launch_config(self):
@@ -796,58 +753,24 @@ class CcDumpApp(App):
         import cc_dump.launch_config
         import cc_dump.tui.launch_config_panel
 
-        self._launch_configs = cc_dump.launch_config.load_configs()
-        self._launch_config_selected = 0
-        self._launch_config_fields = cc_dump.tui.launch_config_panel.make_field_states(
-            self._launch_configs[0]
-        )
-        self._launch_config_active_field = 0
+        configs = cc_dump.launch_config.load_configs()
+        active_name = cc_dump.launch_config.load_active_name()
         self._launch_config_panel_open = True
 
-        panel = cc_dump.tui.launch_config_panel.create_launch_config_panel()
+        panel = cc_dump.tui.launch_config_panel.create_launch_config_panel(
+            configs, active_name
+        )
         self.screen.mount(panel)
-        self._update_launch_config_panel_display()
         self._update_footer_state()
 
-    def _close_launch_config(self, save: bool) -> None:
-        """Close launch config panel, optionally saving changes."""
-        import cc_dump.launch_config
+    def _close_launch_config(self) -> None:
+        """Close launch config panel (remove widget, reset flag)."""
         import cc_dump.tui.launch_config_panel
 
-        if save:
-            # Apply field edits to the selected config before saving
-            selected = self._launch_config_selected
-            if selected < len(self._launch_configs):
-                cc_dump.tui.launch_config_panel.apply_fields_to_config(
-                    self._launch_configs[selected], self._launch_config_fields
-                )
-            cc_dump.launch_config.save_configs(self._launch_configs)
-
-        # Remove panel widget
         for panel in self.screen.query(cc_dump.tui.launch_config_panel.LaunchConfigPanel):
             panel.remove()
         self._launch_config_panel_open = False
-        self._launch_configs = []
-        self._launch_config_fields = []
         self._update_footer_state()
-
-    def _select_launch_config(self, idx: int) -> None:
-        """Switch selected config, saving edits to previous and loading new fields."""
-        import cc_dump.tui.launch_config_panel
-
-        # Save edits to current selection
-        old_idx = self._launch_config_selected
-        if old_idx < len(self._launch_configs):
-            cc_dump.tui.launch_config_panel.apply_fields_to_config(
-                self._launch_configs[old_idx], self._launch_config_fields
-            )
-
-        # Load fields for new selection
-        self._launch_config_selected = idx
-        self._launch_config_fields = cc_dump.tui.launch_config_panel.make_field_states(
-            self._launch_configs[idx]
-        )
-        self._launch_config_active_field = 0
 
     def _launch_with_config(self, config) -> None:
         """Build args from config + session_id, launch via tmux."""
@@ -868,122 +791,36 @@ class CcDumpApp(App):
             self.notify("Launch failed: {}".format(result.detail), severity="error")
         self._update_footer_state()
 
-    def _handle_launch_config_key(self, event) -> None:
-        """Handle key events in LAUNCH_CONFIG mode."""
+    def on_launch_config_panel_saved(self, msg) -> None:
+        """Handle LaunchConfigPanel.Saved — persist configs."""
         import cc_dump.launch_config
-        import cc_dump.tui.launch_config_panel
 
-        key = event.key
-        configs = self._launch_configs
-        idx = self._launch_config_selected
+        cc_dump.launch_config.save_configs(msg.configs)
+        cc_dump.launch_config.save_active_name(msg.active_name)
+        self._close_launch_config()
+        self.notify("Launch configs saved")
 
-        # Quick-launch by number (1-9)
-        if key in "123456789":
-            num = int(key) - 1
-            if num < len(configs):
-                # Save current edits, then launch
-                cc_dump.tui.launch_config_panel.apply_fields_to_config(
-                    configs[idx], self._launch_config_fields
-                )
-                cc_dump.launch_config.save_configs(configs)
-                cc_dump.launch_config.save_active_name(configs[num].name)
-                self._close_launch_config(save=False)  # already saved
-                self._launch_with_config(configs[num])
-            return
+    def on_launch_config_panel_cancelled(self, msg) -> None:
+        """Handle LaunchConfigPanel.Cancelled — close without saving."""
+        self._close_launch_config()
 
-        # Navigate config list
-        if key in ("j", "down"):
-            new_idx = min(idx + 1, len(configs) - 1)
-            if new_idx != idx:
-                self._select_launch_config(new_idx)
-                self._update_launch_config_panel_display()
-            return
-        if key in ("k", "up"):
-            new_idx = max(idx - 1, 0)
-            if new_idx != idx:
-                self._select_launch_config(new_idx)
-                self._update_launch_config_panel_display()
-            return
-
-        # Cycle field
-        if key == "tab":
-            fields = self._launch_config_fields
-            self._launch_config_active_field = (self._launch_config_active_field + 1) % len(fields)
-            self._update_launch_config_panel_display()
-            return
-        if key == "shift+tab":
-            fields = self._launch_config_fields
-            self._launch_config_active_field = (self._launch_config_active_field - 1) % len(fields)
-            self._update_launch_config_panel_display()
-            return
-
-        # Activate selected config
-        if key == "a":
-            cc_dump.tui.launch_config_panel.apply_fields_to_config(
-                configs[idx], self._launch_config_fields
-            )
-            cc_dump.launch_config.save_active_name(configs[idx].name)
-            cc_dump.launch_config.save_configs(configs)
-            self.notify("Active: {}".format(configs[idx].name))
-            self._update_launch_config_panel_display()
-            self._update_footer_state()
-            return
-
-        # New config
-        if key == "n":
-            cc_dump.tui.launch_config_panel.apply_fields_to_config(
-                configs[idx], self._launch_config_fields
-            )
-            new_config = cc_dump.launch_config.LaunchConfig(
-                name="config-{}".format(len(configs) + 1)
-            )
-            configs.append(new_config)
-            self._select_launch_config(len(configs) - 1)
-            self._update_launch_config_panel_display()
-            return
-
-        # Delete selected (prevent deleting last)
-        if key == "d":
-            if len(configs) <= 1:
-                self.notify("Cannot delete last config", severity="warning")
-                return
-            configs.pop(idx)
-            new_idx = min(idx, len(configs) - 1)
-            self._select_launch_config(new_idx)
-            self._update_launch_config_panel_display()
-            return
-
-        # Save and close
-        if key == "enter":
-            self._close_launch_config(save=True)
-            self.notify("Launch configs saved")
-            return
-
-        # Cancel and close
-        if key == "escape":
-            self._close_launch_config(save=False)
-            return
-
-        # Delegate to active field
-        fields = self._launch_config_fields
-        field_idx = self._launch_config_active_field
-        fields[field_idx].handle_key(key, event.character)
-        self._update_launch_config_panel_display()
-
-    def _update_launch_config_panel_display(self) -> None:
-        """Push current editing state to the launch config panel widget."""
+    def on_launch_config_panel_quick_launch(self, msg) -> None:
+        """Handle LaunchConfigPanel.QuickLaunch — save, close, launch."""
         import cc_dump.launch_config
-        import cc_dump.tui.launch_config_panel
 
-        panels = self.screen.query(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
-        if panels:
-            panels.first().update_display(
-                self._launch_configs,
-                self._launch_config_selected,
-                self._launch_config_fields,
-                self._launch_config_active_field,
-                cc_dump.launch_config.load_active_name(),
-            )
+        cc_dump.launch_config.save_configs(msg.configs)
+        cc_dump.launch_config.save_active_name(msg.active_name)
+        self._close_launch_config()
+        self._launch_with_config(msg.config)
+
+    def on_launch_config_panel_activated(self, msg) -> None:
+        """Handle LaunchConfigPanel.Activated — save active name, notify."""
+        import cc_dump.launch_config
+
+        cc_dump.launch_config.save_configs(msg.configs)
+        cc_dump.launch_config.save_active_name(msg.name)
+        self.notify("Active: {}".format(msg.name))
+        self._update_footer_state()
 
     # Side channel
     def action_toggle_side_channel(self):
@@ -1206,12 +1043,10 @@ class CcDumpApp(App):
                 self._close_side_channel()
             return
         elif mode == InputMode.LAUNCH_CONFIG:
-            event.prevent_default()
-            self._handle_launch_config_key(event)
+            # Panel handles its own keys via Textual messages
             return
         elif mode == InputMode.SETTINGS:
-            event.prevent_default()
-            self._handle_settings_key(event)
+            # Panel handles its own keys via Textual messages
             return
         elif mode == InputMode.NORMAL:
             if event.character == "/":

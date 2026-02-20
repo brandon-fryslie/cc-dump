@@ -4,177 +4,91 @@ This module is RELOADABLE. When it reloads, any mounted panel is
 removed during hot-reload (stateless, user can re-open with S).
 
 // [LAW:one-source-of-truth] SETTINGS_FIELDS defines all editable settings.
-// [LAW:one-type-per-behavior] FieldDef/FieldState unions — one type per behavior,
-//   instances differ by config, not by duplicated types.
+// [LAW:one-type-per-behavior] Single FieldDef — instances differ by config (kind),
+//   not by duplicated types.
+// [LAW:locality-or-seam] Panel handles its own keys and messages — app.py just
+//   listens for Saved/Cancelled.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
-from textual.widgets import Static
+from textual.app import ComposeResult
+from textual.containers import VerticalScroll
+from textual.message import Message
+from textual.widgets import Input, Label, Select, Static, Switch
 
 import cc_dump.palette
 
 
-# ─── Field definitions (frozen, describe what a field is) ─────────────────────
+# ─── Field definitions ───────────────────────────────────────────────────────
+# // [LAW:one-type-per-behavior] One type with kind discriminator.
 
 
 @dataclass(frozen=True)
-class TextFieldDef:
+class FieldDef:
     key: str
     label: str
     description: str
-    default: str
-
-    def make_state(self, value: object) -> TextFieldState:
-        s = str(value)
-        return TextFieldState(key=self.key, value=s, cursor_pos=len(s))
-
-
-@dataclass(frozen=True)
-class BoolFieldDef:
-    key: str
-    label: str
-    description: str
-    default: bool
-
-    def make_state(self, value: object) -> BoolFieldState:
-        return BoolFieldState(key=self.key, value=bool(value))
-
-
-FieldDef = TextFieldDef | BoolFieldDef
-
-
-# ─── Field editing state (mutable, handles input) ────────────────────────────
-
-
-@dataclass
-class TextFieldState:
-    key: str
-    value: str
-    cursor_pos: int
-
-    def handle_key(self, key: str, character: str | None) -> None:
-        """Handle text editing keys: backspace, delete, arrows, home, end, printable."""
-        pos = self.cursor_pos
-        value = self.value
-
-        # [LAW:dataflow-not-control-flow] Lookup table for cursor-only mutations
-        _CURSOR_MOVES = {
-            "left": lambda v, p: max(0, p - 1),
-            "right": lambda v, p: min(len(v), p + 1),
-            "home": lambda v, p: 0,
-            "end": lambda v, p: len(v),
-        }
-        if key in _CURSOR_MOVES:
-            self.cursor_pos = _CURSOR_MOVES[key](value, pos)
-            return
-
-        if key == "backspace" and pos > 0:
-            self.value = value[:pos - 1] + value[pos:]
-            self.cursor_pos = pos - 1
-            return
-
-        if key == "delete" and pos < len(value):
-            self.value = value[:pos] + value[pos + 1:]
-            return
-
-        if character and character.isprintable():
-            self.value = value[:pos] + character + value[pos:]
-            self.cursor_pos = pos + 1
-
-    @property
-    def save_value(self) -> str:
-        return self.value
-
-
-@dataclass
-class BoolFieldState:
-    key: str
-    value: bool
-
-    def handle_key(self, key: str, character: str | None) -> None:
-        """Space toggles the boolean."""
-        if key == "space":
-            self.value = not self.value
-
-    @property
-    def save_value(self) -> bool:
-        return self.value
-
-
-@dataclass(frozen=True)
-class SelectFieldDef:
-    key: str
-    label: str
-    description: str
-    options: tuple[str, ...]  # ordered choices
-    default: str
-
-    def make_state(self, value: object) -> "SelectFieldState":
-        s = str(value) if value else self.default
-        # Clamp to valid option
-        idx = self.options.index(s) if s in self.options else 0
-        return SelectFieldState(key=self.key, options=self.options, selected=idx)
-
-
-@dataclass
-class SelectFieldState:
-    key: str
-    options: tuple[str, ...]
-    selected: int
-
-    def handle_key(self, key: str, character: str | None) -> None:
-        """Left/right or space cycles through options."""
-        if key in ("space", "right"):
-            self.selected = (self.selected + 1) % len(self.options)
-        elif key == "left":
-            self.selected = (self.selected - 1) % len(self.options)
-
-    @property
-    def value(self) -> str:
-        return self.options[self.selected]
-
-    @property
-    def save_value(self) -> str:
-        return self.options[self.selected]
-
-
-FieldDef = TextFieldDef | BoolFieldDef | SelectFieldDef
-FieldState = TextFieldState | BoolFieldState | SelectFieldState
+    kind: Literal["text", "bool", "select"]
+    default: str | bool = ""
+    options: tuple[str, ...] = ()  # only for kind="select"
 
 
 # ─── Field registry ──────────────────────────────────────────────────────────
-# [LAW:one-source-of-truth] Adding a new setting = adding an entry here.
+# // [LAW:one-source-of-truth] Adding a new setting = adding an entry here.
 
 SETTINGS_FIELDS: list[FieldDef] = [
-    TextFieldDef(
+    FieldDef(
         key="claude_command",
         label="Claude Command",
-        default="claude",
         description="Command to launch Claude in tmux pane",
+        kind="text",
+        default="claude",
     ),
-    BoolFieldDef(
+    FieldDef(
         key="auto_zoom_default",
         label="Auto-Zoom Default",
-        default=False,
         description="Start with tmux auto-zoom enabled",
+        kind="bool",
+        default=False,
     ),
-    BoolFieldDef(
+    FieldDef(
         key="side_channel_enabled",
         label="AI Summaries",
-        default=True,
         description="Enable AI-powered summaries via claude -p",
+        kind="bool",
+        default=True,
     ),
 ]
+
+
+# ─── Widget helpers ──────────────────────────────────────────────────────────
+
+
+def _make_widget(field: FieldDef, value: object) -> Input | Switch | Select:
+    """Create the appropriate Textual widget for a FieldDef."""
+    widget_id = "field-{}".format(field.key)
+    if field.kind == "text":
+        return Input(value=str(value), id=widget_id)
+    elif field.kind == "bool":
+        return Switch(value=bool(value), id=widget_id)
+    else:  # select
+        s = str(value) if value else field.default
+        options = [(opt or "(none)", opt) for opt in field.options]
+        return Select(options, value=s, allow_blank=False, id=widget_id)
 
 
 # ─── Panel widget ─────────────────────────────────────────────────────────────
 
 
-class SettingsPanel(Static):
-    """Side panel for editing application settings."""
+class SettingsPanel(VerticalScroll):
+    """Side panel for editing application settings.
+
+    Posts Saved or Cancelled messages. App listens for them.
+    """
 
     DEFAULT_CSS = """
     SettingsPanel {
@@ -185,86 +99,99 @@ class SettingsPanel(Static):
         border-left: solid $accent;
         padding: 1;
         height: 1fr;
-        overflow-y: auto;
+    }
+    SettingsPanel .field-label {
+        margin-top: 1;
+        text-style: bold;
+    }
+    SettingsPanel .field-desc {
+        color: $text-muted;
+        text-style: italic;
+    }
+    SettingsPanel .panel-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    SettingsPanel .panel-footer {
+        margin-top: 1;
+        color: $text-muted;
+    }
+    SettingsPanel Input {
+        width: 100%;
+    }
+    SettingsPanel Select {
+        width: 100%;
     }
     """
 
-    def __init__(self):
-        super().__init__("")
+    class Saved(Message):
+        """Posted when user saves settings (Enter)."""
 
-    def update_display(self, fields: list[FieldState], active_idx: int) -> None:
-        """Re-render with current editing state."""
-        from rich.text import Text
+        def __init__(self, values: dict) -> None:
+            self.values = values
+            super().__init__()
 
+    class Cancelled(Message):
+        """Posted when user cancels settings (Escape)."""
+
+    def __init__(self, initial_values: dict | None = None) -> None:
+        super().__init__()
+        self._initial_values = initial_values or {}
+
+    def compose(self) -> ComposeResult:
         p = cc_dump.palette.PALETTE
-        text = Text()
-        text.append("Settings", style="bold {}".format(p.info))
-        text.append("\n\n")
+        yield Static("Settings", classes="panel-title")
 
-        for i, (field_def, field_state) in enumerate(zip(SETTINGS_FIELDS, fields)):
-            is_active = (i == active_idx)
-            # Label
-            label_style = "bold" if is_active else "dim bold"
-            text.append("  ")
-            text.append(field_def.label, style=label_style)
-            text.append("\n")
+        for field in SETTINGS_FIELDS:
+            value = self._initial_values.get(field.key, field.default)
+            yield Label(field.label, classes="field-label")
+            yield _make_widget(field, value)
+            yield Static(field.description, classes="field-desc")
 
-            # Value rendering — dispatched by state type
-            text.append("  ")
-            if isinstance(field_state, TextFieldState):
-                self._render_text_field(text, field_state, is_active)
-            elif isinstance(field_state, BoolFieldState):
-                self._render_bool_field(text, field_state, is_active)
-            text.append("\n")
+        yield Static(
+            "[bold {info}]Tab[/] next  [bold {info}]Enter[/] save  [bold {info}]Esc[/] cancel".format(
+                info=p.info
+            ),
+            classes="panel-footer",
+        )
 
-            # Description
-            text.append("  ")
-            text.append(field_def.description, style="dim italic")
-            text.append("\n\n")
+    def collect_values(self) -> dict:
+        """Read current widget values into a dict keyed by field key."""
+        result = {}
+        for field in SETTINGS_FIELDS:
+            widget = self.query_one("#field-{}".format(field.key))
+            if field.kind == "text":
+                result[field.key] = widget.value
+            elif field.kind == "bool":
+                result[field.key] = widget.value
+            else:  # select
+                result[field.key] = widget.value
+        return result
 
-        # Footer instructions
-        text.append("  ")
-        text.append("Tab", style="bold {}".format(p.info))
-        text.append(" next  ", style="dim")
-        text.append("Enter", style="bold {}".format(p.info))
-        text.append(" save  ", style="dim")
-        text.append("Esc", style="bold {}".format(p.info))
-        text.append(" cancel", style="dim")
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in any Input triggers save."""
+        event.stop()
+        self.post_message(self.Saved(self.collect_values()))
 
-        self.update(text)
-
-    @staticmethod
-    def _render_text_field(text, state: TextFieldState, is_active: bool) -> None:
-        """Render text field with cursor."""
-        value = state.value
-        if is_active:
-            pos = state.cursor_pos
-            before = value[:pos]
-            cursor_char = value[pos] if pos < len(value) else " "
-            after = value[pos + 1:] if pos < len(value) else ""
-            text.append(before, style="bold")
-            text.append(cursor_char, style="reverse bold")
-            text.append(after, style="bold")
-        else:
-            text.append(value, style="dim")
-
-    @staticmethod
-    def _render_bool_field(text, state: BoolFieldState, is_active: bool) -> None:
-        """Render boolean checkbox."""
-        marker = "x" if state.value else " "
-        style = "bold" if is_active else "dim"
-        text.append("[{}]".format(marker), style=style)
-        text.append(" ", style=style)
-        label = "Enabled" if state.value else "Disabled"
-        text.append(label, style=style)
+    def on_key(self, event) -> None:
+        """Handle panel-level keys."""
+        if event.key == "escape":
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.Cancelled())
+        elif event.key == "enter":
+            # Enter outside an Input (e.g. on a Switch) also saves
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.Saved(self.collect_values()))
 
     def get_state(self) -> dict:
-        return {}  # Stateless
+        return {}
 
-    def restore_state(self, state: dict):
+    def restore_state(self, state: dict) -> None:
         pass
 
 
-def create_settings_panel() -> SettingsPanel:
+def create_settings_panel(initial_values: dict | None = None) -> SettingsPanel:
     """Create a new SettingsPanel instance."""
-    return SettingsPanel()
+    return SettingsPanel(initial_values=initial_values)

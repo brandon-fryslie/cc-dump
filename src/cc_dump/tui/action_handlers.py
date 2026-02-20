@@ -167,31 +167,25 @@ def toggle_keys(app) -> None:
 
 
 def toggle_settings(app) -> None:
-    """Toggle the settings panel via mount/remove.
-
-    On open: loads current values from settings.json into app editing state.
-    """
+    """Toggle the settings panel via mount/remove."""
     import cc_dump.tui.settings_panel
 
     panel_class = cc_dump.tui.settings_panel.SettingsPanel
     existing = app.screen.query(panel_class)
     if existing:
-        app._close_settings(save=False)
+        app._close_settings()
     else:
         app._open_settings()
 
 
 def toggle_launch_config(app) -> None:
-    """Toggle the launch config panel via mount/remove.
-
-    On open: loads configs from settings.json into app editing state.
-    """
+    """Toggle the launch config panel via mount/remove."""
     import cc_dump.tui.launch_config_panel
 
     panel_class = cc_dump.tui.launch_config_panel.LaunchConfigPanel
     existing = app.screen.query(panel_class)
     if existing:
-        app._close_launch_config(save=False)
+        app._close_launch_config()
     else:
         app._open_launch_config()
 

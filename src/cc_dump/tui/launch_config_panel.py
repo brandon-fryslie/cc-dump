@@ -3,80 +3,83 @@
 This module is RELOADABLE. When it reloads, any mounted panel is
 removed during hot-reload (stateless, user can re-open with C).
 
-// [LAW:one-type-per-behavior] Reuses FieldDef/FieldState from settings_panel.
+// [LAW:one-type-per-behavior] Reuses FieldDef from settings_panel.
+// [LAW:locality-or-seam] Panel handles its own keys and messages — app.py
+//   just listens for Saved/Cancelled/QuickLaunch/Activated.
 """
 
 from __future__ import annotations
 
-from textual.widgets import Static
+from textual.app import ComposeResult
+from textual.containers import Vertical, VerticalScroll
+from textual.css.query import NoMatches
+from textual.message import Message
+from textual.widgets import Input, Label, OptionList, Select, Static, Switch
 
 import cc_dump.palette
 from cc_dump.launch_config import SHELL_OPTIONS
-from cc_dump.tui.settings_panel import (
-    TextFieldDef,
-    BoolFieldDef,
-    SelectFieldDef,
-    TextFieldState,
-    BoolFieldState,
-    SelectFieldState,
-    FieldDef,
-    FieldState,
-)
+from cc_dump.tui.settings_panel import FieldDef
 
 
 # [LAW:one-source-of-truth] Field definitions for a LaunchConfig.
 CONFIG_FIELDS: list[FieldDef] = [
-    TextFieldDef(
+    FieldDef(
         key="name",
         label="Name",
+        kind="text",
         default="default",
         description="Config identifier",
     ),
-    TextFieldDef(
+    FieldDef(
         key="model",
         label="Model",
+        kind="text",
         default="",
         description="--model flag (empty = none)",
     ),
-    BoolFieldDef(
+    FieldDef(
         key="auto_resume",
         label="Auto-Resume",
+        kind="bool",
         default=True,
         description="Pass --resume <session_id>",
     ),
-    SelectFieldDef(
+    FieldDef(
         key="shell",
         label="Shell",
+        kind="select",
         description="Wrap command in shell -c 'source rc; ...'",
         options=SHELL_OPTIONS,
         default="",
     ),
-    TextFieldDef(
+    FieldDef(
         key="extra_flags",
         label="Extra Flags",
+        kind="text",
         default="",
         description="Appended to command",
     ),
 ]
 
 
-def make_field_states(config) -> list[FieldState]:
-    """Create FieldState list from a LaunchConfig instance."""
-    states: list[FieldState] = []
-    for field_def in CONFIG_FIELDS:
-        value = getattr(config, field_def.key, field_def.default)
-        states.append(field_def.make_state(value))
-    return states
+def _make_widget(field: FieldDef, value: object) -> Input | Switch | Select:
+    """Create the appropriate Textual widget for a FieldDef."""
+    widget_id = "lc-field-{}".format(field.key)
+    if field.kind == "text":
+        return Input(value=str(value), id=widget_id)
+    elif field.kind == "bool":
+        return Switch(value=bool(value), id=widget_id)
+    else:  # select
+        s = str(value) if value else field.default
+        options = [(opt or "(none)", opt) for opt in field.options]
+        return Select(options, value=s, allow_blank=False, id=widget_id)
 
 
-def apply_fields_to_config(config, fields: list[FieldState]) -> None:
-    """Write FieldState values back onto a LaunchConfig."""
-    for field_state in fields:
-        setattr(config, field_state.key, field_state.save_value)
+class LaunchConfigPanel(VerticalScroll):
+    """Side panel for managing launch configurations.
 
-
-class LaunchConfigPanel(Static):
-    """Side panel for managing launch configurations."""
+    Posts messages for app.py to handle: Saved, Cancelled, QuickLaunch, Activated.
+    """
 
     DEFAULT_CSS = """
     LaunchConfigPanel {
@@ -87,129 +90,290 @@ class LaunchConfigPanel(Static):
         border-left: solid $accent;
         padding: 1;
         height: 1fr;
-        overflow-y: auto;
+    }
+    LaunchConfigPanel .panel-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    LaunchConfigPanel .section-title {
+        text-style: bold;
+        margin-top: 1;
+        margin-bottom: 1;
+    }
+    LaunchConfigPanel .field-label {
+        margin-top: 1;
+        text-style: bold;
+    }
+    LaunchConfigPanel .field-desc {
+        color: $text-muted;
+        text-style: italic;
+    }
+    LaunchConfigPanel .panel-footer {
+        margin-top: 1;
+        color: $text-muted;
+    }
+    LaunchConfigPanel OptionList {
+        height: auto;
+        max-height: 10;
+    }
+    LaunchConfigPanel Input {
+        width: 100%;
+    }
+    LaunchConfigPanel Select {
+        width: 100%;
+    }
+    LaunchConfigPanel #lc-edit-section {
+        height: auto;
     }
     """
 
-    def __init__(self):
-        super().__init__("")
+    class Saved(Message):
+        """Posted when user saves configs (Enter)."""
 
-    def update_display(
+        def __init__(self, configs: list, active_name: str) -> None:
+            self.configs = configs
+            self.active_name = active_name
+            super().__init__()
+
+    class Cancelled(Message):
+        """Posted when user cancels (Escape)."""
+
+    class QuickLaunch(Message):
+        """Posted when user quick-launches a config (1-9)."""
+
+        def __init__(self, config, configs: list, active_name: str) -> None:
+            self.config = config
+            self.configs = configs
+            self.active_name = active_name
+            super().__init__()
+
+    class Activated(Message):
+        """Posted when user activates a config (a)."""
+
+        def __init__(self, name: str, configs: list) -> None:
+            self.name = name
+            self.configs = configs
+            super().__init__()
+
+    def __init__(
         self,
         configs: list,
-        selected_idx: int,
-        fields: list[FieldState],
-        active_field_idx: int,
-        active_config_name: str,
+        active_config_name: str = "default",
     ) -> None:
-        """Re-render with current editing state."""
-        from rich.text import Text
+        super().__init__()
+        # Deep-copy configs so edits don't mutate originals until save
+        import copy
+        self._configs = copy.deepcopy(configs)
+        self._active_name = active_config_name
+        self._selected_idx = 0
 
+    def compose(self) -> ComposeResult:
         p = cc_dump.palette.PALETTE
+        yield Static("Launch Configs", classes="panel-title")
 
-        text = Text()
-        text.append("Launch Configs", style="bold {}".format(p.info))
-        text.append("\n\n")
+        # Config list
+        option_list = OptionList(id="lc-config-list")
+        yield option_list
 
-        # Config list with numbers
-        for i, config in enumerate(configs):
-            is_selected = (i == selected_idx)
-            is_active = (config.name == active_config_name)
-            marker = "[*]" if is_active else "   "
-            prefix = ">" if is_selected else " "
-            style = "bold" if is_selected else "dim"
-            text.append("  {} {}. {} {}".format(prefix, i + 1, marker, config.name), style=style)
-            text.append("\n")
+        # Edit section
+        with Vertical(id="lc-edit-section"):
+            yield Static("", id="lc-edit-title", classes="section-title")
+            for field in CONFIG_FIELDS:
+                yield Label(field.label, classes="field-label")
+                yield _make_widget(field, field.default)
+                yield Static(field.description, classes="field-desc")
 
-        text.append("\n")
+        yield Static(
+            "[bold {info}]1-9[/] launch  [bold {info}]a[/] activate  [bold {info}]n[/] new\n"
+            "[bold {info}]d[/] delete  [bold {info}]enter[/] save  [bold {info}]esc[/] close".format(
+                info=p.info
+            ),
+            classes="panel-footer",
+        )
 
-        # Edit section for selected config
-        selected_name = configs[selected_idx].name if configs else ""
-        text.append("  -- Edit: {} --".format(selected_name), style="bold")
-        text.append("\n\n")
+    def on_mount(self) -> None:
+        """Populate the config list and form after mount."""
+        self._refresh_config_list()
+        self._populate_form(self._configs[0] if self._configs else None)
 
-        for i, (field_def, field_state) in enumerate(zip(CONFIG_FIELDS, fields)):
-            is_active_field = (i == active_field_idx)
-            label_style = "bold" if is_active_field else "dim bold"
-            text.append("  ")
-            text.append(field_def.label, style=label_style)
-            text.append("\n")
+    def _refresh_config_list(self) -> None:
+        """Rebuild OptionList options from config list."""
+        try:
+            option_list = self.query_one("#lc-config-list", OptionList)
+        except NoMatches:
+            return
+        option_list.clear_options()
+        for i, config in enumerate(self._configs):
+            marker = "[*]" if config.name == self._active_name else "   "
+            option_list.add_option("{:d}. {} {}".format(i + 1, marker, config.name))
+        if self._selected_idx < option_list.option_count:
+            option_list.highlighted = self._selected_idx
 
-            text.append("  ")
-            if isinstance(field_state, TextFieldState):
-                _render_text_field(text, field_state, is_active_field)
-            elif isinstance(field_state, BoolFieldState):
-                _render_bool_field(text, field_state, is_active_field)
-            elif isinstance(field_state, SelectFieldState):
-                _render_select_field(text, field_state, is_active_field)
-            text.append("\n")
+    def _populate_form(self, config) -> None:
+        """Set widget values from a config object."""
+        if config is None:
+            return
+        try:
+            title = self.query_one("#lc-edit-title", Static)
+        except NoMatches:
+            return
+        title.update("-- Edit: {} --".format(config.name))
+        for field in CONFIG_FIELDS:
+            value = getattr(config, field.key, field.default)
+            widget_id = "#lc-field-{}".format(field.key)
+            try:
+                widget = self.query_one(widget_id)
+            except NoMatches:
+                continue
+            if field.kind == "text":
+                widget.value = str(value)
+            elif field.kind == "bool":
+                widget.value = bool(value)
+            else:  # select
+                widget.value = str(value) if value else field.default
 
-            text.append("  ")
-            text.append(field_def.description, style="dim italic")
-            text.append("\n\n")
+    def _collect_form(self) -> dict:
+        """Read widget values into a dict."""
+        result = {}
+        for field in CONFIG_FIELDS:
+            widget_id = "#lc-field-{}".format(field.key)
+            try:
+                widget = self.query_one(widget_id)
+            except NoMatches:
+                result[field.key] = field.default
+                continue
+            result[field.key] = widget.value
+        return result
 
-        # Footer instructions
-        text.append("  ")
-        text.append("1-9", style="bold {}".format(p.info))
-        text.append(" launch  ", style="dim")
-        text.append("a", style="bold {}".format(p.info))
-        text.append(" activate  ", style="dim")
-        text.append("n", style="bold {}".format(p.info))
-        text.append(" new", style="dim")
-        text.append("\n  ")
-        text.append("d", style="bold {}".format(p.info))
-        text.append(" delete  ", style="dim")
-        text.append("enter", style="bold {}".format(p.info))
-        text.append(" save  ", style="dim")
-        text.append("esc", style="bold {}".format(p.info))
-        text.append(" close", style="dim")
+    def _apply_form_to_selected(self) -> None:
+        """Write form values back to the selected config."""
+        if not self._configs:
+            return
+        config = self._configs[self._selected_idx]
+        values = self._collect_form()
+        for key, value in values.items():
+            setattr(config, key, value)
 
-        self.update(text)
+    def _switch_to_config(self, idx: int) -> None:
+        """Save current form, switch to new config, populate form."""
+        self._apply_form_to_selected()
+        self._selected_idx = idx
+        self._populate_form(self._configs[idx])
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        """When user navigates config list, switch the edit form."""
+        event.stop()
+        new_idx = event.option_index
+        if new_idx != self._selected_idx and new_idx < len(self._configs):
+            self._switch_to_config(new_idx)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in any Input triggers save."""
+        event.stop()
+        self._do_save()
+
+    def _do_save(self) -> None:
+        """Apply form edits and post Saved message."""
+        self._apply_form_to_selected()
+        self.post_message(self.Saved(self._configs, self._active_name))
+
+    def _is_option_list_focused(self) -> bool:
+        """Check if the OptionList currently has focus."""
+        try:
+            option_list = self.query_one("#lc-config-list", OptionList)
+            return option_list.has_focus
+        except NoMatches:
+            return False
+
+    def on_key(self, event) -> None:
+        """Handle panel-level keys.
+
+        Single-letter commands (a/n/d/1-9) only fire when OptionList is focused,
+        preventing conflicts with typing in Input widgets.
+        """
+        key = event.key
+
+        # Escape always cancels
+        if key == "escape":
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.Cancelled())
+            return
+
+        # Enter always saves (unless from Input — handled by on_input_submitted)
+        if key == "enter" and not isinstance(self.screen.focused, Input):
+            event.stop()
+            event.prevent_default()
+            self._do_save()
+            return
+
+        # Commands only active when OptionList focused (not typing in Input)
+        if not self._is_option_list_focused():
+            return
+
+        configs = self._configs
+
+        # Quick-launch by number (1-9)
+        if key in "123456789":
+            num = int(key) - 1
+            if num < len(configs):
+                event.stop()
+                event.prevent_default()
+                self._apply_form_to_selected()
+                self.post_message(
+                    self.QuickLaunch(
+                        configs[num], self._configs, self._active_name
+                    )
+                )
+            return
+
+        # Activate selected config
+        if key == "a":
+            event.stop()
+            event.prevent_default()
+            self._apply_form_to_selected()
+            self._active_name = configs[self._selected_idx].name
+            self._refresh_config_list()
+            self.post_message(self.Activated(self._active_name, self._configs))
+            return
+
+        # New config
+        if key == "n":
+            event.stop()
+            event.prevent_default()
+            self._apply_form_to_selected()
+            import cc_dump.launch_config
+            new_config = cc_dump.launch_config.LaunchConfig(
+                name="config-{}".format(len(configs) + 1)
+            )
+            configs.append(new_config)
+            self._selected_idx = len(configs) - 1
+            self._refresh_config_list()
+            self._populate_form(new_config)
+            return
+
+        # Delete selected (prevent deleting last)
+        if key == "d":
+            event.stop()
+            event.prevent_default()
+            if len(configs) <= 1:
+                self.notify("Cannot delete last config", severity="warning")
+                return
+            configs.pop(self._selected_idx)
+            self._selected_idx = min(self._selected_idx, len(configs) - 1)
+            self._refresh_config_list()
+            self._populate_form(configs[self._selected_idx])
+            return
 
     def get_state(self) -> dict:
-        return {}  # Stateless
+        return {}
 
-    def restore_state(self, state: dict):
+    def restore_state(self, state: dict) -> None:
         pass
 
 
-def _render_text_field(text, state: TextFieldState, is_active: bool) -> None:
-    """Render text field with cursor."""
-    value = state.value
-    if is_active:
-        pos = state.cursor_pos
-        before = value[:pos]
-        cursor_char = value[pos] if pos < len(value) else " "
-        after = value[pos + 1:] if pos < len(value) else ""
-        text.append(before, style="bold")
-        text.append(cursor_char, style="reverse bold")
-        text.append(after, style="bold")
-    else:
-        text.append(value or "(empty)", style="dim")
-
-
-def _render_bool_field(text, state: BoolFieldState, is_active: bool) -> None:
-    """Render boolean checkbox."""
-    marker = "x" if state.value else " "
-    style = "bold" if is_active else "dim"
-    text.append("[{}]".format(marker), style=style)
-    text.append(" ", style=style)
-    label = "Enabled" if state.value else "Disabled"
-    text.append(label, style=style)
-
-
-def _render_select_field(text, state: SelectFieldState, is_active: bool) -> None:
-    """Render select field with left/right arrows when active."""
-    style = "bold" if is_active else "dim"
-    display = state.value or "None"
-    if is_active:
-        text.append("\u25c0 ", style=style)
-        text.append(display, style="bold reverse" if is_active else style)
-        text.append(" \u25b6", style=style)
-    else:
-        text.append(display or "None", style=style)
-
-
-def create_launch_config_panel() -> LaunchConfigPanel:
+def create_launch_config_panel(
+    configs: list, active_config_name: str = "default"
+) -> LaunchConfigPanel:
     """Create a new LaunchConfigPanel instance."""
-    return LaunchConfigPanel()
+    return LaunchConfigPanel(configs=configs, active_config_name=active_config_name)
