@@ -24,11 +24,12 @@ def start_search(app) -> None:
     state.current_index = 0
     state.expanded_blocks = []
     # Save current filter state for restore on cancel
+    store = app._view_store
     state.saved_filters = {
         name: (
-            app._is_visible[name],
-            app._is_full[name],
-            app._is_expanded[name],
+            store.get(f"vis:{name}"),
+            store.get(f"full:{name}"),
+            store.get(f"exp:{name}"),
         )
         for _, name, _, _ in CATEGORY_CONFIG
     }
@@ -181,17 +182,13 @@ def _exit_search_common(app) -> None:
     # Clear block expansion overrides we set
     clear_search_expand(app)
 
-    # Restore saved filter levels (all three dicts) - create new dicts to trigger watchers
-    new_visible = {}
-    new_full = {}
-    new_expanded = {}
-    for name, (is_visible, is_full, is_expanded) in state.saved_filters.items():
-        new_visible[name] = is_visible
-        new_full[name] = is_full
-        new_expanded[name] = is_expanded
-    app._is_visible = new_visible
-    app._is_full = new_full
-    app._is_expanded = new_expanded
+    # Restore saved filter levels — batched via store.update()
+    updates = {}
+    for name, (vis, full, exp) in state.saved_filters.items():
+        updates[f"vis:{name}"] = vis
+        updates[f"full:{name}"] = full
+        updates[f"exp:{name}"] = exp
+    app._view_store.update(updates)
 
     # Reset state
     state.phase = SearchPhase.INACTIVE

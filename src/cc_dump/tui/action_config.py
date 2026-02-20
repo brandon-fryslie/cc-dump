@@ -37,11 +37,11 @@ VIS_CYCLE = [
 ]
 
 # [LAW:dataflow-not-control-flow] Visibility toggle specs — data, not branches.
-# Each tuple: (dict_attr, force_value_or_None) where None means "toggle".
+# Each tuple: (store_key_prefix, force_value_or_None) where None means "toggle".
 VIS_TOGGLE_SPECS = {
-    "vis": [("_is_visible", None)],
-    "detail": [("_is_visible", True), ("_is_full", None)],
-    "expand": [("_is_visible", True), ("_is_expanded", None)],
+    "vis": [("vis", None)],
+    "detail": [("vis", True), ("full", None)],
+    "expand": [("vis", True), ("exp", None)],
 }
 
 # [LAW:one-type-per-behavior] Toggle config for non-cycling panels

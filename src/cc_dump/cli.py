@@ -220,6 +220,10 @@ def main():
 
     router.start()
 
+    # Create view store (reactive, hot-reloadable)
+    import cc_dump.view_store
+    view_store = cc_dump.view_store.create()
+
     # Wire settings store reactions (after all consumers are created)
     store_context = {
         "side_channel_manager": side_channel_mgr,
@@ -254,7 +258,14 @@ def main():
         side_channel_manager=side_channel_mgr,
         data_dispatcher=data_dispatcher,
         settings_store=settings_store,
+        view_store=view_store,
         store_context=store_context,
+    )
+
+    # Wire view store reactions (needs app ref for re-render autorun)
+    store_context["app"] = app
+    view_store._reaction_disposers = cc_dump.view_store.setup_reactions(
+        view_store, store_context
     )
     try:
         app.run()

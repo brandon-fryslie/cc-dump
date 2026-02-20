@@ -50,12 +50,23 @@ async def run_app(
     # Create in-memory analytics store for testing
     analytics_store = AnalyticsStore()
 
+    # Create view store for visibility state
+    import cc_dump.view_store
+    view_store = cc_dump.view_store.create()
+
     app = CcDumpApp(
         event_queue=tui_sub.queue,
         state=state,
         router=router,
         analytics_store=analytics_store,
         replay_data=replay_data,
+        view_store=view_store,
+    )
+
+    # Wire view store reactions (needs app ref)
+    store_context = {"app": app}
+    view_store._reaction_disposers = cc_dump.view_store.setup_reactions(
+        view_store, store_context
     )
 
     async with app.run_test(

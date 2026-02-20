@@ -116,6 +116,20 @@ async def _do_hot_reload(app) -> None:
         except Exception as e:
             app._app_log("ERROR", f"Hot-reload: settings store reconcile failed: {e}")
 
+    # Reconcile view store (values survive, autorun re-registers)
+    view_store = getattr(app, "_view_store", None)
+    if view_store is not None:
+        try:
+            import cc_dump.view_store
+            view_store.reconcile(
+                cc_dump.view_store.SCHEMA,
+                lambda store: cc_dump.view_store.setup_reactions(
+                    store, getattr(app, "_store_context", None)
+                ),
+            )
+        except Exception as e:
+            app._app_log("ERROR", f"Hot-reload: view store reconcile failed: {e}")
+
     # Any file change triggers full widget replacement
     # // [LAW:dataflow-not-control-flow] Unconditional — all reloads take same path
     try:
@@ -145,11 +159,12 @@ async def _do_hot_reload(app) -> None:
         state.cursor_pos = saved_cursor_pos
 
         # Capture fresh filter state and scroll position from new widgets
+        store = app._view_store
         state.saved_filters = {
             name: (
-                app._is_visible[name],
-                app._is_full[name],
-                app._is_expanded[name],
+                store.get(f"vis:{name}"),
+                store.get(f"full:{name}"),
+                store.get(f"exp:{name}"),
             )
             for _, name, _, _ in CATEGORY_CONFIG
         }

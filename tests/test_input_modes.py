@@ -46,13 +46,13 @@ class TestNormalModeKeyDispatch:
     async def test_filter_toggle_1_changes_user(self, app_and_pilot):
         """Pressing '1' toggles user visibility."""
         pilot, app = app_and_pilot
-        initial = app._is_visible["user"]
+        initial = app._view_store.get("vis:user")
 
         await pilot.press("1")
         await pilot.pause()
 
         # Should have toggled
-        assert app._is_visible["user"] != initial
+        assert app._view_store.get("vis:user") != initial
 
     async def test_theme_next_changes_theme(self, app_and_pilot):
         """Pressing ']' cycles to next theme."""
@@ -137,12 +137,12 @@ class TestSearchModeGating:
         await pilot.pause()
 
         # Try to toggle filter
-        initial_user = app._is_visible["user"]
+        initial_user = app._view_store.get("vis:user")
         await pilot.press("1")
         await pilot.pause()
 
         # Filter should NOT have changed
-        assert app._is_visible["user"] == initial_user
+        assert app._view_store.get("vis:user") == initial_user
 
     async def test_theme_blocked_during_search_nav(self, app_and_pilot):
         """During SEARCH_NAV, pressing ']' does NOT change theme."""

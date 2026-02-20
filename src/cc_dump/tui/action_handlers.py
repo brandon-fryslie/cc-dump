@@ -21,14 +21,17 @@ from cc_dump.tui.panel_registry import PANEL_ORDER
 
 def _toggle_vis_dicts(app, category: str, spec_key: str) -> None:
     """// [LAW:one-type-per-behavior] Single function for all visibility mutations."""
-    for attr, force in cc_dump.tui.action_config.VIS_TOGGLE_SPECS[spec_key]:
-        old = getattr(app, attr)
-        new = dict(old)
-        new[category] = (not old[category]) if force is None else force
-        setattr(app, attr, new)
+    from snarfx import transaction
+
+    store = app._view_store
+    # Clear overrides BEFORE transaction so autorun sees clean block state
     clear_overrides(app, category)
-    # Manual toggle invalidates active filterset indicator
     app._active_filterset_slot = None
+    with transaction():
+        for prefix, force in cc_dump.tui.action_config.VIS_TOGGLE_SPECS[spec_key]:
+            key = f"{prefix}:{category}"
+            current = store.get(key)
+            store.set(key, (not current) if force is None else force)
 
 
 def clear_overrides(app, category_name: str) -> None:
@@ -72,11 +75,14 @@ def cycle_vis(app, category: str) -> None:
     // [LAW:dataflow-not-control-flow] State progression driven by _VIS_CYCLE list.
     // [LAW:one-type-per-behavior] Single function for all category visibility cycling.
     """
-    # Get current state from three reactive dicts
+    from snarfx import transaction
+
+    store = app._view_store
+    # Get current state from store
     current = cc_dump.formatting.VisState(
-        app._is_visible[category],
-        app._is_full[category],
-        app._is_expanded[category]
+        store.get(f"vis:{category}"),
+        store.get(f"full:{category}"),
+        store.get(f"exp:{category}"),
     )
 
     # Find index in cycle (default to -1 if state not found, wraps to 0)
@@ -90,15 +96,15 @@ def cycle_vis(app, category: str) -> None:
     next_idx = (idx + 1) % len(vis_cycle)
     next_state = vis_cycle[next_idx]
 
-    # Update all three reactive dicts atomically
-    # [LAW:dataflow-not-control-flow] Always execute these updates; values vary
-    app._is_visible = {**app._is_visible, category: next_state.visible}
-    app._is_full = {**app._is_full, category: next_state.full}
-    app._is_expanded = {**app._is_expanded, category: next_state.expanded}
-
     # Clear per-block overrides and invalidate active filterset
     clear_overrides(app, category)
     app._active_filterset_slot = None
+
+    # Batch-set all three keys — single autorun fire
+    with transaction():
+        store.set(f"vis:{category}", next_state.visible)
+        store.set(f"full:{category}", next_state.full)
+        store.set(f"exp:{category}", next_state.expanded)
 
 
 # ─── Panel cycling ─────────────────────────────────────────────────────
@@ -228,10 +234,13 @@ def apply_filterset(app, slot: str) -> None:
     if filters is None:
         app.notify(f"Preset F{slot} is empty", severity="warning")
         return
-    # Apply all three axes from the loaded VisState values
-    app._is_visible = {name: vs.visible for name, vs in filters.items()}
-    app._is_full = {name: vs.full for name, vs in filters.items()}
-    app._is_expanded = {name: vs.expanded for name, vs in filters.items()}
+    # Batch-set all visibility keys from loaded VisState values
+    updates = {}
+    for name, vs in filters.items():
+        updates[f"vis:{name}"] = vs.visible
+        updates[f"full:{name}"] = vs.full
+        updates[f"exp:{name}"] = vs.expanded
+    app._view_store.update(updates)
     app._active_filterset_slot = slot
     # Show name for built-in presets, just slot number for user-defined
     name = cc_dump.tui.action_config.FILTERSET_NAMES.get(slot, "")

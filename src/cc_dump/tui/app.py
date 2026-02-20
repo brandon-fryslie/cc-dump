@@ -3,8 +3,8 @@
 // [LAW:locality-or-seam] Thin coordinator — delegates to extracted modules:
 //   category_config, action_handlers, search_controller, dump_export,
 //   theme_controller, hot_reload_controller.
-// [LAW:one-source-of-truth] Reactive dicts (_is_visible, _is_full, _is_expanded)
-//   are the sole state for visibility. active_filters is derived.
+// [LAW:one-source-of-truth] View store (SnarfX) is the sole state for visibility.
+//   active_filters is a Computed on the view store.
 """
 
 import os
@@ -87,11 +87,6 @@ class CcDumpApp(App):
 
     CSS_PATH = "styles.css"
 
-    # [LAW:one-source-of-truth] Three orthogonal reactive dicts for visibility state
-    _is_visible: reactive[dict[str, bool]] = reactive({})
-    _is_full: reactive[dict[str, bool]] = reactive({})
-    _is_expanded: reactive[dict[str, bool]] = reactive({})
-
     # Panel visibility
     # [LAW:one-source-of-truth] active_panel cycles through PANEL_ORDER
     active_panel = reactive("session")
@@ -115,6 +110,7 @@ class CcDumpApp(App):
         side_channel_manager=None,
         data_dispatcher=None,
         settings_store=None,
+        view_store=None,
         store_context=None,
     ):
         super().__init__()
@@ -134,6 +130,7 @@ class CcDumpApp(App):
         self._side_channel_manager = side_channel_manager
         self._data_dispatcher = data_dispatcher
         self._settings_store = settings_store
+        self._view_store = view_store
         self._store_context = store_context
         self._closing = False
         self._quit_requested_at: float | None = None
@@ -148,11 +145,6 @@ class CcDumpApp(App):
             self._replay_complete.set()
 
         self._app_state: AppState = {"current_turn_usage": {}}
-
-        # [LAW:one-source-of-truth] Initialize from CATEGORY_CONFIG
-        self._is_visible = {name: d.visible for _, name, _, d in CATEGORY_CONFIG}
-        self._is_full = {name: d.full for _, name, _, d in CATEGORY_CONFIG}
-        self._is_expanded = {name: d.expanded for _, name, _, d in CATEGORY_CONFIG}
 
         self._search_state = cc_dump.tui.search.SearchState()
         self._active_filterset_slot = None
@@ -204,13 +196,8 @@ class CcDumpApp(App):
 
     @property
     def active_filters(self):
-        """// [LAW:one-source-of-truth] Assembled from three reactive dicts."""
-        return {
-            name: cc_dump.formatting.VisState(
-                self._is_visible[name], self._is_full[name], self._is_expanded[name]
-            )
-            for _, name, _, _ in CATEGORY_CONFIG
-        }
+        """// [LAW:one-source-of-truth] Reads from view store Computed."""
+        return self._view_store.active_filters.get()
 
     # ─── Widget accessors ──────────────────────────────────────────────
 
@@ -998,18 +985,6 @@ class CcDumpApp(App):
         _search.update_search_bar(self)
 
     # ─── Reactive watchers ─────────────────────────────────────────────
-
-    def _on_vis_state_changed(self):
-        self._rerender_if_mounted()
-
-    def watch__is_visible(self, value):
-        self._on_vis_state_changed()
-
-    def watch__is_full(self, value):
-        self._on_vis_state_changed()
-
-    def watch__is_expanded(self, value):
-        self._on_vis_state_changed()
 
     def watch_active_panel(self, value):
         self._sync_panel_display(value)

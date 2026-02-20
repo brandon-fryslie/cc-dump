@@ -9,11 +9,12 @@ from cc_dump.tui.app import CcDumpApp
 
 
 def get_vis_state(app: CcDumpApp, category: str) -> VisState:
-    """Read the visibility state from the three reactive dicts."""
+    """Read the visibility state from the view store."""
+    store = app._view_store
     return VisState(
-        visible=app._is_visible[category],
-        full=app._is_full[category],
-        expanded=app._is_expanded[category],
+        visible=store.get(f"vis:{category}"),
+        full=store.get(f"full:{category}"),
+        expanded=store.get(f"exp:{category}"),
     )
 
 
@@ -35,8 +36,8 @@ def get_all_levels(app: CcDumpApp):
 
 
 def get_category_expanded(app: CcDumpApp, category: str) -> bool:
-    """Read the _is_expanded state for a category."""
-    return app._is_expanded[category]
+    """Read the expanded state for a category from the view store."""
+    return app._view_store.get(f"exp:{category}")
 
 
 def get_filters(app: CcDumpApp) -> dict:
