@@ -53,4 +53,5 @@ StatusFooter {
     height: auto;
     max-height: 3;
     padding: 0 1;
+    link-style-hover: dim;
 }

@@ -189,19 +189,17 @@ async def replace_all_widgets(app) -> None:
     if not app.is_running:
         return
 
-    app._replacing_widgets = True
-    try:
+    from snarfx import textual as stx
+    with stx.pause(app):
         await _replace_all_widgets_inner(app)
-    finally:
-        app._replacing_widgets = False
 
 
 async def _replace_all_widgets_inner(app) -> None:
     """Inner implementation of widget replacement.
 
     Strategy: Create all new widgets first (without IDs), then remove old
-    widgets, then mount new ones with the correct IDs. The _replacing_widgets
-    flag prevents any code from querying widgets during the gap.
+    widgets, then mount new ones with the correct IDs. The stx.pause() guard
+    prevents any reaction from querying widgets during the gap.
     """
     from cc_dump.tui.app import _resolve_factory
 

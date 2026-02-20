@@ -88,8 +88,8 @@ class StatusFooter(Static):
         follow_state = state.get("follow_state", FollowState.ACTIVE)
         follow_click = _click("app.toggle_follow")
         _FOLLOW_DISPLAY: dict[FollowState, tuple[str, str]] = {
-            FollowState.OFF: ("dim", " f OFF "),
-            FollowState.ENGAGED: (tc.follow_engaged_style, " f FOLLOW "),
+            FollowState.OFF: ("dim", " f off "),
+            FollowState.ENGAGED: (tc.follow_engaged_style, " f follow "),
             FollowState.ACTIVE: (tc.follow_active_style, " f FOLLOW "),
         }
         follow_style, follow_label = _FOLLOW_DISPLAY[follow_state]

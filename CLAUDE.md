@@ -8,6 +8,25 @@ cc-dump is a transparent HTTP proxy for monitoring Claude Code API traffic. It i
 
 **Product decisions:** See [PRODUCT_DECISIONS.md](PRODUCT_DECISIONS.md) before proposing feature removal.
 
+## SnarfX (Separate Repository)
+
+SnarfX (`snarfx/`) is a **separate git repository** developed alongside cc-dump. It is a MobX-inspired reactive state management library for Python. **Do not `git add` snarfx files to the cc-dump repo** — commit them in the snarfx repo directly using `git -C snarfx`.
+
+Key modules:
+- `snarfx` core: `Observable`, `Computed`, `Reaction`, `Store`, `HotReloadStore`
+- `snarfx.textual`: Textual integration — `reaction()`, `autorun()`, `pause()`, `is_safe()`. Guards, NoMatches catching, and thread marshaling built in. Pause state owned by the module, never set on external objects.
+- `snarfx.hot_reload`: `HotReloadStore` with reconcile for hot-reload survival
+
+```bash
+# SnarfX git operations — always use -C snarfx
+git -C snarfx status
+git -C snarfx add <files> && git -C snarfx commit -m "message"
+git -C snarfx log --oneline
+
+# Run SnarfX tests
+uv run pytest snarfx/tests/ -v
+```
+
 ## Textual Framework Reference
 
 We use the Textual TUI framework. Reference documentation is in `dev-docs/textual-docs/`:

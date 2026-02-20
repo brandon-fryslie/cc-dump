@@ -149,7 +149,6 @@ class CcDumpApp(App):
         self._store_context = store_context
         self._closing = False
         self._quit_requested_at: float | None = None
-        self._replacing_widgets = False
         self._markdown_theme_pushed = False
 
         self.sub_title = f"[{cc_dump.palette.PALETTE.info}]session: {session_name}[/]"
@@ -451,7 +450,8 @@ class CcDumpApp(App):
         }
 
     def _rerender_if_mounted(self):
-        if self.is_running and not self._replacing_widgets:
+        from snarfx import textual as stx
+        if stx.is_safe(self):
             conv = self._get_conv()
             if conv is not None:
                 conv.rerender(self.active_filters)
@@ -524,7 +524,8 @@ class CcDumpApp(App):
                     self._app_log("ERROR", f"  {line}")
 
     def _handle_event_inner(self, event):
-        if self._replacing_widgets:
+        from snarfx import textual as stx
+        if not stx.is_safe(self):
             return
 
         kind = event.kind

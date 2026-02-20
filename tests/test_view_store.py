@@ -3,11 +3,13 @@
 from unittest.mock import MagicMock
 
 import pytest
+from textual.css.query import NoMatches
 
 import cc_dump.view_store
 from cc_dump.formatting import VisState
 from cc_dump.tui.category_config import CATEGORY_CONFIG
 from snarfx import autorun, transaction
+from snarfx import textual as stx
 
 
 class TestSchema:
@@ -207,7 +209,6 @@ class TestPanelActiveReaction:
         store = cc_dump.view_store.create()
         app = MagicMock()
         app.is_running = True
-        app._replacing_widgets = False
         app._rerender_if_mounted = MagicMock()
         app._sync_panel_display = MagicMock()
         context = {"app": app}
@@ -220,11 +221,10 @@ class TestPanelActiveReaction:
 
         app._sync_panel_display.assert_called_with("stats")
 
-    def test_reaction_guarded_during_widget_replacement(self):
+    def test_reaction_guarded_during_stx_pause(self):
         store = cc_dump.view_store.create()
         app = MagicMock()
         app.is_running = True
-        app._replacing_widgets = True
         app._rerender_if_mounted = MagicMock()
         app._sync_panel_display = MagicMock()
         context = {"app": app}
@@ -232,7 +232,8 @@ class TestPanelActiveReaction:
         disposers = cc_dump.view_store.setup_reactions(store, context)
         app._sync_panel_display.reset_mock()
 
-        store.set("panel:active", "timeline")
+        with stx.pause(app):
+            store.set("panel:active", "timeline")
 
         app._sync_panel_display.assert_not_called()
 
@@ -240,7 +241,6 @@ class TestPanelActiveReaction:
         store = cc_dump.view_store.create()
         app = MagicMock()
         app.is_running = False
-        app._replacing_widgets = False
         app._rerender_if_mounted = MagicMock()
         app._sync_panel_display = MagicMock()
         context = {"app": app}
@@ -375,7 +375,6 @@ class TestFooterReaction:
         store = cc_dump.view_store.create()
         app = MagicMock()
         app.is_running = True
-        app._replacing_widgets = False
         app._rerender_if_mounted = MagicMock()
         app._sync_panel_display = MagicMock()
         # Create a mock footer that query_one returns
@@ -400,10 +399,9 @@ class TestErrorReaction:
         store = cc_dump.view_store.create()
         app = MagicMock()
         app.is_running = True
-        app._replacing_widgets = False
         app._rerender_if_mounted = MagicMock()
         app._sync_panel_display = MagicMock()
-        app.query_one = MagicMock(side_effect=Exception("no footer"))
+        app.query_one = MagicMock(side_effect=NoMatches("no footer"))
         mock_conv = MagicMock()
         app._get_conv = MagicMock(return_value=mock_conv)
         context = {"app": app}

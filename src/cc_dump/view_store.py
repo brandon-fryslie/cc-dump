@@ -9,7 +9,8 @@ import cc_dump.formatting
 
 from cc_dump.tui.category_config import CATEGORY_CONFIG
 from snarfx.hot_reload import HotReloadStore
-from snarfx import computed, ObservableList, autorun, reaction
+from snarfx import computed, ObservableList
+from snarfx import textual as stx
 import cc_dump.tui.widget_factory
 import cc_dump.tui.error_indicator
 import cc_dump.tui.side_channel_panel
@@ -120,6 +121,8 @@ def setup_reactions(store, context=None):
 
     Called on create and on hot-reload reconcile.
     context: dict with "app", optional "settings_store" keys.
+
+    // [LAW:single-enforcer] All guards (pause, NoMatches, thread-marshal) enforced by stx.
     """
     disposers = []
 
@@ -132,76 +135,48 @@ def setup_reactions(store, context=None):
             store._settings_store = settings_store
 
         if app is not None:
-            disposers.append(autorun(
+            disposers.append(stx.autorun(app,
                 lambda: (store.active_filters.get(), app._rerender_if_mounted())
             ))
 
             # // [LAW:single-enforcer] Single reaction drives panel display sync.
-            disposers.append(reaction(
+            def _on_panel_change(value):
+                app._sync_panel_display(value)
+                _actions.refresh_active_panel(app, value)
+
+            disposers.append(stx.reaction(app,
                 lambda: store.get("panel:active"),
-                lambda value: _on_active_panel_changed(app, value),
+                _on_panel_change,
             ))
 
             # // [LAW:single-enforcer] Footer reaction
-            disposers.append(reaction(
+            disposers.append(stx.reaction(app,
                 lambda: store.footer_state.get(),
-                lambda state: _push_footer(app, state),
+                lambda state: app.query_one(
+                    cc_dump.tui.custom_footer.StatusFooter
+                ).update_display(state),
             ))
 
             # // [LAW:single-enforcer] Error indicator reaction
-            disposers.append(reaction(
+            def _push_errors(items):
+                conv = app._get_conv()
+                if conv is not None:
+                    conv.update_error_items(items)
+
+            disposers.append(stx.reaction(app,
                 lambda: store.error_items.get(),
-                lambda items: _push_error_items(app, items),
+                _push_errors,
             ))
 
             # // [LAW:single-enforcer] Side-channel panel reaction
-            disposers.append(reaction(
+            disposers.append(stx.reaction(app,
                 lambda: store.sc_panel_state.get(),
-                lambda state: _push_sc_panel(app, state),
+                lambda state: app.screen.query(
+                    cc_dump.tui.side_channel_panel.SideChannelPanel
+                ).first().update_display(state),
             ))
 
     return disposers
-
-
-def _on_active_panel_changed(app, value):
-    """Effect: sync panel widget display, refresh data.
-
-    Guard against firing during hot-reload widget swap or before app is running.
-    Footer update handled by footer_state reaction (panel:active is a dependency).
-    """
-    if not app.is_running or app._replacing_widgets:
-        return
-    app._sync_panel_display(value)
-    _actions.refresh_active_panel(app, value)
-
-
-def _push_footer(app, state):
-    """Effect: push footer state to StatusFooter widget."""
-    if not app.is_running or app._replacing_widgets:
-        return
-    try:
-        footer = app.query_one(cc_dump.tui.custom_footer.StatusFooter)
-    except Exception:
-        return
-    footer.update_display(state)
-
-
-def _push_error_items(app, items):
-    """Effect: push error items to ConversationView's overlay indicator."""
-    if not app.is_running or app._replacing_widgets:
-        return
-    conv = app._get_conv()
-    if conv is not None:
-        conv.update_error_items(items)
-
-
-def _push_sc_panel(app, state):
-    """Effect: push side-channel panel state to SideChannelPanel widget."""
-    if not app.is_running or app._replacing_widgets:
-        return
-    panels = app.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel)
-    if panels:
-        panels.first().update_display(state)
 
 
 def get_category_state(store, name: str) -> "cc_dump.formatting.VisState":

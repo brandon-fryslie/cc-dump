@@ -22,29 +22,37 @@ Neither input needs to know about the other.
 
 **Settings store** (`settings_store.py`): HotReloadStore with schema, disk persistence reaction, consumer sync reactions (tmux, side channel). Hot-reload reconciles schema + reactions automatically.
 
-**Visibility state** (`app.py:83-85`): Three Textual `reactive` dicts (`_is_visible`, `_is_full`, `_is_expanded`) — the sole source for category visibility. `active_filters` property derives `VisState` from them. Watchers trigger `_rerender_if_mounted()`.
+**View store** (`view_store.py`): HotReloadStore holding all interactive view state — category visibility (`vis:*`, `full:*`, `exp:*`), panel open/close (`panel:settings`, `panel:side_channel`, `panel:launch_config`), active panel, follow mode, and side channel state. `active_filters` is a `Computed` that derives `VisState` from the store keys.
+
+**Derived reactions** (`view_store.py`): `footer_state`, `error_items`, and `sc_panel_state` are `Computed` values. Four `reaction()` registrations in `setup_reactions()` automatically push state to widgets — no manual `_update_*()` call sites.
+
+**Input mode** (`app.py`): `_input_mode` is a property that derives from view store booleans + search state. No separate boolean tracking.
 
 **Domain data** (`widget_factory.py`): `ConversationView` owns a list of `TurnData` objects. Each `TurnData` holds `FormattedBlock` lists and pre-rendered `Strip` arrays. Blocks arrive via `event_handlers.py` and are appended to the current turn.
 
-**View state on domain objects**: `FormattedBlock.expanded` (per-block override, `formatting.py:180`) and `block._expandable` (set by renderer, `rendering.py:2097`) are view state living on domain objects.
+**View state on domain objects**: `FormattedBlock.expanded` (per-block override, `formatting.py`) and `block._expandable` (set by renderer, `rendering.py`) are view state still living on domain objects.
 
-**Scattered app-level state** (`app.py:__init__`): Booleans for panel open/close (`_settings_panel_open`, `_launch_config_panel_open`, `_side_channel_panel_open`), side channel loading/result state (5 fields), exception tracking (`_exception_items`), active filterset slot, search state. All manually synchronized.
+**Search state** (`search.py`): `SearchState` is a plain dataclass with its own phase machine, saved filter snapshots, debounce timers, and match lists. Not yet integrated into the reactive graph.
 
-**Manual push functions**: `_update_footer_state()` is called from ~15 sites. `_update_side_channel_panel_display()` from ~5 sites. `_update_error_indicator()` from ~3 sites. Each manually assembles a state snapshot and pushes it to a widget. These are derived state that should be computed automatically.
+### What's been solved (Phases 1-4)
 
-### What's wrong
+1. **Category visibility** — Three Textual `reactive` dicts replaced by flat SnarfX store keys. Single `autorun` re-render instead of three watchers. Batched updates.
 
-1. **Visibility state uses Textual reactives instead of SnarfX** — Three separate `reactive` dicts that must be updated in lockstep. Every mutation creates a new dict copy (`{**app._is_visible, category: val}`). No batching across the three axes.
+2. **Panel/follow state** — Scattered app booleans (`_settings_panel_open`, etc.) replaced by store keys. `_input_mode` derived from store state, not manually tracked.
 
-2. **View state contaminates domain objects** — `expanded` and `_expandable` sit on `FormattedBlock`. This means domain objects are mutated after creation, blocks can't be shared or cached safely, and the block's expansion state is lost on hot-reload (widget replacement clears `_expandable`).
+3. **Derived push functions** — `_update_footer_state()` (15 call sites), `_update_error_indicator()` (3 call sites), `_update_side_channel_panel_display()` (5 call sites) all eliminated. Replaced by `Computed` + `reaction()` that fire automatically on state change.
 
-3. **No domain store abstraction** — Turn data is a list on `ConversationView`. There's no way to observe "new turn appended" reactively. Event handlers reach through `widgets["conv"]` to mutate turns.
+### What's still wrong
 
-4. **Render invalidation has two paths** — New data arrival (`_handle_event_inner`) and user toggles (`watch__is_visible` etc.) take different code paths to trigger re-render. Both ultimately call `conv.rerender()` but with different state assembly.
+1. **`block.expanded` contaminates domain objects** — Per-block expansion overrides sit on `FormattedBlock`. This means domain objects are mutated after creation, expansion state is lost on hot-reload, and `clear_overrides()` must walk all blocks. Fix: Phase 5 (move to view store).
 
-5. **Derived state is pushed, not pulled** — Footer state, error indicator state, side channel panel state, and input mode are all assembled manually and pushed to widgets from scattered call sites. These are pure functions of other state — they should be `Computed` values or `autorun` reactions that update automatically.
+2. **`block._expandable` is a render side effect on a domain object** — Set during rendering (`rendering.py:2082`), read by click handler. Acceptable interim coupling — becomes a render output (not stored on block) in Phase 8.
 
-6. **Search state is a separate world** — `SearchState` has its own phase machine, saved filter snapshots, debounce timers, and match lists. It saves/restores visibility state independently. It should participate in the same reactive graph.
+3. **Search state doesn't survive hot-reload** — `SearchState` is a plain dataclass on the app. File save mid-search loses query, phase, and mode settings. Fix: Phase 6 (identity state to view store, matches recomputed).
+
+4. **No domain store abstraction** — Turn data is a list on `ConversationView`. No way to observe "new turn appended" reactively. Event handlers reach through `widgets["conv"]`. Fix: Phase 7.
+
+5. **Render invalidation has two paths** — New data arrival (`_handle_event_inner`) and user toggles take different code paths to `conv.rerender()`. Fix: Phase 8 (unified computed pipeline). Tightly coupled with Phase 7 — domain store provides the observable input.
 
 ## Target Architecture
 
@@ -69,8 +77,9 @@ Neither input needs to know about the other.
 |                  |     | expansion_       |     |                  |
 |                  |     |   overrides{}    |     |                  |
 |                  |     |                  |     |                  |
-|                  |     | Survives reload  |     | Survives reload  |
-|                  |     | Reset on restart |     | Reset on restart |
+|                  |     | ✅ Core DONE     |     | Survives reload  |
+|                  |     | Survives reload  |     | Reset on restart |
+|                  |     | Reset on restart |     |                  |
 +--------+---------+     +--------+---------+     +--------+---------+
          |                         |                        |
          +------------+------------+------------------------+
@@ -79,12 +88,12 @@ Neither input needs to know about the other.
          +---------------------------+
          | Computed / Derived Layer  |
          |                          |
-         | active_filters           |  Computed from vis/full/exp keys
-         | input_mode               |  Computed from panel + search state
-         | footer_state             |  Computed from filters + panels + tmux
-         | error_items              |  Computed from exceptions + stale files
-         | side_channel_panel_state |  Computed from sc fields
-         | expandable_map           |  Computed from blocks + levels + limits
+         | active_filters           |  ✅ Computed from vis/full/exp keys
+         | input_mode               |  ✅ Derived from panel + search state
+         | footer_state             |  ✅ Computed from filters + panels + tmux
+         | error_items              |  ✅ Computed from exceptions + stale files
+         | side_channel_panel_state |  ✅ Computed from sc fields
+         | expandable_map           |  Render output (Phase 8), not stored on blocks
          | visible_blocks           |  Computed from domain + active_filters
          | tool_collapse            |  Computed from consecutive tool blocks
          | rendered_strips          |  Computed from visible + expanded + theme
@@ -94,12 +103,12 @@ Neither input needs to know about the other.
          +---------------------------+
          | Reactions (side effects)  |
          |                          |
-         | → persist settings       |  settings_store → disk
-         | → sync consumers         |  settings_store → tmux, side_channel
-         | → refresh viewport       |  any render input → conv.refresh()
-         | → update footer widget   |  footer_state → StatusFooter
-         | → update error overlay   |  error_items → ConversationView
-         | → update panel widgets   |  panel state → panel display
+         | → persist settings       |  ✅ settings_store → disk
+         | → sync consumers         |  ✅ settings_store → tmux, side_channel
+         | → refresh viewport       |  ✅ any render input → conv.refresh()
+         | → update footer widget   |  ✅ footer_state → StatusFooter
+         | → update error overlay   |  ✅ error_items → ConversationView
+         | → update panel widgets   |  ✅ panel state → panel display
          +-------------+------------+
                        |
                        v
@@ -114,9 +123,9 @@ Neither input needs to know about the other.
          +---------------------------+
 ```
 
-### What This Buys Us
+### What This Buys Us (Phases 1-4 realized, 5-8 projected)
 
-**Predictable invalidation.** When the user presses `3` to cycle tools visibility:
+**Predictable invalidation.** ✅ When the user presses `3` to cycle tools visibility:
 
 ```
 view_store.set("vis:tools", next_level)
@@ -130,7 +139,7 @@ view_store.set("vis:tools", next_level)
 
 No imperative "clear overrides, re-render all turns, update footer, update search bar" chain. The derivation graph handles it.
 
-**Trivial streaming.** New event arrives:
+**Trivial streaming.** (Phase 7-8) New event arrives:
 
 ```
 domain_store.append_block(new_block)
@@ -140,11 +149,11 @@ domain_store.append_block(new_block)
 
 Append-only domain data means previous derivations are always valid.
 
-**Elimination of manual push calls.** `_update_footer_state()` called from 15 sites becomes a single `autorun`. `_update_error_indicator()` from 3 sites becomes a single `autorun`. `_update_side_channel_panel_display()` from 5 sites becomes a single `autorun`. No more forgetting to call the update function after a state change.
+**Elimination of manual push calls.** ✅ `_update_footer_state()` (15 call sites), `_update_error_indicator()` (3 call sites), `_update_side_channel_panel_display()` (5 call sites) — all eliminated and replaced with `reaction()` registrations. Zero manual push calls remain.
 
-**Hot-reload simplification.** Widget replacement (`hot_reload_controller.py`) currently does state capture → widget removal → widget creation → state restoration → re-render. With SnarfX stores, widget replacement just removes old widgets and mounts fresh ones. State lives in stores (survives). Reactions re-register via `reconcile()`. The new widgets read from the same stores.
+**Hot-reload simplification.** (Partially realized) View state now survives hot-reload via HotReloadStore. Reactions re-register via `reconcile()`. Full simplification (Phase 8) will eliminate the state capture/restore dance for widget replacement entirely.
 
-**Undo/debug for free.** View state is a plain object — snapshot it, restore it, time-travel through it. Domain data is an immutable log — replay from any point.
+**Undo/debug for free.** (Phase 7-8) View state is a plain object — snapshot it, restore it, time-travel through it. Domain data is an immutable log — replay from any point.
 
 ### Design Challenges
 
@@ -220,26 +229,26 @@ error_items = Computed(...)        # from _exception_items + stale_files
 
 **Migration from Textual reactives and app booleans**:
 
-| Today (`app.py`) | Target (`view_store.py`) |
-|---|---|
-| `_is_visible = reactive({})` | `store.get("vis:tools")` |
-| `_is_full = reactive({})` | `store.get("full:tools")` |
-| `_is_expanded = reactive({})` | `store.get("exp:tools")` |
-| `active_panel = reactive("session")` | `store.get("active_panel")` |
-| `show_logs = reactive(False)` | keep as Textual reactive (drives CSS `display`) |
-| `show_info = reactive(False)` | keep as Textual reactive (drives CSS `display`) |
-| `conv._follow_state` | `store.get("follow_mode")` |
-| `block.expanded` | `expansion_overrides[block_id]` |
-| `_settings_panel_open` | `store.get("panel:settings")` |
-| `_side_channel_panel_open` | `store.get("panel:side_channel")` |
-| `_launch_config_panel_open` | `store.get("panel:launch_config")` |
-| `_search_state.phase` | `store.get("search:phase")` |
-| `_search_state.query` | `store.get("search:query")` |
-| `_active_filterset_slot` | `store.get("active_filterset")` |
-| `_input_mode` (property) | `Computed` from panel + search state |
-| `_update_footer_state()` (15 call sites) | `autorun` on footer_state Computed |
-| `_update_error_indicator()` (3 call sites) | `autorun` on error_items Computed |
-| `_update_side_channel_panel_display()` (5 call sites) | `autorun` on sc state Computed |
+| Before | After | Status |
+|---|---|---|
+| `_is_visible = reactive({})` | `store.get("vis:tools")` | ✅ |
+| `_is_full = reactive({})` | `store.get("full:tools")` | ✅ |
+| `_is_expanded = reactive({})` | `store.get("exp:tools")` | ✅ |
+| `active_panel = reactive("session")` | `store.get("panel:active")` | ✅ |
+| `show_logs = reactive(False)` | keep as Textual reactive (drives CSS `display`) | ✅ kept |
+| `show_info = reactive(False)` | keep as Textual reactive (drives CSS `display`) | ✅ kept |
+| `conv._follow_state` | `store.get("follow")` | ✅ |
+| `block.expanded` | `expansion_overrides[block_id]` | Phase 5 |
+| `_settings_panel_open` | `store.get("panel:settings")` | ✅ |
+| `_side_channel_panel_open` | `store.get("panel:side_channel")` | ✅ |
+| `_launch_config_panel_open` | `store.get("panel:launch_config")` | ✅ |
+| `_search_state.phase` | `store.get("search:phase")` | Phase 6 |
+| `_search_state.query` | `store.get("search:query")` | Phase 6 |
+| `_active_filterset_slot` | `store.get("active_filterset")` | ✅ |
+| `_input_mode` (property) | derived from store + search state | ✅ |
+| `_update_footer_state()` (15 call sites) | `reaction` on footer_state Computed | ✅ |
+| `_update_error_indicator()` (3 call sites) | `reaction` on error_items Computed | ✅ |
+| `_update_side_channel_panel_display()` (5 call sites) | `reaction` on sc_panel_state Computed | ✅ |
 
 ### Domain Store — Append-Only Event Log
 
@@ -368,70 +377,98 @@ Each phase is independently shippable and testable.
 
 `settings_store.py` with HotReloadStore, persistence reaction, consumer sync. Proved the pattern works with hot-reload.
 
-### Phase 2: View Store — Category Visibility
+### Phase 2: View Store — Category Visibility ✅ (done)
 
-**Goal**: Replace `_is_visible`/`_is_full`/`_is_expanded` Textual reactives with a SnarfX HotReloadStore. Single `autorun` for re-render instead of three `watch__is_*` methods.
+Replaced `_is_visible`/`_is_full`/`_is_expanded` Textual reactives with a SnarfX HotReloadStore in `view_store.py`. `active_filters` is a `Computed`. Single `autorun` for re-render instead of three `watch__is_*` methods. Action handlers write to store keys instead of dict-copy. Commit `265784b`.
+
+### Phase 3: View Store — Panel, Follow, & Input Mode ✅ (done)
+
+Moved `active_panel`, `_follow_state`, panel open/close booleans into the view store. `_input_mode` is a property derived from store state + search phase. Old Textual reactives and scattered booleans removed from `app.py`. Commit `db998c1`.
+
+### Phase 4: Derived Reactions — Footer, Error, Side Channel ✅ (done)
+
+Eliminated all manual `_update_*()` push functions. `footer_state`, `error_items`, and `sc_panel_state` are `Computed` values in `view_store.py`. Four `reaction()` registrations auto-push to widgets. `_update_footer_state()` (15 call sites), `_update_error_indicator()` (3 call sites), `_update_side_channel_panel_display()` (5 call sites) all removed. Follow-up commit `b13eb12` cleaned up function-level imports across 17 files. Commits `82be2fb`, `b13eb12`.
+
+---
+
+### Intermission: Lessons from Phases 1-4
+
+Before continuing, three structural problems accumulated across Phases 1-4 that should be addressed now — before the foundation gets deeper.
+
+#### Lesson A: The widget-push guard is copy-pasted, not enforced
+
+Every reaction that touches a Textual widget needs `if not app.is_running or app._replacing_widgets: return` to avoid crashes during hot-reload widget swap or before the app is mounted. This guard appears 5 times: once in `_rerender_if_mounted` (`app.py:454`), and four times in `view_store.py` push functions (`_on_active_panel_changed`, `_push_footer`, `_push_error_items`, `_push_sc_panel`). Phase 5 will add more push targets. Phase 6 will add search bar updates. Each one will need the same guard, and forgetting it will cause a crash that only manifests during hot-reload.
+
+**Work**: Extract a `_guarded_push(app, fn)` helper (or decorator) that encapsulates the guard. All existing push functions and `_rerender_if_mounted` use it. Future phases get the guard for free. Single enforcer for the "is it safe to touch widgets?" invariant.
+
+#### Lesson B: The view store schema grew across three phases with inconsistent naming
+
+`settings_store.py` has 3 keys, defined all at once. `view_store.py` has 32 keys that were added across Phases 2, 3, and 4, resulting in mixed naming conventions:
+- Namespaced with colons: `vis:user`, `panel:active`, `sc:loading`, `tmux:available`
+- Bare names: `follow`, `active_filterset`, `active_launch_config_name`, `theme_generation`
+
+The bare names were added as one-offs in later phases without revisiting the convention. `active_filterset` should probably be `filter:active_set`. `active_launch_config_name` should probably be `launch:active_name`. `theme_generation` should probably be `theme:generation`. `follow` should probably be `nav:follow`.
+
+**Work**: Normalize the schema key names to use consistent `namespace:key` convention. This is a rename — find all `store.get("x")` and `store.set("x", ...)` call sites and update them. Do it now while there are ~32 keys and the call sites are known. After Phases 5-6 add more keys, this gets harder.
+
+#### Lesson C: The view store has high fan-out — it imports 5 widget modules
+
+`settings_store.py` imports one module (`settings` — disk I/O). `view_store.py` imports `formatting`, `widget_factory`, `error_indicator`, `side_channel_panel`, `custom_footer`, and `action_handlers`. The store knows about every widget it pushes to. Each phase bolted on another import.
+
+Phase 1's `setup_reactions(store, context)` pointed toward a better pattern: the store doesn't know about consumers — consumers are provided via `context`. But Phase 4 went the other way: `view_store.py` hardcodes `import cc_dump.tui.side_channel_panel` so it can construct `SideChannelPanelState` and query `app.screen.query(SideChannelPanel)`.
+
+**Work**: Push functions move out of `view_store.py`. The store defines schema + computeds. `setup_reactions` accepts push functions via the `context` dict (same pattern `settings_store.py` uses for `side_channel_manager` and `tmux_controller`). Each widget module — or a single `reactions.py` bridge module — owns its push function. `view_store.py` drops to 1-2 imports (formatting, category_config) and stays a pure data module.
+
+---
+
+### Phase 5: Move Block Expansion Overrides to View Store
+
+**Goal**: `FormattedBlock.expanded` stops being stored on domain objects. Expansion overrides live in the view store. Hot-reload preserves expansion state.
+
+**Why split from `_expandable`**: `_expandable` is determined *during* rendering — it depends on whether a different expanded renderer exists, whether strips exceed the truncation limit, and whether the block has children. These are all rendering outputs, not store inputs. `_expandable` becomes derived in Phase 8 when the render pipeline is computed. `block.expanded` (the user's click override) is pure view state and belongs in the store now.
 
 **Files to change**:
-- New: `src/cc_dump/view_store.py` (RELOADABLE) — schema, reactions, `active_filters` Computed
-- `app.py`: Remove three reactive dicts + watchers. Accept view store. `active_filters` reads from Computed.
-- `action_handlers.py`: `toggle_vis`/`toggle_detail`/`toggle_expand`/`cycle_vis` write to view store instead of dict-copy
-- `search_controller.py:29-31, 192-194`: Read/write view store instead of `app._is_visible` etc.
-- `hot_reload_controller.py:150-152`: Same
-- `cli.py`: Create view store, pass to app
-- Add to `_RELOAD_ORDER` in `hot_reload.py`
-
-**Verification**: All existing tests pass. `action_handlers` tests confirm batched updates. Manual: press category keys, verify single re-render per keypress (not three).
-
-### Phase 3: View Store — Panel, Follow, & Input Mode
-
-**Goal**: Move `active_panel`, `_follow_state`, panel open/close booleans into the view store. `_input_mode` becomes a `Computed`.
-
-**Files to change**:
-- `view_store.py`: Add panel/follow keys to schema. Add `input_mode` Computed.
-- `app.py`: Remove `active_panel` reactive and `watch_active_panel`. Remove `_settings_panel_open`, `_launch_config_panel_open`, `_side_channel_panel_open` booleans. `_input_mode` property reads from Computed.
-- `widget_factory.py`: `_follow_state` reads from view store.
-- `action_handlers.py`: Panel cycling writes to view store.
-- All panel open/close methods: Write to view store instead of setting app booleans.
-
-**Verification**: Panel cycling, follow mode toggle, vim navigation all work. Hot-reload preserves panel and follow state.
-
-### Phase 4: Derived Reactions — Footer, Error, Side Channel
-
-**Goal**: Eliminate all manual `_update_*()` push functions. Replace with `autorun` reactions that fire when their input state changes.
-
-**Files to change**:
-- `view_store.py` (or `derived_reactions.py`): `footer_state` Computed, `error_items` Computed, `side_channel_panel_state` Computed. `autorun` reactions that push to widgets.
-- `app.py`: Remove `_update_footer_state()` and all ~15 call sites. Remove `_update_error_indicator()` and all ~3 call sites. Remove `_update_side_channel_panel_display()` and all ~5 call sites. Remove `_side_channel_loading`, `_side_channel_result_text`, etc. — all move to view store.
-- `hot_reload_controller.py`: Remove manual `_update_footer_state()` call after widget replacement — reaction handles it.
-
-**Verification**: Footer updates automatically on any state change. Error indicator updates automatically. Side channel panel syncs automatically. No manual calls remain.
-
-### Phase 5: Extract Block Expansion from Domain Objects
-
-**Goal**: `FormattedBlock.expanded` and `block._expandable` stop being stored on blocks. Expansion overrides live in view store. Expandability is derived.
-
-**Files to change**:
-- `formatting.py:180`: Remove `expanded` field from `FormattedBlock`
-- `view_store.py`: Add `ObservableDict` for per-block expansion overrides
-- `rendering.py:2090-2097`: `_expandable` computed from (block, level, limits) instead of set as side effect
-- `widget_factory.py:941-943, 1178`: `_is_expandable_block` reads derived expandability
+- `formatting.py`: Remove `expanded` field from `FormattedBlock`
+- `view_store.py`: Add `ObservableDict` for per-block expansion overrides, keyed by block identity
 - `widget_factory.py` click handler: Writes to view store expansion dict instead of `block.expanded`
+- `action_handlers.py:clear_overrides()`: Clears view store expansion dict entries instead of walking blocks
+- `rendering.py`: `resolve_visibility()` reads expansion override from view store instead of `block.expanded`
+- `search_controller.py`: Search block expansion writes to view store expansion dict
 
-**Verification**: Click-to-expand works. Hot-reload preserves expansion state. Expansion overrides cleared on category cycle (same behavior as today's `_clear_overrides`).
+**`_expandable` stays as render-time annotation** until Phase 8. It's a rendering output, not state — the block just carries the flag between render and click-handler. Acceptable interim coupling.
+
+**Verification**: Click-to-expand works. Hot-reload preserves expansion state. Expansion overrides cleared on category cycle. Search expand/restore works.
 
 ### Phase 6: Search State in View Store
 
-**Goal**: Search query, phase, and modes live in the view store. Search results become a Computed. Saving/restoring filters becomes a view store snapshot.
+**Goal**: Search identity state survives hot-reload. User doesn't lose their search mid-session when a file changes.
+
+**What goes in the store** (identity state — survives reload):
+- `search:phase` — INACTIVE / EDITING / NAVIGATING
+- `search:query` — the search string
+- `search:modes` — mode flags (case, word, regex, incremental)
+- `search:current_index` — position in match list
+- `search:saved_filters` — filter snapshot for restore-on-cancel (already reads/writes view store keys; this becomes a snapshot dict)
+
+**What stays transient** (derived or ephemeral — recomputed after reload):
+- `matches` list — recomputed from (turns, pattern) after reload
+- `cursor_pos` — resets to end-of-query on reload (acceptable)
+- `debounce_timer` — execution scheduling, not state
+- `expanded_blocks` — tracking list for undo; recomputable from expansion overrides (Phase 5)
+- `saved_scroll_y` — acceptable to lose on reload
 
 **Files to change**:
 - `view_store.py`: Add search keys to schema.
-- `search.py`: `SearchState` becomes a thin accessor over view store keys. Matches list stays transient (derived, not stored).
-- `search_controller.py`: Save/restore filters = snapshot/restore view store keys. Expand matched blocks = write to expansion overrides dict.
+- `search.py`: `SearchState` reads identity fields from view store. Transient fields stay on the dataclass. `SearchBar.update_display()` reads from store.
+- `search_controller.py`: Mutations write to store. After hot-reload reconcile, a reaction recomputes matches from stored query + turns.
 
-**Verification**: Search works identically. Hot-reload preserves search query and phase.
+**Verification**: Search works identically. Hot-reload preserves search query, phase, and modes. Matches recompute automatically after reload.
 
-### Phase 7: Domain Store
+### Phase 7+8: Domain Store & Unified Render Pipeline
+
+> **Why combined**: A domain store (ObservableList) without a unified render pipeline just adds abstraction without simplifying anything — event handlers would write to the store, but the two render paths (`_handle_event_inner` vs `_rerender_if_mounted`) would still exist. The value comes from the combination: domain store provides the observable input, computed render pipeline provides the single invalidation path. Plan as tightly sequenced or combined.
+
+#### Phase 7: Domain Store
 
 **Goal**: Formalize turn data as an `ObservableList` owned by a domain store. Event handlers write to domain store instead of reaching through widget refs.
 
@@ -444,24 +481,26 @@ Each phase is independently shippable and testable.
 
 **Verification**: Replay mode works (append-only). Live proxy works. Turn sealing works. Hot-reload preserves accumulated turns.
 
-### Phase 8: Unified Render Pipeline
+#### Phase 8: Unified Render Pipeline + Derived Expandability
 
-**Goal**: Single render invalidation path. Both "new data" and "user toggle" flow through the same derived → render pipeline.
+**Goal**: Single render invalidation path. Both "new data" and "user toggle" flow through the same derived → render pipeline. `_expandable` becomes a rendering output, not a mutation on domain objects.
 
 **Files to change**:
 - New or in `view_store.py`: `Computed` chain: domain turns → tool collapse → visibility resolution → strip rendering
 - `widget_factory.py`: `render_line(y)` reads from computed strips instead of maintaining its own `_turns` list. `rerender()` method eliminated — refresh is just reading fresh Computed values.
 - `app.py`: Remove `_handle_event_inner` render path vs `_rerender_if_mounted` path — both become a single `autorun` that calls `conv.refresh()`.
+- `rendering.py`: `_expandable` returned alongside strips as part of the computed render output, not set on `block._expandable`. Click handler reads expandability from the render result.
+- `widget_factory.py`: `_is_expandable_block` reads from render output instead of `getattr(block, "_expandable")`.
 
 **Hot-reload simplification**: Widget replacement reduces to: remove old widgets, mount fresh ones. New widgets read from the same stores. No state capture/restore dance needed.
 
-**Verification**: Single code path for all re-renders. Profiling confirms memoization prevents unnecessary recomputation.
+**Verification**: Single code path for all re-renders. Profiling confirms memoization prevents unnecessary recomputation. `_expandable` no longer stored on blocks.
 
 ## Design Decisions
 
 ### Why HotReloadStore for view state?
 
-View store reconcile preserves visibility settings across hot-reload. Today, hot-reload + widget replacement resets `_follow_state` and loses per-block expansion. With a HotReloadStore, the data survives and reactions re-register.
+View store reconcile preserves visibility, panel, and follow state across hot-reload. Before Phases 2-4, hot-reload + widget replacement would reset `_follow_state` and lose per-block expansion. Now the data survives and reactions re-register via `reconcile()`. This is proven in production.
 
 ### Why not put everything in one store?
 
