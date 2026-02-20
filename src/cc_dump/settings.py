@@ -86,6 +86,11 @@ def load_auto_zoom_default() -> bool:
     return bool(load_setting("auto_zoom_default", False))
 
 
+def load_side_channel_enabled() -> bool:
+    """Load whether side-channel AI enrichment is enabled."""
+    return bool(load_setting("side_channel_enabled", True))  # True for dev
+
+
 def save_theme(theme_name: str) -> None:
     """Persist theme choice to settings."""
     data = load_settings()

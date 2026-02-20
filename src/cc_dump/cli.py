@@ -194,6 +194,15 @@ def main():
     tmux_state = tmux_ctrl.state if tmux_ctrl else None
     print(f"   Tmux: {_TMUX_STATUS[tmux_state]}")
 
+    # Side channel (AI enrichment via claude -p)
+    import cc_dump.side_channel
+    import cc_dump.data_dispatcher
+
+    sc_enabled = cc_dump.settings.load_side_channel_enabled()
+    side_channel_mgr = cc_dump.side_channel.SideChannelManager()
+    side_channel_mgr.enabled = sc_enabled
+    data_dispatcher = cc_dump.data_dispatcher.DataDispatcher(side_channel_mgr)
+
     # Request pipeline — transforms + interceptors run before forwarding
     import cc_dump.sentinel
     from cc_dump.proxy import RequestPipeline
@@ -228,6 +237,8 @@ def main():
         recording_path=record_path,
         replay_file=args.replay,
         tmux_controller=tmux_ctrl,
+        side_channel_manager=side_channel_mgr,
+        data_dispatcher=data_dispatcher,
     )
     try:
         app.run()

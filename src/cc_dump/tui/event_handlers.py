@@ -45,6 +45,12 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
         # Track last message time for session panel connectivity
         app_state["last_message_time"] = time.monotonic()
 
+        # Capture recent messages for side-channel summarization
+        raw_messages = body.get("messages", [])
+        recent = app_state.get("recent_messages", [])
+        recent.extend(raw_messages)
+        app_state["recent_messages"] = recent[-50:]  # rolling window
+
         # [LAW:one-source-of-truth] Header injection moved into format_request
         pending_headers = app_state.pop("pending_request_headers", None)
         blocks = cc_dump.formatting.format_request(body, state, request_headers=pending_headers)

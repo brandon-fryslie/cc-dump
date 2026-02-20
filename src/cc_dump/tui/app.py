@@ -104,6 +104,8 @@ class CcDumpApp(App):
         recording_path: Optional[str] = None,
         replay_file: Optional[str] = None,
         tmux_controller=None,
+        side_channel_manager=None,
+        data_dispatcher=None,
     ):
         super().__init__()
         self._event_queue = event_queue
@@ -119,6 +121,8 @@ class CcDumpApp(App):
         self._recording_path = recording_path
         self._replay_file = replay_file
         self._tmux_controller = tmux_controller
+        self._side_channel_manager = side_channel_manager
+        self._data_dispatcher = data_dispatcher
         self._closing = False
         self._quit_requested_at: float | None = None
         self._replacing_widgets = False
@@ -146,6 +150,13 @@ class CcDumpApp(App):
         self._settings_fields: list = []  # list[FieldState] from settings_panel
         self._settings_active_field: int = 0
 
+        # Side channel panel state
+        self._side_channel_panel_open: bool = False
+        self._side_channel_loading: bool = False
+        self._side_channel_result_text: str = ""
+        self._side_channel_result_source: str = ""
+        self._side_channel_result_elapsed_ms: int = 0
+
         # Launch config panel state
         self._launch_config_panel_open: bool = False
         self._launch_configs: list = []          # list[LaunchConfig]
@@ -169,6 +180,8 @@ class CcDumpApp(App):
     def _input_mode(self):
         """// [LAW:one-source-of-truth] InputMode derived from app state."""
         InputMode = cc_dump.tui.input_modes.InputMode
+        if self._side_channel_panel_open:
+            return InputMode.SIDE_CHANNEL
         if self._launch_config_panel_open:
             return InputMode.LAUNCH_CONFIG
         if self._settings_panel_open:
@@ -715,6 +728,9 @@ class CcDumpApp(App):
             for field_state in self._settings_fields:
                 cc_dump.settings.save_setting(field_state.key, field_state.save_value)
             # Apply side effects for specific settings
+            for field_state in self._settings_fields:
+                if field_state.key == "side_channel_enabled" and self._side_channel_manager is not None:
+                    self._side_channel_manager.enabled = field_state.save_value
             tmux = self._tmux_controller
             if tmux is not None:
                 for field_state in self._settings_fields:
@@ -969,6 +985,110 @@ class CcDumpApp(App):
                 cc_dump.launch_config.load_active_name(),
             )
 
+    # Side channel
+    def action_toggle_side_channel(self):
+        _actions.toggle_side_channel(self)
+
+    def _open_side_channel(self):
+        """Open side-channel AI panel."""
+        import cc_dump.tui.side_channel_panel
+
+        self._side_channel_panel_open = True
+        self._side_channel_loading = False
+        self._side_channel_result_text = ""
+        self._side_channel_result_source = ""
+        self._side_channel_result_elapsed_ms = 0
+
+        panel = cc_dump.tui.side_channel_panel.create_side_channel_panel()
+        self.screen.mount(panel)
+        self._update_side_channel_panel_display()
+        self._update_footer_state()
+
+    def _close_side_channel(self):
+        """Close side-channel AI panel."""
+        import cc_dump.tui.side_channel_panel
+
+        for panel in self.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel):
+            panel.remove()
+        self._side_channel_panel_open = False
+        self._update_footer_state()
+
+    def _update_side_channel_panel_display(self):
+        """Push current state to the side-channel panel widget."""
+        import cc_dump.tui.side_channel_panel
+
+        panels = self.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel)
+        if panels:
+            state = cc_dump.tui.side_channel_panel.SideChannelPanelState(
+                enabled=self._side_channel_manager.enabled if self._side_channel_manager else False,
+                loading=self._side_channel_loading,
+                result_text=self._side_channel_result_text,
+                result_source=self._side_channel_result_source,
+                result_elapsed_ms=self._side_channel_result_elapsed_ms,
+            )
+            panels.first().update_display(state)
+
+    def _handle_side_channel_key(self, event) -> None:
+        """Handle key events in SIDE_CHANNEL mode.
+
+        Only Esc is handled here — button interactions use Textual's
+        standard Button.Pressed event.
+        """
+        if event.key == "escape":
+            self._close_side_channel()
+
+    def _side_channel_summarize(self):
+        """Request AI summary of recent messages. Runs in worker thread."""
+        if self._side_channel_loading or self._data_dispatcher is None:
+            return
+
+        messages = self._collect_recent_messages(10)
+        if not messages:
+            self._side_channel_result_text = "No messages to summarize."
+            self._side_channel_result_source = "fallback"
+            self._update_side_channel_panel_display()
+            return
+
+        self._side_channel_loading = True
+        self._update_side_channel_panel_display()
+
+        dispatcher = self._data_dispatcher
+
+        def _do_summarize():
+            result = dispatcher.summarize_messages(messages)
+            self.call_from_thread(self._on_side_channel_result, result)
+
+        self.run_worker(_do_summarize, thread=True, exclusive=False)
+
+    def _on_side_channel_result(self, result):
+        """Callback from worker thread with AI result."""
+        self._side_channel_loading = False
+        self._side_channel_result_text = result.text
+        self._side_channel_result_source = result.source
+        self._side_channel_result_elapsed_ms = result.elapsed_ms
+        self._update_side_channel_panel_display()
+
+    def _collect_recent_messages(self, count: int) -> list[dict]:
+        """Extract last N messages from captured API traffic."""
+        return self._app_state.get("recent_messages", [])[-count:]
+
+    def _side_channel_toggle_enabled(self):
+        """Toggle side-channel AI on/off."""
+        if self._side_channel_manager is None:
+            return
+        new_val = not self._side_channel_manager.enabled
+        self._side_channel_manager.enabled = new_val
+        cc_dump.settings.save_setting("side_channel_enabled", new_val)
+        self._update_side_channel_panel_display()
+
+    def on_button_pressed(self, event) -> None:
+        """Handle button presses from side-channel panel."""
+        button_id = event.button.id
+        if button_id == "sc-summarize":
+            self._side_channel_summarize()
+        elif button_id == "sc-toggle":
+            self._side_channel_toggle_enabled()
+
     # Navigation
     def action_toggle_follow(self):
         _actions.toggle_follow(self)
@@ -1080,7 +1200,12 @@ class CcDumpApp(App):
         MODE_KEYMAP = cc_dump.tui.input_modes.MODE_KEYMAP
         InputMode = cc_dump.tui.input_modes.InputMode
 
-        if mode == InputMode.LAUNCH_CONFIG:
+        if mode == InputMode.SIDE_CHANNEL:
+            if event.key == "escape":
+                event.prevent_default()
+                self._close_side_channel()
+            return
+        elif mode == InputMode.LAUNCH_CONFIG:
             event.prevent_default()
             self._handle_launch_config_key(event)
             return

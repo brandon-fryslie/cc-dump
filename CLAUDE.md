@@ -142,6 +142,59 @@ bd update <id> --status in_progress --json
 bd close <id> --reason "done" --json
 ```
 
-## Session Completion
+### Side-Channel AI Enrichment
 
-Work is not complete until `git push` succeeds. Mandatory: run tests, update issue status, `bd sync`, push, verify with `git status`.
+What it is: A system that spawns claude -p (Claude Code's pipe mode) as a background subprocess to generate
+AI-powered summaries and enriched data. TOS-compliant, works for all users (API key and subscription), no
+additional credentials required.
+
+#### How to access
+
+Press X in normal mode to open the AI panel (docked right). Click "Summarize Last 10 Messages" to
+run. Click "Toggle AI" to enable/disable. Esc closes the panel. The setting persists as side_channel_enabled in
+settings.json (also editable via S → "AI Summaries" checkbox).
+
+#### Architecture
+
+User clicks "Summarize" button in panel → app.py spawns run_worker(thread=True) →
+DataDispatcher.summarize_messages(messages) → if enabled: SideChannelManager.query(prompt) →
+subprocess.run(["claude", "-p", "--model", "haiku", "--allowedTools", ""]) → if disabled: fallback summary
+(message count + role breakdown) → call_from_thread(_on_side_channel_result) → panel.update_display(state)
+Key isolation property: claude -p does NOT route through cc-dump's proxy. Side-channel traffic cannot mix with the
+main conversation view — structural separation by default. Proxy integration (sentinel detection, response
+tapping, cache optimization) is planned as Phase 2.
+
+#### Related modules
+
+• src/cc_dump/side_channel.py — STABLE boundary. SideChannelManager owns subprocess lifecycle. SideChannelResult
+dataclass (text/error/elapsed_ms). Hardcoded claude command, not from settings.
+• src/cc_dump/data_dispatcher.py — STABLE boundary. DataDispatcher routes to AI or fallback. EnrichedResult
+dataclass (text/source/elapsed_ms). Single decision point for AI vs fallback — widgets never know the data
+source.
+• src/cc_dump/tui/side_channel_panel.py — RELOADABLE. Standard Textual widgets (Button, Static, VerticalScroll),
+not custom Rich Text rendering. SideChannelPanelState dataclass pushed from app.py.
+
+#### Modified modules
+
+• settings.py — load_side_channel_enabled() (default True for dev)
+• settings_panel.py — "AI Summaries" BoolFieldDef
+• input_modes.py — SIDE_CHANNEL mode, X keybinding in NORMAL, footer keys, KEY_GROUPS entry
+• hot_reload.py — side_channel.py and data_dispatcher.py in _EXCLUDED_FILES, side_channel_panel in _RELOAD_ORDER
+• event_handlers.py — captures body["messages"] into app_state["recent_messages"] rolling buffer (50 entries)
+• cli.py — creates SideChannelManager() and DataDispatcher, passes to CcDumpApp
+• app.py — panel open/close, on_button_pressed for Button events, worker thread pattern, _input_mode includes
+SIDE_CHANNEL, settings save side-effect for side_channel_enabled
+• hot_reload_controller.py — removes side-channel panel on hot-reload
+
+Future work documented in docs/SIDE_CHANNEL_IDEAS.md:
+
+• Proxy-level response interception for lower latency
+• Session forking for Anthropic prompt cache hits (1-hour cache window)
+• Persistent claude instance to eliminate startup latency
+• Sentinel-based traffic routing
+• Ongoing conversation compaction, shaped summaries, context reset/GC
+• System prompt diff explanations, content classification, semantic search
+
+Tests: tests/test_side_channel.py — 13 unit tests covering subprocess success/error/timeout/command-not-found,
+dispatcher enabled/disabled routing, fallback summaries, prompt construction with content blocks, message
+truncation.

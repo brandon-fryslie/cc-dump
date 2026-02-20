@@ -161,6 +161,12 @@ SETTINGS_FIELDS: list[FieldDef] = [
         default=False,
         description="Start with tmux auto-zoom enabled",
     ),
+    BoolFieldDef(
+        key="side_channel_enabled",
+        label="AI Summaries",
+        default=True,
+        description="Enable AI-powered summaries via claude -p",
+    ),
 ]
 
 

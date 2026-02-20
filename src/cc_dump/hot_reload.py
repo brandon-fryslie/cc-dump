@@ -32,6 +32,7 @@ _RELOAD_ORDER = [
     "cc_dump.tui.info_panel",  # depends on: palette, panel_renderers
     "cc_dump.tui.keys_panel",  # depends on: panel_renderers
     "cc_dump.tui.settings_panel",  # depends on: palette
+    "cc_dump.tui.side_channel_panel",  # depends on: palette
     "cc_dump.tui.launch_config_panel",  # depends on: palette, settings_panel
     "cc_dump.tui.session_panel",  # depends on: panel_renderers
     "cc_dump.tui.widget_factory",  # depends on: analysis, rendering, panel_renderers, error_indicator
@@ -45,6 +46,8 @@ _EXCLUDED_FILES = {
     "event_types.py",  # stable type definitions, never reload
     "tmux_controller.py",  # stable boundary, holds live pane refs
     "stderr_tee.py",  # stable boundary, holds live sys.stderr ref
+    "side_channel.py",  # stable boundary, holds live subprocess refs
+    "data_dispatcher.py",  # stable boundary, holds ref to side_channel
     "__init__.py",  # module init
     "__main__.py",  # entry point
 }
@@ -66,6 +69,7 @@ _EXCLUDED_MODULES = {
 _STALENESS_WATCHLIST = {
     # from _EXCLUDED_FILES
     "proxy.py", "cli.py", "event_types.py", "tmux_controller.py", "stderr_tee.py",
+    "side_channel.py", "data_dispatcher.py",
     # from _EXCLUDED_MODULES
     "tui/app.py", "tui/category_config.py", "tui/action_handlers.py",
     "tui/search_controller.py", "tui/dump_export.py", "tui/theme_controller.py",
