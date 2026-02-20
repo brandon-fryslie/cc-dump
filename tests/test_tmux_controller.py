@@ -556,7 +556,7 @@ class TestAutoResume:
 
     def test_resume_flag_in_launched_command(self, make_controller):
         """When auto_resume is True and session_id is known, --resume appears in the command."""
-        from cc_dump.launch_config import LaunchConfig, build_command_args
+        from cc_dump.launch_config import LaunchConfig, build_full_command
 
         our_pane = MagicMock()
         our_pane.pane_id = "%0"
@@ -574,9 +574,9 @@ class TestAutoResume:
 
         session_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         config = LaunchConfig(auto_resume=True)
-        extra_args = build_command_args(config, session_id)
+        full_command = build_full_command(config, "claude", session_id)
 
-        result = ctrl.launch_claude(extra_args=extra_args)
+        result = ctrl.launch_claude(command=full_command)
 
         assert result.action == LaunchAction.LAUNCHED
         assert result.success
@@ -585,7 +585,7 @@ class TestAutoResume:
 
     def test_no_resume_without_session_id(self, make_controller):
         """Without a session_id, --resume is not in the command."""
-        from cc_dump.launch_config import LaunchConfig, build_command_args
+        from cc_dump.launch_config import LaunchConfig, build_full_command
 
         our_pane = MagicMock()
         our_pane.pane_id = "%0"
@@ -602,16 +602,16 @@ class TestAutoResume:
         )
 
         config = LaunchConfig(auto_resume=True)
-        extra_args = build_command_args(config, "")
+        full_command = build_full_command(config, "claude", "")
 
-        result = ctrl.launch_claude(extra_args=extra_args)
+        result = ctrl.launch_claude(command=full_command)
 
         assert result.action == LaunchAction.LAUNCHED
         assert "--resume" not in result.command
 
     def test_no_resume_when_disabled(self, make_controller):
         """With auto_resume=False, --resume is not in the command even with session_id."""
-        from cc_dump.launch_config import LaunchConfig, build_command_args
+        from cc_dump.launch_config import LaunchConfig, build_full_command
 
         our_pane = MagicMock()
         our_pane.pane_id = "%0"
@@ -628,17 +628,17 @@ class TestAutoResume:
         )
 
         config = LaunchConfig(auto_resume=False)
-        extra_args = build_command_args(config, "some-session-id")
+        full_command = build_full_command(config, "claude", "some-session-id")
 
-        result = ctrl.launch_claude(extra_args=extra_args)
+        result = ctrl.launch_claude(command=full_command)
 
         assert result.action == LaunchAction.LAUNCHED
         assert "--resume" not in result.command
 
     def test_session_id_from_metadata_to_launch(self):
-        """Full chain: metadata.user_id → format_request → state → build_command_args."""
+        """Full chain: metadata.user_id → format_request → state → build_full_command."""
         from cc_dump.formatting import format_request
-        from cc_dump.launch_config import LaunchConfig, build_command_args
+        from cc_dump.launch_config import LaunchConfig, build_full_command
 
         state = {
             "request_counter": 0,
@@ -662,8 +662,8 @@ class TestAutoResume:
         assert session_id == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
         config = LaunchConfig(auto_resume=True)
-        args = build_command_args(config, session_id)
-        assert args == "--resume aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        cmd = build_full_command(config, "claude", session_id)
+        assert cmd == "claude --resume aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 
 # ─── on_event with dead pane ─────────────────────────────────────────────

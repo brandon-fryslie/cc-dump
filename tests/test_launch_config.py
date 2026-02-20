@@ -6,7 +6,7 @@ import pytest
 
 from cc_dump.launch_config import (
     LaunchConfig,
-    build_command_args,
+    build_full_command,
     get_active_config,
     load_active_name,
     load_configs,
@@ -119,39 +119,41 @@ class TestGetActiveConfig:
         assert active.name == "default"
 
 
-class TestBuildCommandArgs:
-    """Command args assembly from config + session_id."""
+class TestBuildFullCommand:
+    """Full command assembly from config + base_command + session_id."""
 
     def test_empty_config(self):
-        """Default config with no session produces empty args."""
+        """Default config with no session produces just the base command."""
         config = LaunchConfig()
-        assert build_command_args(config) == ""
+        assert build_full_command(config, "claude") == "claude"
 
     def test_model_only(self):
         """Config with model produces --model flag."""
         config = LaunchConfig(model="haiku")
-        assert build_command_args(config) == "--model haiku"
+        assert build_full_command(config, "claude") == "claude --model haiku"
 
     def test_resume_with_session(self):
         """auto_resume=True + session_id produces --resume flag."""
         config = LaunchConfig(auto_resume=True)
-        result = build_command_args(config, session_id="abc-123")
-        assert result == "--resume abc-123"
+        result = build_full_command(config, "claude", session_id="abc-123")
+        assert "--resume abc-123" in result
 
     def test_resume_without_session(self):
         """auto_resume=True but empty session_id omits --resume."""
         config = LaunchConfig(auto_resume=True)
-        assert build_command_args(config, session_id="") == ""
+        result = build_full_command(config, "claude", session_id="")
+        assert "--resume" not in result
 
     def test_resume_disabled(self):
         """auto_resume=False omits --resume even with session_id."""
         config = LaunchConfig(auto_resume=False)
-        assert build_command_args(config, session_id="abc-123") == ""
+        result = build_full_command(config, "claude", session_id="abc-123")
+        assert "--resume" not in result
 
     def test_extra_flags(self):
         """Extra flags are appended."""
         config = LaunchConfig(extra_flags="--verbose --no-cache")
-        assert build_command_args(config) == "--verbose --no-cache"
+        assert build_full_command(config, "claude") == "claude --verbose --no-cache"
 
     def test_all_combined(self):
         """Model + resume + extra flags all present."""
@@ -160,5 +162,5 @@ class TestBuildCommandArgs:
             auto_resume=True,
             extra_flags="--verbose",
         )
-        result = build_command_args(config, session_id="sess-42")
-        assert result == "--model opus --resume sess-42 --verbose"
+        result = build_full_command(config, "claude", session_id="sess-42")
+        assert result == "claude --model opus --resume sess-42 --verbose"
