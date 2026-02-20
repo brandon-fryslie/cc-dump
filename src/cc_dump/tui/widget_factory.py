@@ -354,13 +354,33 @@ class ConversationView(ScrollView):
         return Strip(result_segments, cell_length)
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
-        """Extract plain text from the selection range."""
+        """Extract plain text from the selection range, stripping gutters."""
+        from textual.geometry import Offset
+
+        # [LAW:one-source-of-truth] Gutter sizing from rendering module
+        left = cc_dump.tui.rendering.GUTTER_WIDTH
+        has_right = self.size.width >= cc_dump.tui.rendering.MIN_WIDTH_FOR_RIGHT_GUTTER
+        right = cc_dump.tui.rendering.RIGHT_GUTTER_WIDTH if has_right else 0
+
+        # Build clean text: strip left gutter and right gutter from each line
         lines = []
         for turn in self._turns:
             for strip in turn.strips:
-                lines.append(strip.text)
+                raw = strip.text
+                content = raw[left:len(raw) - right] if right else raw[left:]
+                lines.append(content.rstrip())
+
+        # Adjust selection x-coordinates to account for removed left gutter
+        start = selection.start
+        end = selection.end
+        if start is not None:
+            start = Offset(max(0, start.x - left), start.y)
+        if end is not None:
+            end = Offset(max(0, end.x - left), end.y)
+        adjusted = Selection(start, end)
+
         text = "\n".join(lines)
-        return selection.extract(text), "\n"
+        return adjusted.extract(text), "\n"
 
     def selection_updated(self, selection: Selection | None) -> None:
         """Invalidate cache when selection changes."""
