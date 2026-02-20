@@ -12,7 +12,7 @@ from cc_dump.tui.rendering import (
     _render_read_content, _render_confirm_content,
     _render_tool_use_bash_full, _render_tool_use_edit_full,
     _infer_lang_from_path,
-    render_blocks, collapse_tool_runs, render_turn_to_strips,
+    _collapse_children, render_turn_to_strips,
     set_theme,
 )
 from textual.theme import BUILTIN_THEMES
@@ -210,78 +210,22 @@ class TestRenderToolResultExisting:
         assert result1.plain == result2.plain
 
 
-class TestRenderBlocksToolSummary:
-    """Tests for render_blocks tool-use summary when tools filter is off."""
-
-    def test_tool_uses_collapsed_to_summary(self):
-        """Consecutive ToolUseBlocks hidden when tools=EXISTENCE."""
-        blocks = [
-            TextContentBlock(content="hello"),
-            ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
-            ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
-            ToolUseBlock(name="Bash", input_size=150, msg_color_idx=2),
-            TextContentBlock(content="world"),
-        ]
-        result = render_blocks(blocks, {"tools": HIDDEN})
-
-        # At EXISTENCE level, tools are fully hidden (0 lines)
-        # Should have: text, text = 2 items (tools hidden)
-        assert len(result) == 2
-        # Check indices
-        assert result[0][0] == 0  # first TextContentBlock
-        assert result[1][0] == 4  # second TextContentBlock
-        # Tools are completely hidden, so no summary content to check
-
-    def test_tool_uses_shown_individually_when_on(self):
-        """ToolUseBlocks shown individually when tools=FULL."""
-        blocks = [
-            ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
-            ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
-        ]
-        result = render_blocks(blocks, {"tools": ALWAYS_VISIBLE})
-
-        assert len(result) == 2
-        assert result[0][0] == 0
-        assert result[1][0] == 1
-
-    def test_single_tool_use_summary(self):
-        """Single ToolUseBlock fully hidden at EXISTENCE level."""
-        blocks = [
-            ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
-        ]
-        result = render_blocks(blocks, {"tools": HIDDEN})
-
-        # At EXISTENCE level, tools are fully hidden
-        assert len(result) == 0
-
-    def test_tool_result_filtered_when_tools_off(self):
-        """ToolResultBlock collapsed to summary at EXISTENCE level."""
-        blocks = [
-            ToolResultBlock(size=500, tool_name="Read", msg_color_idx=0),
-        ]
-        result = render_blocks(blocks, {"tools": HIDDEN})
-
-        # Orphaned ToolResultBlock (no preceding ToolUseBlock) is dropped by
-        # collapse_tool_runs, so no "used 0 tools" summary appears
-        rendered_text = "\n".join(str(s) for s in result)
-        assert "used 0 tools" not in rendered_text
 
 
-class TestCollapseToolRuns:
-    """Tests for collapse_tool_runs() pre-pass function."""
+class TestCollapseChildren:
+    """Tests for _collapse_children() — the recursive tree collapse function."""
 
     def test_passthrough_when_tools_on(self):
-        """tools_on=True returns all blocks with correct indices."""
+        """tools_on=True returns all blocks unchanged."""
         blocks = [
             TextContentBlock(content="hello"),
             ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
             ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
         ]
-        result = collapse_tool_runs(blocks, tools_on=True)
+        result = _collapse_children(blocks, tools_on=True)
 
         assert len(result) == 3
-        for i, (idx, block) in enumerate(result):
-            assert idx == i
+        for i, block in enumerate(result):
             assert block is blocks[i]
 
     def test_collapse_consecutive_tool_uses(self):
@@ -291,14 +235,12 @@ class TestCollapseToolRuns:
             ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
             ToolUseBlock(name="Bash", input_size=150, msg_color_idx=2),
         ]
-        result = collapse_tool_runs(blocks, tools_on=False)
+        result = _collapse_children(blocks, tools_on=False)
 
         assert len(result) == 1
-        idx, block = result[0]
-        assert idx == 0
-        assert type(block).__name__ == "ToolUseSummaryBlock"
-        assert block.total == 3
-        assert block.tool_counts == {"Bash": 2, "Read": 1}
+        assert type(result[0]).__name__ == "ToolUseSummaryBlock"
+        assert result[0].total == 3
+        assert result[0].tool_counts == {"Bash": 2, "Read": 1}
 
     def test_mixed_blocks_preserved(self):
         """Text, ToolUse, ToolUse, Text -> Text, Summary, Text."""
@@ -308,33 +250,18 @@ class TestCollapseToolRuns:
             ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
             TextContentBlock(content="after"),
         ]
-        result = collapse_tool_runs(blocks, tools_on=False)
+        result = _collapse_children(blocks, tools_on=False)
 
         assert len(result) == 3
-        assert result[0][0] == 0
-        assert type(result[0][1]).__name__ == "TextContentBlock"
-        assert result[1][0] == 1  # first ToolUseBlock index
-        assert type(result[1][1]).__name__ == "ToolUseSummaryBlock"
-        assert result[1][1].total == 2
-        assert result[2][0] == 3
-        assert type(result[2][1]).__name__ == "TextContentBlock"
+        assert type(result[0]).__name__ == "TextContentBlock"
+        assert type(result[1]).__name__ == "ToolUseSummaryBlock"
+        assert result[1].total == 2
+        assert type(result[2]).__name__ == "TextContentBlock"
 
     def test_empty_list(self):
         """Empty input returns empty output."""
-        result = collapse_tool_runs([], tools_on=False)
+        result = _collapse_children([], tools_on=False)
         assert result == []
-
-    def test_single_tool_use(self):
-        """Single ToolUseBlock becomes ToolUseSummaryBlock with total=1."""
-        blocks = [ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0)]
-        result = collapse_tool_runs(blocks, tools_on=False)
-
-        assert len(result) == 1
-        idx, block = result[0]
-        assert idx == 0
-        assert type(block).__name__ == "ToolUseSummaryBlock"
-        assert block.total == 1
-        assert block.tool_counts == {"Bash": 1}
 
     def test_non_consecutive_runs(self):
         """ToolUse, Text, ToolUse -> Summary, Text, Summary (two separate runs)."""
@@ -343,29 +270,38 @@ class TestCollapseToolRuns:
             TextContentBlock(content="middle"),
             ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
         ]
-        result = collapse_tool_runs(blocks, tools_on=False)
+        result = _collapse_children(blocks, tools_on=False)
 
         assert len(result) == 3
-        assert type(result[0][1]).__name__ == "ToolUseSummaryBlock"
-        assert result[0][1].total == 1
-        assert type(result[1][1]).__name__ == "TextContentBlock"
-        assert type(result[2][1]).__name__ == "ToolUseSummaryBlock"
-        assert result[2][1].total == 1
+        assert type(result[0]).__name__ == "ToolUseSummaryBlock"
+        assert result[0].total == 1
+        assert type(result[1]).__name__ == "TextContentBlock"
+        assert type(result[2]).__name__ == "ToolUseSummaryBlock"
+        assert result[2].total == 1
 
-    def test_indices_correct(self):
-        """Verify orig_idx values are correct for each returned item."""
+    def test_orphaned_results_dropped(self):
+        """Orphaned ToolResultBlocks (no ToolUseBlock) produce no summary."""
         blocks = [
-            TextContentBlock(content="a"),       # 0
-            ToolUseBlock(name="B", input_size=1, msg_color_idx=0),  # 1
-            ToolUseBlock(name="C", input_size=1, msg_color_idx=0),  # 2
-            ToolUseBlock(name="D", input_size=1, msg_color_idx=0),  # 3
-            TextContentBlock(content="e"),       # 4
-            ToolUseBlock(name="F", input_size=1, msg_color_idx=0),  # 5
+            ToolResultBlock(size=500, tool_name="Read", msg_color_idx=0),
+            ToolResultBlock(size=300, tool_name="Bash", msg_color_idx=1),
         ]
-        result = collapse_tool_runs(blocks, tools_on=False)
+        result = _collapse_children(blocks, tools_on=False)
+        assert len(result) == 0
 
-        indices = [idx for idx, _ in result]
-        assert indices == [0, 1, 4, 5]
+    def test_force_vis_override_emits_individual(self):
+        """Blocks with _force_vis override are emitted individually instead of collapsing."""
+        blocks = [
+            ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
+            ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
+        ]
+        # Simulate search mode: set _force_vis on one block
+        blocks[0]._force_vis = ALWAYS_VISIBLE
+        result = _collapse_children(blocks, tools_on=False)
+
+        # Both blocks emitted individually, no ToolUseSummaryBlock
+        assert len(result) == 2
+        assert type(result[0]).__name__ == "ToolUseBlock"
+        assert type(result[1]).__name__ == "ToolUseBlock"
 
     def test_input_not_mutated(self):
         """Input list is never mutated."""
@@ -374,33 +310,8 @@ class TestCollapseToolRuns:
             ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
         ]
         original_len = len(blocks)
-        collapse_tool_runs(blocks, tools_on=False)
+        _collapse_children(blocks, tools_on=False)
         assert len(blocks) == original_len
-
-    def test_result_only_run_produces_no_summary(self):
-        """Orphaned ToolResultBlocks (no ToolUseBlock) produce no summary."""
-        blocks = [
-            ToolResultBlock(size=500, tool_name="Read", msg_color_idx=0),
-            ToolResultBlock(size=300, tool_name="Bash", msg_color_idx=1),
-        ]
-        result = collapse_tool_runs(blocks, tools_on=False)
-        # No ToolUseSummaryBlock should be created for result-only runs
-        assert len(result) == 0
-
-    def test_mixed_result_only_and_use_runs(self):
-        """Result-only run dropped, use run summarized, text preserved."""
-        blocks = [
-            ToolResultBlock(size=500, tool_name="Read", msg_color_idx=0),
-            TextContentBlock(content="middle"),
-            ToolUseBlock(name="Bash", input_size=100, msg_color_idx=1),
-            ToolResultBlock(size=300, tool_name="Bash", msg_color_idx=2),
-        ]
-        result = collapse_tool_runs(blocks, tools_on=False)
-        # Orphaned result dropped, text preserved, use+result summarized
-        assert len(result) == 2
-        assert type(result[0][1]).__name__ == "TextContentBlock"
-        assert type(result[1][1]).__name__ == "ToolUseSummaryBlock"
-        assert result[1][1].total == 1
 
 
 class TestRenderToolUseSummary:

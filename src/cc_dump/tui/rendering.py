@@ -1717,64 +1717,6 @@ RENDERERS = _build_renderer_registry()
 # ─── Tool pre-pass ─────────────────────────────────────────────────────────────
 
 
-def collapse_tool_runs(
-    blocks: list, tools_on: bool
-) -> list[tuple[int, FormattedBlock]]:
-    """Pre-pass: collapse consecutive ToolUseBlock runs into ToolUseSummaryBlock.
-
-    When tools_on=True, returns blocks with their original indices unchanged.
-    When tools_on=False, consecutive ToolUseBlock+ToolResultBlock runs are replaced
-    with a single ToolUseSummaryBlock containing the aggregated counts.
-
-    Returns list of (original_block_index, block) tuples.
-    """
-    if tools_on:
-        return [(i, block) for i, block in enumerate(blocks)]
-
-    _tool_types = {"ToolUseBlock", "ToolResultBlock"}
-    result: list[tuple[int, FormattedBlock]] = []
-    pending: list[tuple[int, FormattedBlock]] = []
-
-    def flush():
-        if not pending:
-            return
-        # Check if any pending block has _force_vis override (search mode)
-        # If so, emit individual blocks instead of collapsing
-        if any(getattr(b, "_force_vis", None) is not None for _, b in pending):
-            result.extend(pending)
-            pending.clear()
-            return
-        first_idx = pending[0][0]
-        # Count only ToolUseBlocks for the summary counts
-        use_blocks = [b for _, b in pending if type(b).__name__ == "ToolUseBlock"]
-        # [LAW:dataflow-not-control-flow] No tool uses = no summary to create;
-        # orphaned ToolResultBlocks without a preceding ToolUseBlock are dropped
-        if not use_blocks:
-            pending.clear()
-            return
-        counts = Counter(b.name for b in use_blocks)
-        result.append(
-            (
-                first_idx,
-                ToolUseSummaryBlock(
-                    tool_counts=dict(counts),
-                    total=len(use_blocks),
-                    first_block_index=first_idx,
-                ),
-            )
-        )
-        pending.clear()
-
-    for i, block in enumerate(blocks):
-        if type(block).__name__ in _tool_types:
-            pending.append((i, block))
-        else:
-            flush()
-            result.append((i, block))
-
-    flush()
-    return result
-
 
 # ─── Truncation and collapse indicator ─────────────────────────────────────────
 
@@ -1938,8 +1880,8 @@ def _collapse_children(
     """Return new list with consecutive ToolUse/ToolResult runs collapsed.
 
     Non-mutating — original children list preserved for search indexing.
-    Same flush-based logic as collapse_tool_runs() but returns blocks
-    directly (no index tuples) since indices are managed by the tree walker.
+    Returns blocks directly (no index tuples) since indices are managed
+    by the tree walker.
 
     // [LAW:dataflow-not-control-flow] tools_on is a value; both paths always run.
     """
@@ -2223,44 +2165,6 @@ def render_block(block: FormattedBlock) -> ConsoleRenderable | None:
         return None
     return renderer(block)
 
-
-def render_blocks(
-    blocks: list[FormattedBlock],
-    filters: dict,
-) -> list[tuple[int, Text]]:
-    """Render a list of FormattedBlock to indexed Rich Text objects, applying filters.
-
-    When tools level is not FULL, consecutive ToolUse/ResultBlocks are collapsed
-    into a single summary line like '[used 3 tools: Bash 2x, Read 1x]'.
-
-    Returns:
-        List of (block_index, Text) pairs.
-    """
-    tools_filter = filters.get("tools", ALWAYS_VISIBLE)
-    prepared = collapse_tool_runs(blocks, tools_filter.full)
-
-    rendered: list[tuple[int, Text]] = []
-    for orig_idx, block in prepared:
-        vis = _resolve_visibility(block, filters)
-        max_lines = TRUNCATION_LIMITS[vis]
-
-        if max_lines == 0:
-            continue  # hidden
-
-        type_name = type(block).__name__
-
-        # Single unified renderer lookup
-        renderer = RENDERERS.get((type_name, vis.visible, vis.full, vis.expanded))
-        text = renderer(block) if renderer else None
-
-        if text is not None:
-            # Add category indicator
-            indicator_name = _category_indicator_name(block)
-            if indicator_name:
-                text = _add_filter_indicator(text, indicator_name)
-            rendered.append((orig_idx, text))
-
-    return rendered
 
 
 def render_turn_to_strips(

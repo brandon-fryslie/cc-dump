@@ -188,16 +188,29 @@ def compile_search_pattern(query: str, modes: SearchMode) -> re.Pattern | None:
 # ─── Match finding ────────────────────────────────────────────────────────────
 
 
+def _collect_descendants(block, hier_idx: int) -> list[tuple[int, object]]:
+    """Collect (hier_idx, block) depth-first, children before parent.
+
+    // [LAW:dataflow-not-control-flow] children is always read; empty list = leaf.
+    """
+    items: list[tuple[int, object]] = []
+    for child in reversed(getattr(block, "children", None) or []):
+        items.extend(_collect_descendants(child, hier_idx))
+    items.append((hier_idx, block))
+    return items
+
+
 def find_all_matches(turns: list, pattern: re.Pattern) -> list[SearchMatch]:
     """Find all matches across all turns, ordered most-recent-first.
 
     Iterates turns bottom-up, blocks bottom-up within each turn,
     matches reversed within each block. Skips streaming turns.
 
-    Walks container children recursively so content inside MessageBlock,
-    MetadataSection, etc. is searchable. Child matches use the parent
-    container's hierarchical index as block_index (for _force_vis), but
-    store the actual child block in the `block` field (for identity lookup).
+    Walks container children recursively (arbitrary depth) so content inside
+    MessageBlock, MetadataSection, ToolDefsSection→ToolDefBlock→SkillDefChild,
+    etc. is searchable. Child matches use the top-level container's
+    hierarchical index as block_index (for _force_vis), but store the actual
+    child block in the `block` field (for identity lookup).
 
     // [LAW:dataflow-not-control-flow] searchable list is always built;
     // blocks without children contribute only themselves.
@@ -211,18 +224,7 @@ def find_all_matches(turns: list, pattern: re.Pattern) -> list[SearchMatch]:
 
         for block_idx in range(len(td.blocks) - 1, -1, -1):
             top_block = td.blocks[block_idx]
-            # Build searchable list: children (reversed), then container itself
-            # Each entry is (hierarchical_index, actual_block)
-            searchable: list[tuple[int, object]] = []
-            children = getattr(top_block, "children", None)
-            if children:
-                for child in reversed(children):
-                    gc = getattr(child, "children", None)
-                    if gc:
-                        for grandchild in reversed(gc):
-                            searchable.append((block_idx, grandchild))
-                    searchable.append((block_idx, child))
-            searchable.append((block_idx, top_block))
+            searchable = _collect_descendants(top_block, block_idx)
 
             for hier_idx, block in searchable:
                 text = get_searchable_text(block)

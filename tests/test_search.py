@@ -483,6 +483,23 @@ class TestFindAllMatchesHierarchy:
         # Both children should have block_index=1 (the container's hierarchical index)
         assert all(m.block_index == 1 for m in matches)
 
+    def test_recursive_depth_beyond_grandchildren(self):
+        """Recursive walk finds matches at depth > 2 (great-grandchildren).
+
+        Tree: MessageBlock → ToolDefsSection → ToolDefBlock → SkillDefChild
+        The old 2-level walk would miss the SkillDefChild at depth 3.
+        """
+        skill = SkillDefChild(name="deep-skill", description="deeply nested")
+        tool_def = ToolDefBlock(name="Task", description="Tasks", children=[skill])
+        section = ToolDefsSection(tool_count=1, children=[tool_def])
+        container = MessageBlock(role="user", msg_index=0, children=[section])
+        turns = [_FakeTurnData(0, [container])]
+        pattern = re.compile("deep-skill")
+        matches = find_all_matches(turns, pattern)
+        assert len(matches) == 1
+        assert matches[0].block is skill
+        assert matches[0].block_index == 0  # top-level container's index
+
     def test_config_and_thinking_blocks_searchable(self):
         """ConfigContentBlock and ThinkingBlock are searchable as children."""
         config = ConfigContentBlock(content="CLAUDE.md project instructions")

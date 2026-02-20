@@ -2,6 +2,12 @@ version = 1
 revision = 3
 requires-python = ">=3.10"
 
+[manifest]
+members = [
+    "cc-dump",
+    "snarfx",
+]
+
 [[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
@@ -190,6 +196,7 @@ version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "libtmux" },
+    { name = "snarfx" },
     { name = "textual" },
     { name = "textual-serve" },
     { name = "tiktoken" },
@@ -208,6 +215,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "libtmux", specifier = ">=0.30.0" },
+    { name = "snarfx", editable = "snarfx" },
     { name = "textual", specifier = ">=0.80.0" },
     { name = "textual-serve", specifier = ">=1.0.0" },
     { name = "tiktoken", specifier = ">=0.5.0" },
@@ -1310,6 +1318,21 @@ sdist = { url = "https://files.pythonhosted.org/packages/aa/9c/137848452e130e71f
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fa/e0/83cbdcb81b5cbbbe355648dd402b410437806544f48ee218a2354798f012/rich-14.3.0-py3-none-any.whl", hash = "sha256:0b8c1e368c1125b9e993c2d2f1342802525f4853fc6dac2e8e9e88bac0f45bce", size = 309950, upload-time = "2026-01-24T12:25:44.679Z" },
 ]
+
+[[package]]
+name = "snarfx"
+version = "0.1.0"
+source = { editable = "snarfx" }
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.0" }]
 
 [[package]]
 name = "textual"

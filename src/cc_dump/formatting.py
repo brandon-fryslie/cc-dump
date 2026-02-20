@@ -1198,8 +1198,9 @@ _COMPLETE_RESPONSE_FACTORIES = {
 def format_complete_response(complete_message):
     """Format a complete (non-streaming) Claude message as FormattedBlocks.
 
-    Produces the same flat block list as the streaming path after finalization:
-    StreamInfoBlock, TextDeltaBlock/StreamToolUseBlock/..., StopReasonBlock.
+    Wraps content in a MessageBlock container for structural consistency with
+    the request-side message formatting. Metadata blocks (StreamInfoBlock,
+    StopReasonBlock) remain outside the container.
     // [LAW:one-source-of-truth] One block structure for responses, regardless of transport.
 
     Args:
@@ -1208,24 +1209,33 @@ def format_complete_response(complete_message):
     Returns:
         List of FormattedBlock objects
     """
-    blocks: list[FormattedBlock] = []
+    result: list[FormattedBlock] = []
 
-    # Model info
+    # Model info — metadata, outside container
     model = complete_message.get("model", "?")
-    blocks.append(StreamInfoBlock(model=model))
+    result.append(StreamInfoBlock(model=model))
 
     # [LAW:dataflow-not-control-flow] Content blocks via dispatch table
+    content_children: list[FormattedBlock] = []
     content = complete_message.get("content", [])
     for block in content:
         block_type = block.get("type", "")
         factory: Callable[[_ContentBlockDict], list[FormattedBlock]] = _COMPLETE_RESPONSE_FACTORIES.get(block_type, lambda _: [])
-        blocks.extend(factory(block))
+        content_children.extend(factory(block))
+
+    # // [LAW:one-source-of-truth] MessageBlock wraps content, matching request-side structure.
+    result.append(MessageBlock(
+        role="assistant",
+        msg_index=0,
+        children=content_children,
+        category=Category.ASSISTANT,
+    ))
 
     # [LAW:dataflow-not-control-flow] Always create block, let renderer handle empty
     stop_reason = complete_message.get("stop_reason", "")
-    blocks.append(StopReasonBlock(reason=stop_reason))
+    result.append(StopReasonBlock(reason=stop_reason))
 
-    return blocks
+    return result
 
 
 def format_request_headers(headers_dict: dict) -> list:

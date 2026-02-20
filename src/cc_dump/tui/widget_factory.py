@@ -658,13 +658,14 @@ class ConversationView(ScrollView):
     def finalize_streaming_turn(self) -> list:
         """Finalize the streaming turn.
 
-        Consolidates TextDeltaBlocks → TextContentBlocks, full re-render
-        from consolidated blocks, marks turn as non-streaming.
+        Consolidates TextDeltaBlocks → TextContentBlocks, wraps content in
+        MessageBlock container, full re-render from final blocks, marks turn
+        as non-streaming.
 
-        Returns the consolidated block list.
+        Returns the final block list.
         """
-        # Import the CURRENT TextContentBlock class (post-reload) for creating new blocks
-        from cc_dump.formatting import TextContentBlock
+        # Import the CURRENT classes (post-reload) for creating new blocks
+        from cc_dump.formatting import TextContentBlock, MessageBlock
 
         if not self._turns or not self._turns[-1].is_streaming:
             return []
@@ -699,10 +700,25 @@ class ConversationView(ScrollView):
                 TextContentBlock(content=combined_text, category=Category.ASSISTANT)
             )
 
-        # Eagerly populate content_regions for consolidated text blocks
+        # // [LAW:one-source-of-truth] Wrap content in MessageBlock, matching request-side structure.
+        # Metadata blocks (StreamInfoBlock, StopReasonBlock) stay outside the container.
+        _metadata_types = {"StreamInfoBlock", "StopReasonBlock"}
+        content_children = [b for b in consolidated if type(b).__name__ not in _metadata_types]
+        metadata = [b for b in consolidated if type(b).__name__ in _metadata_types]
+        consolidated = metadata[:1] + [MessageBlock(
+            role="assistant",
+            msg_index=0,
+            children=content_children,
+            category=Category.ASSISTANT,
+        )] + metadata[1:]
+
+        # Eagerly populate content_regions for all text blocks (recursive tree walk)
         # // [LAW:single-enforcer] Uses module-level import for hot-reload safety
-        for block in consolidated:
-            cc_dump.formatting.populate_content_regions(block)
+        def _walk_populate(block_list):
+            for block in block_list:
+                cc_dump.formatting.populate_content_regions(block)
+                _walk_populate(getattr(block, "children", []))
+        _walk_populate(consolidated)
 
         # Full re-render from consolidated blocks
         width = self._content_width if self._size_known else self._last_width
