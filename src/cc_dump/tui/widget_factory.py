@@ -561,9 +561,11 @@ class ConversationView(ScrollView):
         self._recalculate_offsets()
 
     def _refresh_streaming_delta(self, td: TurnData):
-        """Re-render delta buffer through canonical rendering path.
+        """Re-render delta buffer with lightweight streaming preview.
 
-        # [LAW:one-source-of-truth] Uses render_turn_to_strips() — same as completed turns.
+        Uses render_streaming_preview() — Markdown + gutter only, bypassing
+        the full rendering pipeline (visibility, dispatch, truncation, caching).
+        Finalization re-renders through the full pipeline.
         """
         if not td._text_delta_buffer:
             td.strips = td.strips[: td._stable_strip_count]
@@ -573,50 +575,13 @@ class ConversationView(ScrollView):
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
 
-        # Synthetic block from accumulated delta buffer
         combined_text = "".join(td._text_delta_buffer)
-        synthetic = cc_dump.formatting.TextContentBlock(
-            content=combined_text, category=cc_dump.formatting.Category.ASSISTANT
-        )
-
-        # Canonical rendering path — same as completed turns
-        delta_strips, _, _ = cc_dump.tui.rendering.render_turn_to_strips(
-            [synthetic], self._last_filters, console, width, is_streaming=True
+        delta_strips = cc_dump.tui.rendering.render_streaming_preview(
+            combined_text, console, width
         )
 
         td.strips = td.strips[: td._stable_strip_count] + delta_strips
         td._widest_strip = _compute_widest(td.strips)
-
-    def _flush_streaming_delta(self, td: TurnData, filters: dict):
-        """Convert delta buffer to stable strips via canonical rendering path.
-
-        # [LAW:one-source-of-truth] Uses render_turn_to_strips() — same as completed turns.
-        """
-        if not td._text_delta_buffer:
-            return
-
-        width = self._content_width if self._size_known else self._last_width
-        console = self.app.console
-
-        # Synthetic block from accumulated delta buffer
-        combined_text = "".join(td._text_delta_buffer)
-        synthetic = cc_dump.formatting.TextContentBlock(
-            content=combined_text, category=cc_dump.formatting.Category.ASSISTANT
-        )
-
-        # Canonical rendering path
-        delta_strips, _, _ = cc_dump.tui.rendering.render_turn_to_strips(
-            [synthetic], filters, console, width, is_streaming=True
-        )
-
-        td.strips = td.strips[: td._stable_strip_count] + delta_strips
-        td._widest_strip = _compute_widest(td.strips)
-
-        # Advance stable boundary
-        td._stable_strip_count = len(td.strips)
-
-        # Clear delta buffer
-        td._text_delta_buffer.clear()
 
     def _update_streaming_size(self, td: TurnData):
         """Update total_lines and virtual_size for streaming turn.

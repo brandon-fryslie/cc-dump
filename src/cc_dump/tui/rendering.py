@@ -2153,6 +2153,47 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
 # ─── Core rendering ───────────────────────────────────────────────────────────
 
 
+def render_streaming_preview(text: str, console, width: int) -> list:
+    """Lightweight streaming renderer — Markdown + gutter, nothing else.
+
+    Bypasses: visibility resolution, _render_block_tree(), renderer dispatch,
+    search highlighting, expandability, truncation, block caching, region handling.
+
+    Used by _refresh_streaming_delta() for O(n) rendering of accumulated text,
+    replacing the O(n^2) full pipeline that re-ran all visibility/dispatch logic.
+    """
+    from rich.segment import Segment
+    from rich.markdown import Markdown
+    from textual.strip import Strip
+
+    # // [LAW:one-source-of-truth] Reuse gutter constants from this module
+    show_right = width >= MIN_WIDTH_FOR_RIGHT_GUTTER
+    total_gutter = GUTTER_WIDTH + (RIGHT_GUTTER_WIDTH if show_right else 0)
+    render_width = max(1, width - total_gutter)
+
+    tc = get_theme_colors()
+    renderable = Markdown(text, code_theme=tc.code_theme)
+
+    render_options = console.options.update_width(render_width)
+    segments = console.render(renderable, render_options)
+    lines = list(Segment.split_lines(segments))
+    if lines:
+        content_strips = [
+            s.adjust_cell_length(render_width) for s in Strip.from_lines(lines)
+        ]
+    else:
+        content_strips = []
+
+    return _add_gutter_to_strips(
+        content_strips,
+        indicator_name="assistant",
+        is_expandable=False,
+        arrow_char="",
+        width=width,
+        show_right=show_right,
+    )
+
+
 def render_block(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render a FormattedBlock to a Rich renderable object (full content).
 
