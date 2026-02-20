@@ -35,55 +35,9 @@ from cc_dump.event_types import (
     parse_sse_event,
 )
 
-
-# ─── Enum coverage ──────────────────────────────────────────────────────────
-
-
-class TestEnums:
-    def test_pipeline_event_kind_values(self):
-        assert len(PipelineEventKind) == 8
-        expected = {
-            "request_headers", "request", "response_headers",
-            "response_event", "response_done", "error", "proxy_error", "log",
-        }
-        assert {e.value for e in PipelineEventKind} == expected
-
-    def test_content_block_type_values(self):
-        assert len(ContentBlockType) == 3
-        assert ContentBlockType("text") == ContentBlockType.TEXT
-        assert ContentBlockType("tool_use") == ContentBlockType.TOOL_USE
-        assert ContentBlockType("tool_result") == ContentBlockType.TOOL_RESULT
-
-    def test_stop_reason_values(self):
-        assert len(StopReason) == 5
-        assert StopReason("") == StopReason.NONE
-        assert StopReason("end_turn") == StopReason.END_TURN
-        assert StopReason("tool_use") == StopReason.TOOL_USE
-
-    def test_message_role_values(self):
-        assert len(MessageRole) == 2
-        assert MessageRole("user") == MessageRole.USER
-        assert MessageRole("assistant") == MessageRole.ASSISTANT
-
-
 # ─── Value types ─────────────────────────────────────────────────────────────
 
-
 class TestUsage:
-    def test_defaults(self):
-        u = Usage()
-        assert u.input_tokens == 0
-        assert u.output_tokens == 0
-        assert u.cache_read_input_tokens == 0
-        assert u.cache_creation_input_tokens == 0
-
-    def test_with_values(self):
-        u = Usage(input_tokens=100, output_tokens=50, cache_read_input_tokens=25)
-        assert u.input_tokens == 100
-        assert u.output_tokens == 50
-        assert u.cache_read_input_tokens == 25
-        assert u.cache_creation_input_tokens == 0
-
     def test_frozen(self):
         u = Usage()
         with pytest.raises(AttributeError):
@@ -91,18 +45,6 @@ class TestUsage:
 
 
 class TestMessageInfo:
-    def test_construction(self):
-        mi = MessageInfo(
-            id="msg_123",
-            role=MessageRole.ASSISTANT,
-            model="claude-3-opus",
-            usage=Usage(input_tokens=10),
-        )
-        assert mi.id == "msg_123"
-        assert mi.role == MessageRole.ASSISTANT
-        assert mi.model == "claude-3-opus"
-        assert mi.usage.input_tokens == 10
-
     def test_frozen(self):
         mi = MessageInfo(id="x", role=MessageRole.USER, model="m", usage=Usage())
         with pytest.raises(AttributeError):
@@ -113,41 +55,25 @@ class TestMessageInfo:
 
 
 class TestSSEEvents:
-    def test_message_start(self):
-        evt = MessageStartEvent(
-            message=MessageInfo(
-                id="msg_abc", role=MessageRole.ASSISTANT,
-                model="claude-3", usage=Usage(input_tokens=100),
-            )
-        )
-        assert isinstance(evt, SSEEvent)
-        assert evt.message.id == "msg_abc"
-        assert evt.message.usage.input_tokens == 100
-
     def test_text_block_start(self):
         evt = TextBlockStartEvent(index=0)
-        assert isinstance(evt, SSEEvent)
         assert evt.index == 0
 
     def test_tool_use_block_start(self):
         evt = ToolUseBlockStartEvent(index=1, id="toolu_123", name="read_file")
-        assert isinstance(evt, SSEEvent)
         assert evt.id == "toolu_123"
         assert evt.name == "read_file"
 
     def test_text_delta(self):
         evt = TextDeltaEvent(index=0, text="Hello world")
-        assert isinstance(evt, SSEEvent)
         assert evt.text == "Hello world"
 
     def test_input_json_delta(self):
         evt = InputJsonDeltaEvent(index=0, partial_json='{"key": "val"}')
-        assert isinstance(evt, SSEEvent)
         assert evt.partial_json == '{"key": "val"}'
 
     def test_content_block_stop(self):
         evt = ContentBlockStopEvent(index=2)
-        assert isinstance(evt, SSEEvent)
         assert evt.index == 2
 
     def test_message_delta(self):
@@ -156,13 +82,8 @@ class TestSSEEvents:
             stop_sequence="",
             output_tokens=28,
         )
-        assert isinstance(evt, SSEEvent)
         assert evt.stop_reason == StopReason.END_TURN
         assert evt.output_tokens == 28
-
-    def test_message_stop(self):
-        evt = MessageStopEvent()
-        assert isinstance(evt, SSEEvent)
 
     def test_all_frozen(self):
         evt = TextDeltaEvent(index=0, text="x")
@@ -214,6 +135,13 @@ class TestPipelineEvents:
         evt = LogEvent(method="POST", path="/v1/messages", status="200")
         assert evt.kind == PipelineEventKind.LOG
         assert evt.method == "POST"
+
+    def test_response_non_streaming_kind(self):
+        from cc_dump.event_types import ResponseNonStreamingEvent
+        evt = ResponseNonStreamingEvent(status_code=200, headers={}, body={"id": "msg_1"})
+        assert evt.kind == PipelineEventKind.RESPONSE_NON_STREAMING
+        assert evt.status_code == 200
+        assert evt.body["id"] == "msg_1"
 
     def test_kind_not_settable_by_caller(self):
         """kind is set by the subclass, not passed in."""

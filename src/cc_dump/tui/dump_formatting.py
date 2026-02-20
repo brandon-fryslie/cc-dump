@@ -146,9 +146,6 @@ def write_block_text(f, block, block_idx: int, log_fn=None) -> None:
     elif isinstance(block, cc_dump.formatting.ResponseMetadataSection):
         f.write("  RESPONSE METADATA\n")
 
-    elif isinstance(block, cc_dump.formatting.ResponseMessageBlock):
-        f.write("  RESPONSE\n")
-
     elif isinstance(block, cc_dump.formatting.ToolDefBlock):
         f.write(f"  Tool: {block.name}\n")
         if getattr(block, "token_count", 0):

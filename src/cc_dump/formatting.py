@@ -529,15 +529,6 @@ class ResponseMetadataSection(FormattedBlock):
     children: list[FormattedBlock] = field(default_factory=list)
 
 
-@dataclass
-class ResponseMessageBlock(FormattedBlock):
-    """Container for the assistant's response content blocks.
-
-    Children: same content block types as MessageBlock children.
-    """
-
-    children: list[FormattedBlock] = field(default_factory=list)
-
 
 # ─── Content tracking (stateful) ─────────────────────────────────────────────
 

@@ -342,7 +342,6 @@ BLOCK_CATEGORY: dict[str, Category | None] = {
     "SkillDefChild": Category.TOOLS,
     "AgentDefChild": Category.TOOLS,
     "ResponseMetadataSection": Category.METADATA,
-    "ResponseMessageBlock": None,  # Context-dependent (ASSISTANT)
     # Context-dependent (use block.category field):
     "RoleBlock": None,
     "TextContentBlock": None,
@@ -1613,10 +1612,6 @@ def _render_response_metadata_section(block: FormattedBlock) -> ConsoleRenderabl
     return Text("RESPONSE METADATA", style="bold dim")
 
 
-def _render_response_message_block(block: FormattedBlock) -> ConsoleRenderable | None:
-    """Render response message container header."""
-    return Text("ASSISTANT", style="bold dim")
-
 
 # ─── Registries ────────────────────────────────────────────────────────────────
 
@@ -1657,7 +1652,6 @@ BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], ConsoleRenderable | None]]
     "SkillDefChild": _render_skill_def_child,
     "AgentDefChild": _render_agent_def_child,
     "ResponseMetadataSection": _render_response_metadata_section,
-    "ResponseMessageBlock": _render_response_message_block,
 }
 
 # State-specific renderers (override full renderers for specific vis_states)
