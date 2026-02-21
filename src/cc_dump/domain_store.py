@@ -23,6 +23,8 @@ class DomainStore:
         self._completed: list[list] = []  # sealed turn block lists
         self._stream_turns: dict[str, list] = {}  # active stream block lists
         self._stream_delta_buffers: dict[str, list[str]] = {}  # text delta accumulators
+        self._stream_delta_text: dict[str, str] = {}  # incremental joined text
+        self._stream_delta_versions: dict[str, int] = {}  # incremented per appended delta
         self._stream_meta: dict[str, dict] = {}
         self._stream_order: list[str] = []
         self._focused_stream_id: str | None = None
@@ -57,6 +59,8 @@ class DomainStore:
 
         self._stream_turns[request_id] = []
         self._stream_delta_buffers[request_id] = []
+        self._stream_delta_text[request_id] = ""
+        self._stream_delta_versions[request_id] = 0
         self._stream_meta[request_id] = dict(meta or {})
         self._stream_order.append(request_id)
 
@@ -76,6 +80,9 @@ class DomainStore:
         # // [LAW:dataflow-not-control-flow] Block declares streaming behavior via property
         if block.show_during_streaming:
             self._stream_delta_buffers[request_id].append(block.content)
+            # // [LAW:one-source-of-truth] Incremental text buffer avoids repeated joins in render path.
+            self._stream_delta_text[request_id] = self._stream_delta_text.get(request_id, "") + block.content
+            self._stream_delta_versions[request_id] = self._stream_delta_versions.get(request_id, 0) + 1
 
         if self.on_stream_block is not None:
             self.on_stream_block(request_id, block)
@@ -176,6 +183,8 @@ class DomainStore:
         # ── Registry cleanup ──
         self._stream_turns.pop(request_id, None)
         self._stream_delta_buffers.pop(request_id, None)
+        self._stream_delta_text.pop(request_id, None)
+        self._stream_delta_versions.pop(request_id, None)
         self._stream_meta.pop(request_id, None)
         self._stream_order = [
             rid for rid in self._stream_order if rid != request_id
@@ -210,6 +219,14 @@ class DomainStore:
     def get_delta_text(self, request_id: str) -> list[str]:
         """Return the accumulated delta text buffer for a stream."""
         return self._stream_delta_buffers.get(request_id, [])
+
+    def get_delta_preview_text(self, request_id: str) -> str:
+        """Return concatenated delta text for streaming preview rendering."""
+        return self._stream_delta_text.get(request_id, "")
+
+    def get_delta_version(self, request_id: str) -> int:
+        """Return monotonic delta version for change detection."""
+        return self._stream_delta_versions.get(request_id, 0)
 
     def get_stream_blocks(self, request_id: str) -> list:
         """Return the block list for an active stream."""
@@ -315,6 +332,8 @@ class DomainStore:
         self._completed = list(state.get("completed", []))
         self._stream_turns.clear()
         self._stream_delta_buffers.clear()
+        self._stream_delta_text.clear()
+        self._stream_delta_versions.clear()
         self._stream_meta.clear()
         self._stream_order.clear()
         self._focused_stream_id = None
@@ -326,9 +345,11 @@ class DomainStore:
                     continue
                 rid = str(request_id)
                 self._stream_turns[rid] = payload.get("blocks", [])
-                self._stream_delta_buffers[rid] = list(
-                    payload.get("delta_buffers", [])
-                )
+                delta_buffers = list(payload.get("delta_buffers", []))
+                self._stream_delta_buffers[rid] = delta_buffers
+                # // [LAW:one-source-of-truth] Derive concatenated text/version from buffer payload once.
+                self._stream_delta_text[rid] = "".join(delta_buffers)
+                self._stream_delta_versions[rid] = len(delta_buffers)
                 self._stream_meta[rid] = dict(payload.get("meta", {}))
 
             order = state.get("stream_order", [])

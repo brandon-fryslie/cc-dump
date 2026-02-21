@@ -15,6 +15,7 @@ from rich.console import Console
 from rich.style import Style
 from textual.geometry import Offset
 
+import cc_dump.tui.rendering
 from cc_dump.formatting import (
     SeparatorBlock,
     HeaderBlock,
@@ -1083,3 +1084,52 @@ class TestRequestScopedStreaming:
             assert conv.set_focused_stream("req-2") is True
             assert conv.get_focused_stream_id() == "req-2"
             assert len(conv._stream_preview_turns["req-2"].strips) > 0
+
+    def test_stream_delta_paints_are_coalesced_per_tick(self):
+        conv = ConversationView()
+        conv._last_width = 80
+        conv._last_filters = {}
+        conv.call_later = MagicMock()
+
+        with self._patch_app_console(conv):
+            conv.begin_stream("req-1", {"agent_kind": "main", "agent_label": "main"})
+            conv.append_stream_block("req-1", TextDeltaBlock(content="a"))
+            conv.append_stream_block("req-1", TextDeltaBlock(content="b"))
+            conv.append_stream_block("req-1", TextDeltaBlock(content="c"))
+
+        # Multiple chunks schedule only one deferred flush.
+        assert conv.call_later.call_count == 1
+
+        conv._invalidate = MagicMock()
+        flush_cb = conv.call_later.call_args.args[0]
+        flush_cb()
+        conv._invalidate.assert_called_once_with("stream_delta", request_id="req-1")
+
+    def test_incremental_delta_text_buffer_and_version(self):
+        conv = ConversationView()
+        conv._last_width = 80
+        conv._last_filters = {}
+
+        with self._patch_app_console(conv):
+            conv.begin_stream("req-1", {"agent_kind": "main", "agent_label": "main"})
+            conv.append_stream_block("req-1", TextDeltaBlock(content="hello "))
+            conv.append_stream_block("req-1", TextDeltaBlock(content="world"))
+
+        assert conv._domain_store.get_delta_preview_text("req-1") == "hello world"
+        assert conv._domain_store.get_delta_version("req-1") == 2
+
+    def test_stream_preview_skips_rerender_when_version_unchanged(self):
+        conv = ConversationView()
+        conv._last_width = 80
+        conv._last_filters = {}
+
+        with self._patch_app_console(conv):
+            conv.begin_stream("req-1", {"agent_kind": "main", "agent_label": "main"})
+            conv.append_stream_block("req-1", TextDeltaBlock(content="alpha"))
+            conv._pending_stream_delta_request_ids.clear()
+            conv._stream_delta_flush_scheduled = False
+
+            with patch("cc_dump.tui.rendering.render_streaming_preview", wraps=cc_dump.tui.rendering.render_streaming_preview) as preview:
+                conv._render_stream_delta("req-1")
+                conv._render_stream_delta("req-1")
+                assert preview.call_count == 1
