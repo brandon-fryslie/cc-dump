@@ -13,9 +13,9 @@ from snarfx import textual as stx
 
 
 class TestSchema:
-    def test_schema_has_39_keys(self):
-        # 6 categories × 3 axes + 5 panel/follow + 8 footer + 4 side-channel + 4 search
-        assert len(cc_dump.view_store.SCHEMA) == 39
+    def test_schema_has_40_keys(self):
+        # 6 categories × 3 axes + 5 panel/follow + 9 footer + 4 side-channel + 4 search
+        assert len(cc_dump.view_store.SCHEMA) == 40
 
     def test_schema_keys_from_category_config(self):
         for _, name, _, _ in CATEGORY_CONFIG:
@@ -279,6 +279,7 @@ class TestReconcileWithNewKeys:
         assert store.get("tmux:available") is False
         assert store.get("streams:active") == ()
         assert store.get("streams:focused") == ""
+        assert store.get("streams:view") == "focused"
         assert store.get("sc:loading") is False
 
 
@@ -308,6 +309,7 @@ class TestFooterStateComputed:
         assert state["active_launch_config_name"] == ""
         assert state["active_streams"] == ()
         assert state["focused_stream_id"] == ""
+        assert state["stream_view_mode"] == "focused"
 
     def test_updates_on_store_change(self):
         store = cc_dump.view_store.create()
@@ -322,6 +324,12 @@ class TestFooterStateComputed:
         state = store.footer_state.get()
         assert state["active_streams"] == (("req-1", "main", "main"),)
         assert state["focused_stream_id"] == "req-1"
+
+    def test_stream_view_mode_updates(self):
+        store = cc_dump.view_store.create()
+        store.set("streams:view", "lanes")
+        state = store.footer_state.get()
+        assert state["stream_view_mode"] == "lanes"
 
 
 class TestErrorItemsComputed:

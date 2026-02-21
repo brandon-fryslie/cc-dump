@@ -264,6 +264,16 @@ def focus_stream(app, request_id: str) -> None:
     app._view_store.set("streams:focused", ds.get_focused_stream_id() or "")
 
 
+def toggle_stream_view_mode(app) -> None:
+    """Toggle live stream viewport mode between focused and side-by-side lanes."""
+    current = app._view_store.get("streams:view")
+    next_mode = "lanes" if current == "focused" else "focused"
+    app._view_store.set("streams:view", next_mode)
+    conv = app._get_conv()
+    if conv is not None:
+        conv.set_stream_view_mode(next_mode)
+
+
 def go_top(app) -> None:
     def _go(c):
         # // [LAW:dataflow-not-control-flow] Deactivate via table lookup.

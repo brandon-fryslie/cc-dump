@@ -40,6 +40,7 @@ SCHEMA["launch:active_name"] = ""           # str — was load_active_name() fil
 SCHEMA["theme:generation"] = 0              # int — bumped on theme change to invalidate footer
 SCHEMA["streams:active"] = ()               # tuple[(request_id, label, kind), ...]
 SCHEMA["streams:focused"] = ""              # request_id of focused active stream
+SCHEMA["streams:view"] = "focused"          # "focused" | "lanes"
 
 # Side-channel panel state (previously app._side_channel_* attributes)
 SCHEMA["sc:loading"] = False
@@ -93,6 +94,7 @@ def create():
             "active_launch_config_name": store.get("launch:active_name"),
             "active_streams": store.get("streams:active"),
             "focused_stream_id": store.get("streams:focused"),
+            "stream_view_mode": store.get("streams:view"),
             "_gen": store.get("theme:generation"),
         }
 

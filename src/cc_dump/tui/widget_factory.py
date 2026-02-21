@@ -19,6 +19,7 @@ from textual.strip import Strip
 from textual.cache import LRUCache
 from textual.geometry import Size, Offset
 from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
 
 # Use module-level imports for hot-reload
@@ -39,6 +40,11 @@ class FollowState(Enum):
     OFF = "off"
     ENGAGED = "engaged"
     ACTIVE = "active"
+
+
+class StreamViewMode(Enum):
+    FOCUSED = "focused"
+    LANES = "lanes"
 
 
 # [LAW:dataflow-not-control-flow] Transitions as data, not branches.
@@ -226,6 +232,7 @@ class ConversationView(ScrollView):
         self._last_search_ctx = None  # Store search context for lazy rerenders
         # Local fallback for tests that don't pass a view_store
         self._follow_state_fallback: FollowState = FollowState.ACTIVE
+        self._stream_view_mode_fallback: StreamViewMode = StreamViewMode.FOCUSED
         self._pending_restore: dict | None = None
         self._scrolling_programmatically: bool = False
         self._scroll_anchor: ScrollAnchor | None = None
@@ -236,6 +243,7 @@ class ConversationView(ScrollView):
         # Block lists and delta buffers live in DomainStore.
         self._stream_preview_turns: dict[str, TurnData] = {}
         self._attached_stream_id: str | None = None
+        self._multi_stream_preview_id = "__multi_stream_preview__"
         self._pending_stream_delta_request_ids: set[str] = set()
         self._stream_delta_flush_scheduled: bool = False
 
@@ -265,6 +273,23 @@ class ConversationView(ScrollView):
             self._view_store.set("nav:follow", value.value)
         else:
             self._follow_state_fallback = value
+
+    @property
+    def _stream_view_mode(self) -> StreamViewMode:
+        if self._view_store is not None:
+            raw = self._view_store.get("streams:view")
+            try:
+                return StreamViewMode(raw)
+            except ValueError:
+                return StreamViewMode.FOCUSED
+        return self._stream_view_mode_fallback
+
+    @_stream_view_mode.setter
+    def _stream_view_mode(self, value: StreamViewMode):
+        if self._view_store is not None:
+            self._view_store.set("streams:view", value.value)
+        else:
+            self._stream_view_mode_fallback = value
 
     @contextmanager
     def _programmatic_scroll(self):
@@ -537,6 +562,7 @@ class ConversationView(ScrollView):
         "stream_delta":      "_render_stream_delta",
         "stream_finalized":  "_render_stream_finalized",
         "focus_changed":     "_render_focus_changed",
+        "stream_mode_changed": "_render_stream_mode_changed",
         "filters_changed":   "_rerender_affected",
         "block_toggled":     "_render_single_turn",
         "region_toggled":    "_render_single_turn",
@@ -560,7 +586,7 @@ class ConversationView(ScrollView):
 
     # // [LAW:dataflow-not-control-flow] Post-render behavior varies by data (reason), not control flow.
     _FOLLOW_REASONS = frozenset({
-        "new_turn", "stream_delta", "stream_finalized", "focus_changed",
+        "new_turn", "stream_delta", "stream_finalized", "focus_changed", "stream_mode_changed",
     })
     _ANCHOR_REASONS = frozenset({
         "filters_changed", "block_toggled", "region_toggled", "search",
@@ -657,25 +683,23 @@ class ConversationView(ScrollView):
         self._domain_store.add_turn(blocks)
 
     def _append_completed_turn(self, td: TurnData) -> None:
-        """Append completed turn while preserving focused streaming preview at end."""
-        attached: TurnData | None = None
-        if self._attached_stream_id and self._turns and self._turns[-1].is_streaming:
-            attached = self._turns.pop()
+        """Append completed turn while preserving live stream preview at end."""
+        had_preview_attached = bool(
+            self._attached_stream_id and self._turns and self._turns[-1].is_streaming
+        )
+        if had_preview_attached:
+            self._turns.pop()
             self._attached_stream_id = None
 
         td.turn_index = len(self._turns)
         self._turns.append(td)
 
-        # Re-attach focused stream preview if one is active
-        focused_id = self._domain_store.get_focused_stream_id()
-        if attached is not None and focused_id and focused_id in self._stream_preview_turns:
-            attached.turn_index = len(self._turns)
-            self._turns.append(attached)
-            self._attached_stream_id = focused_id
+        if had_preview_attached:
+            self._attach_stream_preview()
 
         self._recalculate_offsets()
 
-    def _attach_focused_stream(self) -> None:
+    def _attach_focused_stream_preview(self) -> None:
         """Ensure focused active stream preview is attached as the last turn."""
         focused = self._domain_store.get_focused_stream_id()
         if not focused or focused not in self._stream_preview_turns:
@@ -691,6 +715,94 @@ class ConversationView(ScrollView):
         self._turns.append(td)
         self._attached_stream_id = focused
         self._recalculate_offsets()
+
+    def _refresh_multi_stream_preview(self) -> TurnData | None:
+        """Build side-by-side strips for active streaming lanes."""
+        request_ids = self._domain_store.get_active_stream_ids()
+        if not request_ids:
+            return None
+
+        td = self._stream_preview_turns.get(self._multi_stream_preview_id)
+        if td is None:
+            td = TurnData(
+                turn_index=-1,
+                blocks=[],
+                strips=[],
+                is_streaming=True,
+            )
+            self._stream_preview_turns[self._multi_stream_preview_id] = td
+
+        width = self._content_width if self._size_known else self._last_width
+        active = request_ids[:3]
+        lane_count = max(1, len(active))
+        separator_width = lane_count - 1
+        lane_width = max(24, (width - separator_width) // lane_count)
+        composed_width = lane_width * lane_count + separator_width
+
+        chips = dict((rid, (label, kind)) for rid, label, kind in self._domain_store.get_active_stream_chips())
+        label_styles = {
+            "main": Style(color=cc_dump.palette.PALETTE.accent, bold=True),
+            "subagent": Style(color=cc_dump.palette.PALETTE.info, bold=True),
+            "unknown": Style(color=cc_dump.palette.PALETTE.warning, dim=True),
+        }
+        separator = Segment("│", Style(dim=True))
+
+        lane_rows: list[list[Strip]] = []
+        for request_id in active:
+            lane_td = self._stream_preview_turns.get(request_id)
+            if lane_td is None:
+                lane_td = TurnData(turn_index=-1, blocks=[], strips=[], is_streaming=True)
+                self._stream_preview_turns[request_id] = lane_td
+            self._refresh_streaming_delta(request_id, lane_td, force=True, width=lane_width)
+            label, kind = chips.get(request_id, (request_id[:8], "unknown"))
+            header_style = label_styles.get(kind, label_styles["unknown"])
+            header_text = Text(f" {label} ".ljust(lane_width), style=header_style)
+            header_strip = Strip([Segment(str(header_text), header_style)]).adjust_cell_length(lane_width)
+            lane_rows.append([header_strip, *lane_td.strips])
+
+        row_count = max(len(rows) for rows in lane_rows)
+        blank_lane = Strip.blank(lane_width, self.rich_style)
+        composed: list[Strip] = []
+        for row_idx in range(row_count):
+            row_segments: list[Segment] = []
+            for lane_idx, rows in enumerate(lane_rows):
+                lane_strip = rows[row_idx] if row_idx < len(rows) else blank_lane
+                lane_strip = lane_strip.crop_extend(0, lane_width, self.rich_style)
+                row_segments.extend(lane_strip._segments)
+                if lane_idx < lane_count - 1:
+                    row_segments.append(separator)
+            composed.append(Strip(row_segments).adjust_cell_length(composed_width))
+
+        td.strips = composed
+        td._widest_strip = _compute_widest(composed)
+        return td
+
+    def _attach_multi_stream_preview(self) -> None:
+        """Attach side-by-side multi-lane streaming preview."""
+        td = self._refresh_multi_stream_preview()
+        if td is None:
+            self._detach_stream_preview()
+            return
+        if (
+            self._attached_stream_id == self._multi_stream_preview_id
+            and self._turns
+            and self._turns[-1].is_streaming
+        ):
+            self._turns[-1] = td
+            self._recalculate_offsets()
+            return
+        self._detach_stream_preview()
+        td.turn_index = len(self._turns)
+        self._turns.append(td)
+        self._attached_stream_id = self._multi_stream_preview_id
+        self._recalculate_offsets()
+
+    def _attach_stream_preview(self) -> None:
+        """Attach the active streaming preview for the selected view mode."""
+        if self._stream_view_mode == StreamViewMode.LANES:
+            self._attach_multi_stream_preview()
+            return
+        self._attach_focused_stream_preview()
 
     def _detach_stream_preview(self) -> None:
         """Remove attached streaming preview turn from completed turn list."""
@@ -719,16 +831,27 @@ class ConversationView(ScrollView):
             is_streaming=True,
         )
         self._stream_preview_turns[request_id] = td
-        self._attach_focused_stream()
+        self._attach_stream_preview()
 
-    def _refresh_streaming_delta(self, request_id: str, td: TurnData, *, force: bool = False) -> bool:
+    def _refresh_streaming_delta(
+        self,
+        request_id: str,
+        td: TurnData,
+        *,
+        force: bool = False,
+        width: int | None = None,
+    ) -> bool:
         """Re-render delta buffer with lightweight streaming preview.
 
         Uses render_streaming_preview() — Markdown + gutter only, bypassing
         the full rendering pipeline (visibility, dispatch, truncation, caching).
         Finalization re-renders through the full pipeline.
         """
-        width = self._content_width if self._size_known else self._last_width
+        width = (
+            width
+            if width is not None
+            else (self._content_width if self._size_known else self._last_width)
+        )
         delta_version = self._domain_store.get_delta_version(request_id)
         if (
             not force
@@ -765,10 +888,20 @@ class ConversationView(ScrollView):
         self.call_later(self._flush_stream_delta_frame)
 
     def _flush_stream_delta_frame(self) -> None:
-        """Flush coalesced stream delta invalidation for the focused stream."""
+        """Flush coalesced stream delta invalidation for current stream mode."""
         self._stream_delta_flush_scheduled = False
         pending = self._pending_stream_delta_request_ids
         self._pending_stream_delta_request_ids = set()
+        if not pending:
+            return
+        if self._stream_view_mode == StreamViewMode.LANES:
+            ordered = tuple(
+                request_id
+                for request_id in self._domain_store.get_active_stream_ids()
+                if request_id in pending
+            )
+            self._invalidate("stream_delta", request_ids=ordered)
+            return
         focused_id = self._domain_store.get_focused_stream_id()
         if not focused_id or focused_id not in pending:
             return
@@ -783,16 +916,33 @@ class ConversationView(ScrollView):
         # // [LAW:dataflow-not-control-flow] Block declares streaming behavior via property
         focused_id = self._domain_store.get_focused_stream_id()
         is_focused = request_id == focused_id
-        if block.show_during_streaming and is_focused:
+        should_render = (
+            block.show_during_streaming
+            and (
+                is_focused
+                or self._stream_view_mode == StreamViewMode.LANES
+            )
+        )
+        if should_render:
             # // [LAW:dataflow-not-control-flow] Pending set holds variability; flush loop stays fixed.
             self._queue_stream_delta(request_id)
 
-    def _render_stream_delta(self, request_id: str) -> None:
-        """Re-render focused stream preview after new delta block."""
+    def _render_stream_delta(self, request_id: str = "", request_ids: tuple[str, ...] = ()) -> None:
+        """Re-render stream preview after new delta block."""
+        if self._stream_view_mode == StreamViewMode.LANES:
+            # // [LAW:dataflow-not-control-flow] Update fixed preview path using request_id data set.
+            for rid in request_ids:
+                td = self._stream_preview_turns.get(rid)
+                if td is None:
+                    continue
+                self._refresh_streaming_delta(rid, td)
+            self._attach_stream_preview()
+            return
+
         td = self._stream_preview_turns.get(request_id)
         if td is None:
             return
-        self._attach_focused_stream()
+        self._attach_stream_preview()
         if self._refresh_streaming_delta(request_id, td):
             self._recalculate_offsets()
 
@@ -841,13 +991,15 @@ class ConversationView(ScrollView):
 
         # Remove from preview registry
         self._stream_preview_turns.pop(request_id, None)
+        if not self._domain_store.get_active_stream_ids():
+            self._stream_preview_turns.pop(self._multi_stream_preview_id, None)
         self._pending_stream_delta_request_ids.discard(request_id)
 
         # Append as a completed turn while preserving active preview at end.
         self._append_completed_turn(td)
 
         # Reattach if there's a new focused stream
-        self._attach_focused_stream()
+        self._attach_stream_preview()
 
     def _on_focus_changed(self, request_id: str) -> None:
         """Domain store callback: focused stream changed."""
@@ -859,7 +1011,17 @@ class ConversationView(ScrollView):
         td = self._stream_preview_turns.get(request_id)
         if td is not None:
             self._refresh_streaming_delta(request_id, td, force=True)
-        self._attach_focused_stream()
+        self._attach_stream_preview()
+
+    def _render_stream_mode_changed(self, mode: str = "focused") -> None:
+        """Re-render stream preview after focused/lanes mode change."""
+        _ = mode
+        for request_id in self._domain_store.get_active_stream_ids():
+            td = self._stream_preview_turns.get(request_id)
+            if td is None:
+                continue
+            self._refresh_streaming_delta(request_id, td, force=True)
+        self._attach_stream_preview()
 
     # ─── Delegating accessors (read from domain_store) ─────────────────────
 
@@ -873,6 +1035,21 @@ class ConversationView(ScrollView):
     def get_active_stream_chips(self) -> tuple[tuple[str, str, str], ...]:
         """Return active stream tuples for footer chips."""
         return self._domain_store.get_active_stream_chips()
+
+    def get_stream_view_mode(self) -> str:
+        return self._stream_view_mode.value
+
+    def set_stream_view_mode(self, mode: str) -> bool:
+        """Set live stream preview mode: focused or side-by-side lanes."""
+        try:
+            next_mode = StreamViewMode(mode)
+        except ValueError:
+            return False
+        if self._stream_view_mode == next_mode:
+            return True
+        self._stream_view_mode = next_mode
+        self._invalidate("stream_mode_changed", mode=next_mode.value)
+        return True
 
     # Backward-compat wrappers for existing call sites/tests.
     def begin_stream(self, request_id: str, stream_meta: dict | None = None) -> None:
@@ -1506,6 +1683,7 @@ class ConversationView(ScrollView):
 
         return {
             "follow_state": self._follow_state.value,
+            "stream_view_mode": self._stream_view_mode.value,
             "scroll_anchor": anchor_dict,
             "view_overrides": self._view_overrides.to_dict(),
         }
@@ -1524,6 +1702,9 @@ class ConversationView(ScrollView):
         else:
             # Backward compat: old bool format
             self._follow_state = FollowState.ACTIVE if state.get("follow_mode", True) else FollowState.OFF
+        stream_mode_raw = state.get("stream_view_mode")
+        if stream_mode_raw in {StreamViewMode.FOCUSED.value, StreamViewMode.LANES.value}:
+            self._stream_view_mode = StreamViewMode(stream_mode_raw)
 
         # Restore view overrides
         vo_data = state.get("view_overrides", {})
@@ -1580,7 +1761,7 @@ class ConversationView(ScrollView):
                 self._refresh_streaming_delta(request_id, td, force=True)
 
         # Reattach focused stream preview
-        self._attach_focused_stream()
+        self._attach_stream_preview()
         self._recalculate_offsets()
 
 

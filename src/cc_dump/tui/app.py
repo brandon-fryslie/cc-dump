@@ -900,6 +900,9 @@ class CcDumpApp(App):
     def action_focus_stream(self, request_id: str):
         _actions.focus_stream(self, request_id)
 
+    def action_toggle_stream_view_mode(self):
+        _actions.toggle_stream_view_mode(self)
+
     def action_go_top(self):
         _actions.go_top(self)
 

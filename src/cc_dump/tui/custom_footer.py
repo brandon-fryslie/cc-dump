@@ -128,6 +128,11 @@ class StatusFooter(Widget):
                 action="app.toggle_follow",
                 id="cmd-follow",
             )
+            yield Chip(
+                " m focus ",
+                action="app.toggle_stream_view_mode",
+                id="cmd-stream-mode",
+            )
             yield Static(" F- ", id="cmd-filterset")
             yield Chip(
                 " c claude ",
@@ -195,6 +200,15 @@ class StatusFooter(Widget):
         follow_chip.set_class(is_dim, "-dim")
         follow_chip.styles.background = follow_bg
         follow_chip.styles.color = follow_fg
+
+        # Stream view mode chip
+        stream_mode_chip = self.query_one("#cmd-stream-mode", Chip)
+        stream_mode = state.get("stream_view_mode", "focused")
+        is_lanes = stream_mode == "lanes"
+        stream_mode_chip.update(" m lanes " if is_lanes else " m focus ")
+        stream_mode_chip.set_class(not is_lanes, "-dim")
+        stream_mode_chip.styles.background = fg_color if is_lanes else bg_color
+        stream_mode_chip.styles.color = bg_color if is_lanes else fg_color
 
         # Filterset indicator
         # [LAW:dataflow-not-control-flow] Always update; style varies by value.
