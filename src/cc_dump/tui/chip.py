@@ -28,11 +28,12 @@ class Chip(Static):
 class ToggleChip(Static):
     """Boolean toggle rendered as a clickable chip.
 
-    Shows label + ON/OFF state inline. Click toggles the value.
-    Bold+accent when on, dim when off.
+    Shows label + ON/OFF state inline. Click or Space toggles the value.
+    Bold+accent when on, dim when off. Focusable for Tab navigation.
     """
 
     ALLOW_SELECT = False
+    can_focus = True
 
     DEFAULT_CSS = """
     ToggleChip {
@@ -47,6 +48,10 @@ class ToggleChip(Static):
         opacity: 0.8;
     }
 
+    ToggleChip:focus {
+        text-style: bold underline;
+    }
+
     ToggleChip.-off {
         text-style: initial;
         opacity: 0.5;
@@ -55,6 +60,10 @@ class ToggleChip(Static):
 
     ToggleChip.-off:hover {
         opacity: 0.7;
+    }
+
+    ToggleChip.-off:focus {
+        text-style: underline;
     }
     """
 
@@ -68,6 +77,15 @@ class ToggleChip(Static):
         self.update(f" {self._base_label}  {'ON' if self.value else 'OFF'} ")
         self.set_class(not self.value, "-off")
 
-    async def on_click(self, event) -> None:
+    def _toggle(self) -> None:
         self.value = not self.value
         self._refresh_label()
+
+    async def on_click(self, event) -> None:
+        self._toggle()
+
+    def on_key(self, event) -> None:
+        if event.key == "space":
+            event.stop()
+            event.prevent_default()
+            self._toggle()

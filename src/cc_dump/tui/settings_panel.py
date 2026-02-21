@@ -177,8 +177,8 @@ class SettingsPanel(VerticalScroll):
         )
 
     def on_mount(self) -> None:
-        """Focus first input widget on mount (standard Textual pattern)."""
-        focusable = self.query("Input, Select, OptionList")
+        """Focus first focusable widget on mount (standard Textual pattern)."""
+        focusable = self.query("Input, Select, OptionList, ToggleChip")
         if focusable:
             focusable.first().focus()
 

@@ -10,16 +10,14 @@ from enum import Enum, auto
 
 
 class InputMode(Enum):
-    """Input modes - all on equal footing.
+    """Input modes derived from search state.
 
-    No mode is privileged. Each has explicit keymap in MODE_KEYMAP.
+    Panel modes eliminated — Textual's focus-based Key event bubbling
+    handles panel key dispatch naturally.
     """
     NORMAL = auto()
     SEARCH_EDIT = auto()
     SEARCH_NAV = auto()
-    SETTINGS = auto()
-    LAUNCH_CONFIG = auto()
-    SIDE_CHANNEL = auto()
 
 
 # [LAW:one-source-of-truth] Key→action mapping per mode.
@@ -133,9 +131,6 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         # Empty - all keys handled specially for text input
     },
 
-    InputMode.SIDE_CHANNEL: {
-        # Empty - panel interaction handled specially in on_key
-    },
 }
 
 
@@ -171,11 +166,6 @@ FOOTER_KEYS: dict[InputMode, list[tuple[str, str]]] = {
         ("esc", "keep"),
         ("q", "cancel"),
         ("jk", "scroll"),
-    ],
-    InputMode.SIDE_CHANNEL: [
-        ("s", "summarize"),
-        ("t", "toggle AI"),
-        ("esc", "close"),
     ],
 }
 

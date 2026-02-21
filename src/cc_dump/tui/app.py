@@ -186,15 +186,13 @@ class CcDumpApp(App):
 
     @property
     def _input_mode(self):
-        """// [LAW:one-source-of-truth] InputMode derived from store booleans + search state."""
+        """// [LAW:one-source-of-truth] InputMode derived from search state only.
+
+        Panel modes eliminated — Textual's focus-based Key event bubbling
+        handles panel key dispatch naturally. Panels with focused widgets
+        consume keys via their own on_key; unfocused panels let keys reach app.
+        """
         InputMode = cc_dump.tui.input_modes.InputMode
-        # // [LAW:one-source-of-truth] Panel mode from store booleans (stable across reload).
-        if self._view_store.get("panel:side_channel"):
-            return InputMode.SIDE_CHANNEL
-        if self._view_store.get("panel:launch_config"):
-            return InputMode.LAUNCH_CONFIG
-        if self._view_store.get("panel:settings"):
-            return InputMode.SETTINGS
         SearchPhase = cc_dump.tui.search.SearchPhase
         phase = self._search_state.phase
         if phase == SearchPhase.EDITING:
@@ -707,10 +705,13 @@ class CcDumpApp(App):
         self.screen.mount(panel)
 
     def _close_settings(self) -> None:
-        """Close settings panel."""
+        """Close settings panel and restore focus to conversation."""
         for panel in self.screen.query(cc_dump.tui.settings_panel.SettingsPanel):
             panel.remove()
         self._view_store.set("panel:settings", False)
+        conv = self._get_conv()
+        if conv is not None:
+            conv.focus()
 
     def on_settings_panel_saved(self, msg) -> None:
         """Handle SettingsPanel.Saved — update store (reactions handle persistence + side effects)."""
@@ -739,10 +740,13 @@ class CcDumpApp(App):
         self.screen.mount(panel)
 
     def _close_launch_config(self) -> None:
-        """Close launch config panel."""
+        """Close launch config panel and restore focus to conversation."""
         for panel in self.screen.query(cc_dump.tui.launch_config_panel.LaunchConfigPanel):
             panel.remove()
         self._view_store.set("panel:launch_config", False)
+        conv = self._get_conv()
+        if conv is not None:
+            conv.focus()
 
     def _launch_with_config(self, config) -> None:
         """Build args from config + session_id, launch via tmux."""
@@ -806,19 +810,13 @@ class CcDumpApp(App):
         panel.update_display(self._view_store.sc_panel_state.get())
 
     def _close_side_channel(self):
-        """Close side-channel AI panel."""
+        """Close side-channel AI panel and restore focus to conversation."""
         for panel in self.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel):
             panel.remove()
         self._view_store.set("panel:side_channel", False)
-
-    def _handle_side_channel_key(self, event) -> None:
-        """Handle key events in SIDE_CHANNEL mode.
-
-        Only Esc is handled here — button interactions use Textual's
-        standard Button.Pressed event.
-        """
-        if event.key == "escape":
-            self._close_side_channel()
+        conv = self._get_conv()
+        if conv is not None:
+            conv.focus()
 
     def _side_channel_summarize(self):
         """Request AI summary of recent messages. Runs in worker thread."""
@@ -958,35 +956,56 @@ class CcDumpApp(App):
 
     # ─── Key dispatch ──────────────────────────────────────────────────
 
+    def _close_topmost_panel(self) -> bool:
+        """Close the topmost open panel. Returns True if a panel was closed.
+
+        Checks store booleans in priority order (side_channel → launch_config → settings).
+        """
+        if self._view_store.get("panel:side_channel"):
+            self._close_side_channel()
+            return True
+        if self._view_store.get("panel:launch_config"):
+            self._close_launch_config()
+            return True
+        if self._view_store.get("panel:settings"):
+            self._close_settings()
+            return True
+        return False
+
     async def on_key(self, event) -> None:
-        """// [LAW:single-enforcer] on_key is the sole key dispatcher."""
+        """// [LAW:single-enforcer] on_key is the sole key dispatcher.
+
+        Search modes consume keys first (including Escape to exit search).
+        Then Escape closes topmost panel. Panel-specific keys are handled by
+        each panel's own on_key via Textual's event bubbling — when focus is
+        within a panel, the panel sees the Key event first.
+        """
         mode = self._input_mode
         MODE_KEYMAP = cc_dump.tui.input_modes.MODE_KEYMAP
         InputMode = cc_dump.tui.input_modes.InputMode
 
-        if mode == InputMode.SIDE_CHANNEL:
-            if event.key == "escape":
-                event.prevent_default()
-                self._close_side_channel()
-                return
-        elif mode == InputMode.NORMAL:
-            if event.character == "/":
-                event.prevent_default()
-                self._start_search()
-                return
-        elif mode == InputMode.SEARCH_EDIT:
+        # Search modes consume keys first (Escape exits search before closing panels)
+        if mode == InputMode.SEARCH_EDIT:
             event.prevent_default()
             self._handle_search_editing_key(event)
             return
-        elif mode == InputMode.SEARCH_NAV:
+        if mode == InputMode.SEARCH_NAV:
             if self._handle_search_nav_special_keys(event):
                 event.prevent_default()
                 return
 
-        # // [LAW:one-source-of-truth] Panel modes (SETTINGS, LAUNCH_CONFIG, SIDE_CHANNEL)
-        # fall through here — Textual's event bubbling lets focused Input widgets
-        # consume their keys before on_key fires. No keymap = use NORMAL's.
-        keymap = MODE_KEYMAP.get(mode) or MODE_KEYMAP[InputMode.NORMAL]
+        # Generic Escape: close topmost panel (when focus is outside the panel)
+        if event.key == "escape" and self._close_topmost_panel():
+            event.prevent_default()
+            return
+
+        if mode == InputMode.NORMAL:
+            if event.character == "/":
+                event.prevent_default()
+                self._start_search()
+                return
+
+        keymap = MODE_KEYMAP.get(mode, MODE_KEYMAP[InputMode.NORMAL])
         action_name = keymap.get(event.key)
         if action_name:
             event.prevent_default()
