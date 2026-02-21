@@ -82,7 +82,7 @@ class SideChannelPanel(Widget):
     """
 
     def compose(self) -> ComposeResult:
-        yield Static("AI Side Channel", id="sc-title")
+        yield Static("AI Side Channeasdfasdfl", id="sc-title")
         yield Static("Status: Enabled", id="sc-status")
         yield Chip(" Summarize Last 10 Messages ", action="app.sc_summarize", id="sc-summarize")
         yield Chip(" Toggle AI ", action="app.sc_toggle", id="sc-toggle")

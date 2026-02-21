@@ -24,7 +24,7 @@ class TestHotReloadErrorResilience:
     """
 
     def _setup_and_trigger(self):
-        """Init hot_reload, load all reloadable modules, and fake a file change."""
+        """Init hot_reload, load all reloadable modules, return hr module."""
         import cc_dump.hot_reload as hr
 
         # Ensure all reloadable modules are in sys.modules
@@ -33,9 +33,6 @@ class TestHotReloadErrorResilience:
 
         test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
         hr.init(str(test_dir))
-        # Force a mismatch so check_and_get_reloaded() sees a change
-        first_path = next(iter(hr._mtimes))
-        hr._mtimes[first_path] = 0.0
         return hr
 
     def test_survives_syntax_error_in_module(self):
@@ -113,10 +110,7 @@ class TestImportValidation:
             src_dir / "tui" / "app.py",
             src_dir / "proxy.py",
             src_dir / "tui" / "hot_reload_controller.py",
-            src_dir / "tui" / "action_handlers.py",
             src_dir / "tui" / "search_controller.py",
-            src_dir / "tui" / "theme_controller.py",
-            src_dir / "tui" / "dump_export.py",
         ]
 
         # // [LAW:one-source-of-truth] Derive from _RELOAD_ORDER, not a separate list
@@ -440,7 +434,7 @@ class TestHotReloadModuleStructure:
 
 
 class TestHotReloadFileDetection:
-    """Unit tests for hot-reload file change detection."""
+    """Unit tests for hot-reload file classification and watch paths."""
 
     def test_init_sets_watch_dirs(self):
         import cc_dump.hot_reload as hr
@@ -451,95 +445,67 @@ class TestHotReloadFileDetection:
         assert len(hr._watch_dirs) > 0
         assert str(test_dir) in hr._watch_dirs
 
-    def test_scan_mtimes_populates_cache(self):
+    def test_get_watch_paths_returns_copy(self):
         import cc_dump.hot_reload as hr
 
         test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
         hr.init(str(test_dir))
 
-        assert len(hr._mtimes) > 0
+        paths = hr.get_watch_paths()
+        assert len(paths) > 0
+        # Modifying returned list doesn't affect internal state
+        paths.append("/bogus")
+        assert "/bogus" not in hr.get_watch_paths()
 
-        formatting_paths = [p for p in hr._mtimes.keys() if "formatting.py" in p]
-        assert len(formatting_paths) > 0, "Should have mtime for formatting.py"
-
-    def test_get_changed_files_returns_empty_initially(self):
+    def test_is_reloadable_for_known_modules(self):
         import cc_dump.hot_reload as hr
 
         test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
         hr.init(str(test_dir))
 
-        hr._get_changed_files()
-        changed = hr._get_changed_files()
+        # Reloadable modules
+        assert hr.is_reloadable(str(test_dir / "palette.py")) is True
+        assert hr.is_reloadable(str(test_dir / "formatting.py")) is True
+        assert hr.is_reloadable(str(test_dir / "tui" / "rendering.py")) is True
 
-        assert isinstance(changed, set)
-        assert len(changed) == 0, "No files should have changed"
-
-    def test_check_returns_false_when_no_changes(self):
+    def test_is_reloadable_rejects_excluded(self):
         import cc_dump.hot_reload as hr
 
         test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
         hr.init(str(test_dir))
 
-        hr.check()
-        result = hr.check()
+        # Excluded files
+        assert hr.is_reloadable(str(test_dir / "proxy.py")) is False
+        assert hr.is_reloadable(str(test_dir / "cli.py")) is False
+        assert hr.is_reloadable(str(test_dir / "tui" / "app.py")) is False
 
-        assert result is False, "Should return False when no changes detected"
-
-    def test_has_changes_returns_false_when_no_changes(self):
+    def test_is_reloadable_with_relative_path(self):
         import cc_dump.hot_reload as hr
 
         test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
         hr.init(str(test_dir))
 
-        assert hr.has_changes() is False, "Should return False when no changes detected"
+        assert hr.is_reloadable("palette.py") is True
+        assert hr.is_reloadable("tui/rendering.py") is True
+        assert hr.is_reloadable("proxy.py") is False
 
-    def test_has_changes_does_not_update_mtimes(self):
+    def test_check_and_get_reloaded_returns_list(self):
+        """check_and_get_reloaded unconditionally reloads all modules."""
         import cc_dump.hot_reload as hr
+
+        # Ensure all reloadable modules are in sys.modules
+        for mod_name in hr._RELOAD_ORDER:
+            importlib.import_module(mod_name)
 
         test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
         hr.init(str(test_dir))
 
-        # Capture mtimes snapshot
-        mtimes_before = dict(hr._mtimes)
-
-        # Simulate a change by tampering with the cache
-        first_path = next(iter(hr._mtimes))
-        hr._mtimes[first_path] = 0.0  # Force a mismatch
-
-        assert hr.has_changes() is True, "Should detect the simulated change"
-        # _mtimes should NOT have been updated (has_changes is read-only)
-        assert hr._mtimes[first_path] == 0.0, "has_changes() must not update _mtimes"
-
-        # Restore
-        hr._mtimes.update(mtimes_before)
-
-    def test_new_file_detected_on_first_check(self):
-        """New files (not yet in _mtimes) are detected on first check."""
-        import cc_dump.hot_reload as hr
-
-        test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
-        hr.init(str(test_dir))
-
-        # Pick an existing watched file and remove it from _mtimes to simulate
-        # a new file that appeared after init
-        target_path = next(p for p in hr._mtimes if "formatting.py" in p)
-        del hr._mtimes[target_path]
-
-        assert hr.has_changes() is True, "New file should be detected by has_changes()"
-        changed = hr._get_changed_files()
-        assert target_path in changed, "New file should appear in _get_changed_files()"
-
-    def test_check_and_get_reloaded_returns_empty_list_when_no_changes(self):
-        import cc_dump.hot_reload as hr
-
-        test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
-        hr.init(str(test_dir))
-
-        hr.check_and_get_reloaded()
-        reloaded = hr.check_and_get_reloaded()
+        # With mock to avoid real reloads
+        with patch.object(importlib, "reload", side_effect=lambda m: m):
+            reloaded = hr.check_and_get_reloaded()
 
         assert isinstance(reloaded, list)
-        assert len(reloaded) == 0, "Should return empty list when no changes"
+        assert len(reloaded) > 0
 
 
 class TestSearchStateHotReload:

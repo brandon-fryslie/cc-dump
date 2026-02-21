@@ -3,6 +3,9 @@
 This module monitors Python source files and reloads them when changes are detected.
 Only pure-function modules are reloaded (formatting, rendering, analysis, palette).
 Live instances (tui/app.py) and stable boundaries (proxy.py) are never reloaded.
+
+File change detection is handled externally (watchfiles in hot_reload_controller).
+This module owns: module classification, reload execution, staleness tracking.
 """
 
 import hashlib
@@ -81,8 +84,10 @@ _STALENESS_WATCHLIST = {
 }
 
 _watch_dirs: list[str] = []
-_mtimes: dict[str, float] = {}
 _excluded_hashes: dict[str, str] = {}
+
+# Set of reloadable relative paths (derived from _RELOAD_ORDER module names)
+_reloadable_rel_paths: set[str] = set()
 
 
 def init(package_dir: str) -> None:
@@ -98,66 +103,54 @@ def init(package_dir: str) -> None:
     if os.path.isdir(tui_dir):
         _watch_dirs.append(tui_dir)
 
-    # Seed initial mtimes
-    _scan_mtimes()
     _scan_excluded_hashes()
 
-
-def _iter_watched_files() -> Iterator[tuple[str, str]]:
-    """Yield (abs_path, rel_path) for all watched Python files after exclusion filters."""
-    root = Path(_watch_dirs[0]) if _watch_dirs else None
-    for d in _watch_dirs:
-        if not os.path.isdir(d):
-            continue
-        for fname in os.listdir(d):
-            if not fname.endswith(".py") or fname in _EXCLUDED_FILES:
-                continue
-            abs_path = os.path.join(d, fname)
-            rel_str = str(Path(abs_path).relative_to(root)).replace(os.sep, "/")
-            if rel_str in _EXCLUDED_MODULES:
-                continue
-            yield abs_path, rel_str
+    # Build reloadable path set from _RELOAD_ORDER
+    # e.g. "cc_dump.palette" → "palette.py", "cc_dump.tui.rendering" → "tui/rendering.py"
+    _reloadable_rel_paths.clear()
+    for mod_name in _RELOAD_ORDER:
+        # Strip "cc_dump." prefix, convert dots to slashes, add .py
+        rel = mod_name.removeprefix("cc_dump.").replace(".", "/") + ".py"
+        _reloadable_rel_paths.add(rel)
 
 
-def has_changes() -> bool:
-    """Check if any watched files have changed mtimes (without updating cache).
+def get_watch_paths() -> list[str]:
+    """Return directories to watch (set by init())."""
+    return list(_watch_dirs)
 
-    Cheap read-only scan — no module reloads, no side effects on _mtimes.
-    Use this for debounce detection; call check_and_get_reloaded() to actually reload.
+
+def is_reloadable(path: str) -> bool:
+    """True if path maps to a module in _RELOAD_ORDER.
+
+    Accepts absolute paths or relative paths. For absolute paths,
+    resolves against _watch_dirs[0] (the package root).
     """
-    for abs_path, _rel in _iter_watched_files():
+    if not _watch_dirs:
+        return False
+
+    root = Path(_watch_dirs[0])
+    p = Path(path)
+
+    # Convert absolute path to relative
+    if p.is_absolute():
         try:
-            mtime = os.path.getmtime(abs_path)
-            if abs_path not in _mtimes or _mtimes[abs_path] != mtime:
-                return True
-        except (FileNotFoundError, OSError):
-            pass
-    return False
+            rel = str(p.relative_to(root)).replace(os.sep, "/")
+        except ValueError:
+            return False
+    else:
+        rel = str(p).replace(os.sep, "/")
 
-
-def check() -> bool:
-    """Check for file changes and reload if necessary.
-
-    Returns:
-        True if any module was reloaded, False otherwise.
-    """
-    return bool(check_and_get_reloaded())
+    return rel in _reloadable_rel_paths
 
 
 def check_and_get_reloaded() -> list[str]:
-    """Check for file changes and reload if necessary.
+    """Reload all modules in dependency order.
+
+    Called after external file watcher detects changes.
 
     Returns:
         List of module names that were reloaded, empty if none.
     """
-    changed_files = _get_changed_files()
-    if not changed_files:
-        return []
-
-    # Log what changed
-    for path in changed_files:
-        print(f"[hot-reload] detected change: {path}", file=sys.stderr)
-
     # Reload all modules in dependency order — any file change triggers full reload
     to_reload = list(_RELOAD_ORDER)
 
@@ -181,40 +174,6 @@ def check_and_get_reloaded() -> list[str]:
         )
 
     return reloaded
-
-
-def _scan_mtimes() -> None:
-    """Populate mtime cache with current file modification times."""
-    for abs_path, _rel in _iter_watched_files():
-        try:
-            _mtimes[abs_path] = os.path.getmtime(abs_path)
-        except FileNotFoundError:
-            pass  # File deleted between listdir and getmtime
-        except OSError as e:
-            sys.stderr.write(f"[hot-reload] cannot stat {abs_path}: {e}\n")
-            sys.stderr.flush()
-
-
-def _get_changed_files() -> set[str]:
-    """Return set of files with changed mtimes since last check.
-
-    Returns:
-        Set of absolute file paths that have changed.
-    """
-    changed = set()
-    for abs_path, _rel in _iter_watched_files():
-        try:
-            mtime = os.path.getmtime(abs_path)
-            if abs_path not in _mtimes or _mtimes[abs_path] != mtime:
-                changed.add(abs_path)
-            _mtimes[abs_path] = mtime
-        except FileNotFoundError:
-            pass  # File deleted between listdir and getmtime
-        except OSError as e:
-            sys.stderr.write(f"[hot-reload] cannot stat {abs_path}: {e}\n")
-            sys.stderr.flush()
-
-    return changed
 
 
 def _iter_excluded_files() -> Iterator[tuple[str, str]]:

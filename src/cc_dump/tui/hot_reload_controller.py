@@ -2,7 +2,7 @@
 
 // [LAW:one-way-deps] Depends on hot_reload, rendering, widget_factory, search. No upward deps.
 // [LAW:locality-or-seam] All reload logic here — app.py keeps thin delegates.
-// [LAW:single-enforcer] Debounce enforced here — callers just call check_hot_reload().
+// [LAW:single-enforcer] Debounce enforced via EventStream — callers just call start_file_watcher().
 
 Not hot-reloadable (mutates app widget tree).
 """
@@ -27,24 +27,23 @@ from cc_dump.tui.category_config import CATEGORY_CONFIG
 
 from cc_dump.tui.panel_registry import PANEL_REGISTRY
 
+from snarfx import EventStream
+
 _DEBOUNCE_S = 2.0  # Quiet period before reload fires
 
+_watcher_stream: EventStream | None = None
 
-async def check_hot_reload(app) -> None:
-    """Check for file changes; debounce before reloading.
 
-    Uses has_changes() (cheap mtime scan, no side effects) to detect changes.
-    On detection, resets a debounce timer. The actual reload only fires once
-    no new changes arrive for _DEBOUNCE_S seconds.
-    """
-    try:
-        changed = cc_dump.hot_reload.has_changes()
-    except Exception as e:
-        app.notify(f"[hot-reload] error checking: {e}", severity="error")
-        app._app_log("ERROR", f"Hot-reload error checking: {e}")
-        return
+def _has_reloadable_changes(changes) -> bool:
+    """True if any changed file is a reloadable module."""
+    for _change_type, path in changes:
+        if cc_dump.hot_reload.is_reloadable(path):
+            return True
+    return False
 
-    # Check excluded files for staleness on every tick (cheap mtime scan)
+
+def _update_staleness(app) -> None:
+    """Sync excluded-file staleness state to view store."""
     stale = cc_dump.hot_reload.get_stale_excluded()
     store = app._view_store
     old_stale = list(store.stale_files)
@@ -53,24 +52,46 @@ async def check_hot_reload(app) -> None:
         if stale:
             store.stale_files.extend(stale)
 
-    if not changed:
+
+async def start_file_watcher(app) -> None:
+    """Start OS-native file watcher. No-op if watchfiles unavailable.
+
+    Wires two streams from the same source:
+    1. reloadable changes → debounce → reload + replace widgets
+    2. all changes → update staleness state (immediate, no debounce)
+    """
+    global _watcher_stream
+
+    try:
+        import watchfiles
+    except ImportError:
+        app._app_log("INFO", "watchfiles not installed — hot-reload disabled")
         return
 
-    # Cancel existing debounce timer if any
-    timer = getattr(app, "_reload_debounce_timer", None)
-    if timer is not None:
-        timer.stop()
+    paths = cc_dump.hot_reload.get_watch_paths()
+    if not paths:
+        return
 
-    # Schedule reload after quiet period
-    app._reload_debounce_timer = app.set_timer(
-        _DEBOUNCE_S, lambda: app.call_later(_do_hot_reload, app)
-    )
+    stream: EventStream = EventStream()
+    _watcher_stream = stream
+
+    # Wire: reloadable file events → debounce → reload + replace widgets
+    stream.filter(_has_reloadable_changes) \
+          .debounce(_DEBOUNCE_S) \
+          .subscribe(lambda _: app.call_later(_do_hot_reload, app))
+
+    # Wire: all events → update staleness state (immediate, no debounce)
+    stream.subscribe(lambda _: app.call_from_thread(_update_staleness, app))
+
+    app._app_log("INFO", f"File watcher started on {len(paths)} path(s)")
+
+    # Consume watchfiles async iterator — runs forever until app exits
+    async for changes in watchfiles.awatch(*paths):
+        stream.emit(changes)
 
 
 async def _do_hot_reload(app) -> None:
     """Execute the actual reload after debounce settles."""
-    app._reload_debounce_timer = None
-
     try:
         reloaded_modules = cc_dump.hot_reload.check_and_get_reloaded()
     except Exception as e:

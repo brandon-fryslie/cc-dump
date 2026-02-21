@@ -36,7 +36,7 @@ import cc_dump.tui.info_panel
 import cc_dump.tui.custom_footer
 import cc_dump.tui.session_panel
 
-# Extracted controller modules (not hot-reloadable, safe for `from` imports)
+# Extracted controller modules (module-object imports — safe for hot-reload)
 from cc_dump.tui import action_handlers as _actions
 from cc_dump.tui.panel_registry import PANEL_REGISTRY, PANEL_ORDER, PANEL_CSS_IDS
 from cc_dump.tui import search_controller as _search
@@ -344,6 +344,9 @@ class CcDumpApp(App):
 
         self.run_worker(self._drain_events, thread=True, exclusive=False)
 
+        # Hot-reload file watcher (requires watchfiles dev dep)
+        self.run_worker(self._start_file_watcher)
+
         # Set initial panel visibility — cycle panels via active_panel
         self._sync_panel_display(self.active_panel)
         logs = self._get_logs()
@@ -583,8 +586,8 @@ class CcDumpApp(App):
     # Textual requires action_* and watch_* as methods on the App class.
 
     # Hot-reload
-    async def _check_hot_reload(self):
-        await _hot_reload.check_hot_reload(self)
+    async def _start_file_watcher(self):
+        await _hot_reload.start_file_watcher(self)
 
     # Theme
     def _apply_markdown_theme(self):
