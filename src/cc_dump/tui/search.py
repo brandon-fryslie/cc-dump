@@ -154,11 +154,11 @@ _TEXT_EXTRACTORS: dict[str, Callable] = {
         f"{k}: {v}" for k, v in b.headers.items()
     ),
     "MetadataBlock": lambda b: f"model: {b.model} max_tokens: {b.max_tokens}",
-    "SystemLabelBlock": lambda b: "SYSTEM:",
+    "SystemSection": lambda b: "SYSTEM",
     "TrackedContentBlock": lambda b: (
         b.content if b.status == "new" else b.new_content if b.status == "changed" else ""
     ),
-    "RoleBlock": lambda b: b.role,
+    "MessageBlock": lambda b: f"{b.role} {b.msg_index}",
     "TextContentBlock": lambda b: b.content,
     "ToolUseBlock": lambda b: f"{b.name} {b.detail}",
     "ToolResultBlock": lambda b: f"{b.tool_name} {b.detail}",

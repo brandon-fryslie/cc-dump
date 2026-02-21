@@ -39,9 +39,6 @@ def write_block_text(f, block, block_idx: int, log_fn=None) -> None:
         if block.tool_count:
             f.write(f"  Tool count: {block.tool_count}\n")
 
-    elif isinstance(block, cc_dump.formatting.SystemLabelBlock):
-        f.write("  SYSTEM:\n")
-
     elif isinstance(block, cc_dump.formatting.TrackedContentBlock):
         f.write(f"  Status: {block.status}\n")
         if block.tag_id:
@@ -52,11 +49,6 @@ def write_block_text(f, block, block_idx: int, log_fn=None) -> None:
             f.write(f"  Old: {block.old_content}\n")
         if block.new_content:
             f.write(f"  New: {block.new_content}\n")
-
-    elif isinstance(block, cc_dump.formatting.RoleBlock):
-        f.write(f"  Role: {block.role}\n")
-        if block.timestamp:
-            f.write(f"  Timestamp: {block.timestamp}\n")
 
     elif isinstance(block, cc_dump.formatting.TextContentBlock):
         if block.content:

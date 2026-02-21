@@ -17,12 +17,10 @@ from cc_dump.formatting import (
     NewlineBlock,
     ProxyErrorBlock,
     ResponseMetadataSection,
-    RoleBlock,
     SeparatorBlock,
     StopReasonBlock,
     StreamInfoBlock,
     StreamToolUseBlock,
-    SystemLabelBlock,
     SystemSection,
     TextContentBlock,
     TextDeltaBlock,
@@ -772,8 +770,8 @@ def test_block_types_can_be_instantiated():
     assert isinstance(HeaderBlock(label="TEST"), FormattedBlock)
     assert isinstance(HttpHeadersBlock(headers={"key": "value"}), FormattedBlock)
     assert isinstance(MetadataBlock(model="claude"), FormattedBlock)
-    assert isinstance(SystemLabelBlock(), FormattedBlock)
-    assert isinstance(RoleBlock(role="user"), FormattedBlock)
+    assert isinstance(SystemSection(children=[]), FormattedBlock)
+    assert isinstance(MessageBlock(role="user", msg_index=0, children=[]), FormattedBlock)
     assert isinstance(TextContentBlock(content="Hello"), FormattedBlock)
     assert isinstance(ToolUseBlock(name="tool"), FormattedBlock)
     assert isinstance(ToolResultBlock(size=100), FormattedBlock)

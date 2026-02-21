@@ -18,9 +18,9 @@ from cc_dump.formatting import (
     HeaderBlock,
     HttpHeadersBlock,
     MetadataBlock,
-    SystemLabelBlock,
+    SystemSection,
     TrackedContentBlock,
-    RoleBlock,
+    MessageBlock,
     TextContentBlock,
     ToolUseBlock,
     ToolResultBlock,
@@ -67,9 +67,9 @@ SEARCHABLE_TEXT_CASES = [
         id="metadata",
     ),
     pytest.param(
-        SystemLabelBlock(),
-        ["SYSTEM:"],
-        id="system_label",
+        SystemSection(children=[]),
+        ["SYSTEM"],
+        id="system_section",
     ),
     pytest.param(
         TrackedContentBlock(status="new", content="hello world"),
@@ -87,9 +87,9 @@ SEARCHABLE_TEXT_CASES = [
         id="tracked_content_ref",
     ),
     pytest.param(
-        RoleBlock(role="assistant"),
-        ["assistant"],
-        id="role",
+        MessageBlock(role="assistant", msg_index=3, children=[]),
+        ["assistant", "3"],
+        id="message",
     ),
     pytest.param(
         TextContentBlock(content="Hello, how can I help?"),

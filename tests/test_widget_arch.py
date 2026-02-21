@@ -20,10 +20,10 @@ from cc_dump.formatting import (
     SeparatorBlock,
     HeaderBlock,
     MetadataBlock,
+    MessageBlock,
     TurnBudgetBlock,
-    SystemLabelBlock,
+    SystemSection,
     TrackedContentBlock,
-    RoleBlock,
     TextContentBlock,
     ToolUseBlock,
     ToolResultBlock,
@@ -76,7 +76,7 @@ class TestBlockCategoryCompleteness:
         assert BLOCK_CATEGORY["HttpHeadersBlock"] == Category.METADATA
         assert BLOCK_CATEGORY["MetadataBlock"] == Category.METADATA
         assert BLOCK_CATEGORY["TurnBudgetBlock"] == Category.METADATA
-        assert BLOCK_CATEGORY["SystemLabelBlock"] == Category.SYSTEM
+        assert BLOCK_CATEGORY["SystemSection"] == Category.SYSTEM
         assert BLOCK_CATEGORY["TrackedContentBlock"] == Category.SYSTEM
         assert BLOCK_CATEGORY["ToolUseBlock"] == Category.TOOLS
         assert BLOCK_CATEGORY["ToolResultBlock"] == Category.TOOLS
@@ -86,7 +86,7 @@ class TestBlockCategoryCompleteness:
         assert BLOCK_CATEGORY["StopReasonBlock"] == Category.METADATA
 
         # Context-dependent blocks (use block.category field)
-        assert BLOCK_CATEGORY["RoleBlock"] is None
+        assert BLOCK_CATEGORY["MessageBlock"] is None
         assert BLOCK_CATEGORY["TextContentBlock"] is None
         assert BLOCK_CATEGORY["TextDeltaBlock"] is None
         assert BLOCK_CATEGORY["ImageBlock"] is None
@@ -493,14 +493,14 @@ class TestScrollPreservation:
         from cc_dump.tui.rendering import set_theme
         from textual.theme import BUILTIN_THEMES
 
-        # Initialize theme for SystemLabelBlock rendering
+        # Initialize theme for SystemSection rendering
         set_theme(BUILTIN_THEMES["textual-dark"])
 
         console = Console()
         turns_blocks = [
             [TextContentBlock(content="Turn 0", indent="")],
             [
-                SystemLabelBlock(),
+                SystemSection(children=[]),
                 TrackedContentBlock(status="new", tag_id="sys", color_idx=0, content="System"),
             ],
             [
@@ -610,7 +610,7 @@ class TestScrollPreservation:
         from cc_dump.tui.rendering import set_theme
         from textual.theme import BUILTIN_THEMES
 
-        # Initialize theme for SystemLabelBlock rendering
+        # Initialize theme for SystemSection rendering
         set_theme(BUILTIN_THEMES["textual-dark"])
 
         console = Console()
@@ -619,7 +619,7 @@ class TestScrollPreservation:
         # Turn 2: always visible text
         turns_blocks = [
             [TextContentBlock(content="Turn 0 visible", indent="")],
-            [SystemLabelBlock(),
+            [SystemSection(children=[]),
              TrackedContentBlock(status="new", tag_id="sys", color_idx=0, content="System only")],
             [TextContentBlock(content="Turn 2 visible", indent="")],
         ]
@@ -658,7 +658,7 @@ class TestWidestStripCache:
     def test_widest_strip_nonzero_for_existence_level(self):
         """_widest_strip is zero when blocks are hidden at EXISTENCE level."""
         from rich.console import Console
-        blocks = [SystemLabelBlock()]
+        blocks = [SystemSection(children=[])]
         console = Console()
         td = TurnData(turn_index=0, blocks=blocks, strips=[])
         td.compute_relevant_keys()

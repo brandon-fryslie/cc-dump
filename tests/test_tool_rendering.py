@@ -4,7 +4,7 @@ import pytest
 
 from cc_dump.formatting import (
     ToolUseBlock, ToolResultBlock, ToolUseSummaryBlock, TextContentBlock,
-    RoleBlock, NewlineBlock, VisState, HIDDEN, ALWAYS_VISIBLE,
+    MessageBlock, NewlineBlock, VisState, HIDDEN, ALWAYS_VISIBLE,
 )
 from cc_dump.tui.rendering import (
     _render_tool_use_oneliner, _render_tool_use_full, _render_tool_result_full,
@@ -369,7 +369,7 @@ class TestRenderTurnToStripsToolSummary:
         from rich.console import Console
 
         blocks = [
-            RoleBlock(role="assistant", msg_index=0),
+            MessageBlock(role="assistant", msg_index=0, children=[]),
             ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
             ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
             ToolUseBlock(name="Bash", input_size=150, msg_color_idx=2),

@@ -50,7 +50,7 @@ class TestRenderBlockFunction:
     def test_render_block_handles_all_block_types(self):
         from cc_dump.tui.rendering import render_block
         from cc_dump.formatting import (
-            SeparatorBlock, HeaderBlock, MetadataBlock, RoleBlock,
+            SeparatorBlock, HeaderBlock, MetadataBlock, MessageBlock,
             TextContentBlock, NewlineBlock
         )
 
@@ -58,7 +58,7 @@ class TestRenderBlockFunction:
             SeparatorBlock(),
             HeaderBlock(label="TEST", header_type="request"),
             MetadataBlock(model="test-model", max_tokens="100"),
-            RoleBlock(role="user"),
+            MessageBlock(role="user", msg_index=0, children=[]),
             TextContentBlock(content="Test text"),
             NewlineBlock(),
         ]

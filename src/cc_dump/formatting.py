@@ -251,13 +251,6 @@ class NewSessionBlock(FormattedBlock):
 
 
 @dataclass
-class SystemLabelBlock(FormattedBlock):
-    """The 'SYSTEM:' label."""
-
-    pass
-
-
-@dataclass
 class TrackedContentBlock(FormattedBlock):
     """Result of content tracking (new/ref/changed)."""
 
@@ -268,15 +261,6 @@ class TrackedContentBlock(FormattedBlock):
     old_content: str = ""
     new_content: str = ""
     indent: str = "    "
-
-
-@dataclass
-class RoleBlock(FormattedBlock):
-    """A message role header (USER, ASSISTANT, SYSTEM)."""
-
-    role: str = ""
-    msg_index: int = 0
-    timestamp: str = ""
 
 
 @dataclass

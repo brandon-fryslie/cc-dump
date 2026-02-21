@@ -32,9 +32,7 @@ from cc_dump.formatting import (
     HttpHeadersBlock,
     MetadataBlock,
     NewSessionBlock,
-    SystemLabelBlock,
     TrackedContentBlock,
-    RoleBlock,
     TextContentBlock,
     ToolUseBlock,
     ToolResultBlock,
@@ -328,7 +326,6 @@ BLOCK_CATEGORY: dict[str, Category | None] = {
     "MetadataBlock": Category.METADATA,
     "NewSessionBlock": Category.METADATA,
     "TurnBudgetBlock": Category.METADATA,
-    "SystemLabelBlock": Category.SYSTEM,
     "TrackedContentBlock": Category.SYSTEM,
     "ToolUseBlock": Category.TOOLS,
     "ToolResultBlock": Category.TOOLS,
@@ -349,7 +346,6 @@ BLOCK_CATEGORY: dict[str, Category | None] = {
     "AgentDefChild": Category.TOOLS,
     "ResponseMetadataSection": Category.METADATA,
     # Context-dependent (use block.category field):
-    "RoleBlock": None,
     "TextContentBlock": None,
     "TextDeltaBlock": None,
     "ImageBlock": None,
@@ -638,11 +634,6 @@ def _render_new_session(block: NewSessionBlock) -> Text | None:
     return t
 
 
-def _render_system_label(block: SystemLabelBlock) -> Text | None:
-    tc = get_theme_colors()
-    return Text("SYSTEM:", style=f"bold {tc.system}")
-
-
 def _render_tracked_new(
     block: TrackedContentBlock, tag_style: str
 ) -> ConsoleRenderable:
@@ -710,16 +701,6 @@ def _render_tracked_content_full(
     if not block.content:
         return None
     return _render_text_as_markdown(block.content)
-
-
-def _render_role(block: RoleBlock) -> Text | None:
-    role_lower = block.role.lower()
-    style = ROLE_STYLES.get(role_lower, "bold magenta")
-    label = block.role.upper().replace("_", " ")
-    t = Text(label, style=style)
-    if block.timestamp:
-        t.append(f"  {block.timestamp}", style="dim")
-    return t
 
 
 def _get_or_segment(block):
@@ -1744,9 +1725,7 @@ BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], ConsoleRenderable | None]]
     "MetadataBlock": _render_metadata,
     "NewSessionBlock": _render_new_session,
     "TurnBudgetBlock": _render_turn_budget,
-    "SystemLabelBlock": _render_system_label,
     "TrackedContentBlock": _render_tracked_content_full,
-    "RoleBlock": _render_role,
     "TextContentBlock": _render_text_content,
     "ToolUseBlock": _render_tool_use_full,
     "ToolResultBlock": _render_tool_result_full,

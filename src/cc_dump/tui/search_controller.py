@@ -342,9 +342,9 @@ def navigate_to_current(app) -> None:
         else:
             break
 
-    # Nearest preceding RoleBlock for role context
+    # Nearest preceding MessageBlock for role context
     for i in range(match.block_index - 1, -1, -1):
-        if type(td.blocks[i]).__name__ == "RoleBlock":
+        if type(td.blocks[i]).__name__ == "MessageBlock":
             force_indices.add(i)
             break
 
