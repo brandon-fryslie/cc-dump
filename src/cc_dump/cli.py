@@ -4,6 +4,7 @@ import argparse
 import http.server
 import os
 import queue
+import signal
 import sys
 import threading
 from datetime import datetime
@@ -297,3 +298,17 @@ def main():
         router.stop()
         if har_recorder:
             har_recorder.close()
+
+        # Print restart command — unstoppable (mask SIGINT so Ctrl+C can't suppress it)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        replay_path = (
+            record_path if record_path and os.path.exists(record_path)
+            else args.replay if args.replay and os.path.exists(args.replay)
+            else None
+        )
+        cmd = f"{sys.argv[0]} --port {actual_port}"
+        if replay_path:
+            cmd += f" --replay {replay_path}"
+        print(f"\n   To resume:\n   {cmd}", file=sys.stderr)
+        sys.stderr.flush()
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
