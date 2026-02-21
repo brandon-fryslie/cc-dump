@@ -349,7 +349,7 @@ class CcDumpApp(App):
             self._app_log("INFO", "Forward proxy mode (dynamic targets)")
             self._app_log(
                 "INFO",
-                f"Usage: HTTP_PROXY=http://{self._host}:{self._port} ANTHROPIC_BASE_URL=http://api.minimax.com claude",
+                f"Usage: HTTP_PROXY=http://{self._host}:{self._port} ANTHROPIC_BASE_URL=https://api.anthropic.com claude",
             )
 
         self.run_worker(self._drain_events, thread=True, exclusive=False)

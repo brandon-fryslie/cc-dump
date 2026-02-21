@@ -135,7 +135,7 @@ def main():
     else:
         print("   Forward proxy mode (dynamic targets)")
         print(
-            f"   Usage: HTTP_PROXY=http://{args.host}:{actual_port} ANTHROPIC_BASE_URL=http://api.minimax.com claude"
+            f"   Usage: HTTP_PROXY=http://{args.host}:{actual_port} ANTHROPIC_BASE_URL=https://api.anthropic.com claude"
         )
 
     # State dict for content tracking (used by formatting layer)
