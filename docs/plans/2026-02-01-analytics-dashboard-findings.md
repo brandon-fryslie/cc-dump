@@ -98,19 +98,17 @@ Decision notes:
 
 ### Decision 3: Replace or Augment Panels?
 
-**Option A - Replace all three**
-- Remove Stats, Economics, Timeline
-- Single Analytics dashboard
+**Decision: Option C (incremental migration).**
 
-**Option B - Add alongside**
-- Keep existing panels
-- Add new Analytics dashboard
-- Let user choose
+Policy:
+- Phase 1: Add Analytics panel alongside existing panels.
+- Phase 2: Keep legacy panels available as fallback while validating parity/UX.
+- Phase 3: Remove or merge legacy panels only after Analytics demonstrates coverage.
 
-**Option C - Incremental migration**
-- Phase 1: Add Analytics with real data only (cache, input/output, time)
-- Phase 2: Deprecate Economics (fake byte estimates)
-- Phase 3: Merge Stats + Timeline into Analytics
+Rationale:
+- Minimizes UX regression risk while delivering the new dashboard.
+- Preserves operator familiarity and rollback path during rollout.
+- Keeps architecture moving toward one analytics surface without big-bang replacement.
 
 ## What We Can Build Now (No Blockers)
 

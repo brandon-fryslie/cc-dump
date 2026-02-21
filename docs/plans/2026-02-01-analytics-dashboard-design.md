@@ -5,6 +5,8 @@
 
 > Update (2026-02-21): Content-type token breakdown is deferred from v1 per
 > `/Users/bmf/code/cc-dump/docs/plans/2026-02-21-content-type-breakdown-decision.md`.
+> Update (2026-02-21): Panel rollout follows incremental migration per
+> `/Users/bmf/code/cc-dump/docs/plans/2026-02-21-analytics-panel-migration-decision.md`.
 
 ## Problem
 
