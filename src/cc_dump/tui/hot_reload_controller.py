@@ -24,6 +24,7 @@ import cc_dump.tui.side_channel_panel
 import cc_dump.tui.search_controller
 import cc_dump.tui.theme_controller
 import cc_dump.tui.view_store_bridge
+import cc_dump.tui.protocols
 from cc_dump.tui.category_config import CATEGORY_CONFIG
 
 from cc_dump.tui.panel_registry import PANEL_REGISTRY
@@ -251,21 +252,25 @@ async def _replace_all_widgets_inner(app) -> None:
 
     # 2. Create ALL new widgets (without IDs yet — set after mounting).
     new_conv = cc_dump.tui.widget_factory.create_conversation_view(view_store=app._view_store, domain_store=app._domain_store)
-    new_conv.restore_state(conv_state)
+    _validate_and_restore_widget_state(new_conv, conv_state, widget_name="ConversationView")
 
     # [LAW:one-source-of-truth] Create cycling panels from registry
     new_panels = {}
     for spec in PANEL_REGISTRY:
         factory = _resolve_factory(spec.factory)
         widget = factory()
-        widget.restore_state(panel_states[spec.name])
+        _validate_and_restore_widget_state(
+            widget,
+            panel_states[spec.name],
+            widget_name=f"Panel:{spec.name}",
+        )
         new_panels[spec.name] = widget
 
     new_logs = cc_dump.tui.widget_factory.create_logs_panel()
-    new_logs.restore_state(logs_state)
+    _validate_and_restore_widget_state(new_logs, logs_state, widget_name="LogsPanel")
 
     new_info = cc_dump.tui.info_panel.create_info_panel()
-    new_info.restore_state(info_state)
+    _validate_and_restore_widget_state(new_info, info_state, widget_name="InfoPanel")
 
     # Remove keys panel if mounted (stateless, no state transfer needed)
     for panel in app.screen.query(cc_dump.tui.keys_panel.KeysPanel):
@@ -334,3 +339,18 @@ async def _replace_all_widgets_inner(app) -> None:
 
     # 5. Re-render with current filters
     new_conv.rerender(app.active_filters)
+
+
+def _validate_and_restore_widget_state(widget, state: dict, *, widget_name: str) -> None:
+    """Validate hot-swap protocol, then restore widget state.
+
+    // [LAW:single-enforcer] One boundary validates hot-swap protocol adherence.
+    // [LAW:one-source-of-truth] Protocol contract enforced by validate_widget_protocol().
+    """
+    try:
+        cc_dump.tui.protocols.validate_widget_protocol(widget)
+    except TypeError as exc:
+        raise TypeError(
+            f"Hot-reload widget protocol validation failed for {widget_name}: {exc}"
+        ) from exc
+    widget.restore_state(state)

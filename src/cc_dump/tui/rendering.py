@@ -36,7 +36,6 @@ from cc_dump.formatting import (
     TrackedContentBlock,
     RoleBlock,
     TextContentBlock,
-    ToolDefinitionsBlock,
     ToolUseBlock,
     ToolResultBlock,
     ToolUseSummaryBlock,
@@ -331,7 +330,6 @@ BLOCK_CATEGORY: dict[str, Category | None] = {
     "TurnBudgetBlock": Category.METADATA,
     "SystemLabelBlock": Category.SYSTEM,
     "TrackedContentBlock": Category.SYSTEM,
-    "ToolDefinitionsBlock": Category.TOOLS,
     "ToolUseBlock": Category.TOOLS,
     "ToolResultBlock": Category.TOOLS,
     "ToolUseSummaryBlock": Category.TOOLS,
@@ -1182,130 +1180,44 @@ def _render_tool_use_full_with_desc(block: ToolUseBlock) -> ConsoleRenderable | 
     return Group(base, desc_text)
 
 
-# ─── ToolDefinitionsBlock renderers ────────────────────────────────────────────
+# ─── ToolDefBlock renderers ───────────────────────────────────────────────────
 
 
-def _render_tool_defs_summary_collapsed(block: ToolDefinitionsBlock) -> Text | None:
-    """SUMMARY collapsed: one-line count + token total."""
+def _render_tool_def_header(name: str, tokens: int) -> Text:
+    """Render aligned tool name + token count header."""
     t = Text("  ")
-    t.append(
-        "{} tool{} / {} tokens".format(
-            len(block.tools),
-            "" if len(block.tools) == 1 else "s",
-            _fmt_tokens(block.total_tokens),
-        ),
-        style="dim",
-    )
+    t.append(f"{name:<18}", style="bold")
+    if tokens > 0:
+        t.append(f"{_fmt_tokens(tokens)} tokens", style="dim")
     return t
 
 
-def _render_tool_defs_summary_expanded(block: ToolDefinitionsBlock) -> Text | None:
-    """SUMMARY expanded: two-column list of tool name + token count."""
-    tc = get_theme_colors()
-    t = Text("  ")
-    t.append(
-        "Tools ({} / {} tokens):".format(len(block.tools), _fmt_tokens(block.total_tokens)),
-        style=f"bold {tc.info}",
-    )
-    # Find max name length for alignment
-    names = [tool.get("name", "?") for tool in block.tools]
-    max_name = max((len(n) for n in names), default=0)
-    for i, tool in enumerate(block.tools):
-        name = tool.get("name", "?")
-        tokens = block.tool_tokens[i] if i < len(block.tool_tokens) else 0
-        t.append("\n    ")
-        t.append("{:<{}}".format(name, max_name + 2))
-        t.append("{} tokens".format(_fmt_tokens(tokens)), style="dim")
-    return t
+def _render_tool_def_summary_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
+    """SUMMARY collapsed: aligned name + token count."""
+    name = getattr(block, "name", "")
+    tokens = getattr(block, "token_estimate", 0)
+    return _render_tool_def_header(name, tokens)
 
 
-def _render_tool_defs_full_collapsed(block: ToolDefinitionsBlock) -> Text | None:
-    """FULL collapsed: comma-separated tool names."""
-    names = [tool.get("name", "?") for tool in block.tools]
-    preview = ", ".join(names)
-    if len(preview) > 100:
-        preview = preview[:97] + "..."
-    t = Text("  ")
-    t.append("Tools: ", style="bold")
-    t.append(preview, style="dim")
-    return t
+def _render_tool_def_summary_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
+    """SUMMARY expanded: header + one-line description preview."""
+    header = _render_tool_def_summary_collapsed(block)
+    if header is None:
+        return None
+    description = getattr(block, "description", "")
+    if not description:
+        return header
+    first_line = description.split("\n", 1)[0]
+    if len(first_line) > 80:
+        first_line = first_line[:77] + "..."
+    preview = Text("    ")
+    preview.append(first_line, style="dim italic")
+    return Group(header, preview)
 
 
-def _render_tool_def_region_parts(
-    block: ToolDefinitionsBlock, overrides=None,
-) -> list[tuple[ConsoleRenderable, int | None]]:
-    """FULL expanded: per-tool region parts with expand/collapse arrows.
-
-    Returns (renderable, region_index) tuples for the region rendering pipeline.
-    // [LAW:dataflow-not-control-flow] content_regions controls the data;
-    // region.expanded=None means expanded (default True), False means collapsed.
-    """
-    tc = get_theme_colors()
-    parts: list[tuple[ConsoleRenderable, int | None]] = []
-
-    # Header (non-region)
-    header = Text("  ")
-    header.append(
-        "Tools: {} definitions ({} tokens)".format(
-            len(block.tools), _fmt_tokens(block.total_tokens)
-        ),
-        style=f"bold {tc.info}",
-    )
-    parts.append((header, None))
-
-    # // [LAW:one-source-of-truth] Region expanded state from overrides only
-    region_expanded = {}
-    for r in block.content_regions:
-        exp = None
-        if overrides is not None:
-            rvs = overrides._regions.get((block.block_id, r.index))
-            if rvs is not None:
-                exp = rvs.expanded
-        region_expanded[r.index] = exp
-
-    for i, tool in enumerate(block.tools):
-        name = tool.get("name", "?")
-        tokens = block.tool_tokens[i] if i < len(block.tool_tokens) else 0
-        desc = tool.get("description", "")
-        is_expanded = region_expanded.get(i, None) is not False
-
-        if is_expanded:
-            # Expanded: arrow + name + full description + params
-            t = Text("    ")
-            t.append("\u25bd ", style=f"bold {tc.info}")  # ▽
-            t.append(name, style="bold")
-            t.append(" ({} tokens)".format(_fmt_tokens(tokens)), style="dim")
-            if desc:
-                t.append(":\n      ")
-                t.append(desc, style="dim italic")
-            # Show required params from input_schema
-            schema = tool.get("input_schema", {})
-            properties = schema.get("properties", {})
-            required = set(schema.get("required", []))
-            if properties:
-                for pname, pinfo in properties.items():
-                    ptype = pinfo.get("type", "")
-                    req_marker = "*" if pname in required else ""
-                    t.append("\n      ")
-                    t.append("{}{}".format(pname, req_marker), style="bold dim")
-                    if ptype:
-                        t.append(": {}".format(ptype), style="dim")
-            parts.append((t, i))
-        else:
-            # Collapsed: arrow + name + first line of desc
-            t = Text("    ")
-            t.append("\u25b7 ", style=f"bold {tc.info}")  # ▷
-            t.append(name, style="bold")
-            t.append(" ({} tokens)".format(_fmt_tokens(tokens)), style="dim")
-            if desc:
-                first_line = desc.split("\n", 1)[0]
-                if len(first_line) > 80:
-                    first_line = first_line[:77] + "..."
-                t.append(": ", style="dim")
-                t.append(first_line, style="dim italic")
-            parts.append((t, i))
-
-    return parts
+def _render_tool_def_full_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
+    """FULL collapsed: same compact header as summary collapsed."""
+    return _render_tool_def_summary_collapsed(block)
 
 
 # ─── ToolResultBlock renderers ─────────────────────────────────────────────────
@@ -1744,14 +1656,52 @@ def _render_tool_defs_section(block: FormattedBlock) -> ConsoleRenderable | None
 
 
 def _render_tool_def(block: FormattedBlock) -> ConsoleRenderable | None:
-    """Render individual tool definition."""
+    """Render individual tool definition with schema details."""
     name = getattr(block, "name", "")
     tokens = getattr(block, "token_estimate", 0)
-    t = Text()
-    t.append(name, style="bold")
-    if tokens:
-        t.append(f" ({_fmt_tokens(tokens)} tokens)", style="dim")
-    return t
+    description = getattr(block, "description", "")
+    input_schema = getattr(block, "input_schema", {})
+
+    header = _render_tool_def_header(name, tokens)
+    lines: list[ConsoleRenderable] = [header]
+
+    if description:
+        desc = Text("    ")
+        desc.append(description, style="dim italic")
+        lines.append(desc)
+
+    properties = {}
+    if isinstance(input_schema, dict):
+        raw_properties = input_schema.get("properties", {})
+        properties = raw_properties if isinstance(raw_properties, dict) else {}
+        raw_required = input_schema.get("required", [])
+        required = {
+            item
+            for item in raw_required
+            if isinstance(item, str)
+        } if isinstance(raw_required, list) else set()
+    else:
+        required = set()
+
+    if properties:
+        params = Text("    parameters:", style="dim")
+        lines.append(params)
+        for pname, pinfo in properties.items():
+            ptype = ""
+            if isinstance(pinfo, dict):
+                raw_type = pinfo.get("type", "")
+                if isinstance(raw_type, str):
+                    ptype = raw_type
+            req_marker = "*" if pname in required else ""
+            row = Text("      ")
+            row.append(f"{pname}{req_marker}", style="bold dim")
+            if ptype:
+                row.append(f": {ptype}", style="dim")
+            lines.append(row)
+
+    if len(lines) == 1:
+        return header
+    return Group(*lines)
 
 
 def _render_skill_def_child(block: FormattedBlock) -> ConsoleRenderable | None:
@@ -1798,7 +1748,6 @@ BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], ConsoleRenderable | None]]
     "TrackedContentBlock": _render_tracked_content_full,
     "RoleBlock": _render_role,
     "TextContentBlock": _render_text_content,
-    "ToolDefinitionsBlock": _render_tool_defs_summary_collapsed,
     "ToolUseBlock": _render_tool_use_full,
     "ToolResultBlock": _render_tool_result_full,
     "ToolUseSummaryBlock": _render_tool_use_summary,
@@ -1851,11 +1800,10 @@ BLOCK_STATE_RENDERERS: dict[
     ("ToolUseBlock", True, False, False): _render_tool_use_summary_collapsed,
     ("ToolUseBlock", True, False, True): _render_tool_use_summary_expanded,
     ("ToolUseBlock", True, True, True): _render_tool_use_full_with_desc,
-    # ToolDefinitionsBlock: 3 state-specific renderers (FULL expanded falls through to regions)
-    ("ToolDefinitionsBlock", True, False, False): _render_tool_defs_summary_collapsed,
-    ("ToolDefinitionsBlock", True, False, True): _render_tool_defs_summary_expanded,
-    ("ToolDefinitionsBlock", True, True, False): _render_tool_defs_full_collapsed,
-    # No entry for (True, True, True) → falls through to region rendering
+    # ToolDefBlock: custom compact summary/collapsed output, full-expanded via default renderer
+    ("ToolDefBlock", True, False, False): _render_tool_def_summary_collapsed,
+    ("ToolDefBlock", True, False, True): _render_tool_def_summary_expanded,
+    ("ToolDefBlock", True, True, False): _render_tool_def_full_collapsed,
     # ThinkingBlock: summary at both summary levels
     ("ThinkingBlock", True, False, False): _render_thinking_summary,
     ("ThinkingBlock", True, False, True): _render_thinking_summary,
@@ -2017,7 +1965,7 @@ def _add_gutter_to_strips(
 # // [LAW:dataflow-not-control-flow] Dispatch table for block-type-specific region renderers.
 # Blocks not in this table use the default _render_region_parts (XML-based).
 _REGION_PART_RENDERERS: dict[str, Callable] = {
-    "ToolDefinitionsBlock": _render_tool_def_region_parts,
+    # Intentionally empty for now: tool defs are represented by ToolDefBlock instances.
 }
 
 

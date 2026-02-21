@@ -76,3 +76,52 @@ class TestRenderBlockFunction:
         result = render_block(block)
         # Should return full rendering
         assert result is not None
+
+
+class TestToolDefRendering:
+    """Regression tests for ToolDefBlock rendering behavior."""
+
+    def _render_plain(self, renderable) -> str:
+        from io import StringIO
+        from rich.console import Console
+
+        buf = StringIO()
+        console = Console(file=buf, width=120, force_terminal=False, color_system=None)
+        console.print(renderable)
+        return buf.getvalue()
+
+    def test_tool_def_full_renderer_includes_schema_and_required_markers(self):
+        from cc_dump.tui.rendering import render_block
+        from cc_dump.formatting import ToolDefBlock
+
+        block = ToolDefBlock(
+            name="Read",
+            description="Read a file from disk",
+            token_estimate=123,
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string"},
+                    "offset": {"type": "integer"},
+                },
+                "required": ["file_path"],
+            },
+        )
+        text = self._render_plain(render_block(block))
+        assert "Read" in text
+        assert "123 tokens" in text
+        assert "parameters:" in text
+        assert "file_path*" in text
+        assert "offset" in text
+        assert "string" in text
+        assert "integer" in text
+
+    def test_tool_def_summary_renderer_shows_compact_header(self):
+        from cc_dump.tui.rendering import RENDERERS
+        from cc_dump.formatting import ToolDefBlock
+
+        block = ToolDefBlock(name="Bash", token_estimate=77)
+        renderer = RENDERERS[("ToolDefBlock", True, False, False)]
+        text = self._render_plain(renderer(block))
+        assert "Bash" in text
+        assert "77 tokens" in text

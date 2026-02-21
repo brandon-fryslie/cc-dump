@@ -24,7 +24,7 @@ from cc_dump.formatting import (
     SystemSection,
     TextContentBlock,
     TextDeltaBlock,
-    ToolDefinitionsBlock,
+    ToolDefBlock,
     ToolDefsSection,
     ToolResultBlock,
     ToolUseBlock,
@@ -1107,7 +1107,7 @@ class TestToolCorrelation:
         assert block2.detail == ""
 
 
-# ─── ToolDefinitionsBlock Tests ──────────────────────────────────────────────
+# ─── ToolDefsSection Tests ───────────────────────────────────────────────────
 
 
 def _make_body_with_tools(tools):
@@ -1197,16 +1197,17 @@ class TestToolDefinitionsBlock:
         assert fresh_state["tool_descriptions"]["Read"] == "Read a file from disk"
         assert fresh_state["tool_descriptions"]["Write"] == "Write content to a file"
 
-    def test_tool_definitions_block_instantiation(self):
-        """ToolDefinitionsBlock can be instantiated with expected fields."""
-        block = ToolDefinitionsBlock(
-            tools=[{"name": "Foo"}],
-            tool_tokens=[100],
-            total_tokens=100,
+    def test_tool_def_block_instantiation(self):
+        """ToolDefBlock can be instantiated with expected fields."""
+        block = ToolDefBlock(
+            name="Foo",
+            description="Does foo things",
+            input_schema={"type": "object"},
+            token_estimate=100,
         )
         assert isinstance(block, FormattedBlock)
-        assert len(block.tools) == 1
-        assert block.total_tokens == 100
+        assert block.name == "Foo"
+        assert block.token_estimate == 100
 
 
 class TestToolUseBlockDescription:

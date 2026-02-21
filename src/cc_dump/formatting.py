@@ -244,15 +244,6 @@ class MetadataBlock(FormattedBlock):
 
 
 @dataclass
-class ToolDefinitionsBlock(FormattedBlock):
-    """Tool definitions from the request body. Each tool is a collapsible sub-block."""
-
-    tools: list = field(default_factory=list)  # [{name, description, input_schema}, ...]
-    tool_tokens: list = field(default_factory=list)  # per-tool token estimates
-    total_tokens: int = 0  # sum of all tool token estimates
-
-
-@dataclass
 class NewSessionBlock(FormattedBlock):
     """Indicates a new Claude Code session started."""
 

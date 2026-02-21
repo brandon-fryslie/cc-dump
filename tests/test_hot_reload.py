@@ -212,6 +212,41 @@ class TestWidgetProtocolValidation:
             validate_widget_protocol(InvalidWidget())
 
 
+class TestHotReloadSwapValidation:
+    """Unit tests for hot-reload swap boundary protocol enforcement."""
+
+    def test_validate_and_restore_widget_state_accepts_valid_widget(self):
+        from cc_dump.tui.hot_reload_controller import _validate_and_restore_widget_state
+
+        class ValidWidget:
+            def __init__(self):
+                self.value = 0
+
+            def get_state(self):
+                return {"value": self.value}
+
+            def restore_state(self, state):
+                self.value = state.get("value", 0)
+
+        widget = ValidWidget()
+        _validate_and_restore_widget_state(widget, {"value": 7}, widget_name="ValidWidget")
+        assert widget.value == 7
+
+    def test_validate_and_restore_widget_state_rejects_invalid_widget(self):
+        from cc_dump.tui.hot_reload_controller import _validate_and_restore_widget_state
+
+        class InvalidWidget:
+            def get_state(self):
+                return {}
+
+        with pytest.raises(TypeError, match="Hot-reload widget protocol validation failed for BrokenWidget"):
+            _validate_and_restore_widget_state(
+                InvalidWidget(),
+                {},
+                widget_name="BrokenWidget",
+            )
+
+
 class TestWidgetStatePreservation:
     """Unit tests for widget state get/restore cycle."""
 
