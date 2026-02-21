@@ -14,6 +14,7 @@ from cc_dump.event_types import (
     ResponseSSEEvent,
     StopReason,
     TextDeltaEvent,
+    ToolUseBlockStartEvent,
     Usage,
 )
 from cc_dump.domain_store import DomainStore
@@ -104,6 +105,102 @@ def _req_body(session_id: str) -> dict:
 
 
 class TestEventHandlersRequestScopedStreaming:
+    def test_request_hint_keeps_main_out_of_subagent_lane(self):
+        main_session = "11111111-2222-3333-4444-555555555555"
+        sub_session = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        state = {
+            "positions": {},
+            "known_hashes": {},
+            "next_id": 0,
+            "next_color": 0,
+            "request_counter": 0,
+            "current_session": main_session,
+        }
+        app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
+        widgets = _mk_widgets(_FakeConv(), _FakeStats(), _FakeViewStore(), DomainStore())
+        log_fn = lambda *args, **kwargs: None
+
+        event_handlers.handle_request(
+            RequestBodyEvent(body=_req_body(sub_session), request_id="req-sub", seq=1, recv_ns=1),
+            state,
+            widgets,
+            app_state,
+            log_fn,
+        )
+        event_handlers.handle_request(
+            RequestBodyEvent(body=_req_body(main_session), request_id="req-main", seq=1, recv_ns=2),
+            state,
+            widgets,
+            app_state,
+            log_fn,
+        )
+
+        reg = app_state["stream_registry"]
+        sub_ctx = reg.get("req-sub")
+        main_ctx = reg.get("req-main")
+        assert sub_ctx is not None
+        assert main_ctx is not None
+        assert sub_ctx.agent_kind == "subagent"
+        assert main_ctx.agent_kind == "main"
+
+    def test_task_tool_use_event_promotes_main_lane(self):
+        state = {
+            "positions": {},
+            "known_hashes": {},
+            "next_id": 0,
+            "next_color": 0,
+            "request_counter": 0,
+            "current_session": None,
+        }
+        app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
+        widgets = _mk_widgets(_FakeConv(), _FakeStats(), _FakeViewStore(), DomainStore())
+        log_fn = lambda *args, **kwargs: None
+
+        event_handlers.handle_request(
+            RequestBodyEvent(
+                body=_req_body("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+                request_id="req-sub-first",
+                seq=1,
+                recv_ns=1,
+            ),
+            state,
+            widgets,
+            app_state,
+            log_fn,
+        )
+        event_handlers.handle_request(
+            RequestBodyEvent(
+                body=_req_body("11111111-2222-3333-4444-555555555555"),
+                request_id="req-main",
+                seq=1,
+                recv_ns=2,
+            ),
+            state,
+            widgets,
+            app_state,
+            log_fn,
+        )
+        event_handlers.handle_response_event(
+            ResponseSSEEvent(
+                sse_event=ToolUseBlockStartEvent(index=0, id="toolu_task_1", name="Task"),
+                request_id="req-main",
+                seq=2,
+                recv_ns=3,
+            ),
+            state,
+            widgets,
+            app_state,
+            log_fn,
+        )
+
+        reg = app_state["stream_registry"]
+        sub_ctx = reg.get("req-sub-first")
+        main_ctx = reg.get("req-main")
+        assert sub_ctx is not None
+        assert main_ctx is not None
+        assert sub_ctx.agent_kind == "subagent"
+        assert main_ctx.agent_kind == "main"
+
     def test_interleaved_stream_events_are_partitioned_by_request_id(self):
         state = {
             "positions": {},

@@ -24,6 +24,7 @@ from cc_dump.event_types import (
     LogEvent,
     MessageStartEvent,
     MessageDeltaEvent,
+    ToolUseBlockStartEvent,
 )
 
 EventHandler = Callable[
@@ -87,6 +88,18 @@ def _fallback_session(ctx, state) -> None:
         ctx.session_id = current_session
 
 
+def _maybe_update_main_session(state, ctx) -> None:
+    """Persist current_session from main/seed contexts, never from subagents."""
+    if not ctx.session_id:
+        return
+    current = state.get("current_session", "")
+    if not isinstance(current, str):
+        current = ""
+    # // [LAW:one-source-of-truth] current_session tracks orchestrator session.
+    if not current or ctx.agent_kind == "main":
+        state["current_session"] = ctx.session_id
+
+
 def handle_request_headers(event: RequestHeadersEvent, state, widgets, app_state, log_fn):
     """Handle request_headers event.
 
@@ -116,6 +129,7 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
             body if isinstance(body, dict) else {},
             seq=event.seq,
             recv_ns=event.recv_ns,
+            session_hint=state.get("current_session", "") if isinstance(state.get("current_session", ""), str) else "",
         )
 
         # Track last message time for session panel connectivity
@@ -146,8 +160,7 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
         stats.update_stats(requests=state["request_counter"])
 
         # Keep session panel semantics based on latest request context.
-        if ctx.session_id:
-            state["current_session"] = ctx.session_id
+        _maybe_update_main_session(state, ctx)
 
         log_fn("DEBUG", f"Request #{state['request_counter']} processed")
     except Exception as e:
@@ -173,8 +186,7 @@ def handle_response_headers(event: ResponseHeadersEvent, state, widgets, app_sta
 
         blocks = cc_dump.formatting.format_response_headers(status_code, headers_dict)
         _stamp_blocks(blocks, ctx)
-        if ctx.session_id:
-            state["current_session"] = ctx.session_id
+        _maybe_update_main_session(state, ctx)
 
         domain_store = widgets["domain_store"]
 
@@ -213,10 +225,17 @@ def handle_response_event(event: ResponseSSEEvent, state, widgets, app_state, lo
             recv_ns=event.recv_ns,
         )
         _fallback_session(ctx, state)
+        if isinstance(sse_event, ToolUseBlockStartEvent) and sse_event.name == "Task":
+            ctx = stream_registry.note_task_tool_use(
+                event.request_id,
+                sse_event.id,
+                seq=event.seq,
+                recv_ns=event.recv_ns,
+            )
+            _fallback_session(ctx, state)
         blocks = cc_dump.formatting.format_response_event(sse_event)
         _stamp_blocks(blocks, ctx)
-        if ctx.session_id:
-            state["current_session"] = ctx.session_id
+        _maybe_update_main_session(state, ctx)
 
         domain_store = widgets["domain_store"]
         stats = widgets["stats"]
@@ -300,8 +319,7 @@ def handle_response_done(event: ResponseDoneEvent, state, widgets, app_state, lo
             app_state["current_turn_usage_by_request"] = usage_by_request
         # Legacy key retained for backward compatibility with old app_state shape.
         app_state["current_turn_usage"] = {}
-        if ctx.session_id:
-            state["current_session"] = ctx.session_id
+        _maybe_update_main_session(state, ctx)
 
         # Refresh stats panel from analytics store (merges current turn if streaming)
         if analytics_store is not None:
@@ -401,8 +419,7 @@ def handle_response_non_streaming(event: ResponseNonStreamingEvent, state, widge
         )
 
         _stamp_blocks(response_blocks, ctx)
-        if ctx.session_id:
-            state["current_session"] = ctx.session_id
+        _maybe_update_main_session(state, ctx)
 
         domain_store.add_turn(response_blocks)
 
