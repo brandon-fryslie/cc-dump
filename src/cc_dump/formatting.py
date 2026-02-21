@@ -716,9 +716,110 @@ class _ContentContext:
     indent: str = "    "
 
 
+_HOOK_XML_TAGS = frozenset({"system-reminder", "user-prompt-submit-hook"})
+_CONFIG_SOURCE_RE = re.compile(
+    r"(?mi)^Contents of (?P<source>.*?(?:CLAUDE\.md|AGENTS\.md))[^\n]*:\n?"
+)
+
+
+def _append_text_block(parts: list[FormattedBlock], text: str, ctx: _ContentContext) -> None:
+    if not text:
+        return
+    parts.append(TextContentBlock(content=text, indent=ctx.indent, category=ctx.role_cat))
+
+
+def _append_text_or_config_segments(
+    parts: list[FormattedBlock],
+    text: str,
+    ctx: _ContentContext,
+) -> None:
+    """Split markdown text into plain text and config-derived child blocks."""
+    # // [LAW:dataflow-not-control-flow] Always run the same splitter; data (matches)
+    # decides emitted block values.
+    if not text:
+        return
+
+    matches = list(_CONFIG_SOURCE_RE.finditer(text))
+    if not matches:
+        _append_text_block(parts, text, ctx)
+        return
+
+    cursor = 0
+    for idx, match in enumerate(matches):
+        start = match.start()
+        if start > cursor:
+            _append_text_block(parts, text[cursor:start], ctx)
+
+        source = match.group("source").strip()
+        next_start = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+        config_content = text[match.end() : next_start]
+        if config_content:
+            parts.append(
+                ConfigContentBlock(
+                    content=config_content,
+                    source=source or "unknown",
+                    indent=ctx.indent,
+                    category=ctx.role_cat,
+                )
+            )
+        else:
+            _append_text_block(parts, text[match.start() : next_start], ctx)
+        cursor = next_start
+
+    if cursor < len(text):
+        _append_text_block(parts, text[cursor:], ctx)
+
+
+def _format_user_text_content(text: str, ctx: _ContentContext) -> list[FormattedBlock]:
+    """Decompose user text into hook/config/text child blocks in source order."""
+    # // [LAW:one-source-of-truth] User text decomposition into config/hook/text
+    # happens in one function, not scattered across render/search layers.
+    seg = cc_dump.segmentation.segment(text)
+    if not seg.sub_blocks:
+        return [TextContentBlock(content=text, indent=ctx.indent, category=ctx.role_cat)]
+
+    blocks: list[FormattedBlock] = []
+    for sb in seg.sub_blocks:
+        piece = text[sb.span.start : sb.span.end]
+        if sb.kind == cc_dump.segmentation.SubBlockKind.XML_BLOCK:
+            meta = sb.meta
+            if not isinstance(meta, cc_dump.segmentation.XmlBlockMeta):
+                _append_text_or_config_segments(blocks, piece, ctx)
+                continue
+            tag_name = meta.tag_name
+            inner = text[meta.inner_span.start : meta.inner_span.end]
+            if tag_name in _HOOK_XML_TAGS:
+                blocks.append(
+                    HookOutputBlock(
+                        content=inner,
+                        hook_name=tag_name,
+                        indent=ctx.indent,
+                        category=ctx.role_cat,
+                    )
+                )
+            else:
+                blocks.append(
+                    ConfigContentBlock(
+                        content=piece,
+                        source=tag_name,
+                        indent=ctx.indent,
+                        category=ctx.role_cat,
+                    )
+                )
+            continue
+
+        _append_text_or_config_segments(blocks, piece, ctx)
+
+    if not blocks:
+        return [TextContentBlock(content=text, indent=ctx.indent, category=ctx.role_cat)]
+    return blocks
+
+
 def _format_text_content(cblock, ctx: _ContentContext) -> list:
     """Format a text content block."""
     text = cblock.get("text", "")
+    if ctx.role_cat == Category.USER:
+        return _format_user_text_content(text, ctx)
     return [TextContentBlock(content=text, indent=ctx.indent, category=ctx.role_cat)]
 
 

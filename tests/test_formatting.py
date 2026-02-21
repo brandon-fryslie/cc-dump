@@ -3,10 +3,12 @@
 import pytest
 
 from cc_dump.formatting import (
+    ConfigContentBlock,
     ContentRegion,
     ErrorBlock,
     FormattedBlock,
     HeaderBlock,
+    HookOutputBlock,
     HttpHeadersBlock,
     ImageBlock,
     MessageBlock,
@@ -148,6 +150,160 @@ def test_format_request_with_messages(fresh_state):
     # Should have TextContentBlocks inside MessageBlocks
     text_blocks = _find_blocks(blocks, TextContentBlock)
     assert len(text_blocks) >= 2
+
+
+def test_format_request_user_text_extracts_hook_output_block(fresh_state):
+    """User text with known hook XML tag becomes HookOutputBlock child."""
+    body = {
+        "model": "claude-3-opus",
+        "max_tokens": 4096,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "<system-reminder>\nHook payload\n</system-reminder>\n\nTail text",
+                    }
+                ],
+            },
+        ],
+    }
+    blocks = format_request(body, fresh_state)
+    msg_blocks = _find_blocks(blocks, MessageBlock)
+    assert len(msg_blocks) == 1
+    children = msg_blocks[0].children
+
+    hook_blocks = [b for b in children if isinstance(b, HookOutputBlock)]
+    text_blocks = [b for b in children if isinstance(b, TextContentBlock)]
+    assert len(hook_blocks) == 1
+    assert hook_blocks[0].hook_name == "system-reminder"
+    assert "Hook payload" in hook_blocks[0].content
+    assert any("Tail text" in b.content for b in text_blocks)
+
+
+def test_format_request_user_text_extracts_non_hook_xml_as_config(fresh_state):
+    """User text with non-hook XML tag becomes ConfigContentBlock child."""
+    body = {
+        "model": "claude-3-opus",
+        "max_tokens": 4096,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "<policy_spec>\nNo shell injection.\n</policy_spec>",
+                    }
+                ],
+            },
+        ],
+    }
+    blocks = format_request(body, fresh_state)
+    msg_blocks = _find_blocks(blocks, MessageBlock)
+    assert len(msg_blocks) == 1
+    children = msg_blocks[0].children
+
+    cfg_blocks = [b for b in children if isinstance(b, ConfigContentBlock)]
+    assert len(cfg_blocks) == 1
+    assert cfg_blocks[0].source == "policy_spec"
+    assert "No shell injection." in cfg_blocks[0].content
+
+
+def test_format_request_user_text_extracts_claude_md_config_without_duplication(
+    fresh_state,
+):
+    """CLAUDE.md section is extracted to ConfigContentBlock and removed from plain text blocks."""
+    config_line = "RULE: one source of truth"
+    body = {
+        "model": "claude-3-opus",
+        "max_tokens": 4096,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Prefix text\n"
+                            "Contents of /Users/test/.claude/CLAUDE.md (global):\n"
+                            f"{config_line}\n"
+                            "Suffix text"
+                        ),
+                    }
+                ],
+            },
+        ],
+    }
+    blocks = format_request(body, fresh_state)
+    msg_blocks = _find_blocks(blocks, MessageBlock)
+    assert len(msg_blocks) == 1
+    children = msg_blocks[0].children
+
+    cfg_blocks = [b for b in children if isinstance(b, ConfigContentBlock)]
+    text_blocks = [b for b in children if isinstance(b, TextContentBlock)]
+    assert len(cfg_blocks) == 1
+    assert cfg_blocks[0].source == "/Users/test/.claude/CLAUDE.md"
+    assert config_line in cfg_blocks[0].content
+    assert all(config_line not in b.content for b in text_blocks)
+
+
+def test_format_request_assistant_text_does_not_extract_hook_or_config(fresh_state):
+    """Hook/config decomposition only applies to user text blocks."""
+    body = {
+        "model": "claude-3-opus",
+        "max_tokens": 4096,
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "<system-reminder>\nAssistant text\n</system-reminder>",
+                    }
+                ],
+            },
+        ],
+    }
+    blocks = format_request(body, fresh_state)
+    msg_blocks = _find_blocks(blocks, MessageBlock)
+    assert len(msg_blocks) == 1
+    children = msg_blocks[0].children
+
+    assert any(isinstance(b, TextContentBlock) for b in children)
+    assert not any(isinstance(b, HookOutputBlock) for b in children)
+    assert not any(isinstance(b, ConfigContentBlock) for b in children)
+
+
+def test_extracted_config_block_has_content_regions_for_collapse(fresh_state):
+    """Extracted ConfigContentBlock participates in region-based collapse/search."""
+    body = {
+        "model": "claude-3-opus",
+        "max_tokens": 4096,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Contents of /tmp/CLAUDE.md:\n"
+                            "<policy_spec>\n"
+                            "Always run tests.\n"
+                            "</policy_spec>\n"
+                        ),
+                    }
+                ],
+            },
+        ],
+    }
+    blocks = format_request(body, fresh_state)
+    cfg_blocks = _find_blocks(blocks, ConfigContentBlock)
+    assert len(cfg_blocks) == 1
+
+    cfg = cfg_blocks[0]
+    assert cfg.content_regions
+    assert any(region.kind == "xml_block" for region in cfg.content_regions)
 
 
 def test_format_request_long_first_message_keeps_text_content(fresh_state):
@@ -1286,3 +1442,4 @@ class TestToolUseBlockDescription:
         tool_uses = _find_blocks(blocks, ToolUseBlock)
         assert len(tool_uses) == 1
         assert tool_uses[0].description == ""
+    HookOutputBlock,
