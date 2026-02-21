@@ -27,6 +27,7 @@ class PipelineEventKind(Enum):
     RESPONSE_HEADERS = "response_headers"
     RESPONSE_EVENT = "response_event"
     RESPONSE_NON_STREAMING = "response_non_streaming"
+    RESPONSE_COMPLETE = "response_complete"
     RESPONSE_DONE = "response_done"
     ERROR = "error"
     PROXY_ERROR = "proxy_error"
@@ -209,6 +210,18 @@ class ResponseNonStreamingEvent(PipelineEvent):
     headers: dict[str, str]
     body: dict
     kind: PipelineEventKind = field(default=PipelineEventKind.RESPONSE_NON_STREAMING, init=False)
+
+
+@dataclass(frozen=True)
+class ResponseCompleteEvent(PipelineEvent):
+    """Complete reconstructed response from SSE assembly.
+
+    Emitted by the proxy after assembling all SSE fragments into a complete
+    Claude API response. Carries the same shape as a stream=false response.
+    """
+
+    body: dict
+    kind: PipelineEventKind = field(default=PipelineEventKind.RESPONSE_COMPLETE, init=False)
 
 
 @dataclass(frozen=True)

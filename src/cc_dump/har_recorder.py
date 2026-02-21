@@ -9,7 +9,6 @@ import os
 import sys
 from datetime import datetime, timezone
 import traceback
-from typing import TypedDict
 
 from cc_dump.event_types import (
     PipelineEvent,
@@ -18,44 +17,13 @@ from cc_dump.event_types import (
     RequestHeadersEvent,
     RequestBodyEvent,
     ResponseHeadersEvent,
-    MessageStartEvent,
-    TextBlockStartEvent,
-    ToolUseBlockStartEvent,
-    TextDeltaEvent,
-    InputJsonDeltaEvent,
-    ContentBlockStopEvent,
-    MessageDeltaEvent,
 )
-
-
-class _UsageDict(TypedDict, total=False):
-    input_tokens: int
-    output_tokens: int
-    cache_read_input_tokens: int
-    cache_creation_input_tokens: int
-
-
-class _ContentBlock(TypedDict, total=False):
-    type: str
-    text: str
-    id: str
-    name: str
-    input: dict
-
-
-class ReconstructedMessage(TypedDict):
-    id: str
-    type: str
-    role: str
-    content: list[_ContentBlock]
-    model: str
-    stop_reason: str | None
-    stop_sequence: str | None
-    usage: _UsageDict
-
-
-_SSEScalar = str | int | None
-_SSEEventRecord = dict[str, _SSEScalar | dict[str, _SSEScalar | dict[str, _SSEScalar]]]
+from cc_dump.response_assembler import (
+    ReconstructedMessage,
+    reconstruct_message_from_events,
+    sse_event_to_dict,
+    _SSEEventRecord,
+)
 
 
 def build_har_request(method: str, url: str, headers: dict, body: dict) -> dict:
@@ -134,212 +102,6 @@ def build_har_response(
         "bodySize": len(response_text.encode("utf-8")),
     }
 
-
-# [LAW:dataflow-not-control-flow] State container for event reconstruction
-class _ReconstructionState:
-    """Shared state for event reconstructors."""
-
-    def __init__(self, message: ReconstructedMessage, content_blocks: list, current_text_block: dict | None):
-        self.message = message
-        self.content_blocks = content_blocks
-        self.current_text_block = current_text_block
-
-
-def _handle_message_start(event: dict, state: _ReconstructionState) -> None:
-    """Handle message_start event."""
-    msg = event.get("message", {})
-    state.message["id"] = msg.get("id", "")
-    state.message["model"] = msg.get("model", "")
-    state.message["role"] = msg.get("role", "assistant")
-    raw_usage = msg.get("usage", {})
-    usage: _UsageDict = {}
-    for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
-        if k in raw_usage:
-            usage[k] = raw_usage[k]  # type: ignore[literal-required]
-    state.message["usage"] = usage
-
-
-def _handle_content_block_start(event: dict, state: _ReconstructionState) -> None:
-    """Handle content_block_start event."""
-    block = event.get("content_block", {})
-    block_type = block.get("type", "")
-    if block_type == "text":
-        state.current_text_block = {"type": "text", "text": ""}
-        state.content_blocks.append(state.current_text_block)
-    elif block_type == "tool_use":
-        tool_block = {
-            "type": "tool_use",
-            "id": block.get("id", ""),
-            "name": block.get("name", ""),
-            "input": {},
-        }
-        state.content_blocks.append(tool_block)
-        state.current_text_block = None
-
-
-def _handle_content_block_delta(event: dict, state: _ReconstructionState) -> None:
-    """Handle content_block_delta event."""
-    delta = event.get("delta", {})
-    delta_type = delta.get("type", "")
-
-    if delta_type == "text_delta" and state.current_text_block:
-        state.current_text_block["text"] += delta.get("text", "")
-
-    elif delta_type == "input_json_delta":
-        # For tool use blocks, accumulate JSON input
-        if state.content_blocks and state.content_blocks[-1].get("type") == "tool_use":
-            # Accumulate JSON string (will need parsing at end)
-            if "_input_json_str" not in state.content_blocks[-1]:
-                state.content_blocks[-1]["_input_json_str"] = ""
-            state.content_blocks[-1]["_input_json_str"] += delta.get("partial_json", "")
-
-
-def _handle_content_block_stop(event: dict, state: _ReconstructionState) -> None:
-    """Handle content_block_stop event."""
-    # Finalize current block
-    if state.content_blocks and state.content_blocks[-1].get("type") == "tool_use":
-        # Parse accumulated JSON
-        json_str = state.content_blocks[-1].pop("_input_json_str", "{}")
-        try:
-            state.content_blocks[-1]["input"] = json.loads(json_str)
-        except json.JSONDecodeError:
-            state.content_blocks[-1]["input"] = {}
-    state.current_text_block = None
-
-
-def _handle_message_delta(event: dict, state: _ReconstructionState) -> None:
-    """Handle message_delta event."""
-    delta = event.get("delta", {})
-    if "stop_reason" in delta:
-        state.message["stop_reason"] = delta["stop_reason"]
-    if "stop_sequence" in delta:
-        state.message["stop_sequence"] = delta["stop_sequence"]
-    # Update usage with output tokens
-    usage_delta = event.get("usage", {})
-    if usage_delta:
-        state.message["usage"].update(usage_delta)
-
-
-# [LAW:dataflow-not-control-flow] Event reconstruction dispatch table
-_EVENT_RECONSTRUCTORS = {
-    "message_start": _handle_message_start,
-    "content_block_start": _handle_content_block_start,
-    "content_block_delta": _handle_content_block_delta,
-    "content_block_stop": _handle_content_block_stop,
-    "message_delta": _handle_message_delta,
-}
-
-
-def reconstruct_message_from_events(events: list[_SSEEventRecord]) -> ReconstructedMessage:
-    """Reconstruct complete Claude message from SSE event sequence.
-
-    This is the KEY function: accumulates deltas into final message in the
-    same format as if stream=false was used in the API request.
-
-    Args:
-        events: List of SSE event dicts (message_start, content_block_delta, etc.)
-
-    Returns:
-        Complete message dict: {"id": "...", "type": "message", "content": [...], "usage": {...}}
-    """
-    message: ReconstructedMessage = {
-        "id": "",
-        "type": "message",
-        "role": "assistant",
-        "content": [],
-        "model": "",
-        "stop_reason": None,
-        "stop_sequence": None,
-        "usage": {},
-    }
-
-    # Initialize reconstruction state
-    state = _ReconstructionState(
-        message=message,
-        content_blocks=[],
-        current_text_block=None,
-    )
-
-    # [LAW:dataflow-not-control-flow] Dispatch via table lookup
-    for event in events:
-        event_type = event.get("type", "")
-        handler = _EVENT_RECONSTRUCTORS.get(event_type)
-        if handler:
-            handler(event, state)
-
-    state.message["content"] = state.content_blocks
-    return state.message
-
-
-def _sse_event_to_dict(sse_event: object) -> _SSEEventRecord:
-    """Convert a typed SSEEvent back to the raw dict format for reconstruction.
-
-    The reconstruct_message_from_events function works with raw dicts internally.
-    This function bridges from typed events back to that format.
-    """
-    if isinstance(sse_event, MessageStartEvent):
-        return {
-            "type": "message_start",
-            "message": {
-                "id": sse_event.message.id,
-                "type": "message",
-                "role": sse_event.message.role.value,
-                "model": sse_event.message.model,
-                "usage": {
-                    "input_tokens": sse_event.message.usage.input_tokens,
-                    "output_tokens": sse_event.message.usage.output_tokens,
-                    "cache_read_input_tokens": sse_event.message.usage.cache_read_input_tokens,
-                    "cache_creation_input_tokens": sse_event.message.usage.cache_creation_input_tokens,
-                },
-            },
-        }
-    elif isinstance(sse_event, TextBlockStartEvent):
-        return {
-            "type": "content_block_start",
-            "index": sse_event.index,
-            "content_block": {"type": "text", "text": ""},
-        }
-    elif isinstance(sse_event, ToolUseBlockStartEvent):
-        return {
-            "type": "content_block_start",
-            "index": sse_event.index,
-            "content_block": {
-                "type": "tool_use",
-                "id": sse_event.id,
-                "name": sse_event.name,
-            },
-        }
-    elif isinstance(sse_event, TextDeltaEvent):
-        return {
-            "type": "content_block_delta",
-            "index": sse_event.index,
-            "delta": {"type": "text_delta", "text": sse_event.text},
-        }
-    elif isinstance(sse_event, InputJsonDeltaEvent):
-        return {
-            "type": "content_block_delta",
-            "index": sse_event.index,
-            "delta": {"type": "input_json_delta", "partial_json": sse_event.partial_json},
-        }
-    elif isinstance(sse_event, ContentBlockStopEvent):
-        return {
-            "type": "content_block_stop",
-            "index": sse_event.index,
-        }
-    elif isinstance(sse_event, MessageDeltaEvent):
-        delta: dict[str, object] = {}
-        if sse_event.stop_reason.value:
-            delta["stop_reason"] = sse_event.stop_reason.value
-        if sse_event.stop_sequence:
-            delta["stop_sequence"] = sse_event.stop_sequence
-        return {
-            "type": "message_delta",
-            "delta": delta,
-            "usage": {"output_tokens": sse_event.output_tokens},
-        }
-    else:
-        # MessageStopEvent or unknown
-        return {"type": "message_stop"}
 
 
 class HARRecordingSubscriber:
@@ -440,7 +202,7 @@ class HARRecordingSubscriber:
         elif kind == PipelineEventKind.RESPONSE_EVENT:
             assert isinstance(event, ResponseSSEEvent)
             # Convert typed SSE event back to dict for reconstruction
-            self.response_events.append(_sse_event_to_dict(event.sse_event))
+            self.response_events.append(sse_event_to_dict(event.sse_event))
 
         elif kind == PipelineEventKind.RESPONSE_DONE:
             # Complete - reconstruct message and write HAR entry

@@ -18,12 +18,14 @@ from cc_dump.event_types import (
     ProxyErrorEvent,
     RequestBodyEvent,
     RequestHeadersEvent,
+    ResponseCompleteEvent,
     ResponseDoneEvent,
     ResponseHeadersEvent,
     ResponseNonStreamingEvent,
     ResponseSSEEvent,
     parse_sse_event,
 )
+from cc_dump.response_assembler import ResponseAssembler
 
 # Headers to exclude from emitted events (security + noise reduction)
 _EXCLUDED_HEADERS = frozenset(
@@ -411,7 +413,8 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 recv_ns=time.monotonic_ns(),
             )
         )
-        # Parse our own SSE bytes through the event queue sink
+        # Parse our own SSE bytes through the event queue sink + assembler
+        assembler = ResponseAssembler()
         for line in sse_bytes.split(b"\n"):
             line_str = line.decode("utf-8", errors="replace").rstrip("\r")
             if not line_str.startswith("data: "):
@@ -424,6 +427,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             except json.JSONDecodeError:
                 continue
             event_type = event.get("type", "")
+            assembler.on_event(event_type, event)
             try:
                 sse = parse_sse_event(event_type, event)
                 seq += 1
@@ -435,6 +439,13 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 ))
             except ValueError:
                 pass
+        assembler.on_done()
+        if assembler.result is not None:
+            self.event_queue.put(ResponseCompleteEvent(
+                body=assembler.result,
+                request_id=request_id,
+                recv_ns=time.monotonic_ns(),
+            ))
         seq += 1
         self.event_queue.put(ResponseDoneEvent(
             request_id=request_id,
@@ -443,10 +454,18 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         ))
 
     def _stream_response(self, resp, request_id: str = ""):
+        assembler = ResponseAssembler()
         _fan_out_sse(resp, [
             ClientSink(self.wfile),
             EventQueueSink(self.event_queue, request_id=request_id),
+            assembler,
         ])
+        if assembler.result is not None:
+            self.event_queue.put(ResponseCompleteEvent(
+                body=assembler.result,
+                request_id=request_id,
+                recv_ns=time.monotonic_ns(),
+            ))
 
     def do_POST(self):
         self._proxy()

@@ -46,6 +46,7 @@ _EXCLUDED_FILES = {
     "cli.py",  # entry point, not reloadable at runtime
     "hot_reload.py",  # this file
     "event_types.py",  # stable type definitions, never reload
+    "response_assembler.py",  # stable boundary, imported by proxy.py
     "tmux_controller.py",  # stable boundary, holds live pane refs
     "stderr_tee.py",  # stable boundary, holds live sys.stderr ref
     "side_channel.py",  # stable boundary, holds live subprocess refs
@@ -57,6 +58,7 @@ _EXCLUDED_FILES = {
 # Directories/modules to exclude
 _EXCLUDED_MODULES = {
     "tui/app.py",  # live app instance, can't safely reload
+    "tui/chip.py",  # stable widget, imported by reloadable modules
     "tui/category_config.py",  # pure data, but referenced at init time
     "tui/action_handlers.py",  # accesses live app/widget state
     "tui/search_controller.py",  # accesses live app/widget state
@@ -70,8 +72,8 @@ _EXCLUDED_MODULES = {
 # Subset of _EXCLUDED_FILES ∪ _EXCLUDED_MODULES, minus boilerplate nobody touches.
 _STALENESS_WATCHLIST = {
     # from _EXCLUDED_FILES
-    "proxy.py", "cli.py", "event_types.py", "tmux_controller.py", "stderr_tee.py",
-    "side_channel.py", "data_dispatcher.py",
+    "proxy.py", "cli.py", "event_types.py", "response_assembler.py",
+    "tmux_controller.py", "stderr_tee.py", "side_channel.py", "data_dispatcher.py",
     # from _EXCLUDED_MODULES
     "tui/app.py", "tui/category_config.py", "tui/action_handlers.py",
     "tui/search_controller.py", "tui/dump_export.py", "tui/theme_controller.py",
