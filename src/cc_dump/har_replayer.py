@@ -13,6 +13,7 @@ from cc_dump.event_types import (
     PipelineEvent,
     RequestBodyEvent,
     RequestHeadersEvent,
+    ResponseCompleteEvent,
     ResponseNonStreamingEvent,
 )
 
@@ -156,6 +157,12 @@ def convert_to_events(
             body=complete_message,
             request_id=request_id,
             seq=0,
+            recv_ns=time.monotonic_ns(),
+        ),
+        ResponseCompleteEvent(
+            body=complete_message,
+            request_id=request_id,
+            seq=1,
             recv_ns=time.monotonic_ns(),
         ),
     ]

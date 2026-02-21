@@ -18,10 +18,9 @@ if TYPE_CHECKING:
     import libtmux
 
 from cc_dump.event_types import (
-    MessageDeltaEvent,
     PipelineEvent,
     PipelineEventKind,
-    ResponseSSEEvent,
+    ResponseCompleteEvent,
     StopReason,
 )
 
@@ -74,9 +73,9 @@ class LaunchResult:
 
 _ZOOM_DECISIONS: dict[tuple[PipelineEventKind, StopReason | None], bool | None] = {
     (PipelineEventKind.REQUEST, None): True,
-    (PipelineEventKind.RESPONSE_EVENT, StopReason.END_TURN): False,
-    (PipelineEventKind.RESPONSE_EVENT, StopReason.MAX_TOKENS): False,
-    (PipelineEventKind.RESPONSE_EVENT, StopReason.TOOL_USE): None,
+    (PipelineEventKind.RESPONSE_COMPLETE, StopReason.END_TURN): False,
+    (PipelineEventKind.RESPONSE_COMPLETE, StopReason.MAX_TOKENS): False,
+    (PipelineEventKind.RESPONSE_COMPLETE, StopReason.TOOL_USE): None,
     (PipelineEventKind.ERROR, None): False,
     (PipelineEventKind.PROXY_ERROR, None): False,
 }
@@ -87,14 +86,16 @@ def _extract_decision_key(
 ) -> tuple[PipelineEventKind, StopReason | None]:
     """Extract the lookup key from a pipeline event.
 
-    For ResponseSSEEvent wrapping MessageDeltaEvent, use the stop_reason.
+    For ResponseCompleteEvent, extract stop_reason from body dict.
     For all other events, stop_reason is None.
     """
     stop_reason: StopReason | None = None
-    if isinstance(event, ResponseSSEEvent) and isinstance(
-        event.sse_event, MessageDeltaEvent
-    ):
-        stop_reason = event.sse_event.stop_reason
+    if isinstance(event, ResponseCompleteEvent):
+        sr_str = event.body.get("stop_reason", "") or ""
+        try:
+            stop_reason = StopReason(sr_str)
+        except ValueError:
+            stop_reason = StopReason.NONE
     return (event.kind, stop_reason)
 
 

@@ -200,12 +200,7 @@ class EventQueueSink(StreamSink):
         ))
 
     def on_done(self):
-        self._seq += 1
-        self._queue.put(ResponseDoneEvent(
-            request_id=self._request_id,
-            seq=self._seq,
-            recv_ns=time.monotonic_ns(),
-        ))
+        pass  # [LAW:single-enforcer] proxy emits ResponseDoneEvent explicitly
 
 
 def _fan_out_sse(resp, sinks):
@@ -466,6 +461,10 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 request_id=request_id,
                 recv_ns=time.monotonic_ns(),
             ))
+        self.event_queue.put(ResponseDoneEvent(
+            request_id=request_id,
+            recv_ns=time.monotonic_ns(),
+        ))
 
     def do_POST(self):
         self._proxy()

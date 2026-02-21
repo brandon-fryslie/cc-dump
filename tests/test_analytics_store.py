@@ -6,15 +6,13 @@ from cc_dump.analytics_store import AnalyticsStore, TurnRecord, ToolInvocationRe
 from cc_dump.analysis import ToolEconomicsRow
 from cc_dump.event_types import (
     RequestBodyEvent,
-    ResponseSSEEvent,
-    ResponseDoneEvent,
-    parse_sse_event,
+    ResponseCompleteEvent,
 )
 
 
-def _sse(event_type: str, raw: dict) -> ResponseSSEEvent:
-    """Helper to build a ResponseSSEEvent from raw SSE data."""
-    return ResponseSSEEvent(sse_event=parse_sse_event(event_type, raw))
+def _complete(body: dict) -> ResponseCompleteEvent:
+    """Build a ResponseCompleteEvent with sensible defaults."""
+    return ResponseCompleteEvent(body=body)
 
 
 # ─── Basic Event Handling Tests ────────────────────────────────────────────────
@@ -31,17 +29,11 @@ def test_store_accumulates_turn():
     }
 
     store.on_event(RequestBodyEvent(body=request))
-    store.on_event(_sse("message_start", {
-        "message": {
-            "model": "claude-sonnet-4",
-            "usage": {"input_tokens": 100, "output_tokens": 0},
-        }
+    store.on_event(_complete({
+        "model": "claude-sonnet-4",
+        "usage": {"input_tokens": 100, "output_tokens": 50},
+        "stop_reason": "end_turn",
     }))
-    store.on_event(_sse("message_delta", {
-        "delta": {"stop_reason": "end_turn"},
-        "usage": {"output_tokens": 50},
-    }))
-    store.on_event(ResponseDoneEvent())
 
     # Verify turn was recorded
     assert len(store._turns) == 1
@@ -86,17 +78,11 @@ def test_store_populates_token_counts():
     }
 
     store.on_event(RequestBodyEvent(body=request))
-    store.on_event(_sse("message_start", {
-        "message": {
-            "model": "claude-sonnet-4",
-            "usage": {"input_tokens": 100, "output_tokens": 0},
-        }
+    store.on_event(_complete({
+        "model": "claude-sonnet-4",
+        "usage": {"input_tokens": 100, "output_tokens": 50},
+        "stop_reason": "end_turn",
     }))
-    store.on_event(_sse("message_delta", {
-        "delta": {"stop_reason": "end_turn"},
-        "usage": {"output_tokens": 50},
-    }))
-    store.on_event(ResponseDoneEvent())
 
     # Verify tool invocation was recorded
     assert len(store._turns) == 1
@@ -141,10 +127,11 @@ def test_store_handles_empty_tool_inputs():
     }
 
     store.on_event(RequestBodyEvent(body=request))
-    store.on_event(_sse("message_start", {
-        "message": {"model": "claude-sonnet-4", "usage": {}},
+    store.on_event(_complete({
+        "model": "claude-sonnet-4",
+        "usage": {},
+        "stop_reason": "",
     }))
-    store.on_event(ResponseDoneEvent())
 
     assert len(store._turns[0].tool_invocations) == 1
     inv = store._turns[0].tool_invocations[0]
@@ -177,10 +164,11 @@ def test_store_handles_multiple_tools():
     }
 
     store.on_event(RequestBodyEvent(body=request))
-    store.on_event(_sse("message_start", {
-        "message": {"model": "claude-sonnet-4", "usage": {}},
+    store.on_event(_complete({
+        "model": "claude-sonnet-4",
+        "usage": {},
+        "stop_reason": "",
     }))
-    store.on_event(ResponseDoneEvent())
 
     assert len(store._turns[0].tool_invocations) == 2
 
@@ -447,6 +435,10 @@ def test_get_state_restore_state():
 
     state = store.get_state()
 
+    # Verify eliminated fields are NOT in serialized state
+    assert "current_response_events" not in state
+    assert "current_text" not in state
+
     # Create new store and restore
     new_store = AnalyticsStore()
     new_store.restore_state(state)
@@ -465,3 +457,22 @@ def test_get_state_restore_state():
     read_inv = next(inv for inv in turn1.tool_invocations if inv.tool_name == "Read")
     assert read_inv.input_tokens == 600
     assert read_inv.result_tokens == 1000
+
+
+def test_get_state_restore_state_handles_old_format():
+    """restore_state gracefully ignores old state dicts with eliminated fields."""
+    store = AnalyticsStore()
+    old_state = {
+        "turns": [],
+        "seq": 3,
+        "current_request": None,
+        "current_response_events": [{"some": "data"}],
+        "current_text": ["hello"],
+        "current_usage": {},
+        "current_stop": "",
+        "current_model": "",
+    }
+    store.restore_state(old_state)
+    assert store._seq == 3
+    assert not hasattr(store, "_current_response_events")
+    assert not hasattr(store, "_current_text")

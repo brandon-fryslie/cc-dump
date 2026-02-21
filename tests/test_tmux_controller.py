@@ -10,14 +10,12 @@ import pytest
 
 from cc_dump.event_types import (
     ErrorEvent,
-    MessageDeltaEvent,
     PipelineEventKind,
     ProxyErrorEvent,
     RequestBodyEvent,
+    ResponseCompleteEvent,
     ResponseDoneEvent,
-    ResponseSSEEvent,
     StopReason,
-    TextDeltaEvent,
 )
 from cc_dump.tmux_controller import (
     LaunchAction,
@@ -78,13 +76,13 @@ class TestZoomDecisions:
         assert _ZOOM_DECISIONS[(PipelineEventKind.REQUEST, None)] is True
 
     def test_end_turn_unzooms(self):
-        assert _ZOOM_DECISIONS[(PipelineEventKind.RESPONSE_EVENT, StopReason.END_TURN)] is False
+        assert _ZOOM_DECISIONS[(PipelineEventKind.RESPONSE_COMPLETE, StopReason.END_TURN)] is False
 
     def test_max_tokens_unzooms(self):
-        assert _ZOOM_DECISIONS[(PipelineEventKind.RESPONSE_EVENT, StopReason.MAX_TOKENS)] is False
+        assert _ZOOM_DECISIONS[(PipelineEventKind.RESPONSE_COMPLETE, StopReason.MAX_TOKENS)] is False
 
     def test_tool_use_is_noop(self):
-        assert _ZOOM_DECISIONS[(PipelineEventKind.RESPONSE_EVENT, StopReason.TOOL_USE)] is None
+        assert _ZOOM_DECISIONS[(PipelineEventKind.RESPONSE_COMPLETE, StopReason.TOOL_USE)] is None
 
     def test_error_unzooms(self):
         assert _ZOOM_DECISIONS[(PipelineEventKind.ERROR, None)] is False
@@ -101,21 +99,27 @@ class TestExtractDecisionKey:
         event = RequestBodyEvent(body={})
         assert _extract_decision_key(event) == (PipelineEventKind.REQUEST, None)
 
-    def test_response_sse_message_delta_end_turn(self):
-        sse = MessageDeltaEvent(stop_reason=StopReason.END_TURN, stop_sequence="", output_tokens=0)
-        event = ResponseSSEEvent(sse_event=sse)
-        assert _extract_decision_key(event) == (PipelineEventKind.RESPONSE_EVENT, StopReason.END_TURN)
+    def test_response_complete_end_turn(self):
+        event = ResponseCompleteEvent(body={"stop_reason": "end_turn"})
+        assert _extract_decision_key(event) == (PipelineEventKind.RESPONSE_COMPLETE, StopReason.END_TURN)
 
-    def test_response_sse_message_delta_tool_use(self):
-        sse = MessageDeltaEvent(stop_reason=StopReason.TOOL_USE, stop_sequence="", output_tokens=0)
-        event = ResponseSSEEvent(sse_event=sse)
-        assert _extract_decision_key(event) == (PipelineEventKind.RESPONSE_EVENT, StopReason.TOOL_USE)
+    def test_response_complete_tool_use(self):
+        event = ResponseCompleteEvent(body={"stop_reason": "tool_use"})
+        assert _extract_decision_key(event) == (PipelineEventKind.RESPONSE_COMPLETE, StopReason.TOOL_USE)
 
-    def test_response_sse_non_delta(self):
-        """Non-MessageDeltaEvent SSE events get stop_reason=None."""
-        sse = TextDeltaEvent(index=0, text="hello")
-        event = ResponseSSEEvent(sse_event=sse)
-        assert _extract_decision_key(event) == (PipelineEventKind.RESPONSE_EVENT, None)
+    def test_response_complete_max_tokens(self):
+        event = ResponseCompleteEvent(body={"stop_reason": "max_tokens"})
+        assert _extract_decision_key(event) == (PipelineEventKind.RESPONSE_COMPLETE, StopReason.MAX_TOKENS)
+
+    def test_response_complete_no_stop_reason(self):
+        """ResponseCompleteEvent with no stop_reason gets StopReason.NONE."""
+        event = ResponseCompleteEvent(body={})
+        assert _extract_decision_key(event) == (PipelineEventKind.RESPONSE_COMPLETE, StopReason.NONE)
+
+    def test_response_complete_unknown_stop_reason(self):
+        """Unknown stop_reason falls back to StopReason.NONE."""
+        event = ResponseCompleteEvent(body={"stop_reason": "something_new"})
+        assert _extract_decision_key(event) == (PipelineEventKind.RESPONSE_COMPLETE, StopReason.NONE)
 
     def test_error_event(self):
         event = ErrorEvent(code=500, reason="server error")
@@ -184,8 +188,7 @@ class TestOnEvent:
             _our_pane=MagicMock(),
             _claude_pane=MagicMock(),
         )
-        sse = MessageDeltaEvent(stop_reason=StopReason.END_TURN, stop_sequence="", output_tokens=0)
-        event = ResponseSSEEvent(sse_event=sse)
+        event = ResponseCompleteEvent(body={"stop_reason": "end_turn"})
         ctrl.on_event(event)
         assert ctrl._is_zoomed is False
 
@@ -197,8 +200,7 @@ class TestOnEvent:
             _our_pane=MagicMock(),
             _claude_pane=MagicMock(),
         )
-        sse = MessageDeltaEvent(stop_reason=StopReason.TOOL_USE, stop_sequence="", output_tokens=0)
-        event = ResponseSSEEvent(sse_event=sse)
+        event = ResponseCompleteEvent(body={"stop_reason": "tool_use"})
         ctrl.on_event(event)
         # Should stay zoomed — no change
         assert ctrl._is_zoomed is True
@@ -245,14 +247,6 @@ class TestOnEvent:
         ctrl.on_event(event)
         assert ctrl._is_zoomed is False
         ctrl._our_pane.resize.assert_not_called()
-
-    def test_unrelated_sse_event_no_decision(self, active_controller):
-        """TextDeltaEvent wrapped in ResponseSSEEvent has no table entry."""
-        sse = TextDeltaEvent(index=0, text="hello")
-        event = ResponseSSEEvent(sse_event=sse)
-        active_controller.on_event(event)
-        assert active_controller._is_zoomed is False
-        active_controller._our_pane.resize.assert_not_called()
 
     def test_response_done_no_decision(self, active_controller):
         """ResponseDoneEvent has no table entry — no-op."""

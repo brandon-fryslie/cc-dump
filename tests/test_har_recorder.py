@@ -6,21 +6,14 @@ from cc_dump.event_types import (
     RequestHeadersEvent,
     RequestBodyEvent,
     ResponseHeadersEvent,
-    ResponseSSEEvent,
-    ResponseDoneEvent,
-    parse_sse_event,
+    ResponseCompleteEvent,
 )
 from cc_dump.har_recorder import (
     HARRecordingSubscriber,
     build_har_request,
     build_har_response,
-    reconstruct_message_from_events,
 )
-
-
-def _sse(event_type: str, raw: dict) -> ResponseSSEEvent:
-    """Helper to build a ResponseSSEEvent from raw SSE data."""
-    return ResponseSSEEvent(sse_event=parse_sse_event(event_type, raw))
+from cc_dump.response_assembler import reconstruct_message_from_events
 
 
 # ─── HAR Request Builder Tests ────────────────────────────────────────────────
@@ -114,6 +107,7 @@ def test_build_har_response_synthetic_headers():
 
 
 # ─── Message Reconstruction Tests ─────────────────────────────────────────────
+# These test reconstruct_message_from_events() in response_assembler.py
 
 
 def test_reconstruct_message_simple_text():
@@ -276,7 +270,7 @@ def test_reconstruct_message_unicode():
         {"type": "content_block_start", "content_block": {"type": "text"}},
         {
             "type": "content_block_delta",
-            "delta": {"type": "text_delta", "text": "Hello 👋 世界"},
+            "delta": {"type": "text_delta", "text": "Hello \U0001f44b \u4e16\u754c"},
         },
         {"type": "content_block_stop"},
         {
@@ -288,7 +282,7 @@ def test_reconstruct_message_unicode():
 
     message = reconstruct_message_from_events(events)
 
-    assert message["content"][0]["text"] == "Hello 👋 世界"
+    assert message["content"][0]["text"] == "Hello \U0001f44b \u4e16\u754c"
 
 
 def test_reconstruct_message_empty():
@@ -338,6 +332,20 @@ def test_reconstruct_message_malformed_tool_json():
 # ─── HARRecordingSubscriber Tests ─────────────────────────────────────────────
 
 
+def _complete_msg(msg_id="msg_test", text="Hello", model="claude-3-opus-20240229"):
+    """Build a complete Claude message dict."""
+    return {
+        "id": msg_id,
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "text", "text": text}],
+        "model": model,
+        "stop_reason": "end_turn",
+        "stop_sequence": None,
+        "usage": {"input_tokens": 10, "output_tokens": 5},
+    }
+
+
 def test_har_subscriber_initialization(tmp_path):
     """Subscriber initializes without creating a file (lazy init)."""
     har_path = tmp_path / "test.har"
@@ -359,55 +367,15 @@ def test_har_subscriber_accumulates_events(tmp_path):
     har_path = tmp_path / "test.har"
     subscriber = HARRecordingSubscriber(str(har_path))
 
+    complete_message = _complete_msg()
+
     # Simulate event sequence
     subscriber.on_event(RequestHeadersEvent(headers={"content-type": "application/json"}))
     subscriber.on_event(
         RequestBodyEvent(body={"model": "claude-3-opus-20240229", "stream": True})
     )
     subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={}))
-    subscriber.on_event(
-        _sse(
-            "message_start",
-            {
-                "type": "message_start",
-                "message": {
-                    "id": "msg_test",
-                    "model": "claude-3-opus-20240229",
-                    "role": "assistant",
-                    "usage": {"input_tokens": 10, "output_tokens": 0},
-                },
-            },
-        )
-    )
-    subscriber.on_event(
-        _sse(
-            "content_block_start",
-            {"type": "content_block_start", "content_block": {"type": "text"}},
-        )
-    )
-    subscriber.on_event(
-        _sse(
-            "content_block_delta",
-            {
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "Hello"},
-            },
-        )
-    )
-    subscriber.on_event(
-        _sse("content_block_stop", {"type": "content_block_stop"})
-    )
-    subscriber.on_event(
-        _sse(
-            "message_delta",
-            {
-                "type": "message_delta",
-                "delta": {"stop_reason": "end_turn"},
-                "usage": {"output_tokens": 5},
-            },
-        )
-    )
-    subscriber.on_event(ResponseDoneEvent())
+    subscriber.on_event(ResponseCompleteEvent(body=complete_message))
 
     # Close and read file
     subscriber.close()
@@ -441,53 +409,13 @@ def test_har_subscriber_writes_file(tmp_path):
     har_path = tmp_path / "test.har"
     subscriber = HARRecordingSubscriber(str(har_path))
 
+    complete_message = _complete_msg(msg_id="msg_file", text="Test")
+
     # Add a complete request/response cycle
     subscriber.on_event(RequestHeadersEvent(headers={}))
     subscriber.on_event(RequestBodyEvent(body={"model": "claude-3-opus-20240229"}))
     subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={}))
-    subscriber.on_event(
-        _sse(
-            "message_start",
-            {
-                "type": "message_start",
-                "message": {
-                    "id": "msg_file",
-                    "model": "claude-3-opus-20240229",
-                    "role": "assistant",
-                    "usage": {"input_tokens": 5, "output_tokens": 0},
-                },
-            },
-        )
-    )
-    subscriber.on_event(
-        _sse(
-            "content_block_start",
-            {"type": "content_block_start", "content_block": {"type": "text"}},
-        )
-    )
-    subscriber.on_event(
-        _sse(
-            "content_block_delta",
-            {
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "Test"},
-            },
-        )
-    )
-    subscriber.on_event(
-        _sse("content_block_stop", {"type": "content_block_stop"})
-    )
-    subscriber.on_event(
-        _sse(
-            "message_delta",
-            {
-                "type": "message_delta",
-                "delta": {"stop_reason": "end_turn"},
-                "usage": {"output_tokens": 3},
-            },
-        )
-    )
-    subscriber.on_event(ResponseDoneEvent())
+    subscriber.on_event(ResponseCompleteEvent(body=complete_message))
 
     # Close and write file
     subscriber.close()
@@ -524,49 +452,7 @@ def test_har_subscriber_multiple_requests(tmp_path):
         )
     )
     subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={}))
-    subscriber.on_event(
-        _sse(
-            "message_start",
-            {
-                "type": "message_start",
-                "message": {
-                    "id": "msg_1",
-                    "model": "claude-3-opus-20240229",
-                    "role": "assistant",
-                    "usage": {"input_tokens": 10, "output_tokens": 0},
-                },
-            },
-        )
-    )
-    subscriber.on_event(
-        _sse(
-            "content_block_start",
-            {"type": "content_block_start", "content_block": {"type": "text"}},
-        )
-    )
-    subscriber.on_event(
-        _sse(
-            "content_block_delta",
-            {
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "Response 1"},
-            },
-        )
-    )
-    subscriber.on_event(
-        _sse("content_block_stop", {"type": "content_block_stop"})
-    )
-    subscriber.on_event(
-        _sse(
-            "message_delta",
-            {
-                "type": "message_delta",
-                "delta": {"stop_reason": "end_turn"},
-                "usage": {"output_tokens": 5},
-            },
-        )
-    )
-    subscriber.on_event(ResponseDoneEvent())
+    subscriber.on_event(ResponseCompleteEvent(body=_complete_msg(msg_id="msg_1", text="Response 1")))
 
     # Second request
     subscriber.on_event(RequestHeadersEvent(headers={}))
@@ -579,49 +465,7 @@ def test_har_subscriber_multiple_requests(tmp_path):
         )
     )
     subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={}))
-    subscriber.on_event(
-        _sse(
-            "message_start",
-            {
-                "type": "message_start",
-                "message": {
-                    "id": "msg_2",
-                    "model": "claude-3-opus-20240229",
-                    "role": "assistant",
-                    "usage": {"input_tokens": 10, "output_tokens": 0},
-                },
-            },
-        )
-    )
-    subscriber.on_event(
-        _sse(
-            "content_block_start",
-            {"type": "content_block_start", "content_block": {"type": "text"}},
-        )
-    )
-    subscriber.on_event(
-        _sse(
-            "content_block_delta",
-            {
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "Response 2"},
-            },
-        )
-    )
-    subscriber.on_event(
-        _sse("content_block_stop", {"type": "content_block_stop"})
-    )
-    subscriber.on_event(
-        _sse(
-            "message_delta",
-            {
-                "type": "message_delta",
-                "delta": {"stop_reason": "end_turn"},
-                "usage": {"output_tokens": 5},
-            },
-        )
-    )
-    subscriber.on_event(ResponseDoneEvent())
+    subscriber.on_event(ResponseCompleteEvent(body=_complete_msg(msg_id="msg_2", text="Response 2")))
 
     # Close and read file
     subscriber.close()
@@ -654,7 +498,7 @@ def test_har_subscriber_error_handling(tmp_path):
 
 
 def test_har_subscriber_incomplete_stream(tmp_path):
-    """Subscriber handles incomplete streams gracefully (missing response_done)."""
+    """Subscriber handles incomplete streams gracefully (missing ResponseCompleteEvent)."""
     har_path = tmp_path / "test.har"
     subscriber = HARRecordingSubscriber(str(har_path))
 
@@ -662,21 +506,7 @@ def test_har_subscriber_incomplete_stream(tmp_path):
     subscriber.on_event(RequestHeadersEvent(headers={}))
     subscriber.on_event(RequestBodyEvent(body={"model": "claude-3-opus-20240229"}))
     subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={}))
-    subscriber.on_event(
-        _sse(
-            "message_start",
-            {
-                "type": "message_start",
-                "message": {
-                    "id": "msg_incomplete",
-                    "model": "claude-3-opus-20240229",
-                    "role": "assistant",
-                    "usage": {"input_tokens": 5, "output_tokens": 0},
-                },
-            },
-        )
-    )
-    # No response_done event
+    # No ResponseCompleteEvent
 
     # Close should still work
     subscriber.close()
@@ -686,7 +516,7 @@ def test_har_subscriber_incomplete_stream(tmp_path):
 
     # But events WERE received — diagnostic counters should reflect this
     assert subscriber._events_received["REQUEST_HEADERS"] == 1
-    assert subscriber._events_received["RESPONSE_EVENT"] == 1
+    assert subscriber._events_received["REQUEST"] == 1
 
 
 def test_har_subscriber_large_content(tmp_path):
@@ -695,53 +525,12 @@ def test_har_subscriber_large_content(tmp_path):
     subscriber = HARRecordingSubscriber(str(har_path))
 
     large_text = "A" * 10000  # 10KB of text
+    complete_message = _complete_msg(msg_id="msg_large", text=large_text)
 
     subscriber.on_event(RequestHeadersEvent(headers={}))
     subscriber.on_event(RequestBodyEvent(body={"model": "claude-3-opus-20240229"}))
     subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={}))
-    subscriber.on_event(
-        _sse(
-            "message_start",
-            {
-                "type": "message_start",
-                "message": {
-                    "id": "msg_large",
-                    "model": "claude-3-opus-20240229",
-                    "role": "assistant",
-                    "usage": {"input_tokens": 10, "output_tokens": 0},
-                },
-            },
-        )
-    )
-    subscriber.on_event(
-        _sse(
-            "content_block_start",
-            {"type": "content_block_start", "content_block": {"type": "text"}},
-        )
-    )
-    subscriber.on_event(
-        _sse(
-            "content_block_delta",
-            {
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": large_text},
-            },
-        )
-    )
-    subscriber.on_event(
-        _sse("content_block_stop", {"type": "content_block_stop"})
-    )
-    subscriber.on_event(
-        _sse(
-            "message_delta",
-            {
-                "type": "message_delta",
-                "delta": {"stop_reason": "end_turn"},
-                "usage": {"output_tokens": 2500},
-            },
-        )
-    )
-    subscriber.on_event(ResponseDoneEvent())
+    subscriber.on_event(ResponseCompleteEvent(body=complete_message))
 
     subscriber.close()
 
@@ -758,8 +547,7 @@ def test_har_subscriber_progressive_saving(tmp_path):
     """Entries are written to disk BEFORE close() is called.
 
     This is the key invariant of progressive saving - entries appear on disk
-    immediately after response_done, not buffered until close(). This prevents
-    the 30+ second hang on exit that occurred with the old buffer-on-exit approach.
+    immediately after ResponseCompleteEvent, not buffered until close().
     """
     har_path = tmp_path / "test.har"
     subscriber = HARRecordingSubscriber(str(har_path))
@@ -775,49 +563,7 @@ def test_har_subscriber_progressive_saving(tmp_path):
         )
     )
     subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={}))
-    subscriber.on_event(
-        _sse(
-            "message_start",
-            {
-                "type": "message_start",
-                "message": {
-                    "id": "msg_1",
-                    "model": "claude-3-opus-20240229",
-                    "role": "assistant",
-                    "usage": {"input_tokens": 10, "output_tokens": 0},
-                },
-            },
-        )
-    )
-    subscriber.on_event(
-        _sse(
-            "content_block_start",
-            {"type": "content_block_start", "content_block": {"type": "text"}},
-        )
-    )
-    subscriber.on_event(
-        _sse(
-            "content_block_delta",
-            {
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "Response 1"},
-            },
-        )
-    )
-    subscriber.on_event(
-        _sse("content_block_stop", {"type": "content_block_stop"})
-    )
-    subscriber.on_event(
-        _sse(
-            "message_delta",
-            {
-                "type": "message_delta",
-                "delta": {"stop_reason": "end_turn"},
-                "usage": {"output_tokens": 5},
-            },
-        )
-    )
-    subscriber.on_event(ResponseDoneEvent())
+    subscriber.on_event(ResponseCompleteEvent(body=_complete_msg(msg_id="msg_1", text="Response 1")))
 
     # Verify first entry is on disk BEFORE close() - this is progressive saving
     assert har_path.exists()
@@ -842,49 +588,7 @@ def test_har_subscriber_progressive_saving(tmp_path):
         )
     )
     subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={}))
-    subscriber.on_event(
-        _sse(
-            "message_start",
-            {
-                "type": "message_start",
-                "message": {
-                    "id": "msg_2",
-                    "model": "claude-3-opus-20240229",
-                    "role": "assistant",
-                    "usage": {"input_tokens": 10, "output_tokens": 0},
-                },
-            },
-        )
-    )
-    subscriber.on_event(
-        _sse(
-            "content_block_start",
-            {"type": "content_block_start", "content_block": {"type": "text"}},
-        )
-    )
-    subscriber.on_event(
-        _sse(
-            "content_block_delta",
-            {
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "Response 2"},
-            },
-        )
-    )
-    subscriber.on_event(
-        _sse("content_block_stop", {"type": "content_block_stop"})
-    )
-    subscriber.on_event(
-        _sse(
-            "message_delta",
-            {
-                "type": "message_delta",
-                "delta": {"stop_reason": "end_turn"},
-                "usage": {"output_tokens": 5},
-            },
-        )
-    )
-    subscriber.on_event(ResponseDoneEvent())
+    subscriber.on_event(ResponseCompleteEvent(body=_complete_msg(msg_id="msg_2", text="Response 2")))
 
     # Verify second entry is on disk BEFORE close()
     with open(har_path, "r") as f:

@@ -13,16 +13,10 @@ import traceback
 from cc_dump.event_types import (
     PipelineEvent,
     PipelineEventKind,
-    ResponseSSEEvent,
+    ResponseCompleteEvent,
     RequestHeadersEvent,
     RequestBodyEvent,
     ResponseHeadersEvent,
-)
-from cc_dump.response_assembler import (
-    ReconstructedMessage,
-    reconstruct_message_from_events,
-    sse_event_to_dict,
-    _SSEEventRecord,
 )
 
 
@@ -128,7 +122,7 @@ class HARRecordingSubscriber:
         self.pending_request_headers = None
         self.response_status = None
         self.response_headers = None
-        self.response_events: list[_SSEEventRecord] = []
+        self._complete_message: dict | None = None
         self.request_start_time = None
 
         # Diagnostic counters for investigation if something goes wrong
@@ -166,8 +160,7 @@ class HARRecordingSubscriber:
         State machine:
         - request_headers + request -> store pending request
         - response_headers -> store response metadata
-        - response_event -> accumulate SSE events (converted back to dicts)
-        - response_done -> reconstruct complete message, build HAR entry
+        - response_complete -> build HAR entry from complete message
 
         Errors are logged but never crash the router.
         """
@@ -199,18 +192,15 @@ class HARRecordingSubscriber:
             self.response_status = event.status_code
             self.response_headers = event.headers
 
-        elif kind == PipelineEventKind.RESPONSE_EVENT:
-            assert isinstance(event, ResponseSSEEvent)
-            # Convert typed SSE event back to dict for reconstruction
-            self.response_events.append(sse_event_to_dict(event.sse_event))
-
-        elif kind == PipelineEventKind.RESPONSE_DONE:
-            # Complete - reconstruct message and write HAR entry
+        elif kind == PipelineEventKind.RESPONSE_COMPLETE:
+            # [LAW:one-source-of-truth] Complete message from ResponseAssembler
+            assert isinstance(event, ResponseCompleteEvent)
+            self._complete_message = event.body
             self._commit_entry()
 
     def _commit_entry(self) -> None:
         """Reconstruct complete message and write HAR entry to disk immediately."""
-        if not self.pending_request or not self.response_events:
+        if not self.pending_request or not self._complete_message:
             return
 
         # Lazy file creation — only when we have a real entry to write
@@ -218,8 +208,7 @@ class HARRecordingSubscriber:
             self._open_file()
 
         try:
-            # Reconstruct complete message from events
-            complete_message = reconstruct_message_from_events(self.response_events)
+            complete_message = self._complete_message
 
             # Calculate timing
             end_time = datetime.now(timezone.utc)
@@ -292,7 +281,7 @@ class HARRecordingSubscriber:
         self.pending_request_headers = None
         self.response_status = None
         self.response_headers = None
-        self.response_events = []
+        self._complete_message = None
         self.request_start_time = None
 
     def close(self) -> None:

@@ -17,10 +17,7 @@ from cc_dump.event_types import (
     PipelineEvent,
     PipelineEventKind,
     RequestBodyEvent,
-    ResponseSSEEvent,
-    MessageStartEvent,
-    MessageDeltaEvent,
-    TextDeltaEvent,
+    ResponseCompleteEvent,
 )
 from cc_dump.analysis import (
     correlate_tools,
@@ -68,10 +65,8 @@ class AnalyticsStore:
         self._turns: list[TurnRecord] = []
         self._seq = 0
 
-        # Accumulator state for current turn (mirrors SQLiteWriter)
+        # Accumulator state for current turn
         self._current_request = None
-        self._current_response_events = []
-        self._current_text = []
         self._current_usage = {}
         self._current_stop = ""
         self._current_model = ""
@@ -93,36 +88,23 @@ class AnalyticsStore:
             assert isinstance(event, RequestBodyEvent)
             # Start accumulating a new turn
             self._current_request = event.body
-            self._current_response_events = []
-            self._current_text = []
             self._current_usage = {}
             self._current_stop = ""
             self._current_model = self._current_request.get("model", "")
 
-        elif kind == PipelineEventKind.RESPONSE_EVENT:
-            assert isinstance(event, ResponseSSEEvent)
-            sse = event.sse_event
-
-            if isinstance(sse, MessageStartEvent):
-                usage = sse.message.usage
-                self._current_usage = {
-                    "input_tokens": usage.input_tokens,
-                    "output_tokens": usage.output_tokens,
-                    "cache_read_input_tokens": usage.cache_read_input_tokens,
-                    "cache_creation_input_tokens": usage.cache_creation_input_tokens,
-                }
-                self._current_model = sse.message.model or self._current_model
-
-            elif isinstance(sse, TextDeltaEvent):
-                self._current_text.append(sse.text)
-
-            elif isinstance(sse, MessageDeltaEvent):
-                self._current_stop = sse.stop_reason.value
-                # Accumulate final usage (output tokens)
-                if sse.output_tokens:
-                    self._current_usage["output_tokens"] = sse.output_tokens
-
-        elif kind == PipelineEventKind.RESPONSE_DONE:
+        elif kind == PipelineEventKind.RESPONSE_COMPLETE:
+            # [LAW:one-source-of-truth] Extract all response data from complete body
+            assert isinstance(event, ResponseCompleteEvent)
+            body = event.body
+            usage = body.get("usage", {})
+            self._current_usage = {
+                "input_tokens": usage.get("input_tokens", 0),
+                "output_tokens": usage.get("output_tokens", 0),
+                "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0),
+                "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0),
+            }
+            self._current_model = body.get("model", "") or self._current_model
+            self._current_stop = body.get("stop_reason", "") or ""
             self._commit_turn()
 
     def _commit_turn(self):
@@ -384,8 +366,6 @@ class AnalyticsStore:
             "seq": self._seq,
             # Accumulator state (for in-progress turns)
             "current_request": self._current_request,
-            "current_response_events": self._current_response_events,
-            "current_text": self._current_text,
             "current_usage": self._current_usage,
             "current_stop": self._current_stop,
             "current_model": self._current_model,
@@ -421,8 +401,6 @@ class AnalyticsStore:
 
         self._seq = state.get("seq", 0)
         self._current_request = state.get("current_request")
-        self._current_response_events = state.get("current_response_events", [])
-        self._current_text = state.get("current_text", [])
         self._current_usage = state.get("current_usage", {})
         self._current_stop = state.get("current_stop", "")
         self._current_model = state.get("current_model", "")

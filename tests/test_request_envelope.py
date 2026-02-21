@@ -129,7 +129,7 @@ class TestEventQueueSinkMetadata:
         q = queue.Queue()
         sink = EventQueueSink(q, request_id="req-1", seq_start=0)
 
-        # Emit several SSE events + done
+        # Emit several SSE events (on_done is a no-op — proxy emits ResponseDoneEvent explicitly)
         sink.on_event("message_start", {
             "type": "message_start",
             "message": {"id": "msg_1", "role": "assistant", "model": "test", "usage": {}},
@@ -154,13 +154,13 @@ class TestEventQueueSinkMetadata:
             "usage": {"output_tokens": 1},
         })
         sink.on_event("message_stop", {"type": "message_stop"})
-        sink.on_done()
+        sink.on_done()  # no-op
 
         events = []
         while not q.empty():
             events.append(q.get_nowait())
 
-        assert len(events) == 7  # 6 SSE + 1 done
+        assert len(events) == 6  # 6 SSE events only
 
         # All share the same request_id
         for evt in events:
@@ -168,7 +168,7 @@ class TestEventQueueSinkMetadata:
 
         # seq is strictly monotonic starting from 1
         seqs = [evt.seq for evt in events]
-        assert seqs == list(range(1, 8))
+        assert seqs == list(range(1, 7))
 
         # recv_ns is monotonically non-decreasing
         timestamps = [evt.recv_ns for evt in events]
@@ -179,24 +179,21 @@ class TestEventQueueSinkMetadata:
         q = queue.Queue()
         sink = EventQueueSink(q, request_id="unique-42")
         sink.on_event("message_stop", {"type": "message_stop"})
-        sink.on_done()
+        sink.on_done()  # no-op
 
         evt1 = q.get_nowait()
-        evt2 = q.get_nowait()
         assert evt1.request_id == "unique-42"
-        assert evt2.request_id == "unique-42"
+        assert q.empty()  # on_done is a no-op — no second event
 
     def test_unknown_event_type_skipped(self):
         """Unknown SSE event types are silently skipped (no metadata emitted)."""
         q = queue.Queue()
         sink = EventQueueSink(q, request_id="req-skip")
         sink.on_event("ping", {})  # unknown type
-        sink.on_done()
+        sink.on_done()  # no-op
 
-        # Only the done event should be in the queue
-        evt = q.get_nowait()
-        assert isinstance(evt, ResponseDoneEvent)
-        assert evt.seq == 1  # ping was skipped, done is seq 1
+        # Queue should be empty — ping was skipped and on_done is a no-op
+        assert q.empty()
 
     def test_recv_ns_is_recent(self):
         """recv_ns should be a monotonic nanosecond timestamp, not zero."""
