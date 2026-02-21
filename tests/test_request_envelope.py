@@ -24,6 +24,7 @@ from cc_dump.event_types import (
     RequestHeadersEvent,
     ResponseDoneEvent,
     ResponseHeadersEvent,
+    ResponseCompleteEvent,
     ResponseNonStreamingEvent,
     ResponseSSEEvent,
     parse_sse_event,
@@ -225,15 +226,20 @@ class TestReplayMetadata:
             complete_message={"type": "message", "id": "msg_1", "content": []},
         )
 
-        # Find the ResponseNonStreamingEvent
-        resp_events = [e for e in events if isinstance(e, ResponseNonStreamingEvent)]
-        assert len(resp_events) == 1
+        resp_headers = [e for e in events if isinstance(e, ResponseHeadersEvent)]
+        complete = [e for e in events if isinstance(e, ResponseCompleteEvent)]
+        assert len(resp_headers) == 1
+        assert len(complete) == 1
 
-        resp = resp_events[0]
-        assert resp.request_id != ""  # UUID hex, not empty
-        assert len(resp.request_id) == 32  # UUID hex length
-        assert resp.seq == 2
-        assert resp.recv_ns > 0
+        headers_evt = resp_headers[0]
+        complete_evt = complete[0]
+        assert headers_evt.request_id != ""  # UUID hex, not empty
+        assert len(headers_evt.request_id) == 32  # UUID hex length
+        assert headers_evt.seq == 2
+        assert headers_evt.recv_ns > 0
+        assert complete_evt.request_id == headers_evt.request_id
+        assert complete_evt.seq == 3
+        assert complete_evt.recv_ns > 0
 
     def test_request_events_have_envelope_metadata(self):
         from cc_dump.har_replayer import convert_to_events

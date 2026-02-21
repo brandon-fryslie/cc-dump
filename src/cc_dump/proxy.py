@@ -21,7 +21,6 @@ from cc_dump.event_types import (
     ResponseCompleteEvent,
     ResponseDoneEvent,
     ResponseHeadersEvent,
-    ResponseNonStreamingEvent,
     ResponseSSEEvent,
     parse_sse_event,
 )
@@ -376,18 +375,23 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         else:
             data = resp.read()
             self.wfile.write(data)
-            # Emit non-streaming response to pipeline
+            # Emit canonical complete-response records for non-streaming transport.
             safe_resp_headers = _safe_headers(resp.headers)
             try:
                 body = json.loads(data)
             except (json.JSONDecodeError, UnicodeDecodeError):
                 body = {}
-            self.event_queue.put(ResponseNonStreamingEvent(
+            self.event_queue.put(ResponseHeadersEvent(
                 status_code=resp.status,
                 headers=safe_resp_headers,
-                body=body,
                 request_id=request_id,
                 seq=0,
+                recv_ns=time.monotonic_ns(),
+            ))
+            self.event_queue.put(ResponseCompleteEvent(
+                body=body,
+                request_id=request_id,
+                seq=1,
                 recv_ns=time.monotonic_ns(),
             ))
 

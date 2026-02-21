@@ -25,10 +25,14 @@ from cc_dump.formatting import (
 from cc_dump.har_replayer import load_har, convert_to_events
 from cc_dump.tui.event_handlers import (
     handle_request,
+    handle_response_headers,
+    handle_response_complete,
     handle_response_non_streaming,
 )
 from cc_dump.event_types import (
     RequestBodyEvent,
+    ResponseHeadersEvent,
+    ResponseCompleteEvent,
     ResponseNonStreamingEvent,
     PipelineEventKind,
 )
@@ -189,21 +193,26 @@ class TestFormatCompleteResponse:
 # ─── Event handler behavior ──────────────────────────────────────────────────
 
 
-class TestNonStreamingEventHandler:
-    """Verify handle_response_non_streaming adds turns to conversation."""
+class TestCompleteResponseEventHandler:
+    """Verify canonical handle_response_complete adds turns to conversation."""
 
     def test_adds_turn_to_conversation(self):
         widgets = _mock_widgets()
         state = {"current_session": "sess_abc"}
         app_state = {}
 
-        event = ResponseNonStreamingEvent(
+        headers_event = ResponseHeadersEvent(
             status_code=200,
             headers={"content-type": "application/json"},
+            request_id="req-1",
+        )
+        complete_event = ResponseCompleteEvent(
             body=_make_complete_message(text="Hello!"),
+            request_id="req-1",
         )
 
-        handle_response_non_streaming(event, state, widgets, app_state, lambda *a: None)
+        handle_response_headers(headers_event, state, widgets, app_state, lambda *a: None)
+        handle_response_complete(complete_event, state, widgets, app_state, lambda *a: None)
 
         # Verify blocks were added to domain store
         ds = widgets["domain_store"]
@@ -218,13 +227,18 @@ class TestNonStreamingEventHandler:
         state = {"current_session": "sess_xyz"}
         app_state = {}
 
-        event = ResponseNonStreamingEvent(
+        headers_event = ResponseHeadersEvent(
             status_code=200,
             headers={},
+            request_id="req-1",
+        )
+        complete_event = ResponseCompleteEvent(
             body=_make_complete_message(),
+            request_id="req-1",
         )
 
-        handle_response_non_streaming(event, state, widgets, app_state, lambda *a: None)
+        handle_response_headers(headers_event, state, widgets, app_state, lambda *a: None)
+        handle_response_complete(complete_event, state, widgets, app_state, lambda *a: None)
 
         ds = widgets["domain_store"]
         blocks = ds.iter_completed_blocks()[0]
@@ -236,18 +250,42 @@ class TestNonStreamingEventHandler:
         state = {}
         app_state = {}
 
-        event = ResponseNonStreamingEvent(
+        headers_event = ResponseHeadersEvent(
             status_code=200,
             headers={},
+            request_id="req-1",
+        )
+        complete_event = ResponseCompleteEvent(
             body=_make_complete_message(text="Visible content here"),
+            request_id="req-1",
         )
 
-        handle_response_non_streaming(event, state, widgets, app_state, lambda *a: None)
+        handle_response_headers(headers_event, state, widgets, app_state, lambda *a: None)
+        handle_response_complete(complete_event, state, widgets, app_state, lambda *a: None)
 
         ds = widgets["domain_store"]
         blocks = ds.iter_completed_blocks()[0]
         text_blocks = _find_blocks(blocks, TextContentBlock)
         assert any("Visible content" in b.content for b in text_blocks)
+
+    def test_non_streaming_transport_normalizes_to_complete_path(self):
+        widgets = _mock_widgets()
+        state = {"current_session": "sess_abc"}
+        app_state = {}
+
+        event = ResponseNonStreamingEvent(
+            status_code=200,
+            headers={"content-type": "application/json"},
+            body=_make_complete_message(text="Hello via wrapper"),
+            request_id="req-legacy",
+        )
+        handle_response_non_streaming(event, state, widgets, app_state, lambda *a: None)
+
+        ds = widgets["domain_store"]
+        completed = ds.iter_completed_blocks()
+        assert len(completed) == 1
+        text_blocks = _find_blocks(completed[0], TextContentBlock)
+        assert any("Hello via wrapper" in b.content for b in text_blocks)
 
 
 # ─── Session detection through request pipeline ──────────────────────────────
@@ -329,10 +367,10 @@ class TestReplayEndToEnd:
             kind = event.kind
             if kind == PipelineEventKind.REQUEST:
                 app_state = handle_request(event, state, widgets, app_state, lambda *a: None)
-            elif kind == PipelineEventKind.RESPONSE_NON_STREAMING:
-                app_state = handle_response_non_streaming(
-                    event, state, widgets, app_state, lambda *a: None
-                )
+            elif kind == PipelineEventKind.RESPONSE_HEADERS:
+                app_state = handle_response_headers(event, state, widgets, app_state, lambda *a: None)
+            elif kind == PipelineEventKind.RESPONSE_COMPLETE:
+                app_state = handle_response_complete(event, state, widgets, app_state, lambda *a: None)
 
         # domain_store should have 2 completed turns (request + response)
         ds = widgets["domain_store"]
@@ -375,10 +413,10 @@ class TestReplayEndToEnd:
             kind = event.kind
             if kind == PipelineEventKind.REQUEST:
                 app_state = handle_request(event, state, widgets, app_state, lambda *a: None)
-            elif kind == PipelineEventKind.RESPONSE_NON_STREAMING:
-                app_state = handle_response_non_streaming(
-                    event, state, widgets, app_state, lambda *a: None
-                )
+            elif kind == PipelineEventKind.RESPONSE_HEADERS:
+                app_state = handle_response_headers(event, state, widgets, app_state, lambda *a: None)
+            elif kind == PipelineEventKind.RESPONSE_COMPLETE:
+                app_state = handle_response_complete(event, state, widgets, app_state, lambda *a: None)
 
         assert state["current_session"] == session_uuid
         # Response blocks are lane-attributed from in-band session metadata.
@@ -418,10 +456,10 @@ class TestReplayEndToEnd:
                 kind = event.kind
                 if kind == PipelineEventKind.REQUEST:
                     app_state = handle_request(event, state, widgets, app_state, lambda *a: None)
-                elif kind == PipelineEventKind.RESPONSE_NON_STREAMING:
-                    app_state = handle_response_non_streaming(
-                        event, state, widgets, app_state, lambda *a: None
-                    )
+                elif kind == PipelineEventKind.RESPONSE_HEADERS:
+                    app_state = handle_response_headers(event, state, widgets, app_state, lambda *a: None)
+                elif kind == PipelineEventKind.RESPONSE_COMPLETE:
+                    app_state = handle_response_complete(event, state, widgets, app_state, lambda *a: None)
 
         # 2 request turns + 2 response turns = 4 completed turns
         ds = widgets["domain_store"]

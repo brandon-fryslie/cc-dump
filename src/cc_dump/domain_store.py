@@ -153,6 +153,26 @@ class DomainStore:
 
         _walk_populate(consolidated)
 
+        self._seal_stream(request_id, consolidated, was_focused=was_focused)
+        return consolidated
+
+    def finalize_stream_with_blocks(self, request_id: str, final_blocks: list) -> list:
+        """Finalize a request-scoped stream using externally assembled blocks.
+
+        // [LAW:one-source-of-truth] Complete-response assembly happens upstream;
+        // this method only seals stream lifecycle in DomainStore.
+        """
+        blocks = self._stream_turns.get(request_id)
+        if blocks is None:
+            return []
+
+        was_focused = request_id == self._focused_stream_id
+        sealed = list(final_blocks)
+        self._seal_stream(request_id, sealed, was_focused=was_focused)
+        return sealed
+
+    def _seal_stream(self, request_id: str, sealed_blocks: list, *, was_focused: bool) -> None:
+        """Common stream shutdown path for both local and upstream assembly."""
         # ── Registry cleanup ──
         self._stream_turns.pop(request_id, None)
         self._stream_delta_buffers.pop(request_id, None)
@@ -162,7 +182,7 @@ class DomainStore:
         ]
 
         # Add to completed turns
-        self._completed.append(consolidated)
+        self._completed.append(sealed_blocks)
 
         # Update focus
         if was_focused:
@@ -171,9 +191,7 @@ class DomainStore:
             )
 
         if self.on_stream_finalized is not None:
-            self.on_stream_finalized(request_id, consolidated, was_focused)
-
-        return consolidated
+            self.on_stream_finalized(request_id, sealed_blocks, was_focused)
 
     def set_focused_stream(self, request_id: str) -> bool:
         """Focus an active stream for live rendering preview."""

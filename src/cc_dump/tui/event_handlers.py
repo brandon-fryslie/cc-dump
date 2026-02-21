@@ -87,6 +87,37 @@ def _sync_active_stream_attribution(widgets, stream_registry) -> None:
         )
 
 
+def _store_response_meta(app_state, request_id: str, status_code: int, headers: dict) -> None:
+    """Store response headers/status by request_id for complete-response finalization."""
+    by_request = app_state.get("response_meta_by_request", {})
+    if not isinstance(by_request, dict):
+        by_request = {}
+    by_request[request_id] = {
+        "status_code": status_code,
+        "headers": dict(headers) if isinstance(headers, dict) else {},
+    }
+    app_state["response_meta_by_request"] = by_request
+
+
+def _pop_response_meta(app_state, request_id: str) -> tuple[int, dict]:
+    """Pop response headers/status for request_id."""
+    by_request = app_state.get("response_meta_by_request", {})
+    if not isinstance(by_request, dict):
+        by_request = {}
+    payload = by_request.pop(request_id, None)
+    app_state["response_meta_by_request"] = by_request
+
+    if not isinstance(payload, dict):
+        return 0, {}
+    status_code = payload.get("status_code", 0)
+    if not isinstance(status_code, int):
+        status_code = 0
+    headers = payload.get("headers", {})
+    if not isinstance(headers, dict):
+        headers = {}
+    return status_code, headers
+
+
 def _current_turn_from_focus(app_state, domain_store):
     usage_map = app_state.get("current_turn_usage_by_request", {})
     if not isinstance(usage_map, dict):
@@ -117,6 +148,84 @@ def _maybe_update_main_session(state, ctx) -> None:
     # // [LAW:one-source-of-truth] current_session tracks orchestrator session.
     if not current or ctx.agent_kind == "main":
         state["current_session"] = ctx.session_id
+
+
+def _clear_current_turn_usage(app_state, request_id: str) -> None:
+    """Clear per-request streaming usage tracking."""
+    usage_by_request = app_state.get("current_turn_usage_by_request", {})
+    if isinstance(usage_by_request, dict):
+        usage_by_request.pop(request_id, None)
+        app_state["current_turn_usage_by_request"] = usage_by_request
+    # Legacy key retained for backward compatibility with old app_state shape.
+    app_state["current_turn_usage"] = {}
+
+
+def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool = True) -> None:
+    """Refresh stats/panels after a response completion path."""
+    domain_store = widgets["domain_store"]
+    stats = widgets["stats"]
+    conv = widgets["conv"]
+    filters = widgets["filters"]
+    refresh_callbacks = widgets.get("refresh_callbacks", {})
+    analytics_store = widgets.get("analytics_store")
+
+    if analytics_store is not None:
+        stats.refresh_from_store(
+            analytics_store,
+            current_turn=_current_turn_from_focus(app_state, domain_store),
+        )
+
+    if rerender_budget:
+        budget_vis = filters.get("metadata", cc_dump.formatting.HIDDEN)
+        if budget_vis.visible:
+            conv.rerender(filters)
+
+    for cb_name in ("refresh_economics", "refresh_timeline", "refresh_session"):
+        cb = refresh_callbacks.get(cb_name)
+        if cb:
+            cb()
+    _sync_stream_footer(widgets)
+
+
+def _handle_complete_response_payload(
+    *,
+    request_id: str,
+    complete_body: dict,
+    state,
+    widgets,
+    app_state,
+    seq: int = 0,
+    recv_ns: int = 0,
+) -> dict[str, object]:
+    """Canonical response finalization path for both streaming and non-streaming transport."""
+    stream_registry = _get_stream_registry(app_state)
+    ctx = stream_registry.mark_done(
+        request_id,
+        seq=seq,
+        recv_ns=recv_ns,
+    )
+    _fallback_session(ctx, state)
+
+    status_code, headers_dict = _pop_response_meta(app_state, request_id)
+    response_blocks: list = []
+    if status_code > 0 or headers_dict:
+        response_blocks.extend(
+            cc_dump.formatting.format_response_headers(status_code or 200, headers_dict)
+        )
+    response_blocks.extend(cc_dump.formatting.format_complete_response(complete_body))
+
+    _stamp_blocks(response_blocks, ctx)
+    _maybe_update_main_session(state, ctx)
+
+    domain_store = widgets["domain_store"]
+    if domain_store.get_stream_blocks(request_id):
+        domain_store.finalize_stream_with_blocks(request_id, response_blocks)
+    else:
+        domain_store.add_turn(response_blocks)
+
+    _clear_current_turn_usage(app_state, request_id)
+    _refresh_post_response(state, widgets, app_state, rerender_budget=True)
+    return app_state
 
 
 def handle_request_headers(event: RequestHeadersEvent, state, widgets, app_state, log_fn):
@@ -197,6 +306,7 @@ def handle_response_headers(event: ResponseHeadersEvent, state, widgets, app_sta
 
     try:
         stream_registry = _get_stream_registry(app_state)
+        _store_response_meta(app_state, event.request_id, status_code, headers_dict)
         ctx = stream_registry.mark_streaming(
             event.request_id,
             seq=event.seq,
@@ -326,46 +436,22 @@ def handle_response_done(event: ResponseDoneEvent, state, widgets, app_state, lo
         )
         _fallback_session(ctx, state)
         domain_store = widgets["domain_store"]
-        conv = widgets["conv"]
-        stats = widgets["stats"]
-        filters = widgets["filters"]
-        refresh_callbacks = widgets.get("refresh_callbacks", {})
-        analytics_store = widgets.get("analytics_store")
-
-        # Finalize request-scoped stream in domain store (fires callback to ConversationView).
-        _ = domain_store.finalize_stream(event.request_id)
-
-        # Clear current turn usage for this request.
-        usage_by_request = app_state.get("current_turn_usage_by_request", {})
-        if isinstance(usage_by_request, dict):
-            usage_by_request.pop(event.request_id, None)
-            app_state["current_turn_usage_by_request"] = usage_by_request
-        # Legacy key retained for backward compatibility with old app_state shape.
-        app_state["current_turn_usage"] = {}
         _maybe_update_main_session(state, ctx)
 
-        # Refresh stats panel from analytics store (merges current turn if streaming)
-        if analytics_store is not None:
-            stats.refresh_from_store(
-                analytics_store,
-                current_turn=_current_turn_from_focus(app_state, domain_store),
-            )
+        # [LAW:single-enforcer] RESPONSE_COMPLETE is canonical finalization path.
+        # RESPONSE_DONE only handles rare fallback where complete payload never arrived.
+        if domain_store.get_stream_blocks(event.request_id):
+            _ = _pop_response_meta(app_state, event.request_id)
+            _ = domain_store.finalize_stream(event.request_id)
+            _clear_current_turn_usage(app_state, event.request_id)
+            _refresh_post_response(state, widgets, app_state, rerender_budget=True)
+            log_fn("DEBUG", "Response done fallback finalized active stream")
+            return app_state
 
-        # Re-render to show cache data in budget blocks
-        budget_vis = filters.get("metadata", cc_dump.formatting.HIDDEN)
-        if budget_vis.visible:
-            conv.rerender(filters)
-
-        # Update economics, timeline, and session panels
-        if "refresh_economics" in refresh_callbacks:
-            refresh_callbacks["refresh_economics"]()
-        if "refresh_timeline" in refresh_callbacks:
-            refresh_callbacks["refresh_timeline"]()
-        if "refresh_session" in refresh_callbacks:
-            refresh_callbacks["refresh_session"]()
-
+        _ = _pop_response_meta(app_state, event.request_id)
+        _clear_current_turn_usage(app_state, event.request_id)
         _sync_stream_footer(widgets)
-        log_fn("DEBUG", "Response completed")
+        log_fn("DEBUG", "Response done acknowledged")
     except Exception as e:
         log_fn("ERROR", f"Error handling response done: {e}")
         raise
@@ -414,48 +500,19 @@ def handle_log(event: LogEvent, state, widgets, app_state, log_fn):
 
 
 def handle_response_non_streaming(event: ResponseNonStreamingEvent, state, widgets, app_state, log_fn):
-    """Handle a complete (non-streaming) HTTP response.
-
-    // [LAW:one-source-of-truth] Uses the same format_complete_response as replay.
-    """
+    """Normalize non-streaming transport into canonical complete-response path."""
     try:
-        stream_registry = _get_stream_registry(app_state)
-        ctx = stream_registry.mark_done(
-            event.request_id,
+        _store_response_meta(app_state, event.request_id, event.status_code, event.headers)
+        _handle_complete_response_payload(
+            request_id=event.request_id,
+            complete_body=event.body,
+            state=state,
+            widgets=widgets,
+            app_state=app_state,
             seq=event.seq,
             recv_ns=event.recv_ns,
         )
-        _fallback_session(ctx, state)
-        domain_store = widgets["domain_store"]
-        stats = widgets["stats"]
-        refresh_callbacks = widgets.get("refresh_callbacks", {})
-        analytics_store = widgets.get("analytics_store")
-
-        # Response header blocks
-        response_blocks = list(
-            cc_dump.formatting.format_response_headers(event.status_code, event.headers)
-        )
-
-        # Complete message blocks
-        response_blocks.extend(
-            cc_dump.formatting.format_complete_response(event.body)
-        )
-
-        _stamp_blocks(response_blocks, ctx)
-        _maybe_update_main_session(state, ctx)
-
-        domain_store.add_turn(response_blocks)
-
-        # Refresh stats and panels (same as response_done)
-        if analytics_store is not None:
-            stats.refresh_from_store(analytics_store, current_turn=None)
-        for cb_name in ("refresh_economics", "refresh_timeline", "refresh_session"):
-            cb = refresh_callbacks.get(cb_name)
-            if cb:
-                cb()
-
-        _sync_stream_footer(widgets)
-        log_fn("DEBUG", f"Complete response: HTTP {event.status_code}")
+        log_fn("DEBUG", f"Complete response via non-streaming transport: HTTP {event.status_code}")
     except Exception as e:
         log_fn("ERROR", f"Error handling complete response: {e}")
         raise
@@ -464,16 +521,17 @@ def handle_response_non_streaming(event: ResponseNonStreamingEvent, state, widge
 
 
 def handle_response_complete(event: ResponseCompleteEvent, state, widgets, app_state, log_fn):
-    """Handle reconstructed complete response event.
-
-    UI rendering is driven by RESPONSE_EVENT/RESPONSE_DONE and RESPONSE_NON_STREAMING.
-    This event is consumed by analytics and persistence subscribers.
-    """
-    _ = _get_stream_registry(app_state).ensure_context(
-        event.request_id,
+    """Handle reconstructed complete response event as the canonical UI path."""
+    _ = _handle_complete_response_payload(
+        request_id=event.request_id,
+        complete_body=event.body,
+        state=state,
+        widgets=widgets,
+        app_state=app_state,
         seq=event.seq,
         recv_ns=event.recv_ns,
     )
+    log_fn("DEBUG", "Complete response finalized")
     return app_state
 
 

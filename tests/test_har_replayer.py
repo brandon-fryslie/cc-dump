@@ -7,8 +7,8 @@ from cc_dump.har_replayer import load_har, convert_to_events
 from cc_dump.event_types import (
     RequestHeadersEvent,
     RequestBodyEvent,
+    ResponseHeadersEvent,
     ResponseCompleteEvent,
-    ResponseNonStreamingEvent,
 )
 
 
@@ -289,7 +289,7 @@ def test_load_har_response_not_complete_message(tmp_path, capsys):
 
 
 def test_convert_to_events_produces_four_events():
-    """convert_to_events produces request headers, request body, non-streaming response, and complete event."""
+    """convert_to_events produces request headers/body, response headers, and complete event."""
     req_headers = {"content-type": "application/json"}
     req_body = {"model": "claude-3-opus-20240229", "messages": [{"role": "user", "content": "Hello"}]}
     resp_status = 200
@@ -311,10 +311,9 @@ def test_convert_to_events_produces_four_events():
     assert events[0].headers == req_headers
     assert isinstance(events[1], RequestBodyEvent)
     assert events[1].body == req_body
-    assert isinstance(events[2], ResponseNonStreamingEvent)
+    assert isinstance(events[2], ResponseHeadersEvent)
     assert events[2].status_code == resp_status
     assert events[2].headers == resp_headers
-    assert events[2].body == complete_message
     assert isinstance(events[3], ResponseCompleteEvent)
     assert events[3].body == complete_message
 
@@ -337,7 +336,7 @@ def test_convert_to_events_preserves_body_exactly():
 
     events = convert_to_events({}, {}, 200, {}, complete_message)
 
-    assert events[2].body is complete_message
+    assert isinstance(events[2], ResponseHeadersEvent)
     assert events[3].body is complete_message
 
 
@@ -396,7 +395,6 @@ def test_roundtrip_har_load_and_convert(tmp_path):
     assert len(events) == 4
     assert isinstance(events[0], RequestHeadersEvent)
     assert isinstance(events[1], RequestBodyEvent)
-    assert isinstance(events[2], ResponseNonStreamingEvent)
+    assert isinstance(events[2], ResponseHeadersEvent)
     assert isinstance(events[3], ResponseCompleteEvent)
-    assert events[2].body["id"] == "msg_test"
     assert events[3].body["id"] == "msg_test"

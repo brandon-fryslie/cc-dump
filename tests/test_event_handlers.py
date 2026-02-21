@@ -9,6 +9,7 @@ from cc_dump.event_types import (
     MessageStartEvent,
     RequestBodyEvent,
     RequestHeadersEvent,
+    ResponseCompleteEvent,
     ResponseDoneEvent,
     ResponseHeadersEvent,
     ResponseSSEEvent,
@@ -451,3 +452,90 @@ class TestEventHandlersRequestScopedStreaming:
         )
         assert domain_store._stream_turns == {}
         assert domain_store.completed_count >= 4  # both streams finalized
+
+    def test_response_complete_finalizes_stream_before_done(self):
+        state = {
+            "positions": {},
+            "known_hashes": {},
+            "next_id": 0,
+            "next_color": 0,
+            "request_counter": 0,
+            "current_session": None,
+        }
+        app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
+        widgets = _mk_widgets(_FakeConv(), _FakeStats(), _FakeViewStore(), DomainStore())
+        log_fn = lambda *args, **kwargs: None
+
+        rid = "req-1"
+        event_handlers.handle_request(
+            RequestBodyEvent(
+                body=_req_body("11111111-2222-3333-4444-555555555555"),
+                request_id=rid,
+                seq=1,
+                recv_ns=1,
+            ),
+            state,
+            widgets,
+            app_state,
+            log_fn,
+        )
+        event_handlers.handle_response_headers(
+            ResponseHeadersEvent(status_code=200, headers={"content-type": "text/event-stream"}, request_id=rid, seq=2, recv_ns=2),
+            state,
+            widgets,
+            app_state,
+            log_fn,
+        )
+        event_handlers.handle_response_event(
+            ResponseSSEEvent(
+                sse_event=TextDeltaEvent(index=0, text="stream delta"),
+                request_id=rid,
+                seq=3,
+                recv_ns=3,
+            ),
+            state,
+            widgets,
+            app_state,
+            log_fn,
+        )
+
+        completed_before = widgets["domain_store"].completed_count
+        event_handlers.handle_response_complete(
+            ResponseCompleteEvent(
+                body={
+                    "id": "msg_1",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "canonical final"}],
+                    "model": "claude-sonnet-4-5-20250929",
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+                request_id=rid,
+                seq=4,
+                recv_ns=4,
+            ),
+            state,
+            widgets,
+            app_state,
+            log_fn,
+        )
+
+        ds = widgets["domain_store"]
+        assert rid not in ds._stream_turns
+        assert ds.completed_count == completed_before + 1
+        response_turn = ds.iter_completed_blocks()[-1]
+        def _walk(blocks):
+            for block in blocks:
+                yield block
+                yield from _walk(getattr(block, "children", []))
+        assert any(getattr(block, "content", "") == "canonical final" for block in _walk(response_turn))
+
+        event_handlers.handle_response_done(
+            ResponseDoneEvent(request_id=rid, seq=5, recv_ns=5),
+            state,
+            widgets,
+            app_state,
+            log_fn,
+        )
+        assert ds.completed_count == completed_before + 1
