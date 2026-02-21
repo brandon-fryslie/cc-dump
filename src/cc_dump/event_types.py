@@ -156,9 +156,16 @@ class MessageStopEvent(SSEEvent):
 
 @dataclass(frozen=True)
 class PipelineEvent:
-    """Base class for all pipeline events."""
+    """Base class for all pipeline events.
+
+    // [LAW:one-source-of-truth] request_id/seq/recv_ns defined once here,
+    // inherited by all event types. Populated on response-side events by proxy.
+    """
 
     kind: PipelineEventKind = field(init=False)
+    request_id: str = field(default="", kw_only=True)
+    seq: int = field(default=0, kw_only=True)
+    recv_ns: int = field(default=0, kw_only=True)
 
 
 @dataclass(frozen=True)

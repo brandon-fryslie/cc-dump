@@ -6,6 +6,8 @@ typed events the live pipeline produces.
 
 import json
 import sys
+import time
+import uuid
 
 from cc_dump.event_types import (
     PipelineEvent,
@@ -144,6 +146,7 @@ def convert_to_events(
     Returns:
         List of typed PipelineEvent objects
     """
+    request_id = uuid.uuid4().hex
     return [
         RequestHeadersEvent(headers=request_headers),
         RequestBodyEvent(body=request_body),
@@ -151,5 +154,8 @@ def convert_to_events(
             status_code=response_status,
             headers=response_headers,
             body=complete_message,
+            request_id=request_id,
+            seq=0,
+            recv_ns=time.monotonic_ns(),
         ),
     ]

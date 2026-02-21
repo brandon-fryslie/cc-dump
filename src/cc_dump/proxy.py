@@ -4,6 +4,7 @@ import http.server
 import json
 import ssl
 import sys
+import time
 import uuid
 import urllib.error
 import urllib.request
@@ -178,18 +179,31 @@ class ClientSink(StreamSink):
 class EventQueueSink(StreamSink):
     """Emits parsed events to the TUI event queue."""
 
-    def __init__(self, queue):
+    def __init__(self, queue, request_id: str = "", seq_start: int = 0):
         self._queue = queue
+        self._request_id = request_id
+        self._seq = seq_start
 
     def on_event(self, event_type, event):
         try:
             sse = parse_sse_event(event_type, event)
         except ValueError:
             return
-        self._queue.put(ResponseSSEEvent(sse_event=sse))
+        self._seq += 1
+        self._queue.put(ResponseSSEEvent(
+            sse_event=sse,
+            request_id=self._request_id,
+            seq=self._seq,
+            recv_ns=time.monotonic_ns(),
+        ))
 
     def on_done(self):
-        self._queue.put(ResponseDoneEvent())
+        self._seq += 1
+        self._queue.put(ResponseDoneEvent(
+            request_id=self._request_id,
+            seq=self._seq,
+            recv_ns=time.monotonic_ns(),
+        ))
 
 
 def _fan_out_sse(resp, sinks):
@@ -238,6 +252,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         self.event_queue.put(LogEvent(method=self.command, path=self.path, status=args[0] if args else ""))
 
     def _proxy(self):
+        request_id = uuid.uuid4().hex
         content_len = int(self.headers.get("Content-Length", 0))
         body_bytes = self.rfile.read(content_len) if content_len else b""
 
@@ -255,7 +270,12 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             request_path = self.path
             if not self.target_host:
                 self.event_queue.put(
-                    ErrorEvent(code=500, reason="No target_host configured for reverse proxy mode")
+                    ErrorEvent(
+                        code=500,
+                        reason="No target_host configured for reverse proxy mode",
+                        request_id=request_id,
+                        recv_ns=time.monotonic_ns(),
+                    )
                 )
                 self.send_response(500)
                 self.end_headers()
@@ -281,7 +301,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         if body is not None and self.request_pipeline is not None:
             body, url, intercept_response = self.request_pipeline.process(body, url)
             if intercept_response is not None:
-                self._send_synthetic_response(intercept_response, body)
+                self._send_synthetic_response(intercept_response, body, request_id)
                 return
             body_bytes = json.dumps(body).encode()  # re-serialize for upstream
 
@@ -300,7 +320,12 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             ctx = ssl.create_default_context()
             resp = urllib.request.urlopen(req, context=ctx, timeout=300)
         except urllib.error.HTTPError as e:
-            self.event_queue.put(ErrorEvent(code=e.code, reason=e.reason))
+            self.event_queue.put(ErrorEvent(
+                code=e.code,
+                reason=e.reason,
+                request_id=request_id,
+                recv_ns=time.monotonic_ns(),
+            ))
             self.send_response(e.code)
             for k, v in e.headers.items():
                 if k.lower() != "transfer-encoding":
@@ -309,7 +334,11 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(e.read())
             return
         except Exception as e:
-            self.event_queue.put(ProxyErrorEvent(error=str(e)))
+            self.event_queue.put(ProxyErrorEvent(
+                error=str(e),
+                request_id=request_id,
+                recv_ns=time.monotonic_ns(),
+            ))
             self.send_response(502)
             self.end_headers()
             return
@@ -327,8 +356,14 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         if is_stream:
             # Emit response headers before streaming
             safe_resp_headers = _safe_headers(resp.headers)
-            self.event_queue.put(ResponseHeadersEvent(status_code=resp.status, headers=safe_resp_headers))
-            self._stream_response(resp)
+            self.event_queue.put(ResponseHeadersEvent(
+                status_code=resp.status,
+                headers=safe_resp_headers,
+                request_id=request_id,
+                seq=0,
+                recv_ns=time.monotonic_ns(),
+            ))
+            self._stream_response(resp, request_id)
         else:
             data = resp.read()
             self.wfile.write(data)
@@ -342,9 +377,12 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 status_code=resp.status,
                 headers=safe_resp_headers,
                 body=body,
+                request_id=request_id,
+                seq=0,
+                recv_ns=time.monotonic_ns(),
             ))
 
-    def _send_synthetic_response(self, response_text: str, body: dict) -> None:
+    def _send_synthetic_response(self, response_text: str, body: dict, request_id: str) -> None:
         """Send a synthetic SSE response and emit pipeline events.
 
         Used when an interceptor short-circuits the request.
@@ -363,10 +401,14 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.flush()
 
         # Emit events to TUI pipeline (same path as real responses)
+        seq = 0
         self.event_queue.put(
             ResponseHeadersEvent(
                 status_code=200,
                 headers={"content-type": "text/event-stream"},
+                request_id=request_id,
+                seq=seq,
+                recv_ns=time.monotonic_ns(),
             )
         )
         # Parse our own SSE bytes through the event queue sink
@@ -384,13 +426,27 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             event_type = event.get("type", "")
             try:
                 sse = parse_sse_event(event_type, event)
-                self.event_queue.put(ResponseSSEEvent(sse_event=sse))
+                seq += 1
+                self.event_queue.put(ResponseSSEEvent(
+                    sse_event=sse,
+                    request_id=request_id,
+                    seq=seq,
+                    recv_ns=time.monotonic_ns(),
+                ))
             except ValueError:
                 pass
-        self.event_queue.put(ResponseDoneEvent())
+        seq += 1
+        self.event_queue.put(ResponseDoneEvent(
+            request_id=request_id,
+            seq=seq,
+            recv_ns=time.monotonic_ns(),
+        ))
 
-    def _stream_response(self, resp):
-        _fan_out_sse(resp, [ClientSink(self.wfile), EventQueueSink(self.event_queue)])
+    def _stream_response(self, resp, request_id: str = ""):
+        _fan_out_sse(resp, [
+            ClientSink(self.wfile),
+            EventQueueSink(self.event_queue, request_id=request_id),
+        ])
 
     def do_POST(self):
         self._proxy()
