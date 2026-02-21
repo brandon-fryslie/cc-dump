@@ -329,7 +329,7 @@ async def test_dump_no_visual_linux(mock_platform, mock_notify):
     # Remove VISUAL from environment if present
     env_backup = os.environ.get("VISUAL")
     if "VISUAL" in os.environ:
-        del os.environ["VISUAL"]
+        os.environ.pop("VISUAL", None)
 
     try:
         replay_data = [make_replay_entry()]
