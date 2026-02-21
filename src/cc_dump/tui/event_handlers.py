@@ -68,6 +68,25 @@ def _sync_stream_footer(widgets) -> None:
     view_store.set("streams:focused", domain_store.get_focused_stream_id() or "")
 
 
+def _sync_active_stream_attribution(widgets, stream_registry) -> None:
+    """Restamp active stream blocks/meta from canonical stream registry contexts."""
+    domain_store = widgets.get("domain_store")
+    if domain_store is None:
+        return
+    # // [LAW:one-source-of-truth] request_id -> attribution mapping is owned by StreamRegistry.
+    for request_id in domain_store.get_active_stream_ids():
+        ctx = stream_registry.get(request_id)
+        if ctx is None:
+            continue
+        domain_store.restamp_stream(
+            request_id,
+            session_id=ctx.session_id,
+            lane_id=ctx.lane_id,
+            agent_kind=ctx.agent_kind,
+            agent_label=ctx.agent_label,
+        )
+
+
 def _current_turn_from_focus(app_state, domain_store):
     usage_map = app_state.get("current_turn_usage_by_request", {})
     if not isinstance(usage_map, dict):
@@ -161,6 +180,7 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
 
         # Keep session panel semantics based on latest request context.
         _maybe_update_main_session(state, ctx)
+        _sync_active_stream_attribution(widgets, stream_registry)
 
         log_fn("DEBUG", f"Request #{state['request_counter']} processed")
     except Exception as e:
@@ -199,6 +219,7 @@ def handle_response_headers(event: ResponseHeadersEvent, state, widgets, app_sta
         # Append response header blocks (empty list is safe)
         for block in blocks:
             domain_store.append_stream_block(event.request_id, block)
+        _sync_active_stream_attribution(widgets, stream_registry)
 
         if blocks:  # Only log if blocks were actually produced
             log_fn(
@@ -276,6 +297,8 @@ def handle_response_event(event: ResponseSSEEvent, state, widgets, app_state, lo
                 current_turn["output_tokens"] = sse_event.output_tokens
                 usage_by_request[event.request_id] = current_turn
                 app_state["current_turn_usage_by_request"] = usage_by_request
+
+        _sync_active_stream_attribution(widgets, stream_registry)
 
         # Refresh stats with the currently focused active stream, if any.
         analytics_store = widgets.get("analytics_store")

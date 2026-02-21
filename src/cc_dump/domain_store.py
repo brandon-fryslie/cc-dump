@@ -197,6 +197,53 @@ class DomainStore:
         """Return the block list for an active stream."""
         return self._stream_turns.get(request_id, [])
 
+    def get_active_stream_ids(self) -> tuple[str, ...]:
+        """Return request_ids for currently active streams in display order."""
+        return tuple(
+            request_id
+            for request_id in self._stream_order
+            if request_id in self._stream_turns
+        )
+
+    def restamp_stream(
+        self,
+        request_id: str,
+        *,
+        session_id: str,
+        lane_id: str,
+        agent_kind: str,
+        agent_label: str,
+    ) -> bool:
+        """Restamp an active stream's metadata and block attribution.
+
+        Returns True if request_id is an active stream and was restamped.
+        """
+        blocks = self._stream_turns.get(request_id)
+        if blocks is None:
+            return False
+
+        # // [LAW:one-source-of-truth] Stream chip labels derive from _stream_meta.
+        meta = self._stream_meta.get(request_id)
+        if meta is None:
+            meta = {}
+            self._stream_meta[request_id] = meta
+        meta["session_id"] = session_id
+        meta["lane_id"] = lane_id
+        meta["agent_kind"] = agent_kind
+        meta["agent_label"] = agent_label
+
+        def _stamp_tree(block) -> None:
+            block.session_id = session_id
+            block.lane_id = lane_id
+            block.agent_kind = agent_kind
+            block.agent_label = agent_label
+            for child in getattr(block, "children", []):
+                _stamp_tree(child)
+
+        for block in blocks:
+            _stamp_tree(block)
+        return True
+
     def get_active_stream_chips(self) -> tuple[tuple[str, str, str], ...]:
         """Return active stream tuples for footer chips.
 
