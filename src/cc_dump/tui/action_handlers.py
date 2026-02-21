@@ -248,6 +248,17 @@ def toggle_follow(app) -> None:
     _conv_action(app, lambda c: c.toggle_follow())
 
 
+def focus_stream(app, request_id: str) -> None:
+    """Focus a live request stream from footer chips."""
+    conv = app._get_conv()
+    if conv is None:
+        return
+    if not conv.set_focused_stream(request_id):
+        return
+    app._view_store.set("streams:active", conv.get_active_stream_chips())
+    app._view_store.set("streams:focused", conv.get_focused_stream_id() or "")
+
+
 def go_top(app) -> None:
     def _go(c):
         # // [LAW:dataflow-not-control-flow] Deactivate via table lookup.

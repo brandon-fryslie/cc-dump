@@ -13,9 +13,9 @@ from snarfx import textual as stx
 
 
 class TestSchema:
-    def test_schema_has_33_keys(self):
-        # 6 categories × 3 axes + 5 panel/follow + 6 footer + 4 side-channel
-        assert len(cc_dump.view_store.SCHEMA) == 33
+    def test_schema_has_35_keys(self):
+        # 6 categories × 3 axes + 5 panel/follow + 8 footer + 4 side-channel
+        assert len(cc_dump.view_store.SCHEMA) == 35
 
     def test_schema_keys_from_category_config(self):
         for _, name, _, _ in CATEGORY_CONFIG:
@@ -276,6 +276,8 @@ class TestReconcileWithNewKeys:
         assert store.get("follow") == "active"
         assert store.get("active_filterset") is None
         assert store.get("tmux:available") is False
+        assert store.get("streams:active") == ()
+        assert store.get("streams:focused") == ""
         assert store.get("sc:loading") is False
 
 
@@ -304,12 +306,22 @@ class TestFooterStateComputed:
         assert state["tmux_auto_zoom"] is False
         assert state["tmux_zoomed"] is False
         assert state["active_launch_config_name"] == ""
+        assert state["active_streams"] == ()
+        assert state["focused_stream_id"] == ""
 
     def test_updates_on_store_change(self):
         store = cc_dump.view_store.create()
         store.set("active_filterset", "1")
         state = store.footer_state.get()
         assert state["active_filterset"] == "1"
+
+    def test_stream_chip_state_updates(self):
+        store = cc_dump.view_store.create()
+        store.set("streams:active", (("req-1", "main", "main"),))
+        store.set("streams:focused", "req-1")
+        state = store.footer_state.get()
+        assert state["active_streams"] == (("req-1", "main", "main"),)
+        assert state["focused_stream_id"] == "req-1"
 
 
 class TestErrorItemsComputed:

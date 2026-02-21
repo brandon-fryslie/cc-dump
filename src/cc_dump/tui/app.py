@@ -14,7 +14,7 @@ import sys
 import threading
 import time
 import traceback
-from typing import Optional, TypedDict
+from typing import Optional, TypedDict, cast
 
 import textual
 from textual.app import App, ComposeResult, SystemCommand
@@ -82,7 +82,11 @@ class TurnUsage(TypedDict, total=False):
 
 class AppState(TypedDict, total=False):
     current_turn_usage: TurnUsage
-    pending_request_headers: dict[str, str]
+    current_turn_usage_by_request: dict[str, TurnUsage]
+    pending_request_headers: dict[str, dict[str, str]]
+    recent_messages: list[dict]
+    last_message_time: float
+    stream_registry: object
 
 
 class NewSession(Message):
@@ -159,7 +163,11 @@ class CcDumpApp(App):
         if not replay_data:
             self._replay_complete.set()
 
-        self._app_state: AppState = {"current_turn_usage": {}}
+        self._app_state: AppState = {
+            "current_turn_usage": {},
+            "current_turn_usage_by_request": {},
+            "pending_request_headers": {},
+        }
 
         self._search_state = cc_dump.tui.search.SearchState()
 
@@ -376,7 +384,7 @@ class CcDumpApp(App):
         if self._replay_data:
             self._process_replay_data()
 
-    def action_quit(self) -> None:
+    async def action_quit(self) -> None:
         now = time.monotonic()
         if self._quit_requested_at is not None and (now - self._quit_requested_at) < 1.0:
             self.exit()
@@ -552,6 +560,7 @@ class CcDumpApp(App):
             "conv": conv,
             "stats": stats,
             "filters": self.active_filters,
+            "view_store": self._view_store,
             "refresh_callbacks": {
                 "refresh_economics": self._refresh_economics,
                 "refresh_timeline": self._refresh_timeline,
@@ -561,8 +570,11 @@ class CcDumpApp(App):
         }
 
         # [LAW:dataflow-not-control-flow] Always call handler, use no-op for unknown
-        handler = cc_dump.tui.event_handlers.EVENT_HANDLERS.get(
-            kind, cc_dump.tui.event_handlers._noop
+        handler = cast(
+            cc_dump.tui.event_handlers.EventHandler,
+            cc_dump.tui.event_handlers.EVENT_HANDLERS.get(
+                kind, cc_dump.tui.event_handlers._noop
+            ),
         )
         self._app_state = handler(
             event, self._state, widgets, self._app_state, self._app_log
@@ -849,7 +861,8 @@ class CcDumpApp(App):
 
     def _collect_recent_messages(self, count: int) -> list[dict]:
         """Extract last N messages from captured API traffic."""
-        return self._app_state.get("recent_messages", [])[-count:]
+        recent_messages = cast(list[dict], self._app_state.get("recent_messages", []))
+        return recent_messages[-count:]
 
     def _side_channel_toggle_enabled(self):
         """Toggle side-channel AI on/off via settings store."""
@@ -870,6 +883,9 @@ class CcDumpApp(App):
     # Navigation
     def action_toggle_follow(self):
         _actions.toggle_follow(self)
+
+    def action_focus_stream(self, request_id: str):
+        _actions.focus_stream(self, request_id)
 
     def action_go_top(self):
         _actions.go_top(self)

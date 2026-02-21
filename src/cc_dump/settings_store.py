@@ -7,7 +7,7 @@
 import logging
 
 import cc_dump.settings
-from snarfx.hot_reload import HotReloadStore
+from snarfx.hot_reload import HotReloadStore  # type: ignore[import-untyped]
 from snarfx import reaction
 
 logger = logging.getLogger(__name__)

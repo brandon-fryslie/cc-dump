@@ -1034,3 +1034,52 @@ class TestLazyRerenderInRenderLine:
         assert td.strips == original_strips
         # call_later should NOT have been called
         conv.call_later.assert_not_called()
+
+
+class TestRequestScopedStreaming:
+    """Request-scoped streaming turns should not interleave."""
+
+    @contextlib.contextmanager
+    def _patch_app_console(self, conv):
+        app_mock = MagicMock(console=Console())
+        cls = type(conv)
+        with patch.object(cls, 'app', new_callable=PropertyMock, return_value=app_mock):
+            yield
+
+    def test_interleaved_requests_stay_partitioned(self):
+        conv = ConversationView()
+        conv._last_width = 80
+        conv._last_filters = {}
+
+        with self._patch_app_console(conv):
+            conv.begin_stream("req-1", {"agent_kind": "main", "agent_label": "main"})
+            conv.begin_stream("req-2", {"agent_kind": "subagent", "agent_label": "subagent 1"})
+
+            conv.append_stream_block("req-1", TextDeltaBlock(content="hello "))
+            conv.append_stream_block("req-2", TextDeltaBlock(content="world "))
+            conv.append_stream_block("req-1", TextDeltaBlock(content="again"))
+
+            # req-2 is active but not focused, so its live strips are not rendered into viewport.
+            assert conv.get_focused_stream_id() == "req-1"
+            assert conv._stream_turns["req-1"]._text_delta_buffer == ["hello ", "again"]
+            assert conv._stream_turns["req-2"]._text_delta_buffer == ["world "]
+
+            conv.finalize_stream("req-1")
+            assert "req-1" not in conv._stream_turns
+            assert "req-2" in conv._stream_turns
+
+    def test_focus_switch_renders_selected_stream(self):
+        conv = ConversationView()
+        conv._last_width = 80
+        conv._last_filters = {}
+
+        with self._patch_app_console(conv):
+            conv.begin_stream("req-1", {"agent_kind": "main", "agent_label": "main"})
+            conv.begin_stream("req-2", {"agent_kind": "subagent", "agent_label": "subagent 1"})
+            conv.append_stream_block("req-1", TextDeltaBlock(content="alpha"))
+            conv.append_stream_block("req-2", TextDeltaBlock(content="beta"))
+
+            assert conv.get_focused_stream_id() == "req-1"
+            assert conv.set_focused_stream("req-2") is True
+            assert conv.get_focused_stream_id() == "req-2"
+            assert len(conv._stream_turns["req-2"].strips) > 0

@@ -288,8 +288,20 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 body = json.loads(body_bytes)
                 # Emit request headers before request body (TUI sees original request)
                 safe_req_headers = _safe_headers(self.headers)
-                self.event_queue.put(RequestHeadersEvent(headers=safe_req_headers))
-                self.event_queue.put(RequestBodyEvent(body=body))
+                # // [LAW:one-source-of-truth] request_id/seq/recv_ns envelope is
+                # carried by request-side events too, not only response-side events.
+                self.event_queue.put(RequestHeadersEvent(
+                    headers=safe_req_headers,
+                    request_id=request_id,
+                    seq=0,
+                    recv_ns=time.monotonic_ns(),
+                ))
+                self.event_queue.put(RequestBodyEvent(
+                    body=body,
+                    request_id=request_id,
+                    seq=1,
+                    recv_ns=time.monotonic_ns(),
+                ))
             except json.JSONDecodeError as e:
                 sys.stderr.write(f"[proxy] malformed request JSON: {e}\n")
                 sys.stderr.flush()

@@ -372,6 +372,9 @@ class TestReplayEndToEnd:
                 )
 
         assert state["current_session"] == session_uuid
+        # Response blocks are lane-attributed from in-band session metadata.
+        response_blocks = widgets["conv"].add_turn.call_args_list[1][0][0]
+        assert all(getattr(block, "agent_kind", "") in {"main", "subagent", "unknown"} for block in response_blocks)
 
     def test_multi_turn_replay(self, tmp_path):
         """Multiple HAR entries produce multiple turns."""

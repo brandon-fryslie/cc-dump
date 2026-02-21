@@ -149,20 +149,31 @@ def convert_to_events(
     """
     request_id = uuid.uuid4().hex
     return [
-        RequestHeadersEvent(headers=request_headers),
-        RequestBodyEvent(body=request_body),
+        # // [LAW:one-source-of-truth] Replay uses same request envelope shape as live proxy.
+        RequestHeadersEvent(
+            headers=request_headers,
+            request_id=request_id,
+            seq=0,
+            recv_ns=time.monotonic_ns(),
+        ),
+        RequestBodyEvent(
+            body=request_body,
+            request_id=request_id,
+            seq=1,
+            recv_ns=time.monotonic_ns(),
+        ),
         ResponseNonStreamingEvent(
             status_code=response_status,
             headers=response_headers,
             body=complete_message,
             request_id=request_id,
-            seq=0,
+            seq=2,
             recv_ns=time.monotonic_ns(),
         ),
         ResponseCompleteEvent(
             body=complete_message,
             request_id=request_id,
-            seq=1,
+            seq=3,
             recv_ns=time.monotonic_ns(),
         ),
     ]

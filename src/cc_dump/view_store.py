@@ -8,7 +8,7 @@
 import cc_dump.formatting
 
 from cc_dump.tui.category_config import CATEGORY_CONFIG
-from snarfx.hot_reload import HotReloadStore
+from snarfx.hot_reload import HotReloadStore  # type: ignore[import-untyped]
 from snarfx import computed, ObservableList
 from snarfx import textual as stx
 import cc_dump.tui.widget_factory
@@ -41,6 +41,8 @@ SCHEMA["tmux:auto_zoom"] = False            # bool — mirrored from tmux contro
 SCHEMA["tmux:zoomed"] = False               # bool — mirrored from tmux controller
 SCHEMA["active_launch_config_name"] = ""    # str — was load_active_name() file I/O each call
 SCHEMA["theme_generation"] = 0              # int — bumped on theme change to invalidate footer
+SCHEMA["streams:active"] = ()               # tuple[(request_id, label, kind), ...]
+SCHEMA["streams:focused"] = ""              # request_id of focused active stream
 
 # Side-channel panel state (previously app._side_channel_* attributes)
 SCHEMA["sc:loading"] = False
@@ -84,6 +86,8 @@ def create():
             "tmux_auto_zoom": store.get("tmux:auto_zoom"),
             "tmux_zoomed": store.get("tmux:zoomed"),
             "active_launch_config_name": store.get("active_launch_config_name"),
+            "active_streams": store.get("streams:active"),
+            "focused_stream_id": store.get("streams:focused"),
             "_gen": store.get("theme_generation"),
         }
 

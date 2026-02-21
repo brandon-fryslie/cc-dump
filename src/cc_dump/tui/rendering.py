@@ -16,7 +16,8 @@ Two-tier dispatch:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from collections.abc import MutableMapping
+from typing import Callable, cast
 
 from rich.text import Text
 from rich.markdown import Markdown
@@ -1553,6 +1554,7 @@ def _render_hook_output_summary(block: FormattedBlock) -> ConsoleRenderable | No
 
 def _render_message_block(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render message container header (replaces RoleBlock rendering)."""
+    tc = get_theme_colors()
     role = getattr(block, "role", "")
     idx = getattr(block, "msg_index", 0)
     timestamp = getattr(block, "timestamp", "")
@@ -1562,6 +1564,27 @@ def _render_message_block(block: FormattedBlock) -> ConsoleRenderable | None:
     t = Text(f"{label} [{idx}]", style=style)
     if timestamp:
         t.append(f"  {timestamp}", style="dim")
+
+    agent_kind = getattr(block, "agent_kind", "") or "main"
+    agent_label = getattr(block, "agent_label", "")
+    if agent_label:
+        badge_styles = {
+            "main": f"bold {tc.foreground} on {tc.background}",
+            "subagent": f"bold {tc.background} on {tc.accent}",
+            "unknown": f"bold {tc.background} on {tc.warning}",
+        }
+        badge_style = badge_styles.get(agent_kind, badge_styles["unknown"])
+        t.append(f" [{agent_label}]", style=badge_style)
+        # Subagent/unknown turns get a subtle header tint to stay visually distinct.
+        # // [LAW:dataflow-not-control-flow] Tint selection is table-driven by agent_kind.
+        tint_by_kind = {
+            "main": None,
+            "subagent": tc.surface,
+            "unknown": tc.surface,
+        }
+        tint = tint_by_kind.get(agent_kind)
+        if tint:
+            t.stylize(f"on {tint}", 0, len(t))
     return t
 
 
@@ -1883,6 +1906,12 @@ class _RenderContext:
     overrides: object = None  # ViewOverrides | None — dual-read/write
 
 
+def _block_cache(ctx: _RenderContext) -> MutableMapping[tuple[object, ...], object] | None:
+    """Return typed cache view for mypy while preserving runtime cache implementation."""
+    # // [LAW:locality-or-seam] Type seam around generic cache to avoid widening renderer types.
+    return cast(MutableMapping[tuple[object, ...], object] | None, ctx.block_cache)
+
+
 def _collapse_children(
     children: list[FormattedBlock], tools_on: bool, overrides=None,
 ) -> list[FormattedBlock]:
@@ -2014,8 +2043,10 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
             region_cache_state,
         )
 
-        if ctx.block_cache is not None and cache_key in ctx.block_cache:
-            block_strips = ctx.block_cache[cache_key]
+        cache = _block_cache(ctx)
+        if cache is not None and cache_key in cache:
+            cached_block = cache[cache_key]
+            block_strips = cached_block if isinstance(cached_block, list) else []
         else:
             block_strips = []
 
@@ -2052,8 +2083,8 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
                                 last_i
                             ].apply_meta(region_meta)
 
-            if ctx.block_cache is not None:
-                ctx.block_cache[cache_key] = block_strips
+            if cache is not None:
+                cache[cache_key] = block_strips
 
         text = True  # sentinel — we already have block_strips
 
@@ -2091,8 +2122,9 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
             search_hash,
         )
 
-        if ctx.block_cache is not None and cache_key in ctx.block_cache:
-            cached = ctx.block_cache[cache_key]
+        cache = _block_cache(ctx)
+        if cache is not None and cache_key in cache:
+            cached = cache[cache_key]
             if isinstance(cached, tuple):
                 block_strips = cached[0]
             else:
@@ -2108,8 +2140,8 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
             else:
                 block_strips = []
 
-            if ctx.block_cache is not None:
-                ctx.block_cache[cache_key] = block_strips
+            if cache is not None:
+                cache[cache_key] = block_strips
 
     # Track expandability: children make a block expandable, as does
     # having a different expanded renderer or exceeding truncation limit

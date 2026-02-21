@@ -35,6 +35,10 @@ class StatusFooter(Widget):
         width: 100%;
     }
 
+    StatusFooter #footer-streams {
+        display: none;
+    }
+
     StatusFooter Chip {
         width: auto;
         height: 1;
@@ -101,6 +105,7 @@ class StatusFooter(Widget):
         ("5", "metadata"),
         ("6", "thinking"),
     ]
+    _MAX_STREAM_CHIPS = 8
 
     def compose(self):
         # Line 1: category chips
@@ -142,6 +147,13 @@ class StatusFooter(Widget):
                 id="cmd-auto-zoom",
                 classes="tmux",
             )
+        with Horizontal(id="footer-streams"):
+            for i in range(self._MAX_STREAM_CHIPS):
+                yield Chip(
+                    f" s{i + 1} ",
+                    action=None,
+                    id=f"stream-{i}",
+                )
 
     def update_display(self, state: dict) -> None:
         """Render footer from state dict. Called by footer_state reaction.
@@ -224,3 +236,34 @@ class StatusFooter(Widget):
         auto_chip.update(" Z auto ")
         auto_chip.set_class(not tmux_auto, "-dim")
         auto_chip.styles.text_style = "bold reverse" if tmux_auto else None
+
+        # Active request stream chips (concurrent streaming focus control).
+        streams = state.get("active_streams", ())
+        if not isinstance(streams, tuple):
+            streams = tuple(streams) if isinstance(streams, list) else ()
+        focused_stream_id = state.get("focused_stream_id", "")
+        stream_row = self.query_one("#footer-streams", Horizontal)
+        stream_row.display = bool(streams)
+
+        kind_styles = {
+            "main": (Color.parse(tc.background), Color.parse(tc.foreground)),
+            "subagent": (Color.parse(tc.surface), Color.parse(tc.accent)),
+            "unknown": (Color.parse(tc.background), Color.parse(tc.warning)),
+        }
+
+        for i in range(self._MAX_STREAM_CHIPS):
+            chip = self.query_one(f"#stream-{i}", Chip)
+            if i >= len(streams):
+                chip.display = False
+                continue
+
+            request_id, label, kind = streams[i]
+            chip.display = True
+            chip.update(f" s{i + 1} {label} ")
+            # // [LAW:dataflow-not-control-flow] Action payload is derived data.
+            chip._action = f"app.focus_stream('{request_id}')"
+
+            bg, fg = kind_styles.get(kind, kind_styles["unknown"])
+            chip.styles.background = bg
+            chip.styles.color = fg
+            chip.set_class(request_id != focused_stream_id, "-dim")

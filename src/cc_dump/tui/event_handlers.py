@@ -5,8 +5,11 @@ events arrive from the proxy. The app.py module calls into these functions
 but the actual behavior can be hot-swapped.
 """
 
+from collections.abc import Callable
+
 import cc_dump.analysis
 import cc_dump.formatting
+import cc_dump.tui.stream_registry
 from cc_dump.event_types import (
     PipelineEventKind,
     RequestHeadersEvent,
@@ -14,6 +17,7 @@ from cc_dump.event_types import (
     ResponseHeadersEvent,
     ResponseSSEEvent,
     ResponseNonStreamingEvent,
+    ResponseCompleteEvent,
     ResponseDoneEvent,
     ErrorEvent,
     ProxyErrorEvent,
@@ -22,6 +26,65 @@ from cc_dump.event_types import (
     MessageDeltaEvent,
 )
 
+EventHandler = Callable[
+    [object, dict[str, object], dict[str, object], dict[str, object], Callable[[str, str], None]],
+    dict[str, object],
+]
+
+
+def _get_stream_registry(app_state):
+    """Get or create the stream registry in app_state."""
+    reg = app_state.get("stream_registry")
+    if reg is None:
+        reg = cc_dump.tui.stream_registry.StreamRegistry()
+        app_state["stream_registry"] = reg
+    return reg
+
+
+def _stamp_block_tree(block, ctx) -> None:
+    """Stamp session/lane attribution on a block tree."""
+    block.session_id = ctx.session_id
+    block.lane_id = ctx.lane_id
+    block.agent_kind = ctx.agent_kind
+    block.agent_label = ctx.agent_label
+    for child in getattr(block, "children", []):
+        _stamp_block_tree(child, ctx)
+
+
+def _stamp_blocks(blocks, ctx) -> None:
+    for block in blocks:
+        _stamp_block_tree(block, ctx)
+
+
+def _sync_stream_footer(widgets, conv) -> None:
+    """Push active stream chip state to view_store."""
+    view_store = widgets.get("view_store")
+    if view_store is None:
+        return
+    # // [LAW:one-source-of-truth] Footer stream chips derive from ConversationView.
+    view_store.set("streams:active", conv.get_active_stream_chips())
+    view_store.set("streams:focused", conv.get_focused_stream_id() or "")
+
+
+def _current_turn_from_focus(app_state, conv):
+    usage_map = app_state.get("current_turn_usage_by_request", {})
+    if not isinstance(usage_map, dict):
+        return None
+    focused = conv.get_focused_stream_id() if hasattr(conv, "get_focused_stream_id") else None
+    if not focused:
+        return None
+    usage = usage_map.get(focused)
+    return usage if isinstance(usage, dict) else None
+
+
+def _fallback_session(ctx, state) -> None:
+    """Preserve legacy session stamping when stream context has no session."""
+    if ctx.session_id:
+        return
+    current_session = state.get("current_session", "")
+    if isinstance(current_session, str) and current_session:
+        ctx.session_id = current_session
+
 
 def handle_request_headers(event: RequestHeadersEvent, state, widgets, app_state, log_fn):
     """Handle request_headers event.
@@ -29,8 +92,12 @@ def handle_request_headers(event: RequestHeadersEvent, state, widgets, app_state
     Stores request headers in app_state to be included with the request turn.
     """
     headers_dict = event.headers
-    # Store headers temporarily - will be consumed by handle_request
-    app_state["pending_request_headers"] = headers_dict
+    pending = app_state.get("pending_request_headers", {})
+    if not isinstance(pending, dict):
+        pending = {}
+    # // [LAW:one-source-of-truth] Headers are keyed by request_id to avoid cross-request races.
+    pending[event.request_id] = headers_dict
+    app_state["pending_request_headers"] = pending
     log_fn("DEBUG", f"Stored request headers: {len(headers_dict)} headers")
     return app_state
 
@@ -42,6 +109,14 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
     body = event.body
 
     try:
+        stream_registry = _get_stream_registry(app_state)
+        ctx = stream_registry.register_request(
+            event.request_id,
+            body if isinstance(body, dict) else {},
+            seq=event.seq,
+            recv_ns=event.recv_ns,
+        )
+
         # Track last message time for session panel connectivity
         app_state["last_message_time"] = time.monotonic()
 
@@ -52,8 +127,13 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
         app_state["recent_messages"] = recent[-50:]  # rolling window
 
         # [LAW:one-source-of-truth] Header injection moved into format_request
-        pending_headers = app_state.pop("pending_request_headers", None)
+        pending_headers_all = app_state.get("pending_request_headers", {})
+        if not isinstance(pending_headers_all, dict):
+            pending_headers_all = {}
+        pending_headers = pending_headers_all.pop(event.request_id, None)
+        app_state["pending_request_headers"] = pending_headers_all
         blocks = cc_dump.formatting.format_request(body, state, request_headers=pending_headers)
+        _stamp_blocks(blocks, ctx)
 
         conv = widgets["conv"]
         stats = widgets["stats"]
@@ -63,6 +143,10 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
 
         # Update stats (only request count and model tracking - not tokens)
         stats.update_stats(requests=state["request_counter"])
+
+        # Keep session panel semantics based on latest request context.
+        if ctx.session_id:
+            state["current_session"] = ctx.session_id
 
         log_fn("DEBUG", f"Request #{state['request_counter']} processed")
     except Exception as e:
@@ -78,28 +162,38 @@ def handle_response_headers(event: ResponseHeadersEvent, state, widgets, app_sta
     headers_dict = event.headers
 
     try:
-        blocks = cc_dump.formatting.format_response_headers(status_code, headers_dict)
+        stream_registry = _get_stream_registry(app_state)
+        ctx = stream_registry.mark_streaming(
+            event.request_id,
+            seq=event.seq,
+            recv_ns=event.recv_ns,
+        )
+        _fallback_session(ctx, state)
 
-        # // [LAW:one-source-of-truth] Stamp response blocks with current session
-        current_session = state.get("current_session", "")
-        for block in blocks:
-            block.session_id = current_session
+        blocks = cc_dump.formatting.format_response_headers(status_code, headers_dict)
+        _stamp_blocks(blocks, ctx)
+        if ctx.session_id:
+            state["current_session"] = ctx.session_id
 
         conv = widgets["conv"]
         filters = widgets["filters"]
 
-        # [LAW:dataflow-not-control-flow] Always begin turn (idempotent), process blocks
-        conv.begin_streaming_turn()
+        conv.begin_stream(event.request_id, {
+            "agent_kind": ctx.agent_kind,
+            "agent_label": ctx.agent_label,
+            "lane_id": ctx.lane_id,
+        })
 
         # Append response header blocks (empty list is safe)
         for block in blocks:
-            conv.append_streaming_block(block, filters)
+            conv.append_stream_block(event.request_id, block, filters)
 
         if blocks:  # Only log if blocks were actually produced
             log_fn(
                 "DEBUG",
                 f"Displayed response headers: HTTP {status_code}, {len(headers_dict)} headers",
             )
+        _sync_stream_footer(widgets, conv)
     except Exception as e:
         log_fn("ERROR", f"Error handling response headers: {e}")
         raise
@@ -112,23 +206,31 @@ def handle_response_event(event: ResponseSSEEvent, state, widgets, app_state, lo
     sse_event = event.sse_event
 
     try:
+        stream_registry = _get_stream_registry(app_state)
+        ctx = stream_registry.mark_streaming(
+            event.request_id,
+            seq=event.seq,
+            recv_ns=event.recv_ns,
+        )
+        _fallback_session(ctx, state)
         blocks = cc_dump.formatting.format_response_event(sse_event)
-
-        # // [LAW:one-source-of-truth] Stamp response blocks with current session
-        current_session = state.get("current_session", "")
-        for block in blocks:
-            block.session_id = current_session
+        _stamp_blocks(blocks, ctx)
+        if ctx.session_id:
+            state["current_session"] = ctx.session_id
 
         conv = widgets["conv"]
         stats = widgets["stats"]
         filters = widgets["filters"]
 
-        # [LAW:dataflow-not-control-flow] Always begin turn (idempotent), process blocks
-        conv.begin_streaming_turn()
+        conv.begin_stream(event.request_id, {
+            "agent_kind": ctx.agent_kind,
+            "agent_label": ctx.agent_label,
+            "lane_id": ctx.lane_id,
+        })
 
         for block in blocks:
             # Append to ConversationView streaming turn
-            conv.append_streaming_block(block, filters)
+            conv.append_stream_block(event.request_id, block, filters)
 
             # Extract stats from message_start and message_delta
             if isinstance(block, cc_dump.formatting.StreamInfoBlock):
@@ -136,17 +238,35 @@ def handle_response_event(event: ResponseSSEEvent, state, widgets, app_state, lo
                 # Extract usage data from message_start for current turn tracking
                 if isinstance(sse_event, MessageStartEvent):
                     usage = sse_event.message.usage
-                    current_turn = app_state.get("current_turn_usage", {})
+                    usage_by_request = app_state.get("current_turn_usage_by_request", {})
+                    if not isinstance(usage_by_request, dict):
+                        usage_by_request = {}
+                    current_turn = usage_by_request.get(event.request_id, {})
                     current_turn["input_tokens"] = usage.input_tokens
                     current_turn["cache_read_tokens"] = usage.cache_read_input_tokens
                     current_turn["cache_creation_tokens"] = usage.cache_creation_input_tokens
-                    app_state["current_turn_usage"] = current_turn
+                    current_turn["model"] = block.model
+                    usage_by_request[event.request_id] = current_turn
+                    app_state["current_turn_usage_by_request"] = usage_by_request
 
             elif isinstance(sse_event, MessageDeltaEvent):
                 # Track output tokens for current turn
-                current_turn = app_state.get("current_turn_usage", {})
+                usage_by_request = app_state.get("current_turn_usage_by_request", {})
+                if not isinstance(usage_by_request, dict):
+                    usage_by_request = {}
+                current_turn = usage_by_request.get(event.request_id, {})
                 current_turn["output_tokens"] = sse_event.output_tokens
-                app_state["current_turn_usage"] = current_turn
+                usage_by_request[event.request_id] = current_turn
+                app_state["current_turn_usage_by_request"] = usage_by_request
+
+        # Refresh stats with the currently focused active stream, if any.
+        analytics_store = widgets.get("analytics_store")
+        if analytics_store is not None:
+            stats.refresh_from_store(
+                analytics_store,
+                current_turn=_current_turn_from_focus(app_state, conv),
+            )
+        _sync_stream_footer(widgets, conv)
     except Exception as e:
         log_fn("ERROR", f"Error handling response event: {e}")
         raise
@@ -157,21 +277,38 @@ def handle_response_event(event: ResponseSSEEvent, state, widgets, app_state, lo
 def handle_response_done(event: ResponseDoneEvent, state, widgets, app_state, log_fn):
     """Handle response_done event."""
     try:
+        stream_registry = _get_stream_registry(app_state)
+        ctx = stream_registry.mark_done(
+            event.request_id,
+            seq=event.seq,
+            recv_ns=event.recv_ns,
+        )
+        _fallback_session(ctx, state)
         conv = widgets["conv"]
         stats = widgets["stats"]
         filters = widgets["filters"]
         refresh_callbacks = widgets.get("refresh_callbacks", {})
         analytics_store = widgets.get("analytics_store")
 
-        # Finalize streaming turn in ConversationView
-        _ = conv.finalize_streaming_turn()
+        # Finalize request-scoped stream in ConversationView.
+        _ = conv.finalize_stream(event.request_id)
 
-        # Clear current turn usage (turn is now committed to store)
+        # Clear current turn usage for this request.
+        usage_by_request = app_state.get("current_turn_usage_by_request", {})
+        if isinstance(usage_by_request, dict):
+            usage_by_request.pop(event.request_id, None)
+            app_state["current_turn_usage_by_request"] = usage_by_request
+        # Legacy key retained for backward compatibility with old app_state shape.
         app_state["current_turn_usage"] = {}
+        if ctx.session_id:
+            state["current_session"] = ctx.session_id
 
         # Refresh stats panel from analytics store (merges current turn if streaming)
         if analytics_store is not None:
-            stats.refresh_from_store(analytics_store, current_turn=None)
+            stats.refresh_from_store(
+                analytics_store,
+                current_turn=_current_turn_from_focus(app_state, conv),
+            )
 
         # Re-render to show cache data in budget blocks
         budget_vis = filters.get("metadata", cc_dump.formatting.HIDDEN)
@@ -186,6 +323,7 @@ def handle_response_done(event: ResponseDoneEvent, state, widgets, app_state, lo
         if "refresh_session" in refresh_callbacks:
             refresh_callbacks["refresh_session"]()
 
+        _sync_stream_footer(widgets, conv)
         log_fn("DEBUG", "Response completed")
     except Exception as e:
         log_fn("ERROR", f"Error handling response done: {e}")
@@ -240,6 +378,13 @@ def handle_response_non_streaming(event: ResponseNonStreamingEvent, state, widge
     // [LAW:one-source-of-truth] Uses the same format_complete_response as replay.
     """
     try:
+        stream_registry = _get_stream_registry(app_state)
+        ctx = stream_registry.mark_done(
+            event.request_id,
+            seq=event.seq,
+            recv_ns=event.recv_ns,
+        )
+        _fallback_session(ctx, state)
         conv = widgets["conv"]
         stats = widgets["stats"]
         filters = widgets["filters"]
@@ -256,10 +401,9 @@ def handle_response_non_streaming(event: ResponseNonStreamingEvent, state, widge
             cc_dump.formatting.format_complete_response(event.body)
         )
 
-        # // [LAW:one-source-of-truth] Stamp with current session
-        current_session = state.get("current_session", "")
-        for block in response_blocks:
-            block.session_id = current_session
+        _stamp_blocks(response_blocks, ctx)
+        if ctx.session_id:
+            state["current_session"] = ctx.session_id
 
         conv.add_turn(response_blocks, filters)
 
@@ -271,6 +415,7 @@ def handle_response_non_streaming(event: ResponseNonStreamingEvent, state, widge
             if cb:
                 cb()
 
+        _sync_stream_footer(widgets, conv)
         log_fn("DEBUG", f"Complete response: HTTP {event.status_code}")
     except Exception as e:
         log_fn("ERROR", f"Error handling complete response: {e}")
@@ -279,17 +424,32 @@ def handle_response_non_streaming(event: ResponseNonStreamingEvent, state, widge
     return app_state
 
 
-def _noop(event, state, widgets, app_state, log_fn):
+def handle_response_complete(event: ResponseCompleteEvent, state, widgets, app_state, log_fn):
+    """Handle reconstructed complete response event.
+
+    UI rendering is driven by RESPONSE_EVENT/RESPONSE_DONE and RESPONSE_NON_STREAMING.
+    This event is consumed by analytics and persistence subscribers.
+    """
+    _ = _get_stream_registry(app_state).ensure_context(
+        event.request_id,
+        seq=event.seq,
+        recv_ns=event.recv_ns,
+    )
+    return app_state
+
+
+def _noop(event, state, widgets, app_state, log_fn) -> dict:
     """No-op handler for events that need no action."""
     return app_state
 
 
 # [LAW:dataflow-not-control-flow] Event dispatch table keyed by PipelineEventKind
-EVENT_HANDLERS = {
+EVENT_HANDLERS: dict[PipelineEventKind, EventHandler] = {
     PipelineEventKind.REQUEST_HEADERS: handle_request_headers,
     PipelineEventKind.REQUEST: handle_request,
     PipelineEventKind.RESPONSE_HEADERS: handle_response_headers,
     PipelineEventKind.RESPONSE_EVENT: handle_response_event,
+    PipelineEventKind.RESPONSE_COMPLETE: handle_response_complete,
     PipelineEventKind.RESPONSE_NON_STREAMING: handle_response_non_streaming,
     PipelineEventKind.RESPONSE_DONE: handle_response_done,
     PipelineEventKind.ERROR: handle_error,

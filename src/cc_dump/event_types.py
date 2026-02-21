@@ -160,7 +160,8 @@ class PipelineEvent:
     """Base class for all pipeline events.
 
     // [LAW:one-source-of-truth] request_id/seq/recv_ns defined once here,
-    // inherited by all event types. Populated on response-side events by proxy.
+    // inherited by all event types. Populated by proxy/replay for request and
+    // response paths.
     """
 
     kind: PipelineEventKind = field(init=False)

@@ -232,10 +232,10 @@ class TestReplayMetadata:
         resp = resp_events[0]
         assert resp.request_id != ""  # UUID hex, not empty
         assert len(resp.request_id) == 32  # UUID hex length
-        assert resp.seq == 0
+        assert resp.seq == 2
         assert resp.recv_ns > 0
 
-    def test_request_events_have_default_metadata(self):
+    def test_request_events_have_envelope_metadata(self):
         from cc_dump.har_replayer import convert_to_events
 
         events = convert_to_events(
@@ -246,9 +246,11 @@ class TestReplayMetadata:
             complete_message={"type": "message", "id": "msg_1", "content": []},
         )
 
-        # Request-side events keep defaults (not tagged with response metadata)
         req_events = [e for e in events if isinstance(e, (RequestHeadersEvent, RequestBodyEvent))]
-        for evt in req_events:
-            assert evt.request_id == ""
-            assert evt.seq == 0
-            assert evt.recv_ns == 0
+        assert len(req_events) == 2
+        assert req_events[0].request_id
+        assert req_events[0].request_id == req_events[1].request_id
+        assert req_events[0].seq == 0
+        assert req_events[1].seq == 1
+        assert req_events[0].recv_ns > 0
+        assert req_events[1].recv_ns > 0

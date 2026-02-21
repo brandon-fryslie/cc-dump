@@ -227,6 +227,13 @@ class ConversationView(ScrollView):
         self._indicator = cc_dump.tui.error_indicator.IndicatorState()
         # // [LAW:one-source-of-truth] All per-block view state lives here.
         self._view_overrides = cc_dump.tui.view_overrides.ViewOverrides()
+        # Active streams keyed by canonical request_id.
+        # // [LAW:one-source-of-truth] request_id is the only stream identity key.
+        self._stream_turns: dict[str, TurnData] = {}
+        self._stream_meta: dict[str, dict] = {}
+        self._stream_order: list[str] = []
+        self._focused_stream_id: str | None = None
+        self._attached_stream_id: str | None = None
 
     # // [LAW:one-source-of-truth] Follow state stored as string in view store.
     # String comparison is stable across hot-reloads (enum class identity changes).
@@ -564,32 +571,80 @@ class ConversationView(ScrollView):
         td._last_filter_snapshot = {
             k: filters.get(k, cc_dump.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
         }
-        self._turns.append(td)
-        self._recalculate_offsets()
+        self._append_completed_turn(td)
 
         if self._is_following:
             with self._programmatic_scroll():
                 self.scroll_end(animate=False, immediate=False, x_axis=False)
 
-    # ─── Sprint 6: Inline streaming ──────────────────────────────────────────
+    def _append_completed_turn(self, td: TurnData) -> None:
+        """Append completed turn while preserving focused streaming preview at end."""
+        attached: TurnData | None = None
+        if self._attached_stream_id and self._turns and self._turns[-1].is_streaming:
+            attached = self._turns.pop()
+            self._attached_stream_id = None
 
-    def begin_streaming_turn(self):
-        """Create an empty streaming TurnData at end of turns list.
+        td.turn_index = len(self._turns)
+        self._turns.append(td)
 
-        Idempotent - if a streaming turn already exists, does nothing.
-        """
-        # Check if we already have a streaming turn
+        if attached is not None and self._focused_stream_id and self._focused_stream_id in self._stream_turns:
+            attached.turn_index = len(self._turns)
+            self._turns.append(attached)
+            self._attached_stream_id = self._focused_stream_id
+
+        self._recalculate_offsets()
+
+    def _attach_focused_stream(self) -> None:
+        """Ensure focused active stream preview is attached as the last turn."""
+        focused = self._focused_stream_id
+        if not focused or focused not in self._stream_turns:
+            self._detach_stream_preview()
+            return
+
+        if self._attached_stream_id == focused and self._turns and self._turns[-1].is_streaming:
+            return
+
+        self._detach_stream_preview()
+        td = self._stream_turns[focused]
+        td.turn_index = len(self._turns)
+        self._turns.append(td)
+        self._attached_stream_id = focused
+        self._recalculate_offsets()
+
+    def _detach_stream_preview(self) -> None:
+        """Remove attached streaming preview turn from completed turn list."""
+        if self._attached_stream_id is None:
+            return
         if self._turns and self._turns[-1].is_streaming:
+            self._turns.pop()
+        self._attached_stream_id = None
+        self._recalculate_offsets()
+
+    # ─── Request-scoped streaming ────────────────────────────────────────────
+
+    def begin_stream(self, request_id: str, stream_meta: dict | None = None) -> None:
+        """Create an active stream bucket for request_id.
+
+        // [LAW:one-source-of-truth] request_id is canonical stream identity.
+        """
+        if request_id in self._stream_turns:
+            if stream_meta:
+                self._stream_meta[request_id] = dict(stream_meta)
             return
 
         td = TurnData(
-            turn_index=len(self._turns),
+            turn_index=-1,
             blocks=[],
             strips=[],
             is_streaming=True,
         )
-        self._turns.append(td)
-        self._recalculate_offsets()
+        self._stream_turns[request_id] = td
+        self._stream_meta[request_id] = dict(stream_meta or {})
+        self._stream_order.append(request_id)
+
+        if self._focused_stream_id is None:
+            self._focused_stream_id = request_id
+        self._attach_focused_stream()
 
     def _refresh_streaming_delta(self, td: TurnData):
         """Re-render delta buffer with lightweight streaming preview.
@@ -621,38 +676,36 @@ class ConversationView(ScrollView):
         """
         self._recalculate_offsets()
 
-    def append_streaming_block(self, block, filters: dict = None):
-        """Append a block to the streaming turn.
-
-        Only blocks with show_during_streaming=True are rendered during streaming.
-        All other blocks are stored for rendering at finalization.
-        """
+    def append_stream_block(self, request_id: str, block, filters: dict | None = None) -> None:
+        """Append a block to the request-scoped streaming turn."""
         if filters is None:
             filters = self._last_filters
 
-        # Ensure streaming turn exists
-        if not self._turns or not self._turns[-1].is_streaming:
-            self.begin_streaming_turn()
-
-        td = self._turns[-1]
+        if request_id not in self._stream_turns:
+            self.begin_stream(request_id)
+        td = self._stream_turns[request_id]
 
         # Add block to blocks list (always store)
         td.blocks.append(block)
 
         # // [LAW:dataflow-not-control-flow] Block declares streaming behavior via property
         if block.show_during_streaming:
-            # TextDeltaBlock: buffer and progressive display
+            # Buffer deltas for all streams; only focused stream renders live preview.
             td._text_delta_buffer.append(block.content)
+        is_focused = request_id == self._focused_stream_id
+        if block.show_during_streaming and is_focused:
+            self._attach_focused_stream()
+            # TextDeltaBlock: progressive display for the focused stream.
             self._refresh_streaming_delta(td)
             # Update virtual size and auto-scroll
             self._update_streaming_size(td)
             if self._is_following:
                 with self._programmatic_scroll():
                     self.scroll_end(animate=False, immediate=False, x_axis=False)
-        # Other blocks: stored only, rendered at finalization
+        # Other blocks: stored only, rendered at finalization.
 
-    def finalize_streaming_turn(self) -> list:
-        """Finalize the streaming turn.
+    def finalize_stream(self, request_id: str) -> list:
+        """Finalize a request-scoped streaming turn.
 
         Consolidates TextDeltaBlocks → TextContentBlocks, wraps content in
         MessageBlock container, full re-render from final blocks, marks turn
@@ -660,12 +713,15 @@ class ConversationView(ScrollView):
 
         Returns the final block list.
         """
-        if not self._turns or not self._turns[-1].is_streaming:
+        td = self._stream_turns.get(request_id)
+        if td is None:
             return []
 
-        td = self._turns[-1]
+        was_focused = request_id == self._focused_stream_id
+        if was_focused:
+            self._detach_stream_preview()
 
-        consolidated = []
+        consolidated: list[cc_dump.formatting.FormattedBlock] = []
         delta_buffer = []
 
         for block in td.blocks:
@@ -737,10 +793,64 @@ class ConversationView(ScrollView):
             k: self._last_filters.get(k, cc_dump.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
         }
 
-        # Recalculate offsets
-        self._recalculate_offsets()
+        # Remove from active stream registries.
+        self._stream_turns.pop(request_id, None)
+        self._stream_meta.pop(request_id, None)
+        self._stream_order = [rid for rid in self._stream_order if rid != request_id]
 
+        # Append as a completed turn while preserving active preview at end.
+        self._append_completed_turn(td)
+
+        if was_focused:
+            self._focused_stream_id = self._stream_order[0] if self._stream_order else None
+            self._attach_focused_stream()
+
+        if self._is_following:
+            with self._programmatic_scroll():
+                self.scroll_end(animate=False, immediate=False, x_axis=False)
         return consolidated
+
+    def get_focused_stream_id(self) -> str | None:
+        return self._focused_stream_id
+
+    def set_focused_stream(self, request_id: str) -> bool:
+        """Focus an active stream for live rendering preview."""
+        if request_id not in self._stream_turns:
+            return False
+        self._focused_stream_id = request_id
+        focused = self._stream_turns[request_id]
+        # Rebuild delta preview from buffered text for the newly-focused stream.
+        self._refresh_streaming_delta(focused)
+        self._attach_focused_stream()
+        if self._is_following:
+            with self._programmatic_scroll():
+                self.scroll_end(animate=False, immediate=False, x_axis=False)
+        return True
+
+    def get_active_stream_chips(self) -> tuple[tuple[str, str, str], ...]:
+        """Return active stream tuples for footer chips.
+
+        Tuple item shape: (request_id, label, kind)
+        """
+        result: list[tuple[str, str, str]] = []
+        for request_id in self._stream_order:
+            if request_id not in self._stream_turns:
+                continue
+            meta = self._stream_meta.get(request_id, {})
+            label = str(meta.get("agent_label") or request_id[:8])
+            kind = str(meta.get("agent_kind") or "unknown")
+            result.append((request_id, label, kind))
+        return tuple(result)
+
+    # Backward-compat wrappers for existing call sites/tests.
+    def begin_streaming_turn(self):
+        self.begin_stream("__default__", {"agent_label": "main", "agent_kind": "main"})
+
+    def append_streaming_block(self, block, filters: dict = None):
+        self.append_stream_block("__default__", block, filters)
+
+    def finalize_streaming_turn(self) -> list:
+        return self.finalize_stream("__default__")
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -1337,21 +1447,18 @@ class ConversationView(ScrollView):
     def get_state(self) -> dict:
         """Extract state for hot-reload preservation.
 
-        Preserves streaming turn state including blocks, delta buffer, and is_streaming flag.
+        Preserves completed turns plus active request-scoped streams.
         """
-        all_blocks = []
-        streaming_states = []
-
-        for td in self._turns:
-            all_blocks.append(td.blocks)
-            if td.is_streaming:
-                streaming_states.append(
-                    {
-                        "turn_index": td.turn_index,
-                        "text_delta_buffer": list(td._text_delta_buffer),
-                        "stable_strip_count": td._stable_strip_count,
-                    }
-                )
+        all_blocks = [td.blocks for td in self._turns if not td.is_streaming]
+        active_streams = {
+            rid: {
+                "blocks": td.blocks,
+                "text_delta_buffer": list(td._text_delta_buffer),
+                "stable_strip_count": td._stable_strip_count,
+                "meta": dict(self._stream_meta.get(rid, {})),
+            }
+            for rid, td in self._stream_turns.items()
+        }
 
         # Serialize scroll anchor for position preservation across hot-reload
         anchor = self._scroll_anchor
@@ -1365,7 +1472,10 @@ class ConversationView(ScrollView):
             "all_blocks": all_blocks,
             "follow_state": self._follow_state.value,
             "turn_count": len(self._turns),
-            "streaming_states": streaming_states,
+            "streaming_states": [],  # backward-compatible key (legacy singleton stream path)
+            "active_streams": active_streams,
+            "stream_order": list(self._stream_order),
+            "focused_stream_id": self._focused_stream_id,
             "scroll_anchor": anchor_dict,
             "view_overrides": self._view_overrides.to_dict(),
         }
@@ -1399,45 +1509,59 @@ class ConversationView(ScrollView):
         state = self._pending_restore
         self._pending_restore = None
         self._turns.clear()
+        self._stream_turns.clear()
+        self._stream_meta.clear()
+        self._stream_order.clear()
+        self._focused_stream_id = None
+        self._attached_stream_id = None
 
         all_blocks = state.get("all_blocks", [])
-        streaming_states = state.get("streaming_states", [])
-        streaming_by_index = {s["turn_index"]: s for s in streaming_states}
+        for block_list in all_blocks:
+            self.add_turn(block_list, filters)
 
-        for turn_idx, block_list in enumerate(all_blocks):
-            if turn_idx in streaming_by_index:
-                # Restore as streaming turn
-                s = streaming_by_index[turn_idx]
-                width = self._content_width if self._size_known else self._last_width
-                console = self.app.console
-
-                # Render blocks to get initial strips
+        # Restore request-scoped active streams.
+        active_streams = state.get("active_streams", {})
+        if isinstance(active_streams, dict):
+            width = self._content_width if self._size_known else self._last_width
+            console = self.app.console
+            for request_id, payload in active_streams.items():
+                if not isinstance(payload, dict):
+                    continue
+                blocks = payload.get("blocks", [])
+                meta = payload.get("meta", {})
+                self.begin_stream(str(request_id), meta if isinstance(meta, dict) else None)
+                td = self._stream_turns[str(request_id)]
+                td.blocks = blocks if isinstance(blocks, list) else []
+                td._text_delta_buffer = list(payload.get("text_delta_buffer", []))
+                td._stable_strip_count = int(payload.get("stable_strip_count", 0))
+                # Rebuild baseline strips for completeness; focused stream preview
+                # is refreshed below.
                 strips, block_strip_map, flat_blocks = cc_dump.tui.rendering.render_turn_to_strips(
-                    block_list,
+                    td.blocks,
                     filters,
                     console,
                     width,
                     block_cache=self._block_strip_cache,
                     overrides=self._view_overrides,
                 )
+                td.strips = strips
+                td.block_strip_map = block_strip_map
+                td._flat_blocks = flat_blocks
+                td._widest_strip = _compute_widest(td.strips)
 
-                td = TurnData(
-                    turn_index=turn_idx,
-                    blocks=block_list,
-                    strips=strips,
-                    block_strip_map=block_strip_map,
-                    _flat_blocks=flat_blocks,
-                    is_streaming=True,
-                    _text_delta_buffer=s["text_delta_buffer"],
-                    _stable_strip_count=s["stable_strip_count"],
-                )
-                self._turns.append(td)
-
-                # Re-render streaming delta to update display
-                self._refresh_streaming_delta(td)
-            else:
-                # Regular completed turn
-                self.add_turn(block_list, filters)
+            order = state.get("stream_order", [])
+            if isinstance(order, list):
+                self._stream_order = [rid for rid in order if rid in self._stream_turns]
+            if not self._stream_order:
+                self._stream_order = list(self._stream_turns.keys())
+            focused = state.get("focused_stream_id")
+            if isinstance(focused, str) and focused in self._stream_turns:
+                self._focused_stream_id = focused
+            elif self._stream_order:
+                self._focused_stream_id = self._stream_order[0]
+            if self._focused_stream_id:
+                self._refresh_streaming_delta(self._stream_turns[self._focused_stream_id])
+                self._attach_focused_stream()
 
         self._recalculate_offsets()
 
