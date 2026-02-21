@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 import time
 from enum import Enum, auto
 from typing import TYPE_CHECKING
@@ -132,6 +133,7 @@ class TmuxController:
         self._our_pane: libtmux.Pane | None = None
         self._claude_pane: libtmux.Pane | None = None
         self.pane_alive = Observable(False)  # reactive — True while Claude pane is alive
+        self._stop_poll: threading.Event | None = None
 
         if not os.environ.get("TMUX"):
             self.state = TmuxState.NOT_IN_TMUX
@@ -301,12 +303,18 @@ class TmuxController:
         // [LAW:single-enforcer] Exit monitoring owned by the controller,
         // not the app. Callers react to pane_alive observable.
         """
+        # Cancel prior monitor thread
+        if self._stop_poll is not None:
+            self._stop_poll.set()
+        stop = self._stop_poll = threading.Event()
+
         self.pane_alive.set(True)
 
         def _poll():
-            while self._validate_claude_pane():
-                time.sleep(2)
-            self.pane_alive.set(False)
+            while not stop.is_set() and self._validate_claude_pane():
+                stop.wait(2)
+            if not stop.is_set():
+                self.pane_alive.set(False)
 
         watch(_poll)
 
