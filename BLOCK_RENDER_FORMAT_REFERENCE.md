@@ -2,6 +2,27 @@
 
 Authoritative reference for every FormattedBlock type: what it is, which filter category controls it, and exactly what it produces under each VisState.
 
+## High Level Goals
+
+The high level goals of this block rendering system are:
+- Instantaneous rendering
+- Searchable
+- Progressive disclosure
+- Strong UX focus
+
+The specific goals for each VisState (of which 5 are currently defined, see next section):
+- Hidden: the block is completely hidden (no visibility)
+  - This may change to displaying a single line to indicate a block exists, or that might become a 6th state
+- Summary Collapsed
+  - Shows a short glanceable summary of the most critical information
+- Summary Expanded
+  - Shows a detailed summary of an expanded range of information
+- Full Collapsed
+  - Shows a snippet of the full content
+- Full Expanded
+  - Shows the full content
+  - These can be extremely long
+
 ## VisState
 
 `VisState(visible, full, expanded)` — three booleans. Five states cycle in order:

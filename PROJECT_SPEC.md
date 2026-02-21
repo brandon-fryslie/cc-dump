@@ -12,15 +12,15 @@ Claude Code is opaque by design — you see the assistant's text output, but not
 
 ### 1. Full Transparency
 
-Every API request and response is captured and displayed. Nothing is hidden or summarized away by default — filters let users control what they see, but the data is always there.
+Every API request and response is captured and displayed. Everything is available for inspection — simple filters let users control what they see, when they want to see it.
 
 ### 2. System Prompt Tracking
 
-System prompts are the most interesting part of Claude Code's behavior and the hardest to observe. cc-dump assigns color-coded tags to each distinct prompt section, tracks them across requests via content hashing, and shows unified diffs when they change.
+System prompts are the most interesting part of Claude Code's behavior and the hardest to observe. cc-dump assigns color-coded tags to each distinct prompt section, and allows you to visualize how your personal configuration is represented in the actual requests and responses underlying CC's functionality.
 
 ### 3. Real-Time Streaming
 
-Responses stream into the TUI as they arrive, matching the real-time experience of using Claude Code. The display updates incrementally — no waiting for the full response before showing anything.
+Responses stream into the TUI as they arrive, giving users full insight into what Claude Code is doing behind the scenes. Not only the main chat, but subagents, tool use, skills, and MCP.  The display updates incrementally — no waiting for the full response before showing anything.
 
 ### 4. Session-Level Analysis
 
@@ -38,7 +38,7 @@ cc-dump should work out of the box with a single command. Point Claude Code at i
 
 - **Not a proxy for production use.** It's a development tool.
 - **Not an API client.** It doesn't make API calls — it observes them.
-- **Not a security tool.** It strips auth headers from display but doesn't provide security guarantees.
+- **Not a security tool.** It strips auth headers from display but doesn't provide security guarantees (except that we don't do anything Claude doesn't do).
 
 ## Key Design Decisions
 
@@ -46,7 +46,7 @@ cc-dump should work out of the box with a single command. Point Claude Code at i
 
 **Virtual rendering:** The conversation view uses Textual's Line API rather than appending widgets. This gives O(log n) line lookup and O(viewport) rendering cost, so performance doesn't degrade over long sessions.
 
-**Database as source of truth for aggregates:** Token counts and tool statistics come from SQLite queries, not in-memory accumulation. This avoids drift between what's displayed and what was actually captured.
+(no longer true, I nixed this) **Database as source of truth for aggregates:** Token counts and tool statistics come from SQLite queries, not in-memory accumulation. This avoids drift between what's displayed and what was actually captured.
 
 **Filter-based progressive disclosure:** The default view shows a compact summary. Keybindings progressively reveal more detail (headers, tool I/O, system prompts, expanded content, metadata). Each filter has a colored indicator so users can see at a glance what's shown.
 
