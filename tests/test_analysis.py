@@ -1,16 +1,9 @@
 """Unit tests for analysis.py - token estimation, budgets, tool correlation."""
 
-import pytest
-
 from cc_dump.analysis import (
     TurnBudget,
-    ToolAggregates,
     ToolInvocation,
-    ModelEconomics,
-    ModelPricing,
     MODEL_PRICING,
-    HAIKU_BASE_UNIT,
-    aggregate_tools,
     classify_model,
     compute_turn_budget,
     correlate_tools,
@@ -373,65 +366,6 @@ def test_correlate_tools_result_as_list():
     assert invocations[0].result_str.startswith("[")
 
 
-# ─── Tool Aggregation Tests ───────────────────────────────────────────────────
-
-
-def test_aggregate_tools_empty():
-    """Empty list returns empty aggregates."""
-    assert aggregate_tools([]) == []
-
-
-def test_aggregate_tools_single_tool():
-    """Single tool aggregated correctly."""
-    invocations = [
-        ToolInvocation(
-            tool_use_id="1",
-            name="read_file",
-            input_str="a" * 40,   # 40 // 4 = 10
-            result_str="b" * 400,  # 400 // 4 = 100
-        ),
-    ]
-    aggregates = aggregate_tools(invocations)
-    assert len(aggregates) == 1
-    agg = aggregates[0]
-    assert agg.name == "read_file"
-    assert agg.calls == 1
-    assert agg.input_tokens_est == 10
-    assert agg.result_tokens_est == 100
-    assert agg.total_tokens_est == 110
-
-
-def test_aggregate_tools_multiple_calls_same_tool():
-    """Multiple invocations of same tool aggregated."""
-    invocations = [
-        ToolInvocation(name="read_file", input_str="a" * 40, result_str="b" * 200),
-        ToolInvocation(name="read_file", input_str="c" * 80, result_str="d" * 400),
-    ]
-    aggregates = aggregate_tools(invocations)
-    assert len(aggregates) == 1
-    agg = aggregates[0]
-    assert agg.name == "read_file"
-    assert agg.calls == 2
-    assert agg.input_tokens_est == 30
-    assert agg.result_tokens_est == 150
-    assert agg.total_tokens_est == 180
-
-
-def test_aggregate_tools_sorting():
-    """Aggregates sorted by total_tokens_est descending."""
-    invocations = [
-        ToolInvocation(name="small", input_str="a" * 20, result_str="b" * 20),
-        ToolInvocation(name="large", input_str="c" * 400, result_str="d" * 800),
-        ToolInvocation(name="medium", input_str="e" * 80, result_str="f" * 120),
-    ]
-    aggregates = aggregate_tools(invocations)
-    assert len(aggregates) == 3
-    # Sorted by total descending
-    assert aggregates[0].name == "large"
-    assert aggregates[1].name == "medium"
-    assert aggregates[2].name == "small"
-
-
 # ─── Tool Result Breakdown Tests ──────────────────────────────────────────────
 
 
@@ -530,59 +464,3 @@ def test_classify_model_unknown():
 def test_classify_model_empty():
     key, pricing = classify_model("")
     assert key == "unknown"
-
-
-# ─── Model Economics Tests ───────────────────────────────────────────────────
-
-
-def test_model_economics_total_input():
-    m = ModelEconomics(
-        input_tokens=1000,
-        cache_read_tokens=2000,
-        cache_creation_tokens=500,
-    )
-    assert m.total_input == 3500
-
-
-def test_model_economics_cache_hit_pct():
-    m = ModelEconomics(
-        input_tokens=700,
-        cache_read_tokens=2100,
-        cache_creation_tokens=200,
-    )
-    # cache_read / total_input = 2100 / 3000 = 70%
-    assert abs(m.cache_hit_pct - 70.0) < 0.01
-
-
-def test_model_economics_cache_hit_pct_zero():
-    m = ModelEconomics()
-    assert m.cache_hit_pct == 0.0
-
-
-def test_model_economics_norm_cost_haiku():
-    """1000 Haiku base input tokens = 1000 norm units."""
-    m = ModelEconomics(input_tokens=1000)
-    pricing = MODEL_PRICING["haiku"]
-    # 1000 * (1.0 / 1.0) = 1000
-    assert m.norm_cost(pricing) == 1000.0
-
-
-def test_model_economics_norm_cost_opus():
-    """1000 Opus base input tokens = 5000 norm units (5x Haiku)."""
-    m = ModelEconomics(input_tokens=1000)
-    pricing = MODEL_PRICING["opus"]
-    assert m.norm_cost(pricing) == 5000.0
-
-
-def test_model_economics_norm_cost_mixed():
-    """Full cost calculation with all token types."""
-    m = ModelEconomics(
-        input_tokens=1000,
-        cache_creation_tokens=500,
-        cache_read_tokens=2000,
-        output_tokens=300,
-    )
-    pricing = MODEL_PRICING["sonnet"]
-    # 1000 * 3.0 + 500 * 3.75 + 2000 * 0.30 + 300 * 15.0
-    # = 3000 + 1875 + 600 + 4500 = 9975
-    assert m.norm_cost(pricing) == 9975.0

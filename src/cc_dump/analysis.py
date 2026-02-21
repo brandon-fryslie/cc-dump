@@ -187,20 +187,6 @@ class ToolInvocation:
 
 
 @dataclass
-class ToolAggregates:
-    """Aggregate stats for a single tool name across a session."""
-
-    name: str = ""
-    calls: int = 0
-    input_tokens_est: int = 0
-    result_tokens_est: int = 0
-
-    @property
-    def total_tokens_est(self) -> int:
-        return self.input_tokens_est + self.result_tokens_est
-
-
-@dataclass
 class ToolEconomicsRow:
     """Per-tool economics data for the panel display."""
 
@@ -270,23 +256,6 @@ def correlate_tools(messages: list) -> list[ToolInvocation]:
                 )
 
     return invocations
-
-
-def aggregate_tools(invocations: list[ToolInvocation]) -> list[ToolAggregates]:
-    """Group invocations by tool name and compute aggregates.
-
-    Returns list sorted by total_tokens_est descending.
-    """
-    by_name: dict[str, ToolAggregates] = {}
-    for inv in invocations:
-        if inv.name not in by_name:
-            by_name[inv.name] = ToolAggregates(name=inv.name)
-        agg = by_name[inv.name]
-        agg.calls += 1
-        agg.input_tokens_est += estimate_tokens(inv.input_str)
-        agg.result_tokens_est += estimate_tokens(inv.result_str)
-
-    return sorted(by_name.values(), key=lambda a: a.total_tokens_est, reverse=True)
 
 
 def tool_result_breakdown(messages: list) -> dict[str, int]:
@@ -484,37 +453,3 @@ def format_model_ultra_short(model: str) -> str:
 
     # Return lowercase family name, or "unknown" for unrecognized models
     return family if family != "unknown" else "unknown"
-
-
-@dataclass
-class ModelEconomics:
-    """Aggregated real token data for a single model family."""
-
-    model_key: str = ""
-    calls: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_creation_tokens: int = 0
-
-    @property
-    def total_input(self) -> int:
-        """Total input = fresh + cache_read + cache_creation."""
-        return self.input_tokens + self.cache_read_tokens + self.cache_creation_tokens
-
-    @property
-    def cache_hit_pct(self) -> float:
-        """Cache hit percentage of total input."""
-        total = self.total_input
-        if total == 0:
-            return 0.0
-        return 100.0 * self.cache_read_tokens / total
-
-    def norm_cost(self, pricing: ModelPricing) -> float:
-        """Normalized cost where 1 Haiku base input token = 1 unit."""
-        return (
-            self.input_tokens * (pricing.base_input / HAIKU_BASE_UNIT)
-            + self.cache_creation_tokens * (pricing.cache_write_5m / HAIKU_BASE_UNIT)
-            + self.cache_read_tokens * (pricing.cache_hit / HAIKU_BASE_UNIT)
-            + self.output_tokens * (pricing.output / HAIKU_BASE_UNIT)
-        )
