@@ -35,6 +35,10 @@ test *args:
 test-seq *args:
     uv run pytest {{args}}
 
+# Run deterministic smoke checks for d6u follow-up M1-M4
+smoke-d6u:
+    uv run pytest tests/test_d6u_smoke_checks.py
+
 # Format code with ruff
 fmt:
     uv run ruff format src/
