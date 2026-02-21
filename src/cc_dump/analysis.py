@@ -181,10 +181,6 @@ class ToolInvocation:
 
     tool_use_id: str = ""
     name: str = ""
-    input_bytes: int = 0
-    result_bytes: int = 0
-    input_tokens_est: int = 0
-    result_tokens_est: int = 0
     input_str: str = ""  # Raw input text for token counting
     result_str: str = ""  # Raw result text for token counting
     is_error: bool = False
@@ -220,7 +216,7 @@ class ToolEconomicsRow:
 def correlate_tools(messages: list) -> list[ToolInvocation]:
     """Match tool_use blocks to tool_result blocks by tool_use_id.
 
-    Returns a list of ToolInvocation with per-tool byte/token estimates.
+    Returns a list of ToolInvocation with raw input/result strings.
     """
     # Collect tool_use blocks by id
     uses: dict[str, dict] = {}
@@ -251,10 +247,9 @@ def correlate_tools(messages: list) -> list[ToolInvocation]:
                 if not use_block:
                     continue
 
-                # Compute sizes
+                # Capture raw input/result strings (token counting happens downstream).
                 tool_input = use_block.get("input", {})
                 input_str = json.dumps(tool_input)
-                input_bytes = len(input_str)
 
                 content_val = block.get("content", "")
                 if isinstance(content_val, list):
@@ -263,16 +258,11 @@ def correlate_tools(messages: list) -> list[ToolInvocation]:
                     result_str = content_val
                 else:
                     result_str = json.dumps(content_val)
-                result_bytes = len(result_str)
 
                 invocations.append(
                     ToolInvocation(
                         tool_use_id=tool_use_id,
                         name=use_block.get("name", "?"),
-                        input_bytes=input_bytes,
-                        result_bytes=result_bytes,
-                        input_tokens_est=estimate_tokens(input_str),
-                        result_tokens_est=estimate_tokens(result_str),
                         input_str=input_str,
                         result_str=result_str,
                         is_error=block.get("is_error", False),
@@ -293,8 +283,8 @@ def aggregate_tools(invocations: list[ToolInvocation]) -> list[ToolAggregates]:
             by_name[inv.name] = ToolAggregates(name=inv.name)
         agg = by_name[inv.name]
         agg.calls += 1
-        agg.input_tokens_est += inv.input_tokens_est
-        agg.result_tokens_est += inv.result_tokens_est
+        agg.input_tokens_est += estimate_tokens(inv.input_str)
+        agg.result_tokens_est += estimate_tokens(inv.result_str)
 
     return sorted(by_name.values(), key=lambda a: a.total_tokens_est, reverse=True)
 
@@ -307,7 +297,7 @@ def tool_result_breakdown(messages: list) -> dict[str, int]:
     invocations = correlate_tools(messages)
     breakdown: dict[str, int] = {}
     for inv in invocations:
-        breakdown[inv.name] = breakdown.get(inv.name, 0) + inv.result_tokens_est
+        breakdown[inv.name] = breakdown.get(inv.name, 0) + estimate_tokens(inv.result_str)
     return breakdown
 
 

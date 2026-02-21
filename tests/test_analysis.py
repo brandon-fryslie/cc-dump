@@ -273,10 +273,8 @@ def test_correlate_tools_matched():
     inv = invocations[0]
     assert inv.tool_use_id == "tool_1"
     assert inv.name == "get_weather"
-    assert inv.input_bytes > 0
-    assert inv.result_bytes > 0
-    assert inv.input_tokens_est > 0
-    assert inv.result_tokens_est > 0
+    assert inv.input_str
+    assert inv.result_str
     assert inv.is_error is False
 
 
@@ -371,8 +369,8 @@ def test_correlate_tools_result_as_list():
     ]
     invocations = correlate_tools(messages)
     assert len(invocations) == 1
-    # Content list is JSON serialized for size
-    assert invocations[0].result_bytes > 0
+    # Content list is JSON serialized into raw result_str
+    assert invocations[0].result_str.startswith("[")
 
 
 # ─── Tool Aggregation Tests ───────────────────────────────────────────────────
@@ -389,8 +387,8 @@ def test_aggregate_tools_single_tool():
         ToolInvocation(
             tool_use_id="1",
             name="read_file",
-            input_tokens_est=10,
-            result_tokens_est=100,
+            input_str="a" * 40,   # 40 // 4 = 10
+            result_str="b" * 400,  # 400 // 4 = 100
         ),
     ]
     aggregates = aggregate_tools(invocations)
@@ -406,8 +404,8 @@ def test_aggregate_tools_single_tool():
 def test_aggregate_tools_multiple_calls_same_tool():
     """Multiple invocations of same tool aggregated."""
     invocations = [
-        ToolInvocation(name="read_file", input_tokens_est=10, result_tokens_est=50),
-        ToolInvocation(name="read_file", input_tokens_est=20, result_tokens_est=100),
+        ToolInvocation(name="read_file", input_str="a" * 40, result_str="b" * 200),
+        ToolInvocation(name="read_file", input_str="c" * 80, result_str="d" * 400),
     ]
     aggregates = aggregate_tools(invocations)
     assert len(aggregates) == 1
@@ -422,9 +420,9 @@ def test_aggregate_tools_multiple_calls_same_tool():
 def test_aggregate_tools_sorting():
     """Aggregates sorted by total_tokens_est descending."""
     invocations = [
-        ToolInvocation(name="small", input_tokens_est=5, result_tokens_est=5),
-        ToolInvocation(name="large", input_tokens_est=100, result_tokens_est=200),
-        ToolInvocation(name="medium", input_tokens_est=20, result_tokens_est=30),
+        ToolInvocation(name="small", input_str="a" * 20, result_str="b" * 20),
+        ToolInvocation(name="large", input_str="c" * 400, result_str="d" * 800),
+        ToolInvocation(name="medium", input_str="e" * 80, result_str="f" * 120),
     ]
     aggregates = aggregate_tools(invocations)
     assert len(aggregates) == 3
