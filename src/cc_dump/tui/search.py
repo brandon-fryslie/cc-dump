@@ -84,24 +84,62 @@ class SearchContext:
         ]
 
 
-@dataclass
 class SearchState:
-    """Mutable search state managed by the app."""
+    """Mutable search state managed by the app.
 
-    phase: SearchPhase = SearchPhase.INACTIVE
-    query: str = ""
-    cursor_pos: int = 0
-    modes: SearchMode = (
-        SearchMode.CASE_INSENSITIVE | SearchMode.REGEX | SearchMode.INCREMENTAL
-    )
-    matches: list[SearchMatch] = field(default_factory=list)
-    current_index: int = 0  # index into matches (0 = most recent)
-    saved_filters: dict = field(default_factory=dict)
-    expanded_blocks: list[tuple[int, int, object]] = field(
-        default_factory=list
-    )  # (turn_index, block_index, block_ref) triples we expanded
-    debounce_timer: object | None = None  # Timer handle
-    saved_scroll_y: float | None = None  # Scroll position before search started
+    Identity fields (phase, query, modes, cursor_pos) delegate to a SnarfX
+    view store — they survive hot-reload via reconcile() without manual
+    save/restore.
+
+    Transient fields (matches, expanded_blocks, etc.) are plain attributes
+    rebuilt by run_search() after reload.
+
+    // [LAW:one-source-of-truth] Store is the single source for identity fields.
+    """
+
+    def __init__(self, store):
+        self._store = store
+        # Transient — rebuilt by run_search() after reload
+        self.matches: list[SearchMatch] = []
+        self.current_index: int = 0
+        self.saved_filters: dict = {}
+        self.expanded_blocks: list[tuple[int, int, object]] = []
+        self.debounce_timer: object | None = None
+        self.saved_scroll_y: float | None = None
+
+    # ── Identity properties (delegated to store) ──
+
+    @property
+    def phase(self) -> SearchPhase:
+        return SearchPhase(self._store.get("search:phase"))
+
+    @phase.setter
+    def phase(self, v: SearchPhase) -> None:
+        self._store.set("search:phase", v.value)
+
+    @property
+    def query(self) -> str:
+        return self._store.get("search:query")
+
+    @query.setter
+    def query(self, v: str) -> None:
+        self._store.set("search:query", v)
+
+    @property
+    def modes(self) -> SearchMode:
+        return SearchMode(self._store.get("search:modes"))
+
+    @modes.setter
+    def modes(self, v: SearchMode) -> None:
+        self._store.set("search:modes", int(v))
+
+    @property
+    def cursor_pos(self) -> int:
+        return self._store.get("search:cursor_pos")
+
+    @cursor_pos.setter
+    def cursor_pos(self, v: int) -> None:
+        self._store.set("search:cursor_pos", v)
 
 
 # ─── Text extraction ─────────────────────────────────────────────────────────

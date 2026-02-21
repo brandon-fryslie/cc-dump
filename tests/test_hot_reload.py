@@ -509,59 +509,53 @@ class TestHotReloadFileDetection:
 
 
 class TestSearchStateHotReload:
-    """Unit tests for search state preservation across hot-reload."""
+    """Unit tests for search state preservation across hot-reload.
 
-    def test_search_scalars_survive_fresh_state(self):
-        """query, modes, cursor_pos transfer to fresh SearchState via _do_hot_reload logic."""
+    // [LAW:one-source-of-truth] Identity fields live in the view store.
+    // New SearchState(same_store) reads them back without manual copy.
+    """
+
+    def test_search_identity_survives_via_store(self):
+        """Identity fields survive creating a new SearchState on the same store."""
+        import cc_dump.view_store
         from cc_dump.tui.search import SearchState, SearchPhase, SearchMode
 
-        # Simulate the scalar save/restore that _do_hot_reload performs
-        old_state = SearchState()
+        store = cc_dump.view_store.create()
+        old_state = SearchState(store)
         old_state.phase = SearchPhase.NAVIGATING
         old_state.query = "test_pattern"
         old_state.modes = SearchMode.CASE_INSENSITIVE | SearchMode.WORD_BOUNDARY
         old_state.cursor_pos = 5
 
-        # Save scalars (mirrors _do_hot_reload save step)
-        saved_query = old_state.query
-        saved_modes = old_state.modes
-        saved_cursor_pos = old_state.cursor_pos
-        saved_phase = old_state.phase
-
-        # Reset to fresh state (mirrors _do_hot_reload reset step)
-        new_state = SearchState()
-
-        # Restore scalars (mirrors _do_hot_reload restore step)
-        new_state.query = saved_query
-        new_state.modes = saved_modes
-        new_state.cursor_pos = saved_cursor_pos
-        new_state.phase = saved_phase
+        # Simulate hot-reload: new SearchState on the same store
+        new_state = SearchState(store)
 
         assert new_state.query == "test_pattern"
         assert new_state.modes == SearchMode.CASE_INSENSITIVE | SearchMode.WORD_BOUNDARY
         assert new_state.cursor_pos == 5
         assert new_state.phase == SearchPhase.NAVIGATING
 
-    def test_stale_search_fields_not_preserved(self):
-        """matches, expanded_blocks, debounce_timer reset to defaults after reload."""
+    def test_transient_fields_reset_on_new_state(self):
+        """matches, expanded_blocks, debounce_timer reset to defaults on new SearchState."""
+        import cc_dump.view_store
         from cc_dump.tui.search import SearchState, SearchPhase, SearchMatch
 
-        old_state = SearchState()
+        store = cc_dump.view_store.create()
+        old_state = SearchState(store)
         old_state.phase = SearchPhase.NAVIGATING
         old_state.query = "test"
         old_state.matches = [SearchMatch(0, 0, 0, 4)]
         old_state.expanded_blocks = [(0, 0)]
         old_state.debounce_timer = "fake_timer"
 
-        # After reload, a fresh SearchState should have empty derived fields
-        new_state = SearchState()
-        # Restore only scalars (as _do_hot_reload does)
-        new_state.query = old_state.query
-        new_state.modes = old_state.modes
-        new_state.cursor_pos = old_state.cursor_pos
-        new_state.phase = old_state.phase
+        # New SearchState on same store — transient fields are fresh
+        new_state = SearchState(store)
 
-        # Derived/stale fields must be fresh defaults
+        # Identity survived
+        assert new_state.query == "test"
+        assert new_state.phase == SearchPhase.NAVIGATING
+
+        # Transient fields are fresh defaults
         assert new_state.matches == []
         assert new_state.expanded_blocks == []
         assert new_state.debounce_timer is None

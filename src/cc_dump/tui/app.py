@@ -170,7 +170,7 @@ class CcDumpApp(App):
             "pending_request_headers": {},
         }
 
-        self._search_state = cc_dump.tui.search.SearchState()
+        self._search_state = cc_dump.tui.search.SearchState(self._view_store)
 
         # Buffered error log — dumped to stderr after TUI exits
         self._error_log: list[str] = []

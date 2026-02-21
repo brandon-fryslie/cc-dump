@@ -105,14 +105,12 @@ async def _do_hot_reload(app) -> None:
 
     app._app_log("INFO", f"Hot-reload: {', '.join(reloaded_modules)}")
 
-    # Save search scalars before resetting (stale matches/expanded_blocks are discarded)
+    # // [LAW:one-source-of-truth] Identity fields (phase, query, modes, cursor_pos)
+    # live in the view store — they survive reconcile() automatically.
+    # Only transient fields (matches, expanded_blocks, debounce_timer) need reset.
     SearchPhase = cc_dump.tui.search.SearchPhase
     old_search = app._search_state
     search_was_active = old_search.phase != SearchPhase.INACTIVE
-    saved_query = old_search.query
-    saved_modes = old_search.modes
-    saved_cursor_pos = old_search.cursor_pos
-    saved_phase = old_search.phase
 
     # Cancel debounce timer and clear expansion overrides on old blocks
     if old_search.debounce_timer is not None:
@@ -120,8 +118,9 @@ async def _do_hot_reload(app) -> None:
     if search_was_active:
         cc_dump.tui.search_controller.clear_search_expand(app)
 
-    # Reset to fresh state (matches, expanded_blocks, debounce_timer discarded)
-    app._search_state = cc_dump.tui.search.SearchState()
+    # Fresh SearchState connected to same store — identity fields survive,
+    # transient fields get fresh defaults
+    app._search_state = cc_dump.tui.search.SearchState(app._view_store)
     bar = app._get_search_bar()
     if bar is not None:
         bar.display = False
@@ -172,12 +171,11 @@ async def _do_hot_reload(app) -> None:
         app._app_log("ERROR", f"Hot-reload error applying: {e}")
         return
 
-    # Restore search state after successful widget replacement
-    if search_was_active and saved_query:
+    # Restore search after successful widget replacement.
+    # Identity fields (query, modes, cursor_pos, phase) already in store.
+    if search_was_active and app._search_state.query:
         state = app._search_state
-        state.query = saved_query
-        state.modes = saved_modes
-        state.cursor_pos = saved_cursor_pos
+        saved_phase = state.phase
 
         # Capture fresh filter state and scroll position from new widgets
         store = app._view_store
@@ -195,8 +193,7 @@ async def _do_hot_reload(app) -> None:
         # Re-execute search against fresh blocks
         cc_dump.tui.search_controller.run_search(app)
 
-        # Restore phase and navigate if we had results
-        state.phase = saved_phase
+        # Navigate if we were navigating and have results
         if saved_phase == SearchPhase.NAVIGATING and state.matches:
             cc_dump.tui.search_controller.navigate_to_current(app)
 

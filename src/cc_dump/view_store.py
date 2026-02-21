@@ -47,6 +47,13 @@ SCHEMA["sc:result_text"] = ""
 SCHEMA["sc:result_source"] = ""
 SCHEMA["sc:result_elapsed_ms"] = 0
 
+# Search identity state — survives hot-reload via reconcile
+# // [LAW:one-source-of-truth] String, not SearchPhase enum — stable across reloads.
+SCHEMA["search:phase"] = "inactive"
+SCHEMA["search:query"] = ""
+SCHEMA["search:modes"] = 13    # CASE_INSENSITIVE(1) | REGEX(4) | INCREMENTAL(8)
+SCHEMA["search:cursor_pos"] = 0
+
 
 def create():
     """Create view store with defaults from CATEGORY_CONFIG."""

@@ -396,7 +396,9 @@ class TestSearchContext:
 
 class TestSearchState:
     def test_defaults(self):
-        state = SearchState()
+        import cc_dump.view_store
+        store = cc_dump.view_store.create()
+        state = SearchState(store)
         assert state.phase == SearchPhase.INACTIVE
         assert state.query == ""
         assert state.cursor_pos == 0
@@ -406,6 +408,28 @@ class TestSearchState:
         assert not (state.modes & SearchMode.WORD_BOUNDARY)
         assert state.matches == []
         assert state.current_index == 0
+
+    def test_property_proxy_round_trip(self):
+        """Identity fields round-trip through store."""
+        import cc_dump.view_store
+        store = cc_dump.view_store.create()
+        state = SearchState(store)
+
+        state.phase = SearchPhase.NAVIGATING
+        assert state.phase == SearchPhase.NAVIGATING
+        assert store.get("search:phase") == "navigating"
+
+        state.query = "hello"
+        assert state.query == "hello"
+        assert store.get("search:query") == "hello"
+
+        state.modes = SearchMode.CASE_INSENSITIVE | SearchMode.WORD_BOUNDARY
+        assert state.modes == SearchMode.CASE_INSENSITIVE | SearchMode.WORD_BOUNDARY
+        assert store.get("search:modes") == int(SearchMode.CASE_INSENSITIVE | SearchMode.WORD_BOUNDARY)
+
+        state.cursor_pos = 7
+        assert state.cursor_pos == 7
+        assert store.get("search:cursor_pos") == 7
 
 
 # ─── Hierarchy walking ────────────────────────────────────────────────────────

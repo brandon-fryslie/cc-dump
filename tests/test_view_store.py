@@ -13,9 +13,9 @@ from snarfx import textual as stx
 
 
 class TestSchema:
-    def test_schema_has_35_keys(self):
-        # 6 categories × 3 axes + 5 panel/follow + 8 footer + 4 side-channel
-        assert len(cc_dump.view_store.SCHEMA) == 35
+    def test_schema_has_39_keys(self):
+        # 6 categories × 3 axes + 5 panel/follow + 8 footer + 4 side-channel + 4 search
+        assert len(cc_dump.view_store.SCHEMA) == 39
 
     def test_schema_keys_from_category_config(self):
         for _, name, _, _ in CATEGORY_CONFIG:
