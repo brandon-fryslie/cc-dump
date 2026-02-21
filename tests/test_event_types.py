@@ -5,7 +5,6 @@ import pytest
 from cc_dump.event_types import (
     # Enums
     PipelineEventKind,
-    ContentBlockType,
     StopReason,
     MessageRole,
     # Value types

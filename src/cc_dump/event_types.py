@@ -34,14 +34,6 @@ class PipelineEventKind(Enum):
     LOG = "log"
 
 
-class ContentBlockType(Enum):
-    """Content block type in request body JSON."""
-
-    TEXT = "text"
-    TOOL_USE = "tool_use"
-    TOOL_RESULT = "tool_result"
-
-
 class StopReason(Enum):
     """Stop reason from message_delta."""
 
