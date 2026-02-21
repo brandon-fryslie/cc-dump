@@ -8,6 +8,7 @@ from cc_dump.analysis import (
     compute_turn_budget,
     correlate_tools,
     estimate_tokens,
+    fmt_tokens,
     tool_result_breakdown,
 )
 
@@ -41,6 +42,16 @@ def test_estimate_tokens_unicode():
     # The function uses len(text) which is character count, not byte count
     # 100 chars // 4 = 25
     assert estimate_tokens(text) == 25
+
+
+def test_fmt_tokens_small():
+    """Compact formatter keeps values <1000 unchanged."""
+    assert fmt_tokens(999) == "999"
+
+
+def test_fmt_tokens_thousands():
+    """Compact formatter uses one-decimal 'k' notation for values >=1000."""
+    assert fmt_tokens(1500) == "1.5k"
 
 
 # ─── Turn Budget Tests ────────────────────────────────────────────────────────

@@ -9,12 +9,8 @@ import cc_dump.palette
 import cc_dump.tui.input_modes
 from rich.text import Text
 
-
-def _fmt_tokens(n: int) -> str:
-    """Format token count: 1.2k, 68.9k, etc."""
-    if n >= 1000:
-        return "{:.1f}k".format(n / 1000)
-    return str(n)
+# [LAW:one-source-of-truth] Shared compact token formatter lives in analysis.py.
+_fmt_tokens = cc_dump.analysis.fmt_tokens
 
 
 def render_stats_panel(

@@ -25,6 +25,7 @@ from rich.console import ConsoleRenderable, Group
 from rich.syntax import Syntax
 from collections import Counter
 
+from cc_dump.analysis import fmt_tokens as _fmt_tokens
 from cc_dump.formatting import (
     FormattedBlock,
     SeparatorBlock,
@@ -1685,20 +1686,8 @@ def _render_tool_def(block: FormattedBlock) -> ConsoleRenderable | None:
     return Group(*lines)
 
 
-def _render_skill_def_child(block: FormattedBlock) -> ConsoleRenderable | None:
-    """Render skill definition child."""
-    name = getattr(block, "name", "")
-    desc = getattr(block, "description", "")
-    t = Text()
-    t.append(name, style="bold")
-    if desc:
-        preview = desc[:60] + "..." if len(desc) > 60 else desc
-        t.append(f' — "{preview}"', style="dim")
-    return t
-
-
-def _render_agent_def_child(block: FormattedBlock) -> ConsoleRenderable | None:
-    """Render agent definition child."""
+def _render_named_def_child(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render a named definition child (skills, agents, and similar)."""
     name = getattr(block, "name", "")
     desc = getattr(block, "description", "")
     t = Text()
@@ -1748,8 +1737,9 @@ BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], ConsoleRenderable | None]]
     "SystemSection": _render_system_section,
     "ToolDefsSection": _render_tool_defs_section,
     "ToolDefBlock": _render_tool_def,
-    "SkillDefChild": _render_skill_def_child,
-    "AgentDefChild": _render_agent_def_child,
+    # [LAW:one-type-per-behavior] SkillDefChild and AgentDefChild share one renderer.
+    "SkillDefChild": _render_named_def_child,
+    "AgentDefChild": _render_named_def_child,
     "ResponseMetadataSection": _render_response_metadata_section,
 }
 
@@ -2503,13 +2493,6 @@ def _indent_text(text: str, indent: str) -> Text:
             t.append("\n")
         t.append(indent + line)
     return t
-
-
-def _fmt_tokens(n: int) -> str:
-    """Format token count for compact display: 1.2k, 68.9k, etc."""
-    if n >= 1000:
-        return "{:.1f}k".format(n / 1000)
-    return str(n)
 
 
 def _pct(part: int, total: int) -> str:

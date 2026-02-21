@@ -125,3 +125,34 @@ class TestToolDefRendering:
         text = self._render_plain(renderer(block))
         assert "Bash" in text
         assert "77 tokens" in text
+
+
+class TestNamedDefinitionChildRendering:
+    """Regression tests for shared named-child renderer behavior."""
+
+    def _render_plain(self, renderable) -> str:
+        from io import StringIO
+        from rich.console import Console
+
+        buf = StringIO()
+        console = Console(file=buf, width=120, force_terminal=False, color_system=None)
+        console.print(renderable)
+        return buf.getvalue()
+
+    def test_skill_def_child_renderer(self):
+        from cc_dump.tui.rendering import render_block
+        from cc_dump.formatting import SkillDefChild
+
+        block = SkillDefChild(name="review-pr", description="Review pull requests")
+        text = self._render_plain(render_block(block))
+        assert "review-pr" in text
+        assert "Review pull requests" in text
+
+    def test_agent_def_child_renderer(self):
+        from cc_dump.tui.rendering import render_block
+        from cc_dump.formatting import AgentDefChild
+
+        block = AgentDefChild(name="researcher", description="Gather context")
+        text = self._render_plain(render_block(block))
+        assert "researcher" in text
+        assert "Gather context" in text

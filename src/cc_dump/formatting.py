@@ -903,68 +903,68 @@ _CONTENT_BLOCK_FACTORIES = {
 # Hardcoded for Skill (→ skills) and Task (→ agents). Extensible list.
 
 
-def _parse_skill_children(description: str) -> list["FormattedBlock"]:
-    """Parse Skill tool description into SkillDefChild blocks.
+def _iter_named_definition_lines(description: str) -> list[tuple[str, str]]:
+    """Extract '- name: description' pairs from multiline tool descriptions."""
+    pairs: list[tuple[str, str]] = []
+    for raw_line in description.splitlines():
+        line = raw_line.strip()
+        if not (line.startswith("- ") and ":" in line[2:]):
+            continue
+        rest = line[2:]
+        colon_idx = rest.find(": ")
+        if colon_idx <= 0:
+            continue
+        name = rest[:colon_idx].strip()
+        desc = rest[colon_idx + 2:].strip()
+        pairs.append((name, desc))
+    return pairs
 
-    Extracts skill entries from the description's "user-invocable skills" section
-    and from lines matching '- skill_name: description' pattern.
-    """
-    children: list[FormattedBlock] = []
-    # Look for lines matching "- name: description" or "- plugin:name: description"
-    for line in description.splitlines():
-        line = line.strip()
-        if line.startswith("- ") and ":" in line[2:]:
-            # Extract name and description
-            rest = line[2:]  # Remove "- "
-            # Handle "name: description" or "plugin:name: description"
-            # Find the first ": " that's likely a separator (not part of plugin:name)
-            colon_idx = rest.find(": ")
-            if colon_idx > 0:
-                name = rest[:colon_idx].strip()
-                desc = rest[colon_idx + 2:].strip().strip('"')
-                # Detect plugin source from name
-                plugin_source = ""
-                if ":" in name:
-                    parts = name.split(":", 1)
-                    plugin_source = parts[0]
-                children.append(SkillDefChild(
-                    name=name,
-                    description=desc,
-                    plugin_source=plugin_source,
-                    category=Category.TOOLS,
-                ))
-    return children
+
+def _parse_named_definition_children(
+    description: str,
+    build_child: "Callable[[str, str], FormattedBlock]",
+) -> list["FormattedBlock"]:
+    """Parse named-definition lines and map them into child blocks."""
+    return [build_child(name, desc) for name, desc in _iter_named_definition_lines(description)]
+
+
+def _build_skill_def_child(name: str, desc: str) -> FormattedBlock:
+    """Build SkillDefChild from parsed name/description."""
+    plugin_source = name.split(":", 1)[0] if ":" in name else ""
+    return SkillDefChild(
+        name=name,
+        description=desc.strip('"'),
+        plugin_source=plugin_source,
+        category=Category.TOOLS,
+    )
+
+
+def _build_agent_def_child(name: str, desc: str) -> FormattedBlock:
+    """Build AgentDefChild from parsed name/description."""
+    tools_str = ""
+    desc_part = desc
+    if "(Tools:" in desc_part:
+        tools_start = desc_part.index("(Tools:")
+        tools_str = desc_part[tools_start + 7:].rstrip(")")
+        desc_part = desc_part[:tools_start].strip()
+    return AgentDefChild(
+        name=name,
+        description=desc_part.strip('"'),
+        available_tools=tools_str.strip(),
+        category=Category.TOOLS,
+    )
+
+
+def _parse_skill_children(description: str) -> list["FormattedBlock"]:
+    """Parse Skill tool description into SkillDefChild blocks."""
+    # [LAW:one-type-per-behavior] Reuse generic named-definition parser.
+    return _parse_named_definition_children(description, _build_skill_def_child)
 
 
 def _parse_agent_children(description: str) -> list["FormattedBlock"]:
-    """Parse Task tool description into AgentDefChild blocks.
-
-    Extracts agent type entries from the description's "Available agent types" section.
-    Looks for '- AgentName: description' pattern within the description text.
-    """
-    children: list[FormattedBlock] = []
-    # Look for lines matching "- Name: description (Tools: ...)"
-    for line in description.splitlines():
-        line = line.strip()
-        if line.startswith("- ") and ":" in line[2:]:
-            rest = line[2:]
-            colon_idx = rest.find(": ")
-            if colon_idx > 0:
-                name = rest[:colon_idx].strip()
-                desc_part = rest[colon_idx + 2:].strip()
-                # Extract tools list if present
-                tools_str = ""
-                if "(Tools:" in desc_part:
-                    tools_start = desc_part.index("(Tools:")
-                    tools_str = desc_part[tools_start + 7:].rstrip(")")
-                    desc_part = desc_part[:tools_start].strip()
-                children.append(AgentDefChild(
-                    name=name,
-                    description=desc_part.strip('"'),
-                    available_tools=tools_str.strip(),
-                    category=Category.TOOLS,
-                ))
-    return children
+    """Parse Task tool description into AgentDefChild blocks."""
+    # [LAW:one-type-per-behavior] Reuse generic named-definition parser.
+    return _parse_named_definition_children(description, _build_agent_def_child)
 
 
 # // [LAW:one-source-of-truth] Known compound tools and their child parsers.

@@ -24,6 +24,8 @@ from cc_dump.formatting import (
     SystemSection,
     TextContentBlock,
     TextDeltaBlock,
+    SkillDefChild,
+    AgentDefChild,
     ToolDefBlock,
     ToolDefsSection,
     ToolResultBlock,
@@ -1333,6 +1335,53 @@ class TestToolDefinitionsBlock:
         assert tds.children[1].name == "Write"
         assert tds.children[0].description == "Read a file from disk"
         assert tds.children[1].description == "Write content to a file"
+
+    def test_skill_tool_parses_named_children(self, fresh_state):
+        """Skill tool definition lines parse into SkillDefChild children."""
+        body = _make_body_with_tools(
+            [
+                {
+                    "name": "Skill",
+                    "description": '- review-pr: "Review pull requests"\n- do:run-tests: "Run test suite"',
+                    "input_schema": {"type": "object"},
+                }
+            ]
+        )
+        blocks = format_request(body, fresh_state)
+        tds = [b for b in blocks if isinstance(b, ToolDefsSection)][0]
+        tool = tds.children[0]
+        assert len(tool.children) == 2
+        assert isinstance(tool.children[0], SkillDefChild)
+        assert tool.children[0].name == "review-pr"
+        assert tool.children[0].description == "Review pull requests"
+        assert tool.children[0].plugin_source == ""
+        assert isinstance(tool.children[1], SkillDefChild)
+        assert tool.children[1].name == "do:run-tests"
+        assert tool.children[1].plugin_source == "do"
+
+    def test_task_tool_parses_named_children(self, fresh_state):
+        """Task tool definition lines parse into AgentDefChild children."""
+        body = _make_body_with_tools(
+            [
+                {
+                    "name": "Task",
+                    "description": "- researcher: Gathers context (Tools: Read, Bash)\n- writer: Drafts output",
+                    "input_schema": {"type": "object"},
+                }
+            ]
+        )
+        blocks = format_request(body, fresh_state)
+        tds = [b for b in blocks if isinstance(b, ToolDefsSection)][0]
+        tool = tds.children[0]
+        assert len(tool.children) == 2
+        assert isinstance(tool.children[0], AgentDefChild)
+        assert tool.children[0].name == "researcher"
+        assert tool.children[0].description == "Gathers context"
+        assert tool.children[0].available_tools == "Read, Bash"
+        assert isinstance(tool.children[1], AgentDefChild)
+        assert tool.children[1].name == "writer"
+        assert tool.children[1].description == "Drafts output"
+        assert tool.children[1].available_tools == ""
 
     def test_tool_definitions_block_with_empty_tools(self, fresh_state):
         """ToolDefsSection created even with empty tools list."""

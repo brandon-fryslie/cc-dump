@@ -23,6 +23,14 @@ def estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
+# [LAW:one-source-of-truth] Canonical compact token formatter shared by renderers.
+def fmt_tokens(n: int) -> str:
+    """Format token count for compact display: 1.2k, 68.9k, etc."""
+    if n >= 1000:
+        return "{:.1f}k".format(n / 1000)
+    return str(n)
+
+
 # ─── Turn Budget ──────────────────────────────────────────────────────────────
 
 
