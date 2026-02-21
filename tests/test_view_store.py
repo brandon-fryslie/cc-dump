@@ -183,7 +183,7 @@ class TestPanelAndFollowSchema:
         assert cc_dump.view_store.SCHEMA["panel:launch_config"] is False
 
     def test_follow_default(self):
-        assert cc_dump.view_store.SCHEMA["follow"] == "active"
+        assert cc_dump.view_store.SCHEMA["nav:follow"] == "active"
 
     def test_store_has_panel_keys(self):
         store = cc_dump.view_store.create()
@@ -191,7 +191,7 @@ class TestPanelAndFollowSchema:
         assert store.get("panel:side_channel") is False
         assert store.get("panel:settings") is False
         assert store.get("panel:launch_config") is False
-        assert store.get("follow") == "active"
+        assert store.get("nav:follow") == "active"
 
     def test_panel_active_set_and_get(self):
         store = cc_dump.view_store.create()
@@ -200,8 +200,8 @@ class TestPanelAndFollowSchema:
 
     def test_follow_set_and_get(self):
         store = cc_dump.view_store.create()
-        store.set("follow", "off")
-        assert store.get("follow") == "off"
+        store.set("nav:follow", "off")
+        assert store.get("nav:follow") == "off"
 
 
 class TestPanelActiveReaction:
@@ -211,58 +211,59 @@ class TestPanelActiveReaction:
         app.is_running = True
         app._rerender_if_mounted = MagicMock()
         app._sync_panel_display = MagicMock()
-        context = {"app": app}
+        push_panel = MagicMock()
+        context = {"app": app, "push_panel_change": push_panel}
 
         disposers = cc_dump.view_store.setup_reactions(store, context)
 
-        app._sync_panel_display.reset_mock()
+        push_panel.reset_mock()
 
         store.set("panel:active", "stats")
 
-        app._sync_panel_display.assert_called_with("stats")
+        push_panel.assert_called_with("stats")
 
     def test_reaction_guarded_during_stx_pause(self):
         store = cc_dump.view_store.create()
         app = MagicMock()
         app.is_running = True
         app._rerender_if_mounted = MagicMock()
-        app._sync_panel_display = MagicMock()
-        context = {"app": app}
+        push_panel = MagicMock()
+        context = {"app": app, "push_panel_change": push_panel}
 
         disposers = cc_dump.view_store.setup_reactions(store, context)
-        app._sync_panel_display.reset_mock()
+        push_panel.reset_mock()
 
         with stx.pause(app):
             store.set("panel:active", "timeline")
 
-        app._sync_panel_display.assert_not_called()
+        push_panel.assert_not_called()
 
     def test_reaction_guarded_before_running(self):
         store = cc_dump.view_store.create()
         app = MagicMock()
         app.is_running = False
         app._rerender_if_mounted = MagicMock()
-        app._sync_panel_display = MagicMock()
-        context = {"app": app}
+        push_panel = MagicMock()
+        context = {"app": app, "push_panel_change": push_panel}
 
         disposers = cc_dump.view_store.setup_reactions(store, context)
-        app._sync_panel_display.reset_mock()
+        push_panel.reset_mock()
 
         store.set("panel:active", "economics")
 
-        app._sync_panel_display.assert_not_called()
+        push_panel.assert_not_called()
 
 
 class TestReconcileWithNewKeys:
     def test_reconcile_preserves_panel_values(self):
         store = cc_dump.view_store.create()
         store.set("panel:active", "timeline")
-        store.set("follow", "off")
+        store.set("nav:follow", "off")
 
         store.reconcile(cc_dump.view_store.SCHEMA, lambda s: [])
 
         assert store.get("panel:active") == "timeline"
-        assert store.get("follow") == "off"
+        assert store.get("nav:follow") == "off"
 
     def test_reconcile_adds_new_keys_with_defaults(self):
         """Reconcile adds all keys with defaults."""
@@ -273,8 +274,8 @@ class TestReconcileWithNewKeys:
         # All keys present with defaults
         assert store.get("panel:active") == "session"
         assert store.get("panel:side_channel") is False
-        assert store.get("follow") == "active"
-        assert store.get("active_filterset") is None
+        assert store.get("nav:follow") == "active"
+        assert store.get("filter:active") is None
         assert store.get("tmux:available") is False
         assert store.get("streams:active") == ()
         assert store.get("streams:focused") == ""
@@ -295,8 +296,7 @@ class TestFooterStateComputed:
         store = cc_dump.view_store.create()
         state = store.footer_state.get()
         assert state["active_panel"] == "session"
-        from cc_dump.tui.widget_factory import FollowState
-        assert state["follow_state"] == FollowState("active")
+        assert state["follow_state"] == "active"
 
     def test_contains_footer_inputs(self):
         store = cc_dump.view_store.create()
@@ -311,7 +311,7 @@ class TestFooterStateComputed:
 
     def test_updates_on_store_change(self):
         store = cc_dump.view_store.create()
-        store.set("active_filterset", "1")
+        store.set("filter:active", "1")
         state = store.footer_state.get()
         assert state["active_filterset"] == "1"
 
@@ -365,21 +365,20 @@ class TestScPanelStateComputed:
     def test_defaults(self):
         store = cc_dump.view_store.create()
         state = store.sc_panel_state.get()
-        from cc_dump.tui.side_channel_panel import SideChannelPanelState
-        assert isinstance(state, SideChannelPanelState)
-        assert state.enabled is False  # no settings_store wired
-        assert state.loading is False
-        assert state.result_text == ""
-        assert state.result_source == ""
-        assert state.result_elapsed_ms == 0
+        assert isinstance(state, dict)
+        assert state["enabled"] is False  # no settings_store wired
+        assert state["loading"] is False
+        assert state["result_text"] == ""
+        assert state["result_source"] == ""
+        assert state["result_elapsed_ms"] == 0
 
     def test_updates_from_store(self):
         store = cc_dump.view_store.create()
         store.set("sc:loading", True)
         store.set("sc:result_text", "summary")
         state = store.sc_panel_state.get()
-        assert state.loading is True
-        assert state.result_text == "summary"
+        assert state["loading"] is True
+        assert state["result_text"] == "summary"
 
 
 class TestFooterReaction:
@@ -388,19 +387,16 @@ class TestFooterReaction:
         app = MagicMock()
         app.is_running = True
         app._rerender_if_mounted = MagicMock()
-        app._sync_panel_display = MagicMock()
-        # Create a mock footer that query_one returns
-        mock_footer = MagicMock()
-        app.query_one = MagicMock(return_value=mock_footer)
-        context = {"app": app}
+        push_footer = MagicMock()
+        context = {"app": app, "push_footer": push_footer}
 
         disposers = cc_dump.view_store.setup_reactions(store, context)
 
-        mock_footer.update_display.reset_mock()
-        store.set("active_filterset", "2")
+        push_footer.reset_mock()
+        store.set("filter:active", "2")
 
-        mock_footer.update_display.assert_called()
-        state = mock_footer.update_display.call_args[0][0]
+        push_footer.assert_called()
+        state = push_footer.call_args[0][0]
         assert state["active_filterset"] == "2"
 
 
@@ -412,18 +408,15 @@ class TestErrorReaction:
         app = MagicMock()
         app.is_running = True
         app._rerender_if_mounted = MagicMock()
-        app._sync_panel_display = MagicMock()
-        app.query_one = MagicMock(side_effect=NoMatches("no footer"))
-        mock_conv = MagicMock()
-        app._get_conv = MagicMock(return_value=mock_conv)
-        context = {"app": app}
+        push_errors = MagicMock()
+        context = {"app": app, "push_errors": push_errors}
 
         disposers = cc_dump.view_store.setup_reactions(store, context)
-        mock_conv.update_error_items.reset_mock()
+        push_errors.reset_mock()
 
         store.exception_items.append(ErrorItem("exc-1", "\U0001f4a5", "RuntimeError: boom"))
 
-        mock_conv.update_error_items.assert_called()
-        items = mock_conv.update_error_items.call_args[0][0]
+        push_errors.assert_called()
+        items = push_errors.call_args[0][0]
         assert len(items) == 1
         assert items[0].summary == "RuntimeError: boom"

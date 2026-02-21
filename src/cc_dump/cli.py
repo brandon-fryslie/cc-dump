@@ -28,6 +28,7 @@ import cc_dump.sentinel
 from cc_dump.proxy import RequestPipeline
 import cc_dump.view_store
 import cc_dump.hot_reload
+import cc_dump.tui.view_store_bridge
 from cc_dump.tui.app import CcDumpApp
 
 
@@ -259,6 +260,7 @@ def main():
     # the is_safe guard skips it and tracks zero deps. Hot-reload's
     # store.reconcile() re-registers reactions when app IS running.
     store_context["app"] = app
+    store_context.update(cc_dump.tui.view_store_bridge.build_reaction_context(app))
     view_store._reaction_disposers = cc_dump.view_store.setup_reactions(
         view_store, store_context
     )

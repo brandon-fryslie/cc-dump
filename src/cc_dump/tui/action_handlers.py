@@ -30,7 +30,7 @@ def _toggle_vis_dicts(app, category: str, spec_key: str) -> None:
     store = app._view_store
     # Clear overrides BEFORE transaction so autorun sees clean block state
     clear_overrides(app, category)
-    app._view_store.set("active_filterset", None)
+    app._view_store.set("filter:active", None)
     with transaction():
         for prefix, force in cc_dump.tui.action_config.VIS_TOGGLE_SPECS[spec_key]:
             key = f"{prefix}:{category}"
@@ -91,7 +91,7 @@ def cycle_vis(app, category: str) -> None:
 
     # Clear per-block overrides and invalidate active filterset
     clear_overrides(app, category)
-    app._view_store.set("active_filterset", None)
+    app._view_store.set("filter:active", None)
 
     # Batch-set all three keys — single autorun fire
     with transaction():
@@ -200,7 +200,7 @@ def toggle_side_channel(app) -> None:
 def _cycle_filterset(app, direction: int) -> None:
     """Cycle through filterset slots. direction: +1 forward, -1 backward."""
     slots = cc_dump.tui.action_config.FILTERSET_SLOTS
-    current = app._view_store.get("active_filterset")
+    current = app._view_store.get("filter:active")
     idx = slots.index(current) if current in slots else -1
     next_idx = (idx + direction) % len(slots)
     apply_filterset(app, slots[next_idx])
@@ -227,7 +227,7 @@ def apply_filterset(app, slot: str) -> None:
         updates[f"full:{name}"] = vs.full
         updates[f"exp:{name}"] = vs.expanded
     app._view_store.update(updates)
-    app._view_store.set("active_filterset", slot)
+    app._view_store.set("filter:active", slot)
     # Show name for built-in presets, just slot number for user-defined
     name = cc_dump.tui.action_config.FILTERSET_NAMES.get(slot, "")
     label = f"F{slot} {name}" if name else f"F{slot}"

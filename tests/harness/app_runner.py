@@ -13,6 +13,7 @@ from textual.pilot import Pilot
 from cc_dump.analytics_store import AnalyticsStore
 from cc_dump.router import EventRouter, QueueSubscriber
 from cc_dump.tui.app import CcDumpApp
+import cc_dump.tui.view_store_bridge
 
 
 @asynccontextmanager
@@ -73,6 +74,7 @@ async def run_app(
         # Wire view store reactions AFTER app is running so autorun
         # tracks dependencies (is_safe(app) requires app.is_running=True).
         store_context = {"app": app}
+        store_context.update(cc_dump.tui.view_store_bridge.build_reaction_context(app))
         view_store._reaction_disposers = cc_dump.view_store.setup_reactions(
             view_store, store_context
         )

@@ -52,6 +52,7 @@ import cc_dump.tui.error_indicator
 import cc_dump.tui.settings_panel
 import cc_dump.tui.launch_config_panel
 import cc_dump.tui.side_channel_panel
+import cc_dump.tui.view_store_bridge
 import cc_dump.har_replayer
 import cc_dump.sessions
 
@@ -375,11 +376,15 @@ class CcDumpApp(App):
 
         # Seed external state into view store for reactive footer
         self._sync_tmux_to_store()
-        self._view_store.set("active_launch_config_name", cc_dump.launch_config.load_active_name())
+        self._view_store.set("launch:active_name", cc_dump.launch_config.load_active_name())
         # Footer hydration — reactions are now active
         footer = self._get_footer()
         if footer:
-            footer.update_display(self._view_store.footer_state.get())
+            footer.update_display(
+                cc_dump.tui.view_store_bridge.enrich_footer_state(
+                    self._view_store.footer_state.get()
+                )
+            )
 
         if self._replay_data:
             self._process_replay_data()
@@ -800,7 +805,7 @@ class CcDumpApp(App):
         """Handle LaunchConfigPanel.Activated — save active name, notify."""
         cc_dump.launch_config.save_configs(msg.configs)
         cc_dump.launch_config.save_active_name(msg.name)
-        self._view_store.set("active_launch_config_name", msg.name)
+        self._view_store.set("launch:active_name", msg.name)
         self.notify("Active: {}".format(msg.name))
 
     # Side channel
@@ -819,7 +824,11 @@ class CcDumpApp(App):
             self._view_store.set("sc:result_source", "")
             self._view_store.set("sc:result_elapsed_ms", 0)
         # Initial hydration — reaction may not fire if values unchanged from defaults
-        panel.update_display(self._view_store.sc_panel_state.get())
+        panel.update_display(
+            cc_dump.tui.side_channel_panel.SideChannelPanelState(
+                **self._view_store.sc_panel_state.get()
+            )
+        )
 
     def _close_side_channel(self):
         """Close side-channel AI panel and restore focus to conversation."""
@@ -955,12 +964,12 @@ class CcDumpApp(App):
         pass
 
     def watch_theme(self, theme_name: str) -> None:
-        if not self.is_running:
+        if not stx.is_safe(self):
             return
         cc_dump.tui.rendering.set_theme(self.current_theme)
         self._apply_markdown_theme()
-        gen = self._view_store.get("theme_generation")
-        self._view_store.set("theme_generation", gen + 1)
+        gen = self._view_store.get("theme:generation")
+        self._view_store.set("theme:generation", gen + 1)
         conv = self._get_conv()
         if conv is not None:
             conv._block_strip_cache.clear()

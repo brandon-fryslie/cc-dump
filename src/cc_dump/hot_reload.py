@@ -46,6 +46,7 @@ _RELOAD_ORDER = [
     "cc_dump.tui.dump_export",  # depends on: dump_formatting
     "cc_dump.tui.theme_controller",  # depends on: rendering
     "cc_dump.tui.action_handlers",  # depends on: formatting, action_config, rendering, widget_factory
+    "cc_dump.tui.view_store_bridge",  # depends on: widget_factory, custom_footer, side_channel_panel, action_handlers
 ]
 
 # Files to explicitly exclude from watching

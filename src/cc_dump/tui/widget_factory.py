@@ -241,13 +241,13 @@ class ConversationView(ScrollView):
     @property
     def _follow_state(self) -> FollowState:
         if self._view_store is not None:
-            return FollowState(self._view_store.get("follow"))
+            return FollowState(self._view_store.get("nav:follow"))
         return self._follow_state_fallback
 
     @_follow_state.setter
     def _follow_state(self, value: FollowState):
         if self._view_store is not None:
-            self._view_store.set("follow", value.value)
+            self._view_store.set("nav:follow", value.value)
         else:
             self._follow_state_fallback = value
 

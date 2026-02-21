@@ -95,7 +95,7 @@ async def test_on_mount_seeds_footer_state():
         assert app.is_running
 
         # Footer state was seeded — active_launch_config_name is in store
-        assert app._view_store.get("active_launch_config_name") is not None
+        assert app._view_store.get("launch:active_name") is not None
 
         # Footer widget exists and was hydrated
         footer = app._get_footer()

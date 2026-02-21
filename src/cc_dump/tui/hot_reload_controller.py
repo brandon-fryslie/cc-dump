@@ -23,6 +23,7 @@ import cc_dump.tui.launch_config_panel
 import cc_dump.tui.side_channel_panel
 import cc_dump.tui.search_controller
 import cc_dump.tui.theme_controller
+import cc_dump.tui.view_store_bridge
 from cc_dump.tui.category_config import CATEGORY_CONFIG
 
 from cc_dump.tui.panel_registry import PANEL_REGISTRY
@@ -146,11 +147,13 @@ async def _do_hot_reload(app) -> None:
     view_store = getattr(app, "_view_store", None)
     if view_store is not None:
         try:
+            # Rebuild bridge context with freshly-reloaded module functions
+            ctx = getattr(app, "_store_context", None)
+            if ctx is not None:
+                ctx.update(cc_dump.tui.view_store_bridge.build_reaction_context(app))
             view_store.reconcile(
                 cc_dump.view_store.SCHEMA,
-                lambda store: cc_dump.view_store.setup_reactions(
-                    store, getattr(app, "_store_context", None)
-                ),
+                lambda store: cc_dump.view_store.setup_reactions(store, ctx),
             )
         except Exception as e:
             app._app_log("ERROR", f"Hot-reload: view store reconcile failed: {e}")
@@ -326,7 +329,11 @@ async def _replace_all_widgets_inner(app) -> None:
     # StatusFooter is stateless — create fresh and hydrate from store
     new_footer = cc_dump.tui.custom_footer.StatusFooter()
     await app.mount(new_footer, after=new_info)
-    new_footer.update_display(app._view_store.footer_state.get())
+    new_footer.update_display(
+        cc_dump.tui.view_store_bridge.enrich_footer_state(
+            app._view_store.footer_state.get()
+        )
+    )
 
     # 5. Re-render with current filters
     new_conv.rerender(app.active_filters)
