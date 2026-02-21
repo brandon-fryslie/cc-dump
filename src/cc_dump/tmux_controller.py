@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import libtmux
+
+from snarfx import Observable, watch
 
 from cc_dump.event_types import (
     PipelineEvent,
@@ -128,6 +131,7 @@ class TmuxController:
         self._session: libtmux.Session | None = None
         self._our_pane: libtmux.Pane | None = None
         self._claude_pane: libtmux.Pane | None = None
+        self.pane_alive = Observable(False)  # reactive — True while Claude pane is alive
 
         if not os.environ.get("TMUX"):
             self.state = TmuxState.NOT_IN_TMUX
@@ -285,10 +289,26 @@ class TmuxController:
                 shell=shell,
             )
             self.state = TmuxState.CLAUDE_RUNNING
+            self._monitor_exit()
             return LaunchResult(LaunchAction.LAUNCHED, command, success=True, command=shell)
         except Exception as e:
             _log("launch error: {}".format(e))
             return LaunchResult(LaunchAction.BLOCKED, str(e), success=False)
+
+    def _monitor_exit(self) -> None:
+        """Start watching for Claude pane exit.
+
+        // [LAW:single-enforcer] Exit monitoring owned by the controller,
+        // not the app. Callers react to pane_alive observable.
+        """
+        self.pane_alive.set(True)
+
+        def _poll():
+            while self._validate_claude_pane():
+                time.sleep(2)
+            self.pane_alive.set(False)
+
+        watch(_poll)
 
     def focus_self(self) -> bool:
         """Select the cc-dump pane."""

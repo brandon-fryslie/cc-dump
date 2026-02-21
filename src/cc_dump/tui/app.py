@@ -56,7 +56,9 @@ import cc_dump.har_replayer
 import cc_dump.sessions
 
 from cc_dump.stderr_tee import get_tee as _get_tee
+import snarfx
 from snarfx import transaction
+from snarfx import textual as stx
 
 
 def _resolve_factory(dotted_path: str):
@@ -352,10 +354,20 @@ class CcDumpApp(App):
             info.display = self.show_info
             info.update_info(self._build_server_info())
 
+        # Wire snarfx auto-marshal now that call_from_thread is available
+        snarfx.set_scheduler(self.call_from_thread)
+
+        # React to tmux pane exit — sync store when Claude dies
+        if self._tmux_controller is not None:
+            stx.reaction(self,
+                lambda: self._tmux_controller.pane_alive.get(),
+                lambda _: self._sync_tmux_to_store(),
+            )
+
         # Seed external state into view store for reactive footer
         self._sync_tmux_to_store()
         self._view_store.set("active_launch_config_name", cc_dump.launch_config.load_active_name())
-        # Initial footer hydration (reactions may not fire since is_running just became True)
+        # Footer hydration — reactions are now active
         footer = self._get_footer()
         if footer:
             footer.update_display(self._view_store.footer_state.get())
@@ -450,7 +462,7 @@ class CcDumpApp(App):
         }
 
     def _rerender_if_mounted(self):
-        from snarfx import textual as stx
+
         if stx.is_safe(self):
             conv = self._get_conv()
             if conv is not None:
@@ -524,7 +536,7 @@ class CcDumpApp(App):
                     self._app_log("ERROR", f"  {line}")
 
     def _handle_event_inner(self, event):
-        from snarfx import textual as stx
+
         if not stx.is_safe(self):
             return
 
@@ -655,8 +667,6 @@ class CcDumpApp(App):
         if result.success:
             self.notify("{}: {}".format(result.action.value, result.detail))
             self._sync_tmux_to_store()
-            if result.action == cc_dump.tmux_controller.LaunchAction.LAUNCHED:
-                self._start_exit_monitoring()
         else:
             self.notify("Launch failed: {}".format(result.detail), severity="error")
 
@@ -745,8 +755,6 @@ class CcDumpApp(App):
         self._app_log("INFO", "launch_with_config: {}".format(result))
         if result.success:
             self.notify("{}: {}".format(result.action.value, result.detail))
-            if result.action == cc_dump.tmux_controller.LaunchAction.LAUNCHED:
-                self._start_exit_monitoring()
         else:
             self.notify("Launch failed: {}".format(result.detail), severity="error")
         self._sync_tmux_to_store()
@@ -850,13 +858,13 @@ class CcDumpApp(App):
         self._settings_store.set("side_channel_enabled", not current)
         # sc_panel_state Computed reads settings_store → reaction fires automatically
 
-    def on_button_pressed(self, event) -> None:
-        """Handle button presses from side-channel panel."""
-        button_id = event.button.id
-        if button_id == "sc-summarize":
-            self._side_channel_summarize()
-        elif button_id == "sc-toggle":
-            self._side_channel_toggle_enabled()
+    def action_sc_summarize(self) -> None:
+        """Action target for side-channel Summarize chip."""
+        self._side_channel_summarize()
+
+    def action_sc_toggle(self) -> None:
+        """Action target for side-channel Toggle chip."""
+        self._side_channel_toggle_enabled()
 
     # Navigation
     def action_toggle_follow(self):
