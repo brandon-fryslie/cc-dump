@@ -84,18 +84,17 @@ User wants **one unified analytics dashboard** showing token usage breakdowns ac
 
 ### Decision 2: Content Type Breakdown
 
-**Option A - Estimated only**
-- Use request_json analysis (like Timeline panel does)
-- Clearly label as "estimated"
-- User already rejected estimates
+**Decision: Option B (skip entirely).**
 
-**Option B - Skip entirely**
-- Don't show content type breakdown
-- Focus on cache/input/output which are real
+Rationale:
+- Anthropic usage data does not provide content-type token attribution.
+- Request-JSON-derived estimates were explicitly rejected by the user.
+- Analytics dashboard v1 must use only real API token counts.
 
-**Option C - Request API enhancement**
-- Ask Anthropic to return content-type token breakdown in usage object
-- Not under our control
+Decision notes:
+- Do not implement content-type token charts/tables in v1.
+- Do not backfill with estimated values labeled as "estimated".
+- If Anthropic adds authoritative content-type usage fields later, revisit.
 
 ### Decision 3: Replace or Augment Panels?
 
@@ -149,7 +148,7 @@ User wants **one unified analytics dashboard** showing token usage breakdowns ac
 
 ## Next Steps
 
-1. **User decides** on Decision 1, 2, 3
+1. **User decides** on Decision 1 and 3 (Decision 2 is resolved: skip content-type breakdown)
 2. **If going minimal**: Implement dashboard with cache/input/output/timeline only
 3. **If doing subagents**: Design session correlation mechanism first
 4. **Economics panel**: Either fix to use real data or remove it

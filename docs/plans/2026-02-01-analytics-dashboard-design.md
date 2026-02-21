@@ -1,14 +1,17 @@
 # Analytics Dashboard Design
 
 **Date**: 2026-02-01
-**Status**: Approved for implementation
+**Status**: Approved for implementation (with Decision 2 update)
+
+> Update (2026-02-21): Content-type token breakdown is deferred from v1 per
+> `/Users/bmf/code/cc-dump/docs/plans/2026-02-21-content-type-breakdown-decision.md`.
 
 ## Problem
 
 Current panels (Stats, Cost, Timeline) show basic token metrics but lack critical breakdowns:
 - No cached vs fresh token visibility
 - No subagent categorization
-- No content type breakdown (system prompts, tools, conversation)
+- No content type breakdown from authoritative API usage fields
 - No input/output split
 - Limited time-based analysis
 
@@ -49,7 +52,7 @@ Bash              5K       7K       8K       4K     $0.10
 Total            80K      70K     109K      41K     $1.20
 ```
 
-**Tab 2: By Content Type**
+**Tab 2: By Content Type (Deferred from v1)**
 ```
 Content Type     Input    Output   Cached   Fresh    Cost
 ─────────────────────────────────────────────────────────
@@ -238,7 +241,8 @@ Tabs should be keyboard-navigable and show current selection clearly.
 
 - Users can answer: "Is caching working effectively?"
 - Users can answer: "Which subagents are expensive?"
-- Users can answer: "Where are my tokens going?" (content type breakdown)
+- Users can answer: "Where are my tokens going?" across real-token dimensions
+  (cache/fresh, input/output, model/tool/subagent where available)
 - Users can answer: "Which tools cost the most?"
 - Dashboard loads and updates within 200ms (no performance degradation)
 - All existing panel functionality preserved or improved
