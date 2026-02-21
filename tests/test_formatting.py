@@ -150,6 +150,25 @@ def test_format_request_with_messages(fresh_state):
     assert len(text_blocks) >= 2
 
 
+def test_format_request_long_first_message_keeps_text_content(fresh_state):
+    """Long first message content remains TextContentBlock (no tracking coercion)."""
+    long_text = "line\n" * 700
+    body = {
+        "model": "claude-3-opus",
+        "max_tokens": 4096,
+        "messages": [
+            {"role": "user", "content": long_text},
+        ],
+    }
+    blocks = format_request(body, fresh_state)
+
+    text_blocks = _find_blocks(blocks, TextContentBlock)
+    tracked_blocks = _find_blocks(blocks, TrackedContentBlock)
+
+    assert any(tb.content == long_text for tb in text_blocks)
+    assert tracked_blocks == []
+
+
 def test_format_request_with_tool_use(fresh_state):
     """Tool use blocks formatted correctly."""
     body = {

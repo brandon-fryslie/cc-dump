@@ -15,7 +15,7 @@ from cc_dump.formatting import (
     FormattedBlock,
     StreamInfoBlock,
     StopReasonBlock,
-    TextDeltaBlock,
+    TextContentBlock,
     StreamToolUseBlock,
     ThinkingBlock,
     format_complete_response,
@@ -117,7 +117,7 @@ class TestFormatCompleteResponse:
         msg = _make_complete_message(text="Hello world")
         blocks = format_complete_response(msg)
 
-        text_blocks = _find_blocks(blocks, TextDeltaBlock)
+        text_blocks = _find_blocks(blocks, TextContentBlock)
         assert len(text_blocks) == 1
         assert text_blocks[0].content == "Hello world"
 
@@ -145,7 +145,7 @@ class TestFormatCompleteResponse:
         msg = _make_complete_message(content=content, stop_reason="tool_use")
         blocks = format_complete_response(msg)
 
-        text_blocks = _find_blocks(blocks, TextDeltaBlock)
+        text_blocks = _find_blocks(blocks, TextContentBlock)
         tool_blocks = _find_blocks(blocks, StreamToolUseBlock)
         assert len(text_blocks) == 1
         assert text_blocks[0].content == "Let me check that."
@@ -181,7 +181,7 @@ class TestFormatCompleteResponse:
         blocks = format_complete_response(msg)
 
         # Unknown type silently skipped, known type still present
-        text_blocks = _find_blocks(blocks, TextDeltaBlock)
+        text_blocks = _find_blocks(blocks, TextContentBlock)
         assert len(text_blocks) == 1
         assert text_blocks[0].content == "Known"
 
@@ -246,7 +246,7 @@ class TestNonStreamingEventHandler:
 
         ds = widgets["domain_store"]
         blocks = ds.iter_completed_blocks()[0]
-        text_blocks = _find_blocks(blocks, TextDeltaBlock)
+        text_blocks = _find_blocks(blocks, TextContentBlock)
         assert any("Visible content" in b.content for b in text_blocks)
 
 
@@ -340,7 +340,7 @@ class TestReplayEndToEnd:
 
         # Response turn should contain the answer text
         response_blocks = ds.iter_completed_blocks()[1]
-        text_blocks = _find_blocks(response_blocks, TextDeltaBlock)
+        text_blocks = _find_blocks(response_blocks, TextContentBlock)
         assert any("2+2 = 4" in b.content for b in text_blocks)
 
     def test_replay_captures_session_id(self, tmp_path):

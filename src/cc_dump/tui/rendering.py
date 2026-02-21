@@ -571,6 +571,34 @@ def _render_http_headers_summary(block: HttpHeadersBlock) -> Text | None:
     return t
 
 
+def _render_http_headers_summary_expanded(block: HttpHeadersBlock) -> Text | None:
+    """Multi-line summary for HttpHeadersBlock at SUMMARY expanded."""
+    tc = get_theme_colors()
+    t = Text("  ")
+    n = len(block.headers)
+    labels = {
+        "response": ("HTTP {}".format(block.status_code), f"bold {tc.success}"),
+        "request": ("Request Headers", f"bold {tc.info}"),
+    }
+    label, style = labels.get(block.header_type, ("Headers", "bold"))
+    t.append(label, style=style)
+    t.append("  ({} header{})".format(n, "s" if n != 1 else ""), style="dim")
+
+    shown = 0
+    for key in sorted(block.headers.keys()):
+        if shown >= 6:
+            break
+        value = block.headers[key]
+        t.append("\n    {}: ".format(key), style=f"dim {tc.info}")
+        t.append(value, style="dim")
+        shown += 1
+
+    if n > shown:
+        t.append("\n    ")
+        t.append("··· {} more headers".format(n - shown), style="dim")
+    return t
+
+
 def _render_metadata(block: MetadataBlock) -> Text | None:
     parts = [
         "model: ",
@@ -898,6 +926,61 @@ def _render_text_content(block: TextContentBlock) -> ConsoleRenderable | None:
     return _indent_text(block.content, block.indent)
 
 
+def _preview_line(text: str, max_chars: int = 100) -> str:
+    """Return a single-line preview with normalized whitespace."""
+    collapsed = " ".join(text.split())
+    if len(collapsed) <= max_chars:
+        return collapsed
+    return collapsed[: max_chars - 1] + "…"
+
+
+def _line_count(text: str) -> int:
+    """Return human-readable line count for content previews."""
+    return len(text.splitlines()) if text else 0
+
+
+def _render_text_summary_collapsed(block: TextContentBlock) -> ConsoleRenderable | None:
+    """Summary-collapsed text renderer: one-line glanceable preview.
+
+    // [LAW:dataflow-not-control-flow] Summary is derived from content value only.
+    """
+    if not block.content:
+        return None
+    lines = _line_count(block.content)
+    preview = _preview_line(block.content, max_chars=110)
+    t = Text("  ")
+    t.append(preview)
+    if lines > 1:
+        t.append(f"  ({lines} lines)", style="dim")
+    return t
+
+
+def _render_text_summary_expanded(block: TextContentBlock) -> ConsoleRenderable | None:
+    """Summary-expanded text renderer: bounded preview with explicit remainder.
+
+    Distinct from full-expanded to preserve progressive disclosure semantics.
+    """
+    if not block.content:
+        return None
+
+    lines = block.content.splitlines()
+    preview_limit = 18
+    if len(lines) <= preview_limit:
+        return _render_text_content(block)
+
+    head = "\n".join(lines[:preview_limit])
+    hidden = len(lines) - preview_limit
+
+    if block.category in _MARKDOWN_CATEGORIES:
+        preview = _render_text_as_markdown(head)
+    else:
+        preview = _indent_text(head, block.indent)
+
+    tail = Text()
+    tail.append(f"    ··· {hidden} more lines", style="dim")
+    return Group(preview, tail)
+
+
 # ─── Language inference helper ─────────────────────────────────────────────────
 
 # [LAW:one-source-of-truth] Single mapping from file extension to Pygments lexer name.
@@ -991,6 +1074,27 @@ def _render_tool_use_oneliner(block: ToolUseBlock) -> Text | None:
         t.append(" {}".format(block.detail), style="dim")
     t.append(" ({} lines)".format(block.input_size))
     return t
+
+
+def _render_tool_use_summary_collapsed(block: ToolUseBlock) -> Text | None:
+    """Summary-collapsed ToolUse renderer: compact call identity only."""
+    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    t = Text("  ")
+    t.append("[Use: {}]".format(block.name), style="bold {}".format(color))
+    return t
+
+
+def _render_tool_use_summary_expanded(block: ToolUseBlock) -> ConsoleRenderable | None:
+    """Summary-expanded ToolUse renderer: detail + optional description preview."""
+    base = _render_tool_use_oneliner(block)
+    if not block.description or base is None:
+        return base
+    desc_line = block.description.split("\n", 1)[0]
+    if len(desc_line) > 120:
+        desc_line = desc_line[:117] + "..."
+    desc_text = Text("    ")
+    desc_text.append(desc_line, style="dim italic")
+    return Group(base, desc_text)
 
 
 def _render_tool_use_bash_full(block: ToolUseBlock) -> ConsoleRenderable | None:
@@ -1214,6 +1318,30 @@ def _render_tool_result_summary(block: ToolResultBlock) -> Text | None:
     """
     color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
     return _tool_result_header(block, color)
+
+
+def _render_tool_result_summary_collapsed(block: ToolResultBlock) -> Text | None:
+    """Summary-collapsed ToolResult renderer: minimal result signal."""
+    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    t = Text("  ")
+    suffix = " ERROR" if block.is_error else ""
+    t.append("[Result{}]".format(suffix), style="bold {}".format(color))
+    if block.size:
+        t.append(" ({} lines)".format(block.size), style="dim")
+    return t
+
+
+def _render_tool_result_summary_expanded(block: ToolResultBlock) -> ConsoleRenderable | None:
+    """Summary-expanded ToolResult renderer: header + one-line content preview."""
+    header = _render_tool_result_summary(block)
+    if header is None:
+        return None
+    if not block.content:
+        return header
+    preview = _preview_line(block.content, max_chars=120)
+    body = Text("    ")
+    body.append(preview, style="dim")
+    return Group(header, body)
 
 
 def _render_read_content(block: ToolResultBlock) -> ConsoleRenderable | None:
@@ -1510,13 +1638,13 @@ def _render_thinking_summary(block: FormattedBlock) -> ConsoleRenderable | None:
 
 def _render_config_content(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render config content block — full content with source label."""
-    t = Text()
     source = getattr(block, "source", "unknown")
-    t.append(f"[config: {source}] ", style="bold dim")
     content = getattr(block, "content", "")
-    if content:
-        t.append(content, style="dim")
-    return t
+    header = Text()
+    header.append(f"[config: {source}]", style="bold dim")
+    if not content:
+        return header
+    return Group(header, _render_text_as_markdown(content))
 
 
 def _render_config_content_summary(block: FormattedBlock) -> ConsoleRenderable | None:
@@ -1526,19 +1654,22 @@ def _render_config_content_summary(block: FormattedBlock) -> ConsoleRenderable |
     line_count = len(content.splitlines()) if content else 0
     t = Text()
     t.append(f"[config: {source}]", style="bold dim")
-    t.append(f" ({line_count} lines)", style="dim")
+    if line_count:
+        t.append(f" ({line_count} lines)", style="dim")
+        t.append(" ", style="dim")
+        t.append(_preview_line(content, max_chars=80), style="dim")
     return t
 
 
 def _render_hook_output(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render hook output block — full content with hook name."""
-    t = Text()
     hook_name = getattr(block, "hook_name", "")
-    t.append(f"[hook: {hook_name}] ", style="bold dim")
     content = getattr(block, "content", "")
-    if content:
-        t.append(content, style="dim")
-    return t
+    header = Text()
+    header.append(f"[hook: {hook_name}]", style="bold dim")
+    if not content:
+        return header
+    return Group(header, _render_text_as_markdown(content))
 
 
 def _render_hook_output_summary(block: FormattedBlock) -> ConsoleRenderable | None:
@@ -1548,7 +1679,10 @@ def _render_hook_output_summary(block: FormattedBlock) -> ConsoleRenderable | No
     line_count = len(content.splitlines()) if content else 0
     t = Text()
     t.append(f"[hook: {hook_name}]", style="bold dim")
-    t.append(f" ({line_count} lines)", style="dim")
+    if line_count:
+        t.append(f" ({line_count} lines)", style="dim")
+        t.append(" ", style="dim")
+        t.append(_preview_line(content, max_chars=80), style="dim")
     return t
 
 
@@ -1702,13 +1836,20 @@ BLOCK_STATE_RENDERERS: dict[
     ("TrackedContentBlock", True, False, True): _render_tracked_content_summary,
     # HttpHeadersBlock: one-liner at summary level collapsed
     ("HttpHeadersBlock", True, False, False): _render_http_headers_summary,
+    ("HttpHeadersBlock", True, False, True): _render_http_headers_summary_expanded,
     # TurnBudgetBlock: oneliner at summary level
     ("TurnBudgetBlock", True, False, False): _render_turn_budget_oneliner,
     ("TurnBudgetBlock", True, False, True): _render_turn_budget_oneliner,
-    # ToolResultBlock: header-only at full collapsed (no raw content dump)
+    # TextContentBlock: dedicated summary renderers (full states use default render path)
+    ("TextContentBlock", True, False, False): _render_text_summary_collapsed,
+    ("TextContentBlock", True, False, True): _render_text_summary_expanded,
+    # ToolResultBlock: summary states + header-only at full collapsed
+    ("ToolResultBlock", True, False, False): _render_tool_result_summary_collapsed,
+    ("ToolResultBlock", True, False, True): _render_tool_result_summary_expanded,
     ("ToolResultBlock", True, True, False): _render_tool_result_summary,
-    # ToolUseBlock: one-liner at full collapsed, description at full expanded
-    ("ToolUseBlock", True, True, False): _render_tool_use_oneliner,
+    # ToolUseBlock: summary states + description at full expanded
+    ("ToolUseBlock", True, False, False): _render_tool_use_summary_collapsed,
+    ("ToolUseBlock", True, False, True): _render_tool_use_summary_expanded,
     ("ToolUseBlock", True, True, True): _render_tool_use_full_with_desc,
     # ToolDefinitionsBlock: 3 state-specific renderers (FULL expanded falls through to regions)
     ("ToolDefinitionsBlock", True, False, False): _render_tool_defs_summary_collapsed,

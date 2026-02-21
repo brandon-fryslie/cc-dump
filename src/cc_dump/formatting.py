@@ -728,17 +728,7 @@ class _ContentContext:
 def _format_text_content(cblock, ctx: _ContentContext) -> list:
     """Format a text content block."""
     text = cblock.get("text", "")
-    if len(text) > 500 and ctx.msg_index == 0:
-        return [
-            track_content(
-                text,
-                "msg0:text:{}".format(ctx.msg_index),
-                ctx.state,
-                indent=ctx.indent,
-            )
-        ]
-    else:
-        return [TextContentBlock(content=text, indent=ctx.indent, category=ctx.role_cat)]
+    return [TextContentBlock(content=text, indent=ctx.indent, category=ctx.role_cat)]
 
 
 def _format_tool_use_content(cblock, ctx: _ContentContext) -> list:
@@ -1178,7 +1168,7 @@ def _complete_text_block(block: dict) -> list:
     """Create blocks for text content."""
     text = block.get("text", "")
     if text:
-        return [TextDeltaBlock(content=text, category=Category.ASSISTANT)]
+        return [TextContentBlock(content=text, category=Category.ASSISTANT)]
     return []
 
 
