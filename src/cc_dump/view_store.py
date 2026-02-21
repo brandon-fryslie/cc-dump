@@ -10,7 +10,7 @@ import cc_dump.formatting
 import cc_dump.tui.error_indicator
 
 from cc_dump.tui.category_config import CATEGORY_CONFIG
-from snarfx.hot_reload import HotReloadStore  # type: ignore[import-untyped]
+from snarfx.hot_reload import HotReloadStore
 from snarfx import computed, ObservableList
 from snarfx import textual as stx
 
