@@ -28,6 +28,7 @@ import cc_dump.analysis
 import cc_dump.tui.rendering
 import cc_dump.tui.panel_renderers
 import cc_dump.tui.error_indicator
+import cc_dump.tui.view_overrides
 
 
 # ─── Follow mode state machine ──────────────────────────────────────────────
@@ -138,6 +139,7 @@ class TurnData:
         force: bool = False,
         block_cache=None,
         search_ctx=None,
+        overrides=None,
     ) -> bool:
         """Re-render if a relevant filter changed. Returns True if strips changed.
 
@@ -145,6 +147,7 @@ class TurnData:
             force: Force re-render even if filter snapshot hasn't changed.
             block_cache: Optional LRUCache for caching rendered strips per block.
             search_ctx: Optional SearchContext for highlighting matches.
+            overrides: Optional ViewOverrides for per-block view state.
         """
         # Create snapshot using ALWAYS_VISIBLE default to match filters dict structure
         snapshot = {k: filters.get(k, cc_dump.formatting.ALWAYS_VISIBLE) for k in self.relevant_filter_keys}
@@ -161,6 +164,7 @@ class TurnData:
             block_cache=block_cache,
             search_ctx=search_ctx,
             turn_index=self.turn_index,
+            overrides=overrides,
         )
         self._widest_strip = _compute_widest(self.strips)
         return True
@@ -221,6 +225,8 @@ class ConversationView(ScrollView):
         self._scrolling_programmatically: bool = False
         self._scroll_anchor: ScrollAnchor | None = None
         self._indicator = cc_dump.tui.error_indicator.IndicatorState()
+        # // [LAW:one-source-of-truth] All per-block view state lives here.
+        self._view_overrides = cc_dump.tui.view_overrides.ViewOverrides()
 
     # // [LAW:one-source-of-truth] Follow state stored as string in view store.
     # String comparison is stable across hot-reloads (enum class identity changes).
@@ -251,6 +257,11 @@ class ConversationView(ScrollView):
     def _is_following(self) -> bool:
         """Whether auto-scroll is active (ACTIVE state only)."""
         return self._follow_state == FollowState.ACTIVE
+
+    @property
+    def view_overrides(self):
+        """Public accessor for ViewOverrides — used by search_controller and action_handlers."""
+        return self._view_overrides
 
     def render_line(self, y: int) -> Strip:
         """Line API: render a single line at virtual position y."""
@@ -474,6 +485,7 @@ class ConversationView(ScrollView):
             width,
             block_cache=self._block_strip_cache,
             search_ctx=self._last_search_ctx,  # Pass stored search context
+            overrides=self._view_overrides,
         )
         # re_render clears _pending_filter_snapshot
 
@@ -535,7 +547,8 @@ class ConversationView(ScrollView):
         console = self.app.console
 
         strips, block_strip_map, flat_blocks = cc_dump.tui.rendering.render_turn_to_strips(
-            blocks, filters, console, width, block_cache=self._block_strip_cache
+            blocks, filters, console, width, block_cache=self._block_strip_cache,
+            overrides=self._view_overrides,
         )
         td = TurnData(
             turn_index=len(self._turns),
@@ -705,6 +718,7 @@ class ConversationView(ScrollView):
             console,
             width,
             block_cache=self._block_strip_cache,
+            overrides=self._view_overrides,
         )
 
         # Update turn data
@@ -773,6 +787,7 @@ class ConversationView(ScrollView):
                     force=force,
                     block_cache=self._block_strip_cache,
                     search_ctx=search_ctx,
+                    overrides=self._view_overrides,
                 ):
                     if first_changed is None:
                         first_changed = idx
@@ -806,6 +821,7 @@ class ConversationView(ScrollView):
             self._last_filters, self.app.console, width,
             force=True, block_cache=self._block_strip_cache,
             search_ctx=self._last_search_ctx,
+            overrides=self._view_overrides,
         )
         self._recalculate_offsets_from(turn_index)
 
@@ -835,6 +851,7 @@ class ConversationView(ScrollView):
                         console,
                         width,
                         block_cache=self._block_strip_cache,
+                        overrides=self._view_overrides,
                     )
                 )
                 td._widest_strip = _compute_widest(td.strips)
@@ -915,8 +932,10 @@ class ConversationView(ScrollView):
         return best_block_idx
 
     def _is_expandable_block(self, block) -> bool:
-        """Check if a block was truncated (set by render_turn_to_strips)."""
-        return getattr(block, "_expandable", False)
+        """Check if a block is expandable (from ViewOverrides, set by render_turn_to_strips)."""
+        # // [LAW:one-source-of-truth] Expandable state from overrides only
+        bvs = self._view_overrides._blocks.get(block.block_id)
+        return bvs.expandable if bvs is not None else False
 
     def _block_strip_count(self, turn: TurnData, block_index: int) -> int:
         """Return the number of strips occupied by a block.
@@ -1160,7 +1179,7 @@ class ConversationView(ScrollView):
     def _region_at_line(
         self, turn: TurnData, block, block_idx: int, content_y: int
     ) -> int | None:
-        """Map click y → content region index using region._strip_range.
+        """Map click y → content region index using strip_range.
 
         Returns the region index if the click hit a region's strip range,
         or None if no region was hit.
@@ -1175,10 +1194,12 @@ class ConversationView(ScrollView):
 
         local_y = content_y - turn.line_offset - block_start_strip
 
-        # Check each region's strip range
+        # // [LAW:one-source-of-truth] strip_range from overrides only
         for region in block.content_regions:
-            if region._strip_range is not None:
-                range_start, range_end = region._strip_range
+            rvs = self._view_overrides._regions.get((block.block_id, region.index))
+            strip_range = rvs.strip_range if rvs is not None else None
+            if strip_range is not None:
+                range_start, range_end = strip_range
                 if range_start <= local_y < range_end:
                     return region.index
 
@@ -1198,9 +1219,12 @@ class ConversationView(ScrollView):
         if block_start_strip is None:
             return None
         local_y = content_y - turn.line_offset - block_start_strip
+        # // [LAW:one-source-of-truth] strip_range from overrides only
         for region in block.content_regions:
-            if region._strip_range is not None:
-                range_start, range_end = region._strip_range
+            rvs = self._view_overrides._regions.get((block.block_id, region.index))
+            strip_range = rvs.strip_range if rvs is not None else None
+            if strip_range is not None:
+                range_start, range_end = strip_range
                 if local_y == range_start or local_y == range_end - 1:
                     return region.index
         return None
@@ -1223,7 +1247,11 @@ class ConversationView(ScrollView):
         if region.kind not in cc_dump.tui.rendering.COLLAPSIBLE_REGION_KINDS:
             return
         # Toggle: None/True → False, False → None (restore default)
-        region.expanded = None if region.expanded is False else False
+        # // [LAW:one-source-of-truth] Region expanded state in overrides only
+        rvs = self._view_overrides.get_region(block.block_id, region_idx)
+        current_exp = rvs.expanded
+        new_expanded = None if current_exp is False else False
+        rvs.expanded = new_expanded
 
         # Re-render just this turn
         if not turn.is_streaming:
@@ -1235,6 +1263,7 @@ class ConversationView(ScrollView):
                 width,
                 force=True,
                 block_cache=self._block_strip_cache,
+                overrides=self._view_overrides,
             )
             self._recalculate_offsets()
             # Resolve anchor to maintain scroll position
@@ -1249,14 +1278,18 @@ class ConversationView(ScrollView):
         cat = cc_dump.tui.rendering.get_category(block)
         vis = self._last_filters.get(cat.value, cc_dump.formatting.ALWAYS_VISIBLE) if cat else cc_dump.formatting.ALWAYS_VISIBLE
 
-        # Coalesce: treat None as default
-        current = block.expanded if block.expanded is not None else vis.expanded
+        # Coalesce: treat None as default — read from overrides only
+        # / [LAW:one-source-of-truth] Expanded state from ViewOverrides only
+        bvs = self._view_overrides.get_block(block.block_id)
+        current = bvs.expanded if bvs.expanded is not None else vis.expanded
 
         # Toggle
         new_value = not current
 
         # Store override (None if matches default)
-        block.expanded = None if new_value == vis.expanded else new_value
+        override_value = None if new_value == vis.expanded else new_value
+        # // [LAW:one-source-of-truth] View state in overrides only
+        bvs.expanded = override_value
 
         # Re-render just this turn
         if not turn.is_streaming:
@@ -1268,6 +1301,7 @@ class ConversationView(ScrollView):
                 width,
                 force=True,
                 block_cache=self._block_strip_cache,
+                overrides=self._view_overrides,
             )
             self._recalculate_offsets()
             # Resolve anchor to maintain scroll position after expand/collapse
@@ -1333,6 +1367,7 @@ class ConversationView(ScrollView):
             "turn_count": len(self._turns),
             "streaming_states": streaming_states,
             "scroll_anchor": anchor_dict,
+            "view_overrides": self._view_overrides.to_dict(),
         }
 
     def restore_state(self, state: dict):
@@ -1348,6 +1383,10 @@ class ConversationView(ScrollView):
         else:
             # Backward compat: old bool format
             self._follow_state = FollowState.ACTIVE if state.get("follow_mode", True) else FollowState.OFF
+
+        # Restore view overrides
+        vo_data = state.get("view_overrides", {})
+        self._view_overrides = cc_dump.tui.view_overrides.ViewOverrides.from_dict(vo_data)
 
         # Restore streaming states after _rebuild_from_state is called
         streaming_states = state.get("streaming_states", [])
@@ -1379,6 +1418,7 @@ class ConversationView(ScrollView):
                     console,
                     width,
                     block_cache=self._block_strip_cache,
+                    overrides=self._view_overrides,
                 )
 
                 td = TurnData(

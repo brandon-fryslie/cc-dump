@@ -348,16 +348,21 @@ def navigate_to_current(app) -> None:
             force_indices.add(i)
             break
 
+    # // [LAW:one-source-of-truth] force_vis in ViewOverrides only
     for i in force_indices:
-        td.blocks[i]._force_vis = cc_dump.formatting.ALWAYS_VISIBLE
-        state.expanded_blocks.append((match.turn_index, i, td.blocks[i]))
+        if conv is not None:
+            conv._view_overrides.get_block(td.blocks[i].block_id).force_vis = cc_dump.formatting.ALWAYS_VISIBLE
+            conv._view_overrides._search_block_ids.add(td.blocks[i].block_id)
+        state.expanded_blocks.append((match.turn_index, i, td.blocks[i].block_id))
 
     # Also force-vis the actual matched child block when it differs from
     # the container (i.e., the match is inside a child, not the container itself)
     matched_block = match.block
     if matched_block is not None and matched_block is not td.blocks[match.block_index]:
-        matched_block._force_vis = cc_dump.formatting.ALWAYS_VISIBLE
-        state.expanded_blocks.append((match.turn_index, match.block_index, matched_block))
+        if conv is not None:
+            conv._view_overrides.get_block(matched_block.block_id).force_vis = cc_dump.formatting.ALWAYS_VISIBLE
+            conv._view_overrides._search_block_ids.add(matched_block.block_id)
+        state.expanded_blocks.append((match.turn_index, match.block_index, matched_block.block_id))
 
     # Re-render with search context, ensure target is materialized
     search_rerender(app)
@@ -378,15 +383,15 @@ def navigate_to_current(app) -> None:
 
 
 def clear_search_expand(app) -> None:
-    """Reset _force_vis and expanded on blocks we expanded during search.
+    """Reset force_vis on blocks we expanded during search.
 
-    expanded_blocks entries are (turn_idx, block_idx, block_ref) triples.
-    Uses block_ref directly for cleanup — handles both container and child blocks.
+    expanded_blocks entries are (turn_idx, block_idx, block_id) triples.
+    // [LAW:one-source-of-truth] Clears via ViewOverrides.clear_search() only.
     """
     state = app._search_state
-    for _turn_idx, _block_idx, block_ref in state.expanded_blocks:
-        block_ref._force_vis = None
-        block_ref.expanded = None
+    conv = app._get_conv()
+    if conv is not None:
+        conv._view_overrides.clear_search()
     state.expanded_blocks.clear()
 
 

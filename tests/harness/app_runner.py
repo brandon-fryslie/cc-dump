@@ -63,16 +63,18 @@ async def run_app(
         view_store=view_store,
     )
 
-    # Wire view store reactions (needs app ref)
-    store_context = {"app": app}
-    view_store._reaction_disposers = cc_dump.view_store.setup_reactions(
-        view_store, store_context
-    )
-
     async with app.run_test(
         size=size,
         message_hook=message_hook,
     ) as pilot:
         # Ensure on_mount processing (including replay) has completed
         await pilot.pause()
+
+        # Wire view store reactions AFTER app is running so autorun
+        # tracks dependencies (is_safe(app) requires app.is_running=True).
+        store_context = {"app": app}
+        view_store._reaction_disposers = cc_dump.view_store.setup_reactions(
+            view_store, store_context
+        )
+
         yield pilot, app

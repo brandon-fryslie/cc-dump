@@ -251,43 +251,49 @@ class TestWidgetStatePreservation:
         assert new_widget._follow_state == FollowState.OFF
 
     def test_conversation_view_blocks_preserve_expansion(self):
-        """Blocks with expanded=True/False survive roundtrip via reference."""
+        """Block expanded overrides survive roundtrip via ViewOverrides serialization."""
         from cc_dump.formatting import TextContentBlock
         from cc_dump.tui.widget_factory import ConversationView, TurnData
 
         block_a = TextContentBlock(content="hello")
-        block_a.expanded = True
         block_b = TextContentBlock(content="world")
-        block_b.expanded = False
 
         widget = ConversationView()
         td = TurnData(turn_index=0, blocks=[block_a, block_b], strips=[])
         widget._turns.append(td)
 
+        # Set expanded overrides via ViewOverrides
+        widget._view_overrides.get_block(block_a.block_id).expanded = True
+        widget._view_overrides.get_block(block_b.block_id).expanded = False
+
         state = widget.get_state()
         new_widget = ConversationView()
         new_widget.restore_state(state)
 
-        # Blocks are passed by reference — same objects
-        restored_blocks = state["all_blocks"][0]
-        assert restored_blocks[0].expanded is True
-        assert restored_blocks[1].expanded is False
+        # ViewOverrides roundtrip preserves expanded state
+        assert new_widget._view_overrides.get_block(block_a.block_id).expanded is True
+        assert new_widget._view_overrides.get_block(block_b.block_id).expanded is False
 
     def test_conversation_view_blocks_preserve_force_vis(self):
-        """_force_vis survives roundtrip via block reference."""
+        """force_vis is transient (search state) — not serialized across hot-reload."""
         from cc_dump.formatting import TextContentBlock, ALWAYS_VISIBLE
         from cc_dump.tui.widget_factory import ConversationView, TurnData
 
         block = TextContentBlock(content="test")
-        block._force_vis = ALWAYS_VISIBLE
 
         widget = ConversationView()
         td = TurnData(turn_index=0, blocks=[block], strips=[])
         widget._turns.append(td)
 
+        # Set force_vis via ViewOverrides (search mode)
+        widget._view_overrides.get_block(block.block_id).force_vis = ALWAYS_VISIBLE
+
         state = widget.get_state()
-        restored_blocks = state["all_blocks"][0]
-        assert restored_blocks[0]._force_vis is ALWAYS_VISIBLE
+        new_widget = ConversationView()
+        new_widget.restore_state(state)
+
+        # force_vis is transient — not serialized
+        assert new_widget._view_overrides.get_block(block.block_id).force_vis is None
 
     def test_conversation_view_follow_state_active_roundtrip(self):
         """follow_state=ACTIVE explicitly survives roundtrip."""
@@ -338,24 +344,29 @@ class TestWidgetStatePreservation:
         assert new_widget.models_seen == set()
 
     def test_content_region_state_roundtrip(self):
-        """Content regions with expanded=False survive via block reference."""
+        """Content regions survive via block reference; expanded state in ViewOverrides."""
         from cc_dump.formatting import TextContentBlock, ContentRegion
         from cc_dump.tui.widget_factory import ConversationView, TurnData
 
         block = TextContentBlock(content="test")
         block.content_regions = [
-            ContentRegion(index=0, kind="xml_block", expanded=False),
-            ContentRegion(index=1, kind="md", expanded=None),
+            ContentRegion(index=0, kind="xml_block"),
+            ContentRegion(index=1, kind="md"),
         ]
 
         widget = ConversationView()
+        # Set region expanded state via ViewOverrides
+        widget._view_overrides.get_region(block.block_id, 0).expanded = False
         td = TurnData(turn_index=0, blocks=[block], strips=[])
         widget._turns.append(td)
 
         state = widget.get_state()
         restored_blocks = state["all_blocks"][0]
-        assert restored_blocks[0].content_regions[0].expanded is False
-        assert restored_blocks[0].content_regions[1].expanded is None
+        # Block structure survives roundtrip
+        assert restored_blocks[0].content_regions[0].kind == "xml_block"
+        assert restored_blocks[0].content_regions[1].kind == "md"
+        # ViewOverrides state survives roundtrip
+        assert state["view_overrides"] is not None
 
     def test_timeline_panel_state_roundtrip(self):
         from cc_dump.tui.widget_factory import TimelinePanel

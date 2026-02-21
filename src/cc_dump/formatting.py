@@ -96,13 +96,23 @@ class Category(Enum):
 
 # ─── Structured IR ────────────────────────────────────────────────────────────
 
+# // [LAW:one-source-of-truth] Block identity — monotonic, unique per process.
+_next_block_id: int = 0
+
+
+def _auto_id() -> int:
+    """Allocate a unique block_id. Monotonically increasing per process."""
+    global _next_block_id
+    _next_block_id += 1
+    return _next_block_id
+
 
 @dataclass
 class ContentRegion:
     """An independently expandable/collapsible region within a block.
 
-    // [LAW:one-source-of-truth] Replaces _xml_expanded shadow dict, _xml_strip_ranges,
-    // and _xml_expandable bool — all region state lives here.
+    // [LAW:one-source-of-truth] Domain data only. View state (expanded, strip_range)
+    // lives in ViewOverrides.RegionViewState.
 
     kind: structural discriminator — determines rendering behavior.
         Values: "xml_block", "md", "code_fence", "md_fence", "tool_def"
@@ -113,8 +123,6 @@ class ContentRegion:
     index: int  # Position in parent's content_regions list
     kind: str = ""  # "xml_block", "md", "code_fence", "md_fence", "tool_def"
     tags: list[str] = field(default_factory=list)  # Semantic labels for navigation
-    expanded: bool | None = None  # None = default (expanded). False = collapsed.
-    _strip_range: tuple[int, int] | None = None  # Set by renderer: (start, end) in block strips
 
 
 def populate_content_regions(block: "FormattedBlock") -> None:
@@ -159,22 +167,21 @@ def populate_content_regions(block: "FormattedBlock") -> None:
 class FormattedBlock:
     """Base class for all formatted output blocks.
 
-    Two visibility axes:
+    Visibility axes:
     - Level (per-category, keyboard cycle): EXISTENCE / SUMMARY / FULL
-    - expanded (per-block, click toggle): collapsed / expanded within current level.
-      None means use the level default.
     - category: overrides static BLOCK_CATEGORY for context-dependent blocks
       (e.g., TextContentBlock can be USER or ASSISTANT depending on the message).
+
+    Per-block view state (expanded, _expandable, _force_vis) lives in
+    ViewOverrides, owned by ConversationView — not on the block itself.
 
     Sub-region axis:
     - content_regions: list[ContentRegion] — independently toggleable regions
       within the block (e.g., XML sub-blocks). Empty = no sub-regions.
     """
 
-    # Per-block expand/collapse override. None = use level default.
-    # [LAW:one-source-of-truth] Level default is in rendering.DEFAULT_EXPANDED;
-    # this field only stores explicit per-block overrides.
-    expanded: bool | None = None
+    # // [LAW:one-source-of-truth] Stable identity for cache keys and ViewOverrides.
+    block_id: int = field(default_factory=_auto_id)
 
     # Context-dependent category override. None = use static BLOCK_CATEGORY.
     category: Category | None = None

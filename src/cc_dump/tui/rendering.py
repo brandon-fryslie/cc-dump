@@ -373,29 +373,36 @@ def get_category(block: FormattedBlock) -> Category | None:
     return BLOCK_CATEGORY.get(type(block).__name__)
 
 
-def _resolve_visibility(block: FormattedBlock, filters: dict) -> VisState:
+def _resolve_visibility(block: FormattedBlock, filters: dict, overrides=None) -> VisState:
     """Determine VisState for a block given current filter state.
 
     // [LAW:one-source-of-truth] Returns THE visibility representation.
     // [LAW:dataflow-not-control-flow] Value coalescing, not branching.
+    // [LAW:single-enforcer] ViewOverrides is the sole source for per-block overrides.
 
     Filters contain VisState values keyed by category name.
-    Runtime `_force_vis` attribute overrides all filters (search mode).
-    Per-block `block.expanded` overrides category-level expansion.
+    Runtime force_vis (from overrides) overrides all filters (search mode).
+    Per-block expanded (from overrides) overrides category-level expansion.
     Returns ALWAYS_VISIBLE for blocks with no category.
     """
-    # Check for runtime override (search mode)
-    force_vis = getattr(block, "_force_vis", None)
-    if force_vis is not None:
-        return force_vis
+    # Check for runtime override (search mode) — from overrides only
+    if overrides is not None:
+        bvs = overrides._blocks.get(block.block_id)
+        if bvs is not None and bvs.force_vis is not None:
+            return bvs.force_vis
 
     cat = get_category(block)
     if cat is None:
         return ALWAYS_VISIBLE  # always fully visible
 
     vis = filters.get(cat.value, ALWAYS_VISIBLE)
-    # Per-block override: None → use category default, else use block value
-    expanded = block.expanded if block.expanded is not None else vis.expanded
+    # Per-block expanded override — from overrides only
+    block_expanded = None
+    if overrides is not None:
+        bvs = overrides._blocks.get(block.block_id)
+        if bvs is not None:
+            block_expanded = bvs.expanded
+    expanded = block_expanded if block_expanded is not None else vis.expanded
 
     return VisState(vis.visible, vis.full, expanded)
 
@@ -779,7 +786,7 @@ def _render_xml_collapsed(tag_name: str, inner_text: str) -> ConsoleRenderable:
 
 
 def _render_region_parts(
-    block,
+    block, overrides=None,
 ) -> list[tuple[ConsoleRenderable, int | None]]:
     """Render text into per-part renderables using block.content_regions for state.
 
@@ -792,6 +799,7 @@ def _render_region_parts(
     Args:
         block: A block with .content and .content_regions already populated
             by populate_content_regions().
+        overrides: Optional ViewOverrides for reading region expanded state.
 
     Returns:
         List of (renderable, region_idx) tuples.
@@ -834,7 +842,13 @@ def _render_region_parts(
 
         elif sb.kind == cc_dump.segmentation.SubBlockKind.XML_BLOCK:
             # expanded=None or True means expanded; False means collapsed
-            is_expanded = (region is None) or (region.expanded is not False)
+            # // [LAW:one-source-of-truth] Read from overrides only
+            region_exp = None
+            if overrides is not None and region is not None:
+                rvs = overrides._regions.get((block.block_id, region.index))
+                if rvs is not None:
+                    region_exp = rvs.expanded
+            is_expanded = region_exp is not False
 
             m = sb.meta
             inner = text[m.inner_span.start : m.inner_span.end]
@@ -1113,7 +1127,7 @@ def _render_tool_defs_full_collapsed(block: ToolDefinitionsBlock) -> Text | None
 
 
 def _render_tool_def_region_parts(
-    block: ToolDefinitionsBlock,
+    block: ToolDefinitionsBlock, overrides=None,
 ) -> list[tuple[ConsoleRenderable, int | None]]:
     """FULL expanded: per-tool region parts with expand/collapse arrows.
 
@@ -1134,8 +1148,15 @@ def _render_tool_def_region_parts(
     )
     parts.append((header, None))
 
-    # Build region expanded lookup
-    region_expanded = {r.index: r.expanded for r in block.content_regions}
+    # // [LAW:one-source-of-truth] Region expanded state from overrides only
+    region_expanded = {}
+    for r in block.content_regions:
+        exp = None
+        if overrides is not None:
+            rvs = overrides._regions.get((block.block_id, r.index))
+            if rvs is not None:
+                exp = rvs.expanded
+        region_expanded[r.index] = exp
 
     for i, tool in enumerate(block.tools):
         name = tool.get("name", "?")
@@ -1859,10 +1880,11 @@ class _RenderContext:
     turn_index: int
     show_right: bool
     filters: dict
+    overrides: object = None  # ViewOverrides | None — dual-read/write
 
 
 def _collapse_children(
-    children: list[FormattedBlock], tools_on: bool
+    children: list[FormattedBlock], tools_on: bool, overrides=None,
 ) -> list[FormattedBlock]:
     """Return new list with consecutive ToolUse/ToolResult runs collapsed.
 
@@ -1879,11 +1901,19 @@ def _collapse_children(
     result: list[FormattedBlock] = []
     pending: list[FormattedBlock] = []
 
+    def _has_force_vis(b):
+        # // [LAW:one-source-of-truth] force_vis from overrides only
+        if overrides is not None:
+            bvs = overrides._blocks.get(b.block_id)
+            if bvs is not None and bvs.force_vis is not None:
+                return True
+        return False
+
     def flush():
         if not pending:
             return
         # Blocks with search overrides are emitted individually
-        if any(getattr(b, "_force_vis", None) is not None for b in pending):
+        if any(_has_force_vis(b) for b in pending):
             result.extend(pending)
             pending.clear()
             return
@@ -1927,7 +1957,7 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
     // [LAW:dataflow-not-control-flow] Same operations every call; values decide outcomes.
     """
 
-    vis = _resolve_visibility(block, ctx.filters)
+    vis = _resolve_visibility(block, ctx.filters, overrides=ctx.overrides)
     max_lines = TRUNCATION_LIMITS[vis]
 
     # Hidden blocks produce 0 lines
@@ -1963,13 +1993,21 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
     # Precedence: state-specific renderer > region rendering > default renderer
     if has_regions and not state_override:
         region_renderer = _REGION_PART_RENDERERS.get(type_name, _render_region_parts)
-        region_parts = region_renderer(block)
+        region_parts = region_renderer(block, overrides=ctx.overrides)
 
+        # Region cache state — read from overrides first, fallback to region field
+        def _region_expanded(r):
+            # // [LAW:one-source-of-truth] Region expanded from overrides only
+            if ctx.overrides is not None:
+                rvs = ctx.overrides._regions.get((block.block_id, r.index))
+                if rvs is not None:
+                    return rvs.expanded
+            return None  # default: expanded
         region_cache_state = tuple(
-            (r.index, r.expanded) for r in block.content_regions
+            (r.index, _region_expanded(r)) for r in block.content_regions
         )
         cache_key = (
-            id(block),
+            block.block_id,
             ctx.render_width,
             vis,
             search_hash,
@@ -1996,7 +2034,10 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
 
                 if region_idx is not None:
                     region = block.content_regions[region_idx]
-                    region._strip_range = (part_start, len(block_strips))
+                    # // [LAW:one-source-of-truth] strip_range in ViewOverrides only
+                    strip_range = (part_start, len(block_strips))
+                    if ctx.overrides is not None:
+                        ctx.overrides.get_region(block.block_id, region_idx).strip_range = strip_range
                     if (
                         region.kind in COLLAPSIBLE_REGION_KINDS
                         and part_start < len(block_strips)
@@ -2044,7 +2085,7 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
     # Standard rendering path (non-region)
     if not has_regions:
         cache_key = (
-            id(block),
+            block.block_id,
             ctx.render_width,
             vis,
             search_hash,
@@ -2079,11 +2120,14 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
     has_different_expanded = RENDERERS.get(collapsed_key) is not RENDERERS.get(
         expanded_key
     )
-    block._expandable = bool(children) or has_different_expanded or (
+    is_expandable = bool(children) or has_different_expanded or (
         collapsed_limit is not None
         and collapsed_limit > 0
         and len(block_strips) > collapsed_limit
     )
+    # // [LAW:one-source-of-truth] Expandable state in ViewOverrides only
+    if ctx.overrides is not None:
+        ctx.overrides.get_block(block.block_id).expandable = is_expandable
 
     # Truncation
     # // [LAW:dataflow-not-control-flow] No should_truncate flag, just max_lines value
@@ -2103,14 +2147,14 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
         block_strips_for_gutter = truncated_strips
         arrow = (
             GUTTER_ARROWS.get((vis.full, False), "")
-            if block._expandable
+            if is_expandable
             else ""
         )
     else:
         block_strips_for_gutter = list(block_strips)
         arrow = (
             GUTTER_ARROWS.get((vis.full, vis.expanded), "")
-            if block._expandable
+            if is_expandable
             else ""
         )
 
@@ -2119,7 +2163,7 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
     final_strips = _add_gutter_to_strips(
         block_strips_for_gutter,
         indicator_name,
-        block._expandable,
+        is_expandable,
         arrow,
         ctx.width,
         neutral=is_neutral,
@@ -2130,7 +2174,7 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
     # Recurse into children when container is visible and expanded
     if children and vis.visible and vis.expanded:
         tools_filter = ctx.filters.get("tools", ALWAYS_VISIBLE)
-        collapsed = _collapse_children(children, tools_filter.full)
+        collapsed = _collapse_children(children, tools_filter.full, overrides=ctx.overrides)
         for child in collapsed:
             _render_block_tree(child, ctx)
 
@@ -2200,6 +2244,7 @@ def render_turn_to_strips(
     is_streaming: bool = False,
     search_ctx=None,
     turn_index: int = -1,
+    overrides=None,
 ) -> tuple[list, dict[int, int], list[FormattedBlock]]:
     """Render blocks to Strip objects for Line API storage.
 
@@ -2218,6 +2263,7 @@ def render_turn_to_strips(
         is_streaming: If True, skip truncation (show all content during stream)
         search_ctx: Optional SearchContext for highlighting matches
         turn_index: Turn index for search match correlation
+        overrides: Optional ViewOverrides for reading/writing per-block view state
 
     Returns:
         (strips, block_strip_map, flat_blocks) — pre-rendered lines, a dict mapping
@@ -2250,6 +2296,7 @@ def render_turn_to_strips(
         turn_index=turn_index,
         show_right=show_right,
         filters=filters,
+        overrides=overrides,
     )
 
     for block in blocks:

@@ -253,7 +253,10 @@ def main():
         store_context=store_context,
     )
 
-    # Wire view store reactions (needs app ref for re-render autorun)
+    # Wire view store reactions (needs app ref for re-render autorun).
+    # NOTE: autorun's initial run fires before app.is_running=True, so
+    # the is_safe guard skips it and tracks zero deps. Hot-reload's
+    # store.reconcile() re-registers reactions when app IS running.
     store_context["app"] = app
     view_store._reaction_disposers = cc_dump.view_store.setup_reactions(
         view_store, store_context

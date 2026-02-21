@@ -14,6 +14,7 @@ from cc_dump.tui.rendering import (
     _render_region_parts,
     COLLAPSIBLE_REGION_KINDS,
 )
+from cc_dump.tui.view_overrides import ViewOverrides
 from cc_dump.segmentation import segment, SubBlockKind
 from rich.console import Console
 from textual.theme import BUILTIN_THEMES
@@ -236,11 +237,11 @@ def test_populate_content_regions_idempotent():
     text = "Some text\n<thinking>\ninner content\n</thinking>\nmore text"
     block = TextContentBlock(content=text, category=Category.ASSISTANT)
     populate_content_regions(block)
-    # Modify a region's state
-    block.content_regions[1].expanded = False
+    # Capture region identity
+    original_regions = list(block.content_regions)
     # Call again — should not overwrite
     populate_content_regions(block)
-    assert block.content_regions[1].expanded is False
+    assert block.content_regions == original_regions
 
 
 def test_populate_all_segments():
@@ -319,9 +320,10 @@ def test_region_parts_xml_collapsed():
     text = "Intro text\n<thinking>\nLine 1\nLine 2\nLine 3\n</thinking>\nConclusion"
     block = TextContentBlock(content=text, category=Category.ASSISTANT)
     populate_content_regions(block)
-    # Collapse the XML region (index 1)
-    block.content_regions[1].expanded = False
-    parts = _render_region_parts(block)
+    # Collapse the XML region (index 1) via ViewOverrides
+    overrides = ViewOverrides()
+    overrides.get_region(block.block_id, 1).expanded = False
+    parts = _render_region_parts(block, overrides=overrides)
 
     # Find the XML part at segment index 1
     xml_parts = [(r, idx) for r, idx in parts if idx == 1]
@@ -342,8 +344,9 @@ def test_region_parts_form_a_collapsed():
     text = "Intro\n<thinking>I need to think\nabout something\n</thinking>\nEnd"
     block = TextContentBlock(content=text, category=Category.ASSISTANT)
     populate_content_regions(block)
-    block.content_regions[1].expanded = False
-    parts = _render_region_parts(block)
+    overrides = ViewOverrides()
+    overrides.get_region(block.block_id, 1).expanded = False
+    parts = _render_region_parts(block, overrides=overrides)
 
     xml_parts = [(r, idx) for r, idx in parts if idx == 1]
     assert len(xml_parts) == 1
@@ -358,8 +361,9 @@ def test_region_parts_form_c_collapsed():
     text = "Intro\n<note>short note</note>\nEnd"
     block = TextContentBlock(content=text, category=Category.ASSISTANT)
     populate_content_regions(block)
-    block.content_regions[1].expanded = False
-    parts = _render_region_parts(block)
+    overrides = ViewOverrides()
+    overrides.get_region(block.block_id, 1).expanded = False
+    parts = _render_region_parts(block, overrides=overrides)
 
     xml_parts = [(r, idx) for r, idx in parts if idx == 1]
     assert len(xml_parts) == 1
@@ -403,9 +407,10 @@ def test_region_parts_mixed_collapse():
     block = TextContentBlock(content=text, category=Category.ASSISTANT)
     populate_content_regions(block)
     # Collapse thinking (index 1), leave search expanded (index 3)
-    block.content_regions[1].expanded = False
+    overrides = ViewOverrides()
+    overrides.get_region(block.block_id, 1).expanded = False
     # content_regions[3] stays default (None = expanded)
-    parts = _render_region_parts(block)
+    parts = _render_region_parts(block, overrides=overrides)
 
     xml_parts = [(r, idx) for r, idx in parts if idx is not None and block.content_regions[idx].kind == "xml_block"]
     assert len(xml_parts) == 2
@@ -423,7 +428,7 @@ def test_region_parts_mixed_collapse():
 
 
 def test_xml_block_renders_with_content_regions():
-    """TextContentBlock with XML sets content_regions with _strip_range on XML region."""
+    """TextContentBlock with XML sets strip_range in ViewOverrides for XML region."""
     _setup_theme()
     text = "Intro\n<thinking>\nLine 1\nLine 2\nLine 3\n</thinking>\nEnd"
     block = TextContentBlock(content=text, category=Category.ASSISTANT)
@@ -431,23 +436,26 @@ def test_xml_block_renders_with_content_regions():
 
     console = Console()
     filters = {"assistant": ALWAYS_VISIBLE}
+    overrides = ViewOverrides()
 
     strips, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters,
         console=console,
         width=80,
+        overrides=overrides,
     )
 
     # Block should have content_regions populated (3 segments: MD, XML, MD)
     assert len(block.content_regions) == 3
-    # XML region at index 1 should have strip range set
+    # XML region at index 1 should have strip range set in overrides
     xml_region = block.content_regions[1]
     assert xml_region.kind == "xml_block"
-    assert xml_region._strip_range is not None, "XML region should have strip range set"
+    rvs = overrides.get_region(block.block_id, 1)
+    assert rvs.strip_range is not None, "XML region should have strip range in overrides"
 
     # Range should be valid
-    start, end = xml_region._strip_range
+    start, end = rvs.strip_range
     assert start >= 0
     assert end > start
 
@@ -476,17 +484,19 @@ def test_xml_collapsed_fewer_strips():
         width=80,
     )
 
-    # Collapsed — populate regions then collapse XML
+    # Collapsed — populate regions then collapse XML via ViewOverrides
     block_collapsed = TextContentBlock(content=text, category=Category.ASSISTANT)
     populate_content_regions(block_collapsed)
-    # Find the XML region and collapse it
+    # Find the XML region and collapse it via overrides
     xml_idx = next(i for i, r in enumerate(block_collapsed.content_regions) if r.kind == "xml_block")
-    block_collapsed.content_regions[xml_idx].expanded = False
+    overrides = ViewOverrides()
+    overrides.get_region(block_collapsed.block_id, xml_idx).expanded = False
     strips_collapsed, _, _ = render_turn_to_strips(
         blocks=[block_collapsed],
         filters=filters,
         console=console,
         width=80,
+        overrides=overrides,
     )
 
     # Collapsed should have significantly fewer strips
@@ -507,12 +517,13 @@ def test_plain_text_gets_md_regions():
 
 
 def test_xml_expanded_survives_rerender():
-    """content_regions state persists across re-renders (same block object)."""
+    """ViewOverrides state persists across re-renders (same overrides object)."""
     _setup_theme()
     text = "Intro\n<thinking>\nLine 1\nLine 2\n</thinking>\nEnd"
     block = TextContentBlock(content=text, category=Category.ASSISTANT)
     populate_content_regions(block)
-    block.content_regions[1].expanded = False
+    overrides = ViewOverrides()
+    overrides.get_region(block.block_id, 1).expanded = False
 
     console = Console()
     filters = {"assistant": ALWAYS_VISIBLE}
@@ -523,17 +534,19 @@ def test_xml_expanded_survives_rerender():
         filters=filters,
         console=console,
         width=80,
+        overrides=overrides,
     )
 
-    # Verify state preserved
-    assert block.content_regions[1].expanded is False
+    # Verify state preserved in overrides
+    assert overrides.get_region(block.block_id, 1).expanded is False
 
-    # Second render (same block, should use same state)
+    # Second render (same overrides, should produce same result)
     strips2, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters,
         console=console,
         width=80,
+        overrides=overrides,
     )
 
     # Strip counts should be the same
