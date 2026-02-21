@@ -105,6 +105,32 @@ def _req_body(session_id: str) -> dict:
     }
 
 
+def _complete_response(text: str, *, msg_id: str, model: str = "claude-sonnet-4-5-20250929") -> dict:
+    return {
+        "id": msg_id,
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "text", "text": text}],
+        "model": model,
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+    }
+
+
+def _walk_blocks(blocks):
+    for block in blocks:
+        yield block
+        yield from _walk_blocks(getattr(block, "children", []))
+
+
+def _turn_text(blocks) -> str:
+    return "".join(
+        block.content
+        for block in _walk_blocks(blocks)
+        if isinstance(getattr(block, "content", None), str)
+    )
+
+
 class TestEventHandlersRequestScopedStreaming:
     def test_request_hint_keeps_main_out_of_subagent_lane(self):
         main_session = "11111111-2222-3333-4444-555555555555"
@@ -539,3 +565,148 @@ class TestEventHandlersRequestScopedStreaming:
             log_fn,
         )
         assert ds.completed_count == completed_before + 1
+
+    def test_three_interleaved_streams_finalize_out_of_order_without_cross_talk(self):
+        state = {
+            "positions": {},
+            "known_hashes": {},
+            "next_id": 0,
+            "next_color": 0,
+            "request_counter": 0,
+            "current_session": None,
+        }
+        app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
+        widgets = _mk_widgets(_FakeConv(), _FakeStats(), _FakeViewStore(), DomainStore())
+        domain_store = widgets["domain_store"]
+        log_fn = lambda *args, **kwargs: None
+
+        requests = [
+            ("req-a", "11111111-2222-3333-4444-555555555555"),
+            ("req-b", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+            ("req-c", "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"),
+        ]
+        for idx, (rid, session_id) in enumerate(requests, start=1):
+            event_handlers.handle_request_headers(
+                RequestHeadersEvent(
+                    headers={"content-type": "application/json"},
+                    request_id=rid,
+                    seq=0,
+                    recv_ns=idx,
+                ),
+                state,
+                widgets,
+                app_state,
+                log_fn,
+            )
+            event_handlers.handle_request(
+                RequestBodyEvent(
+                    body=_req_body(session_id),
+                    request_id=rid,
+                    seq=1,
+                    recv_ns=idx + 10,
+                ),
+                state,
+                widgets,
+                app_state,
+                log_fn,
+            )
+            event_handlers.handle_response_headers(
+                ResponseHeadersEvent(
+                    status_code=200,
+                    headers={"content-type": "text/event-stream"},
+                    request_id=rid,
+                    seq=2,
+                    recv_ns=idx + 20,
+                ),
+                state,
+                widgets,
+                app_state,
+                log_fn,
+            )
+            event_handlers.handle_response_event(
+                ResponseSSEEvent(
+                    sse_event=MessageStartEvent(
+                        MessageInfo(
+                            id=f"msg-{rid}",
+                            role=MessageRole.ASSISTANT,
+                            model="claude-sonnet-4-5-20250929",
+                            usage=Usage(input_tokens=1),
+                        )
+                    ),
+                    request_id=rid,
+                    seq=3,
+                    recv_ns=idx + 30,
+                ),
+                state,
+                widgets,
+                app_state,
+                log_fn,
+            )
+            event_handlers.handle_response_event(
+                ResponseSSEEvent(
+                    sse_event=TextDeltaEvent(index=0, text=f"temp-{rid}"),
+                    request_id=rid,
+                    seq=4,
+                    recv_ns=idx + 40,
+                ),
+                state,
+                widgets,
+                app_state,
+                log_fn,
+            )
+
+        assert set(domain_store.get_active_stream_ids()) == {"req-a", "req-b", "req-c"}
+
+        # // [LAW:single-enforcer] Out-of-order completion still finalizes per request_id only.
+        completion_order = [("req-b", "final-b"), ("req-c", "final-c"), ("req-a", "final-a")]
+        for idx, (rid, text) in enumerate(completion_order, start=1):
+            event_handlers.handle_response_complete(
+                ResponseCompleteEvent(
+                    body=_complete_response(text, msg_id=f"msg-final-{rid}"),
+                    request_id=rid,
+                    seq=10 + idx,
+                    recv_ns=100 + idx,
+                ),
+                state,
+                widgets,
+                app_state,
+                log_fn,
+            )
+            remaining = {"req-a", "req-b", "req-c"} - {item[0] for item in completion_order[:idx]}
+            assert set(domain_store.get_active_stream_ids()) == remaining
+
+        assert domain_store.get_active_stream_ids() == ()
+        response_turns = [
+            turn
+            for turn in domain_store.iter_completed_blocks()
+            if _turn_text(turn).startswith("final-")
+        ]
+        response_payloads = sorted(_turn_text(turn) for turn in response_turns)
+        assert response_payloads == ["final-a", "final-b", "final-c"]
+        assert all("temp-" not in payload for payload in response_payloads)
+
+        expected_agent = {
+            "final-a": "main",
+            "final-b": "subagent",
+            "final-c": "subagent",
+        }
+        expected_session = {
+            "final-a": "11111111-2222-3333-4444-555555555555",
+            "final-b": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "final-c": "bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
+        }
+        for turn in response_turns:
+            payload = _turn_text(turn)
+            blocks = list(_walk_blocks(turn))
+            kinds = {
+                str(getattr(block, "agent_kind", ""))
+                for block in blocks
+                if str(getattr(block, "agent_kind", ""))
+            }
+            sessions = {
+                str(getattr(block, "session_id", ""))
+                for block in blocks
+                if str(getattr(block, "session_id", ""))
+            }
+            assert kinds == {expected_agent[payload]}
+            assert sessions == {expected_session[payload]}

@@ -340,6 +340,36 @@ def test_convert_to_events_preserves_body_exactly():
     assert events[3].body is complete_message
 
 
+def test_convert_to_events_uses_single_request_envelope():
+    """All replay events share one request envelope with monotonic sequencing."""
+    complete_message = {
+        "id": "msg_789",
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "text", "text": "ok"}],
+        "model": "claude-3-opus-20240229",
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+    }
+
+    events = convert_to_events(
+        {"content-type": "application/json"},
+        {"model": "claude-3-opus-20240229", "messages": []},
+        200,
+        {"content-type": "application/json"},
+        complete_message,
+    )
+
+    request_ids = {event.request_id for event in events}
+    seqs = [event.seq for event in events]
+    recv_ns = [event.recv_ns for event in events]
+
+    assert len(request_ids) == 1
+    assert seqs == [0, 1, 2, 3]
+    assert all(ns > 0 for ns in recv_ns)
+    assert recv_ns == sorted(recv_ns)
+
+
 # ─── Integration Tests ────────────────────────────────────────────────────────
 
 

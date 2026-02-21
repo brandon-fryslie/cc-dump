@@ -188,6 +188,15 @@ class TestBenchmarkSmoke:
             f"p95 format latency {fmt['p95_us']:.1f}us exceeds 1000us threshold"
         )
 
+    def test_queue_delay_budget_under_threshold(self):
+        """End-to-end event queue delay should remain within budget for 2k deltas."""
+        from benchmarks.bench_streaming import run_benchmark
+        results = run_benchmark(n_deltas=2000)
+        queue_delay = results["stages"]["queue_delay"]
+        assert queue_delay["p95_us"] < 100_000, (
+            f"p95 queue delay {queue_delay['p95_us']:.1f}us exceeds 100000us budget"
+        )
+
     def test_event_generation(self):
         """Verify synthetic event stream structure."""
         from benchmarks.bench_streaming import generate_sse_stream
