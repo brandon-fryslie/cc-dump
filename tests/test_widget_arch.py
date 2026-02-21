@@ -672,6 +672,39 @@ class TestWidestStripCache:
 class TestIncrementalOffsets:
     """Test _recalculate_offsets_from correctness."""
 
+    def test_invalidate_cache_for_turn_range_only_removes_affected_turns(self):
+        """Range invalidation preserves unaffected turn cache entries."""
+        from textual.strip import Strip
+
+        conv = ConversationView()
+        conv._turns = [TurnData(turn_index=i, blocks=[], strips=[]) for i in range(4)]
+
+        key0 = ("k", 0)
+        key1 = ("k", 1)
+        key2 = ("k", 2)
+        key3 = ("k", 3)
+        conv._line_cache[key0] = Strip.blank(10)
+        conv._line_cache[key1] = Strip.blank(10)
+        conv._line_cache[key2] = Strip.blank(10)
+        conv._line_cache[key3] = Strip.blank(10)
+        conv._cache_keys_by_turn = {
+            0: {key0},
+            1: {key1},
+            2: {key2},
+            3: {key3},
+        }
+
+        conv._invalidate_cache_for_turns(2, 4)
+
+        assert key0 in conv._line_cache
+        assert key1 in conv._line_cache
+        assert key2 not in conv._line_cache
+        assert key3 not in conv._line_cache
+        assert 0 in conv._cache_keys_by_turn
+        assert 1 in conv._cache_keys_by_turn
+        assert 2 not in conv._cache_keys_by_turn
+        assert 3 not in conv._cache_keys_by_turn
+
     def test_incremental_matches_full_recalc(self):
         """Incremental from index K produces same offsets as full recalc."""
         from textual.strip import Strip
@@ -712,6 +745,37 @@ class TestIncrementalOffsets:
 
         # Incremental and full must match
         assert incr_offsets == full_offsets
+
+    def test_recalculate_offsets_from_invalidates_only_changed_turns(self):
+        """Incremental offset recalculation invalidates cache keys for changed range only."""
+        from textual.strip import Strip
+
+        conv = ConversationView()
+        conv._turns = [TurnData(turn_index=i, blocks=[], strips=[Strip.blank(80)]) for i in range(4)]
+        conv._recalculate_offsets()
+
+        key0 = ("line", 0)
+        key1 = ("line", 1)
+        key2 = ("line", 2)
+        key3 = ("line", 3)
+        conv._line_cache[key0] = Strip.blank(10)
+        conv._line_cache[key1] = Strip.blank(10)
+        conv._line_cache[key2] = Strip.blank(10)
+        conv._line_cache[key3] = Strip.blank(10)
+        conv._cache_keys_by_turn = {
+            0: {key0},
+            1: {key1},
+            2: {key2},
+            3: {key3},
+        }
+
+        conv._turns[2].strips = [Strip.blank(80)] * 3
+        conv._recalculate_offsets_from(2)
+
+        assert key0 in conv._line_cache
+        assert key1 in conv._line_cache
+        assert key2 not in conv._line_cache
+        assert key3 not in conv._line_cache
 
     def test_incremental_from_zero_matches_full(self):
         """_recalculate_offsets_from(0) is identical to _recalculate_offsets()."""

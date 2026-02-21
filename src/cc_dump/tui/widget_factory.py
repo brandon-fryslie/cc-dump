@@ -324,15 +324,6 @@ class ConversationView(ScrollView):
             if actual_y >= self._total_lines:
                 return Strip.blank(width, self.rich_style)
 
-            key = (actual_y, scroll_x, width, self._widest_line)
-            # Bypass cache when selection is active (selection is transient)
-            if selection is None and key in self._line_cache:
-                strip = self._line_cache[key].apply_style(self.rich_style)
-                # Apply overlay AFTER cache (viewport-relative, must not be cached)
-                return cc_dump.tui.error_indicator.composite_overlay(
-                    strip, y, width, self._indicator
-                )
-
             # Binary search for the turn containing this line
             turn = self._find_turn_for_line(actual_y)
             if turn is None:
@@ -344,6 +335,22 @@ class ConversationView(ScrollView):
                 self._lazy_rerender_turn(turn)
 
             local_y = actual_y - turn.line_offset
+            key = (
+                turn.turn_index,
+                turn.line_offset,
+                local_y,
+                scroll_x,
+                width,
+                self._widest_line,
+            )
+            # Bypass cache when selection is active (selection is transient)
+            if selection is None and key in self._line_cache:
+                strip = self._line_cache[key].apply_style(self.rich_style)
+                # Apply overlay AFTER cache (viewport-relative, must not be cached)
+                return cc_dump.tui.error_indicator.composite_overlay(
+                    strip, y, width, self._indicator
+                )
+
             if local_y < len(turn.strips):
                 strip = turn.strips[local_y].crop_extend(
                     scroll_x, scroll_x + width, self.rich_style
@@ -602,6 +609,27 @@ class ConversationView(ScrollView):
             if not self._is_following:
                 self._resolve_anchor()
 
+    def _invalidate_cache_for_turns(self, start_idx: int, end_idx: int | None = None) -> None:
+        """Drop line-cache entries for turns in [start_idx, end_idx).
+
+        // [LAW:single-enforcer] Range invalidation for line cache happens only here.
+        """
+        if start_idx <= 0:
+            self._line_cache.clear()
+            self._cache_keys_by_turn.clear()
+            return
+
+        upper = len(self._turns) if end_idx is None else min(end_idx, len(self._turns))
+        if upper <= start_idx:
+            return
+
+        for turn_idx in range(start_idx, upper):
+            keys = self._cache_keys_by_turn.pop(turn_idx, None)
+            if not keys:
+                continue
+            for key in keys:
+                self._line_cache.discard(key)
+
     def _recalculate_offsets(self):
         """Rebuild line offsets and virtual size."""
         self._recalculate_offsets_from(0)
@@ -633,8 +661,7 @@ class ConversationView(ScrollView):
         self._total_lines = offset
         self._widest_line = max(widest, self._last_width)
         self.virtual_size = Size(self._widest_line, self._total_lines)
-        self._line_cache.clear()
-        self._cache_keys_by_turn.clear()  # Clear tracking when cache is cleared
+        self._invalidate_cache_for_turns(start_idx, len(turns))
 
     def _on_turn_added(self, blocks: list, index: int) -> None:
         """Domain store callback: a completed turn was added."""
@@ -697,7 +724,7 @@ class ConversationView(ScrollView):
         if had_preview_attached:
             self._attach_stream_preview()
 
-        self._recalculate_offsets()
+        self._recalculate_offsets_from(td.turn_index)
 
     def _attach_focused_stream_preview(self) -> None:
         """Ensure focused active stream preview is attached as the last turn."""
@@ -1639,7 +1666,7 @@ class ConversationView(ScrollView):
             block_cache=self._block_strip_cache,
             overrides=self._view_overrides,
         )
-        self._recalculate_offsets()
+        self._recalculate_offsets_from(turn.turn_index)
 
     # ─── Error indicator ────────────────────────────────────────────────────
 
