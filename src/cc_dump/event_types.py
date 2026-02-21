@@ -26,6 +26,7 @@ class PipelineEventKind(Enum):
     REQUEST = "request"
     RESPONSE_HEADERS = "response_headers"
     RESPONSE_EVENT = "response_event"
+    RESPONSE_PROGRESS = "response_progress"
     RESPONSE_NON_STREAMING = "response_non_streaming"
     RESPONSE_COMPLETE = "response_complete"
     RESPONSE_DONE = "response_done"
@@ -196,6 +197,26 @@ class ResponseSSEEvent(PipelineEvent):
 
 
 @dataclass(frozen=True)
+class ResponseProgressEvent(PipelineEvent):
+    """Transport-normalized progress hint for live streaming UX.
+
+    Carries only rendering/telemetry hints (delta text, model/usage, task tool
+    lineage). Complete response content remains authoritative in
+    ResponseCompleteEvent.
+    """
+
+    delta_text: str = ""
+    model: str = ""
+    input_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
+    output_tokens: int | None = None
+    stop_reason: str = ""
+    task_tool_use_id: str = ""
+    kind: PipelineEventKind = field(default=PipelineEventKind.RESPONSE_PROGRESS, init=False)
+
+
+@dataclass(frozen=True)
 class ResponseNonStreamingEvent(PipelineEvent):
     """A complete (non-streaming) HTTP response."""
 
@@ -249,6 +270,29 @@ class LogEvent(PipelineEvent):
     path: str
     status: str
     kind: PipelineEventKind = field(default=PipelineEventKind.LOG, init=False)
+
+
+# [LAW:one-source-of-truth] Canonical SSE -> progress-hint mapping lives here.
+def sse_progress_payload(sse_event: SSEEvent) -> dict[str, object] | None:
+    """Convert SSE event to progress payload fields, or None if not relevant."""
+    if isinstance(sse_event, MessageStartEvent):
+        usage = sse_event.message.usage
+        return {
+            "model": sse_event.message.model,
+            "input_tokens": usage.input_tokens,
+            "cache_read_input_tokens": usage.cache_read_input_tokens,
+            "cache_creation_input_tokens": usage.cache_creation_input_tokens,
+        }
+    if isinstance(sse_event, TextDeltaEvent):
+        return {"delta_text": sse_event.text}
+    if isinstance(sse_event, MessageDeltaEvent):
+        return {
+            "output_tokens": sse_event.output_tokens,
+            "stop_reason": sse_event.stop_reason.value,
+        }
+    if isinstance(sse_event, ToolUseBlockStartEvent) and sse_event.name == "Task":
+        return {"task_tool_use_id": sse_event.id}
+    return None
 
 
 # ─── Parse boundary ──────────────────────────────────────────────────────────

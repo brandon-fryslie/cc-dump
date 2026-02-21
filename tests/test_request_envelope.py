@@ -26,6 +26,7 @@ from cc_dump.event_types import (
     ResponseHeadersEvent,
     ResponseCompleteEvent,
     ResponseNonStreamingEvent,
+    ResponseProgressEvent,
     ResponseSSEEvent,
     parse_sse_event,
 )
@@ -44,6 +45,7 @@ class TestMetadataDefaults:
             RequestHeadersEvent(headers={}),
             RequestBodyEvent(body={}),
             ResponseHeadersEvent(status_code=200, headers={}),
+            ResponseProgressEvent(),
             ResponseSSEEvent(sse_event=MessageStopEvent()),
             ResponseNonStreamingEvent(status_code=200, headers={}, body={}),
             ResponseDoneEvent(),
@@ -78,9 +80,9 @@ class TestMetadataExplicit:
         assert evt.seq == 0
         assert evt.recv_ns == 999
 
-    def test_response_sse_with_metadata(self):
-        evt = ResponseSSEEvent(
-            sse_event=MessageStopEvent(),
+    def test_response_progress_with_metadata(self):
+        evt = ResponseProgressEvent(
+            delta_text="hello",
             request_id="def456",
             seq=5,
             recv_ns=12345,
@@ -161,15 +163,16 @@ class TestEventQueueSinkMetadata:
         while not q.empty():
             events.append(q.get_nowait())
 
-        assert len(events) == 6  # 6 SSE events only
+        assert len(events) == 3  # message_start, text_delta, message_delta
 
         # All share the same request_id
         for evt in events:
             assert evt.request_id == "req-1"
+            assert isinstance(evt, ResponseProgressEvent)
 
         # seq is strictly monotonic starting from 1
         seqs = [evt.seq for evt in events]
-        assert seqs == list(range(1, 7))
+        assert seqs == list(range(1, 4))
 
         # recv_ns is monotonically non-decreasing
         timestamps = [evt.recv_ns for evt in events]
@@ -179,7 +182,11 @@ class TestEventQueueSinkMetadata:
     def test_request_id_propagated(self):
         q = queue.Queue()
         sink = EventQueueSink(q, request_id="unique-42")
-        sink.on_event("message_stop", {"type": "message_stop"})
+        sink.on_event("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "x"},
+        })
         sink.on_done()  # no-op
 
         evt1 = q.get_nowait()
@@ -201,7 +208,10 @@ class TestEventQueueSinkMetadata:
         q = queue.Queue()
         before = time.monotonic_ns()
         sink = EventQueueSink(q, request_id="ts-test")
-        sink.on_event("message_stop", {"type": "message_stop"})
+        sink.on_event("message_start", {
+            "type": "message_start",
+            "message": {"id": "msg_1", "role": "assistant", "model": "test", "usage": {}},
+        })
         after = time.monotonic_ns()
 
         evt = q.get_nowait()

@@ -27,6 +27,7 @@ from cc_dump.har_replayer import load_har, convert_to_events
 from cc_dump.tui.event_handlers import (
     handle_request_headers,
     handle_request,
+    handle_response_progress,
     handle_response_event,
     handle_response_headers,
     handle_response_complete,
@@ -149,6 +150,10 @@ def _run_pipeline_events(events):
             )
         elif event.kind == PipelineEventKind.RESPONSE_EVENT:
             app_state = handle_response_event(
+                event, state, widgets, app_state, lambda *a: None
+            )
+        elif event.kind == PipelineEventKind.RESPONSE_PROGRESS:
+            app_state = handle_response_progress(
                 event, state, widgets, app_state, lambda *a: None
             )
         elif event.kind == PipelineEventKind.RESPONSE_COMPLETE:

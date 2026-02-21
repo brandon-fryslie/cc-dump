@@ -26,6 +26,7 @@ from cc_dump.event_types import (
     RequestBodyEvent,
     ResponseHeadersEvent,
     ResponseSSEEvent,
+    ResponseProgressEvent,
     ResponseDoneEvent,
     ErrorEvent,
     ProxyErrorEvent,
@@ -115,6 +116,11 @@ class TestPipelineEvents:
         evt = ResponseSSEEvent(sse_event=sse)
         assert evt.kind == PipelineEventKind.RESPONSE_EVENT
         assert evt.sse_event is sse
+
+    def test_response_progress_kind(self):
+        evt = ResponseProgressEvent(delta_text="hello")
+        assert evt.kind == PipelineEventKind.RESPONSE_PROGRESS
+        assert evt.delta_text == "hello"
 
     def test_response_done_kind(self):
         evt = ResponseDoneEvent()

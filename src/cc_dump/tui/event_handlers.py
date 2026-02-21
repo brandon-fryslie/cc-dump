@@ -16,15 +16,14 @@ from cc_dump.event_types import (
     RequestBodyEvent,
     ResponseHeadersEvent,
     ResponseSSEEvent,
+    ResponseProgressEvent,
     ResponseNonStreamingEvent,
     ResponseCompleteEvent,
     ResponseDoneEvent,
     ErrorEvent,
     ProxyErrorEvent,
     LogEvent,
-    MessageStartEvent,
-    MessageDeltaEvent,
-    ToolUseBlockStartEvent,
+    sse_progress_payload,
 )
 
 EventHandler = Callable[
@@ -344,10 +343,32 @@ def handle_response_headers(event: ResponseHeadersEvent, state, widgets, app_sta
     return app_state
 
 
-def handle_response_event(event: ResponseSSEEvent, state, widgets, app_state, log_fn):
-    """Handle a response SSE event."""
-    sse_event = event.sse_event
+def _upsert_current_turn_usage(app_state, request_id: str, progress: ResponseProgressEvent) -> None:
+    """Merge progress usage/model data into current_turn_usage_by_request."""
+    usage_by_request = app_state.get("current_turn_usage_by_request", {})
+    if not isinstance(usage_by_request, dict):
+        usage_by_request = {}
+    current_turn = usage_by_request.get(request_id, {})
+    if not isinstance(current_turn, dict):
+        current_turn = {}
 
+    if progress.model:
+        current_turn["model"] = progress.model
+    if progress.input_tokens is not None:
+        current_turn["input_tokens"] = progress.input_tokens
+    if progress.cache_read_input_tokens is not None:
+        current_turn["cache_read_tokens"] = progress.cache_read_input_tokens
+    if progress.cache_creation_input_tokens is not None:
+        current_turn["cache_creation_tokens"] = progress.cache_creation_input_tokens
+    if progress.output_tokens is not None:
+        current_turn["output_tokens"] = progress.output_tokens
+
+    usage_by_request[request_id] = current_turn
+    app_state["current_turn_usage_by_request"] = usage_by_request
+
+
+def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_state, log_fn):
+    """Handle transport-normalized streaming progress hints."""
     try:
         stream_registry = _get_stream_registry(app_state)
         ctx = stream_registry.mark_streaming(
@@ -356,16 +377,15 @@ def handle_response_event(event: ResponseSSEEvent, state, widgets, app_state, lo
             recv_ns=event.recv_ns,
         )
         _fallback_session(ctx, state)
-        if isinstance(sse_event, ToolUseBlockStartEvent) and sse_event.name == "Task":
+        if event.task_tool_use_id:
             ctx = stream_registry.note_task_tool_use(
                 event.request_id,
-                sse_event.id,
+                event.task_tool_use_id,
                 seq=event.seq,
                 recv_ns=event.recv_ns,
             )
             _fallback_session(ctx, state)
-        blocks = cc_dump.formatting.format_response_event(sse_event)
-        _stamp_blocks(blocks, ctx)
+
         _maybe_update_main_session(state, ctx)
 
         domain_store = widgets["domain_store"]
@@ -377,37 +397,18 @@ def handle_response_event(event: ResponseSSEEvent, state, widgets, app_state, lo
             "lane_id": ctx.lane_id,
         })
 
-        for block in blocks:
-            # Append to domain store (fires callback to ConversationView)
+        if event.delta_text:
+            block = cc_dump.formatting.TextDeltaBlock(
+                content=event.delta_text,
+                category=cc_dump.formatting.Category.ASSISTANT,
+            )
+            _stamp_block_tree(block, ctx)
             domain_store.append_stream_block(event.request_id, block)
 
-            # Extract stats from message_start and message_delta
-            if isinstance(block, cc_dump.formatting.StreamInfoBlock):
-                stats.update_stats(model=block.model)
-                # Extract usage data from message_start for current turn tracking
-                if isinstance(sse_event, MessageStartEvent):
-                    usage = sse_event.message.usage
-                    usage_by_request = app_state.get("current_turn_usage_by_request", {})
-                    if not isinstance(usage_by_request, dict):
-                        usage_by_request = {}
-                    current_turn = usage_by_request.get(event.request_id, {})
-                    current_turn["input_tokens"] = usage.input_tokens
-                    current_turn["cache_read_tokens"] = usage.cache_read_input_tokens
-                    current_turn["cache_creation_tokens"] = usage.cache_creation_input_tokens
-                    current_turn["model"] = block.model
-                    usage_by_request[event.request_id] = current_turn
-                    app_state["current_turn_usage_by_request"] = usage_by_request
+        if event.model:
+            stats.update_stats(model=event.model)
 
-            elif isinstance(sse_event, MessageDeltaEvent):
-                # Track output tokens for current turn
-                usage_by_request = app_state.get("current_turn_usage_by_request", {})
-                if not isinstance(usage_by_request, dict):
-                    usage_by_request = {}
-                current_turn = usage_by_request.get(event.request_id, {})
-                current_turn["output_tokens"] = sse_event.output_tokens
-                usage_by_request[event.request_id] = current_turn
-                app_state["current_turn_usage_by_request"] = usage_by_request
-
+        _upsert_current_turn_usage(app_state, event.request_id, event)
         _sync_active_stream_attribution(widgets, stream_registry)
 
         # Refresh stats with the currently focused active stream, if any.
@@ -419,10 +420,28 @@ def handle_response_event(event: ResponseSSEEvent, state, widgets, app_state, lo
             )
         _sync_stream_footer(widgets)
     except Exception as e:
-        log_fn("ERROR", f"Error handling response event: {e}")
+        log_fn("ERROR", f"Error handling response progress: {e}")
         raise
 
     return app_state
+
+
+def handle_response_event(event: ResponseSSEEvent, state, widgets, app_state, log_fn):
+    """Compatibility shim for legacy SSE events.
+
+    // [LAW:locality-or-seam] Legacy SSE transport is translated at this seam
+    // into ResponseProgressEvent so downstream handlers stay transport-agnostic.
+    """
+    payload = sse_progress_payload(event.sse_event)
+    if payload is None:
+        return app_state
+    progress = ResponseProgressEvent(
+        request_id=event.request_id,
+        seq=event.seq,
+        recv_ns=event.recv_ns,
+        **payload,
+    )
+    return handle_response_progress(progress, state, widgets, app_state, log_fn)
 
 
 def handle_response_done(event: ResponseDoneEvent, state, widgets, app_state, log_fn):
@@ -546,6 +565,7 @@ EVENT_HANDLERS: dict[PipelineEventKind, EventHandler] = {
     PipelineEventKind.REQUEST: handle_request,
     PipelineEventKind.RESPONSE_HEADERS: handle_response_headers,
     PipelineEventKind.RESPONSE_EVENT: handle_response_event,
+    PipelineEventKind.RESPONSE_PROGRESS: handle_response_progress,
     PipelineEventKind.RESPONSE_COMPLETE: handle_response_complete,
     PipelineEventKind.RESPONSE_NON_STREAMING: handle_response_non_streaming,
     PipelineEventKind.RESPONSE_DONE: handle_response_done,

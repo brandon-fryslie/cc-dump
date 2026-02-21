@@ -21,8 +21,9 @@ from cc_dump.event_types import (
     ResponseCompleteEvent,
     ResponseDoneEvent,
     ResponseHeadersEvent,
-    ResponseSSEEvent,
+    ResponseProgressEvent,
     parse_sse_event,
+    sse_progress_payload,
 )
 from cc_dump.response_assembler import ResponseAssembler
 
@@ -190,16 +191,23 @@ class EventQueueSink(StreamSink):
             sse = parse_sse_event(event_type, event)
         except ValueError:
             return
+        payload = sse_progress_payload(sse)
+        if payload is None:
+            return
         self._seq += 1
-        self._queue.put(ResponseSSEEvent(
-            sse_event=sse,
+        self._queue.put(ResponseProgressEvent(
             request_id=self._request_id,
             seq=self._seq,
             recv_ns=time.monotonic_ns(),
+            **payload,
         ))
 
     def on_done(self):
         pass  # [LAW:single-enforcer] proxy emits ResponseDoneEvent explicitly
+
+    @property
+    def seq(self) -> int:
+        return self._seq
 
 
 def _fan_out_sse(resp, sinks):
@@ -441,20 +449,24 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             assembler.on_event(event_type, event)
             try:
                 sse = parse_sse_event(event_type, event)
-                seq += 1
-                self.event_queue.put(ResponseSSEEvent(
-                    sse_event=sse,
-                    request_id=request_id,
-                    seq=seq,
-                    recv_ns=time.monotonic_ns(),
-                ))
+                payload = sse_progress_payload(sse)
+                if payload is not None:
+                    seq += 1
+                    self.event_queue.put(ResponseProgressEvent(
+                        request_id=request_id,
+                        seq=seq,
+                        recv_ns=time.monotonic_ns(),
+                        **payload,
+                    ))
             except ValueError:
                 pass
         assembler.on_done()
         if assembler.result is not None:
+            seq += 1
             self.event_queue.put(ResponseCompleteEvent(
                 body=assembler.result,
                 request_id=request_id,
+                seq=seq,
                 recv_ns=time.monotonic_ns(),
             ))
         seq += 1
@@ -466,19 +478,25 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 
     def _stream_response(self, resp, request_id: str = ""):
         assembler = ResponseAssembler()
+        event_sink = EventQueueSink(self.event_queue, request_id=request_id)
         _fan_out_sse(resp, [
             ClientSink(self.wfile),
-            EventQueueSink(self.event_queue, request_id=request_id),
+            event_sink,
             assembler,
         ])
+        seq = event_sink.seq
         if assembler.result is not None:
+            seq += 1
             self.event_queue.put(ResponseCompleteEvent(
                 body=assembler.result,
                 request_id=request_id,
+                seq=seq,
                 recv_ns=time.monotonic_ns(),
             ))
+        seq += 1
         self.event_queue.put(ResponseDoneEvent(
             request_id=request_id,
+            seq=seq,
             recv_ns=time.monotonic_ns(),
         ))
 
