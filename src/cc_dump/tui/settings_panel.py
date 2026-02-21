@@ -18,7 +18,9 @@ from typing import Literal
 from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.message import Message
-from textual.widgets import Input, Label, Select, Static, Switch
+from textual.widgets import Input, Label, Select, Static
+
+from cc_dump.tui.chip import ToggleChip
 
 import cc_dump.palette
 
@@ -63,13 +65,13 @@ SETTINGS_FIELDS: list[FieldDef] = [
 # ─── Widget helpers ──────────────────────────────────────────────────────────
 
 
-def _make_widget(field: FieldDef, value: object) -> Input | Switch | Select:
+def _make_widget(field: FieldDef, value: object) -> Input | ToggleChip | Select:
     """Create the appropriate Textual widget for a FieldDef."""
     widget_id = "field-{}".format(field.key)
     if field.kind == "text":
         return Input(value=str(value), id=widget_id)
     elif field.kind == "bool":
-        return Switch(value=bool(value), id=widget_id)
+        return ToggleChip(field.label, value=bool(value), id=widget_id)
     else:  # select
         s = str(value) if value else field.default
         options = [(opt or "(none)", opt) for opt in field.options]
@@ -119,11 +121,8 @@ class SettingsPanel(VerticalScroll):
         margin-top: 1;
         color: $text-muted;
     }
-    SettingsPanel Switch {
-        width: auto;
-        height: auto;
-        border: none;
-        padding: 0 1;
+    SettingsPanel ToggleChip {
+        margin-top: 1;
     }
     SettingsPanel Input {
         width: 1fr;
@@ -159,9 +158,15 @@ class SettingsPanel(VerticalScroll):
 
         for field in SETTINGS_FIELDS:
             value = self._initial_values.get(field.key, field.default)
-            with Horizontal(classes="field-row"):
-                yield Label(field.label, classes="field-label")
-                yield _make_widget(field, value)
+            widget = _make_widget(field, value)
+            # // [LAW:one-type-per-behavior] Bool fields use ToggleChip (label inside),
+            # other fields use Label + widget in a row.
+            if field.kind == "bool":
+                yield widget
+            else:
+                with Horizontal(classes="field-row"):
+                    yield Label(field.label, classes="field-label")
+                    yield widget
             yield Static(field.description, classes="field-desc")
 
         yield Static(
@@ -173,7 +178,7 @@ class SettingsPanel(VerticalScroll):
 
     def on_mount(self) -> None:
         """Focus first input widget on mount (standard Textual pattern)."""
-        focusable = self.query("Input, Switch, Select, OptionList")
+        focusable = self.query("Input, Select, OptionList")
         if focusable:
             focusable.first().focus()
 

@@ -48,10 +48,3 @@ SessionPanel {
     padding: 0 1;
 }
 
-StatusFooter {
-    dock: bottom;
-    height: auto;
-    max-height: 3;
-    padding: 0 1;
-    link-style-hover: dim;
-}

@@ -1,21 +1,18 @@
-"""Custom Footer widget with data-driven rendering."""
+"""Custom Footer widget with composed Textual widgets."""
 
-from rich.style import Style
-from rich.text import Text
+from textual.color import Color
+from textual.containers import Horizontal
+from textual.widget import Widget
 from textual.widgets import Static
 
 import cc_dump.tui.rendering
 import cc_dump.tui.widget_factory
 from cc_dump.formatting import VisState, HIDDEN
+from cc_dump.tui.chip import Chip
 
 
-def _click(action: str) -> Style:
-    """Create a Style with @click meta for Textual action dispatch."""
-    return Style.from_meta({"@click": action})
-
-
-class StatusFooter(Static):
-    """Data-driven footer. No private Textual API imports.
+class StatusFooter(Widget):
+    """Data-driven footer built from composed widgets.
 
     // [LAW:dataflow-not-control-flow] Render pipeline is fixed; data determines style.
     // [LAW:single-enforcer] update_display() is the sole render entry.
@@ -23,6 +20,63 @@ class StatusFooter(Static):
     """
 
     ALLOW_SELECT = False
+
+    DEFAULT_CSS = """
+    StatusFooter {
+        dock: bottom;
+        height: auto;
+        max-height: 3;
+        padding: 0 1;
+        layout: vertical;
+    }
+
+    StatusFooter Horizontal {
+        height: 1;
+        width: 100%;
+    }
+
+    StatusFooter Chip {
+        width: auto;
+        height: 1;
+        text-style: bold;
+    }
+
+    StatusFooter Chip:hover {
+        opacity: 0.8;
+    }
+
+    /* Hidden chips: dim, but still respond to hover */
+    StatusFooter Chip.-hidden {
+        text-style: initial;
+        opacity: 0.5;
+    }
+
+    StatusFooter Chip.-hidden:hover {
+        opacity: 0.7;
+    }
+
+    /* Dim chips (follow off, zoom/auto off): same hover pattern */
+    StatusFooter Chip.-dim {
+        opacity: 0.5;
+    }
+
+    StatusFooter Chip.-dim:hover {
+        opacity: 0.7;
+    }
+
+    StatusFooter Static {
+        width: auto;
+        height: 1;
+    }
+
+    StatusFooter .tmux {
+        display: none;
+    }
+
+    StatusFooter .tmux.-available {
+        display: block;
+    }
+    """
 
     # Icon encodes visibility state (5 states)
     _VIS_ICONS: dict[VisState, str] = {
@@ -48,91 +102,125 @@ class StatusFooter(Static):
         ("6", "thinking"),
     ]
 
-    _COMMAND_ITEMS = [("/", "search")]
+    def compose(self):
+        # Line 1: category chips
+        with Horizontal(id="footer-categories"):
+            for key, name in self._CATEGORY_ITEMS:
+                yield Chip(
+                    f" {key} {name} \u00b7 ",
+                    action=f"app.cycle_vis('{name}')",
+                    id=f"cat-{name}",
+                )
+        # Line 2: command row
+        with Horizontal(id="footer-commands"):
+            yield Chip(
+                " / search ",
+                action="app.simulate_key('/')",
+                id="cmd-search",
+            )
+            yield Chip(
+                " f FOLLOW ",
+                action="app.toggle_follow",
+                id="cmd-follow",
+            )
+            yield Static(" F- ", id="cmd-filterset")
+            yield Chip(
+                " c claude ",
+                action="app.launch_claude",
+                id="cmd-claude",
+                classes="tmux",
+            )
+            yield Chip(
+                " z zoom ",
+                action="app.toggle_tmux_zoom",
+                id="cmd-zoom",
+                classes="tmux",
+            )
+            yield Chip(
+                " Z auto ",
+                action="app.toggle_auto_zoom",
+                id="cmd-auto-zoom",
+                classes="tmux",
+            )
 
     def update_display(self, state: dict) -> None:
-        """Render footer from state dict. Called by footer_state reaction."""
-        self.update(self._render_footer(state))
-
-    def _render_footer(self, state: dict) -> Text:
-        """Build 2-line Rich Text — categories on line 1, actions on line 2.
+        """Render footer from state dict. Called by footer_state reaction.
 
         // [LAW:dataflow-not-control-flow] State values determine rendering, no branching.
-        Each span carries @click meta so clicks dispatch the matching action.
         """
         tc = cc_dump.tui.rendering.get_theme_colors()
 
-        # Line 1: categories with icon+color — active gets colored background
-        # no_wrap=True prevents mid-chip line breaks
-        line1 = Text(no_wrap=True)
+        # Line 1: category chips — icon + color from state
         for key, name in self._CATEGORY_ITEMS:
+            chip = self.query_one(f"#cat-{name}", Chip)
             vis = state.get(name, HIDDEN)
             icon = self._VIS_ICONS[vis]
-            _, bg_color, fg_light = tc.filter_colors[name]
+            chip.update(f" {key} {name} {icon} ")
+
+            _, bg_hex, fg_hex = tc.filter_colors[name]
             # // [LAW:dataflow-not-control-flow] Style derived from vis.visible value
-            active_style = f"bold {fg_light} on {bg_color}"
-            style = active_style if vis.visible else "dim"
-            click = _click(f"app.cycle_vis('{name}')")
-            # [LAW:one-type-per-behavior] Single segment = single hover region for unified chip
-            line1.append(f" {key} {name} {icon} ", style=Style.parse(style) + click)
+            # Colors always set; CSS class -hidden dims via opacity.
+            chip.set_class(not vis.visible, "-hidden")
+            chip.styles.background = Color.parse(bg_hex)
+            chip.styles.color = Color.parse(fg_hex)
 
-        # Line 2: search + follow + filterset + tmux
-        line2 = Text(no_wrap=True)
-
-        for key, label in self._COMMAND_ITEMS:
-            line2.append(f" {key} {label} ", style="bold")
-
-        # Follow mode — 3-state chip
+        # Line 2: follow chip — 3-state
         # // [LAW:dataflow-not-control-flow] Style + label derived from follow_state via table.
         FollowState = cc_dump.tui.widget_factory.FollowState
         follow_state = state.get("follow_state", FollowState.ACTIVE)
-        follow_click = _click("app.toggle_follow")
-        _FOLLOW_DISPLAY: dict[FollowState, tuple[str, str]] = {
-            FollowState.OFF: ("dim", " f off "),
-            FollowState.ENGAGED: (tc.follow_engaged_style, " f follow "),
-            FollowState.ACTIVE: (tc.follow_active_style, " f FOLLOW "),
+        follow_chip = self.query_one("#cmd-follow", Chip)
+
+        bg_color = Color.parse(tc.background)
+        fg_color = Color.parse(tc.foreground)
+        # [LAW:dataflow-not-control-flow] Table lookup, not branches.
+        _FOLLOW_DISPLAY: dict = {
+            FollowState.OFF: (" f off ", True, bg_color, fg_color),
+            FollowState.ENGAGED: (" f follow ", False, fg_color, bg_color),
+            FollowState.ACTIVE: (" f FOLLOW ", False, bg_color, fg_color),
         }
-        follow_style, follow_label = _FOLLOW_DISPLAY[follow_state]
-        line2.append(follow_label, style=Style.parse(follow_style) + follow_click)
+        label, is_dim, follow_bg, follow_fg = _FOLLOW_DISPLAY[follow_state]
+        follow_chip.update(label)
+        follow_chip.set_class(is_dim, "-dim")
+        follow_chip.styles.background = follow_bg
+        follow_chip.styles.color = follow_fg
 
-        # Filterset indicator — show active preset slot
+        # Filterset indicator
+        # [LAW:dataflow-not-control-flow] Always update; style varies by value.
         active_slot = state.get("active_filterset")
-        # [LAW:dataflow-not-control-flow] Always append; style varies by value.
-        line2.append("  ")
-        if active_slot is not None:
-            tc = cc_dump.tui.rendering.get_theme_colors()
-            line2.append(f" F{active_slot} ", style=tc.follow_active_style)
-        else:
-            line2.append(" F- ", style="dim")
+        filterset_label = self.query_one("#cmd-filterset", Static)
+        filterset_label.update(
+            f" F{active_slot} " if active_slot is not None else " F- "
+        )
+        # [LAW:dataflow-not-control-flow] Always set; values vary by state.
+        has_filterset = active_slot is not None
+        filterset_label.styles.background = bg_color if has_filterset else fg_color
+        filterset_label.styles.color = fg_color if has_filterset else bg_color
+        filterset_label.styles.text_style = "bold" if has_filterset else None
+        filterset_label.styles.opacity = 1.0 if has_filterset else 0.5
 
-        # Tmux indicators — only shown when tmux is available
-        # // [LAW:dataflow-not-control-flow] Always run; style varies by state values.
+        # Tmux indicators — show/hide based on availability
+        # // [LAW:dataflow-not-control-flow] Always run; state values vary style.
         tmux_available = state.get("tmux_available", False)
         tmux_auto = state.get("tmux_auto_zoom", False)
         tmux_zoomed = state.get("tmux_zoomed", False)
-        if tmux_available:
-            line2.append("  ")
-            claude_click = _click("app.launch_claude")
-            line2.append(" c", style=Style.parse("bold") + claude_click)
-            line2.append(" ", style=claude_click)
-            line2.append("claude", style=Style.parse("") + claude_click)
 
-            active_config_name = state.get("active_launch_config_name", "")
-            if active_config_name and active_config_name != "default":
-                line2.append(" [{}]".format(active_config_name), style="dim italic")
+        for widget in self.query(".tmux"):
+            widget.set_class(tmux_available, "-available")
 
-            zoom_click = _click("app.toggle_tmux_zoom")
-            line2.append("  ")
-            zoom_style = "bold reverse" if tmux_zoomed else "dim"
-            line2.append(" z", style=Style.parse("bold" if tmux_zoomed else "dim") + zoom_click)
-            line2.append(" ", style=zoom_click)
-            line2.append("zoom", style=Style.parse(zoom_style) + zoom_click)
+        # Claude chip
+        claude_chip = self.query_one("#cmd-claude", Chip)
+        active_config_name = state.get("active_launch_config_name", "")
+        config_suffix = f" [{active_config_name}]" if (active_config_name and active_config_name != "default") else ""
+        claude_chip.update(f" c claude{config_suffix} ")
 
-            auto_click = _click("app.toggle_auto_zoom")
-            line2.append("  ")
-            auto_style = "bold reverse" if tmux_auto else "dim"
-            line2.append(" Z", style=Style.parse("bold" if tmux_auto else "dim") + auto_click)
-            line2.append(" ", style=auto_click)
-            line2.append("auto", style=Style.parse(auto_style) + auto_click)
+        # Zoom chip
+        zoom_chip = self.query_one("#cmd-zoom", Chip)
+        zoom_chip.update(" z zoom ")
+        zoom_chip.set_class(not tmux_zoomed, "-dim")
+        zoom_chip.styles.text_style = "bold reverse" if tmux_zoomed else None
 
-        return Text("\n").join([line1, line2])
+        # Auto-zoom chip
+        auto_chip = self.query_one("#cmd-auto-zoom", Chip)
+        auto_chip.update(" Z auto ")
+        auto_chip.set_class(not tmux_auto, "-dim")
+        auto_chip.styles.text_style = "bold reverse" if tmux_auto else None

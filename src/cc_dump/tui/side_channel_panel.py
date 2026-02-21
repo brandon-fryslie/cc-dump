@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widget import Widget
-from textual.widgets import Button, Static
+from textual.widgets import Static
+
+from cc_dump.tui.chip import Chip
 
 
 @dataclass
@@ -49,9 +51,23 @@ class SideChannelPanel(Widget):
         margin-bottom: 1;
     }
 
-    SideChannelPanel Button {
-        width: 100%;
+    SideChannelPanel Chip {
+        width: auto;
+        height: 1;
+        text-style: bold;
         margin-bottom: 1;
+    }
+
+    SideChannelPanel Chip:hover {
+        opacity: 0.8;
+    }
+
+    SideChannelPanel Chip.-dim {
+        opacity: 0.5;
+    }
+
+    SideChannelPanel Chip.-dim:hover {
+        opacity: 0.7;
     }
 
     SideChannelPanel #sc-result-scroll {
@@ -68,8 +84,8 @@ class SideChannelPanel(Widget):
     def compose(self) -> ComposeResult:
         yield Static("AI Side Channel", id="sc-title")
         yield Static("Status: Enabled", id="sc-status")
-        yield Button("Summarize Last 10 Messages", id="sc-summarize")
-        yield Button("Toggle AI", id="sc-toggle", variant="default")
+        yield Chip(" Summarize Last 10 Messages ", action="app.sc_summarize", id="sc-summarize")
+        yield Chip(" Toggle AI ", action="app.sc_toggle", id="sc-toggle")
         with VerticalScroll(id="sc-result-scroll"):
             yield Static("", id="sc-result")
         yield Static("", id="sc-meta")
@@ -80,14 +96,14 @@ class SideChannelPanel(Widget):
         status = self.query_one("#sc-status", Static)
         status.update(f"Status: {'Enabled' if state.enabled else 'Disabled'}")
 
-        # Toggle button label
-        toggle = self.query_one("#sc-toggle", Button)
-        toggle.label = "Disable AI" if state.enabled else "Enable AI"
+        # Toggle chip label
+        toggle = self.query_one("#sc-toggle", Chip)
+        toggle.update(" Disable AI " if state.enabled else " Enable AI ")
 
-        # Summarize button
-        btn = self.query_one("#sc-summarize", Button)
-        btn.disabled = state.loading
-        btn.label = "Working..." if state.loading else "Summarize Last 10 Messages"
+        # Summarize chip
+        chip = self.query_one("#sc-summarize", Chip)
+        chip.update(" Working... " if state.loading else " Summarize Last 10 Messages ")
+        chip.set_class(state.loading, "-dim")
 
         # Result text
         result = self.query_one("#sc-result", Static)
