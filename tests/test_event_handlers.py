@@ -16,6 +16,7 @@ from cc_dump.event_types import (
     TextDeltaEvent,
     Usage,
 )
+from cc_dump.domain_store import DomainStore
 from cc_dump.tui import event_handlers
 
 
@@ -76,7 +77,7 @@ class _FakeViewStore:
         self.values[key] = value
 
 
-def _mk_widgets(conv, stats, view_store):
+def _mk_widgets(conv, stats, view_store, domain_store=None):
     return {
         "conv": conv,
         "stats": stats,
@@ -84,6 +85,7 @@ def _mk_widgets(conv, stats, view_store):
         "refresh_callbacks": {},
         "analytics_store": object(),
         "view_store": view_store,
+        "domain_store": domain_store or DomainStore(),
     }
 
 
@@ -115,7 +117,8 @@ class TestEventHandlersRequestScopedStreaming:
         conv = _FakeConv()
         stats = _FakeStats()
         view_store = _FakeViewStore()
-        widgets = _mk_widgets(conv, stats, view_store)
+        domain_store = DomainStore()
+        widgets = _mk_widgets(conv, stats, view_store, domain_store)
         log_fn = lambda *args, **kwargs: None
 
         r1 = "req-111"
@@ -228,9 +231,9 @@ class TestEventHandlersRequestScopedStreaming:
             log_fn,
         )
 
-        assert len(conv.stream_blocks[r1]) > 0
-        assert len(conv.stream_blocks[r2]) > 0
-        assert set(conv.stream_blocks.keys()) == {r1, r2}
+        assert len(domain_store._stream_turns[r1]) > 0
+        assert len(domain_store._stream_turns[r2]) > 0
+        assert set(domain_store._stream_turns.keys()) == {r1, r2}
 
         # Finalize one request: only that stream is removed/finalized.
         event_handlers.handle_response_done(
@@ -240,9 +243,10 @@ class TestEventHandlersRequestScopedStreaming:
             app_state,
             log_fn,
         )
-        assert conv.finalized == [r1]
-        assert r1 not in conv.stream_blocks
-        assert r2 in conv.stream_blocks
+        assert r1 not in domain_store._stream_turns
+        assert r2 in domain_store._stream_turns
+        # r1 finalized → blocks moved to completed
+        assert domain_store.completed_count >= 3  # 2 request turns + 1 finalized
 
         event_handlers.handle_response_done(
             ResponseDoneEvent(request_id=r2, seq=6, recv_ns=12),
@@ -251,5 +255,5 @@ class TestEventHandlersRequestScopedStreaming:
             app_state,
             log_fn,
         )
-        assert conv.finalized == [r1, r2]
-        assert conv.stream_blocks == {}
+        assert domain_store._stream_turns == {}
+        assert domain_store.completed_count >= 4  # both streams finalized

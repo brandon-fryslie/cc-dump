@@ -42,13 +42,18 @@ def clear_overrides(app, category_name: str) -> None:
     """Reset per-block expanded overrides and content region states for a category.
 
     // [LAW:one-source-of-truth] Clears via ViewOverrides.clear_category() only.
+    // [LAW:one-source-of-truth] Reads blocks from domain store.
     """
     cat = cc_dump.formatting.Category(category_name)
     conv = app._get_conv()
     if conv is None:
         return
 
-    all_blocks = [block for td in conv._turns for block in td.blocks]
+    ds = getattr(app, "_domain_store", None)
+    if ds is not None:
+        all_blocks = [block for block_list in ds.iter_completed_blocks() for block in block_list]
+    else:
+        all_blocks = [block for td in conv._turns for block in td.blocks]
     conv._view_overrides.clear_category(all_blocks, cat)
 
 
@@ -250,13 +255,13 @@ def toggle_follow(app) -> None:
 
 def focus_stream(app, request_id: str) -> None:
     """Focus a live request stream from footer chips."""
-    conv = app._get_conv()
-    if conv is None:
+    ds = getattr(app, "_domain_store", None)
+    if ds is None:
         return
-    if not conv.set_focused_stream(request_id):
+    if not ds.set_focused_stream(request_id):
         return
-    app._view_store.set("streams:active", conv.get_active_stream_chips())
-    app._view_store.set("streams:focused", conv.get_focused_stream_id() or "")
+    app._view_store.set("streams:active", ds.get_active_stream_chips())
+    app._view_store.set("streams:focused", ds.get_focused_stream_id() or "")
 
 
 def go_top(app) -> None:

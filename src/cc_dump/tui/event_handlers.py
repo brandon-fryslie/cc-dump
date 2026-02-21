@@ -56,21 +56,22 @@ def _stamp_blocks(blocks, ctx) -> None:
         _stamp_block_tree(block, ctx)
 
 
-def _sync_stream_footer(widgets, conv) -> None:
+def _sync_stream_footer(widgets) -> None:
     """Push active stream chip state to view_store."""
     view_store = widgets.get("view_store")
-    if view_store is None:
+    domain_store = widgets.get("domain_store")
+    if view_store is None or domain_store is None:
         return
-    # // [LAW:one-source-of-truth] Footer stream chips derive from ConversationView.
-    view_store.set("streams:active", conv.get_active_stream_chips())
-    view_store.set("streams:focused", conv.get_focused_stream_id() or "")
+    # // [LAW:one-source-of-truth] Footer stream chips derive from DomainStore.
+    view_store.set("streams:active", domain_store.get_active_stream_chips())
+    view_store.set("streams:focused", domain_store.get_focused_stream_id() or "")
 
 
-def _current_turn_from_focus(app_state, conv):
+def _current_turn_from_focus(app_state, domain_store):
     usage_map = app_state.get("current_turn_usage_by_request", {})
     if not isinstance(usage_map, dict):
         return None
-    focused = conv.get_focused_stream_id() if hasattr(conv, "get_focused_stream_id") else None
+    focused = domain_store.get_focused_stream_id() if domain_store is not None else None
     if not focused:
         return None
     usage = usage_map.get(focused)
@@ -135,11 +136,11 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
         blocks = cc_dump.formatting.format_request(body, state, request_headers=pending_headers)
         _stamp_blocks(blocks, ctx)
 
-        conv = widgets["conv"]
+        domain_store = widgets["domain_store"]
         stats = widgets["stats"]
 
-        # Non-streaming: add turn directly to ConversationView
-        conv.add_turn(blocks)
+        # Non-streaming: add turn to domain store (fires callback to ConversationView)
+        domain_store.add_turn(blocks)
 
         # Update stats (only request count and model tracking - not tokens)
         stats.update_stats(requests=state["request_counter"])
@@ -175,10 +176,9 @@ def handle_response_headers(event: ResponseHeadersEvent, state, widgets, app_sta
         if ctx.session_id:
             state["current_session"] = ctx.session_id
 
-        conv = widgets["conv"]
-        filters = widgets["filters"]
+        domain_store = widgets["domain_store"]
 
-        conv.begin_stream(event.request_id, {
+        domain_store.begin_stream(event.request_id, {
             "agent_kind": ctx.agent_kind,
             "agent_label": ctx.agent_label,
             "lane_id": ctx.lane_id,
@@ -186,14 +186,14 @@ def handle_response_headers(event: ResponseHeadersEvent, state, widgets, app_sta
 
         # Append response header blocks (empty list is safe)
         for block in blocks:
-            conv.append_stream_block(event.request_id, block, filters)
+            domain_store.append_stream_block(event.request_id, block)
 
         if blocks:  # Only log if blocks were actually produced
             log_fn(
                 "DEBUG",
                 f"Displayed response headers: HTTP {status_code}, {len(headers_dict)} headers",
             )
-        _sync_stream_footer(widgets, conv)
+        _sync_stream_footer(widgets)
     except Exception as e:
         log_fn("ERROR", f"Error handling response headers: {e}")
         raise
@@ -218,19 +218,18 @@ def handle_response_event(event: ResponseSSEEvent, state, widgets, app_state, lo
         if ctx.session_id:
             state["current_session"] = ctx.session_id
 
-        conv = widgets["conv"]
+        domain_store = widgets["domain_store"]
         stats = widgets["stats"]
-        filters = widgets["filters"]
 
-        conv.begin_stream(event.request_id, {
+        domain_store.begin_stream(event.request_id, {
             "agent_kind": ctx.agent_kind,
             "agent_label": ctx.agent_label,
             "lane_id": ctx.lane_id,
         })
 
         for block in blocks:
-            # Append to ConversationView streaming turn
-            conv.append_stream_block(event.request_id, block, filters)
+            # Append to domain store (fires callback to ConversationView)
+            domain_store.append_stream_block(event.request_id, block)
 
             # Extract stats from message_start and message_delta
             if isinstance(block, cc_dump.formatting.StreamInfoBlock):
@@ -264,9 +263,9 @@ def handle_response_event(event: ResponseSSEEvent, state, widgets, app_state, lo
         if analytics_store is not None:
             stats.refresh_from_store(
                 analytics_store,
-                current_turn=_current_turn_from_focus(app_state, conv),
+                current_turn=_current_turn_from_focus(app_state, domain_store),
             )
-        _sync_stream_footer(widgets, conv)
+        _sync_stream_footer(widgets)
     except Exception as e:
         log_fn("ERROR", f"Error handling response event: {e}")
         raise
@@ -284,14 +283,15 @@ def handle_response_done(event: ResponseDoneEvent, state, widgets, app_state, lo
             recv_ns=event.recv_ns,
         )
         _fallback_session(ctx, state)
+        domain_store = widgets["domain_store"]
         conv = widgets["conv"]
         stats = widgets["stats"]
         filters = widgets["filters"]
         refresh_callbacks = widgets.get("refresh_callbacks", {})
         analytics_store = widgets.get("analytics_store")
 
-        # Finalize request-scoped stream in ConversationView.
-        _ = conv.finalize_stream(event.request_id)
+        # Finalize request-scoped stream in domain store (fires callback to ConversationView).
+        _ = domain_store.finalize_stream(event.request_id)
 
         # Clear current turn usage for this request.
         usage_by_request = app_state.get("current_turn_usage_by_request", {})
@@ -307,7 +307,7 @@ def handle_response_done(event: ResponseDoneEvent, state, widgets, app_state, lo
         if analytics_store is not None:
             stats.refresh_from_store(
                 analytics_store,
-                current_turn=_current_turn_from_focus(app_state, conv),
+                current_turn=_current_turn_from_focus(app_state, domain_store),
             )
 
         # Re-render to show cache data in budget blocks
@@ -323,7 +323,7 @@ def handle_response_done(event: ResponseDoneEvent, state, widgets, app_state, lo
         if "refresh_session" in refresh_callbacks:
             refresh_callbacks["refresh_session"]()
 
-        _sync_stream_footer(widgets, conv)
+        _sync_stream_footer(widgets)
         log_fn("DEBUG", "Response completed")
     except Exception as e:
         log_fn("ERROR", f"Error handling response done: {e}")
@@ -341,10 +341,10 @@ def handle_error(event: ErrorEvent, state, widgets, app_state, log_fn):
     block = cc_dump.formatting.ErrorBlock(code=code, reason=reason)
     block.session_id = state.get("current_session", "")
 
-    conv = widgets["conv"]
+    domain_store = widgets["domain_store"]
 
     # Single block, non-streaming: add directly
-    conv.add_turn([block])
+    domain_store.add_turn([block])
 
     return app_state
 
@@ -358,10 +358,10 @@ def handle_proxy_error(event: ProxyErrorEvent, state, widgets, app_state, log_fn
     block = cc_dump.formatting.ProxyErrorBlock(error=err)
     block.session_id = state.get("current_session", "")
 
-    conv = widgets["conv"]
+    domain_store = widgets["domain_store"]
 
     # Single block, non-streaming: add directly
-    conv.add_turn([block])
+    domain_store.add_turn([block])
 
     return app_state
 
@@ -385,9 +385,8 @@ def handle_response_non_streaming(event: ResponseNonStreamingEvent, state, widge
             recv_ns=event.recv_ns,
         )
         _fallback_session(ctx, state)
-        conv = widgets["conv"]
+        domain_store = widgets["domain_store"]
         stats = widgets["stats"]
-        filters = widgets["filters"]
         refresh_callbacks = widgets.get("refresh_callbacks", {})
         analytics_store = widgets.get("analytics_store")
 
@@ -405,7 +404,7 @@ def handle_response_non_streaming(event: ResponseNonStreamingEvent, state, widge
         if ctx.session_id:
             state["current_session"] = ctx.session_id
 
-        conv.add_turn(response_blocks, filters)
+        domain_store.add_turn(response_blocks)
 
         # Refresh stats and panels (same as response_done)
         if analytics_store is not None:
@@ -415,7 +414,7 @@ def handle_response_non_streaming(event: ResponseNonStreamingEvent, state, widge
             if cb:
                 cb()
 
-        _sync_stream_footer(widgets, conv)
+        _sync_stream_footer(widgets)
         log_fn("DEBUG", f"Complete response: HTTP {event.status_code}")
     except Exception as e:
         log_fn("ERROR", f"Error handling complete response: {e}")

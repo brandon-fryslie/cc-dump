@@ -28,6 +28,7 @@ import cc_dump.sentinel
 from cc_dump.proxy import RequestPipeline
 import cc_dump.view_store
 import cc_dump.hot_reload
+import cc_dump.domain_store
 import cc_dump.tui.view_store_bridge
 from cc_dump.tui.app import CcDumpApp
 
@@ -220,6 +221,9 @@ def main():
     # Create view store (reactive, hot-reloadable)
     view_store = cc_dump.view_store.create()
 
+    # Create domain store (owns FormattedBlock trees, persists across hot-reload)
+    domain_store = cc_dump.domain_store.DomainStore()
+
     # Wire settings store reactions (after all consumers are created)
     store_context = {
         "side_channel_manager": side_channel_mgr,
@@ -252,6 +256,7 @@ def main():
         data_dispatcher=data_dispatcher,
         settings_store=settings_store,
         view_store=view_store,
+        domain_store=domain_store,
         store_context=store_context,
     )
 

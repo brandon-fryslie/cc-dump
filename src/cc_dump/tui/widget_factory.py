@@ -29,6 +29,7 @@ import cc_dump.tui.rendering
 import cc_dump.tui.panel_renderers
 import cc_dump.tui.error_indicator
 import cc_dump.tui.view_overrides
+import cc_dump.domain_store
 
 
 # ─── Follow mode state machine ──────────────────────────────────────────────
@@ -203,9 +204,11 @@ class ConversationView(ScrollView):
     }
     """
 
-    def __init__(self, view_store=None):
+    def __init__(self, view_store=None, domain_store=None):
         super().__init__()
         self._view_store = view_store
+        # Auto-create domain store for tests that don't provide one
+        self._domain_store = domain_store if domain_store is not None else cc_dump.domain_store.DomainStore()
         self._turns: list[TurnData] = []
         self._total_lines: int = 0
         self._widest_line: int = 0
@@ -227,13 +230,21 @@ class ConversationView(ScrollView):
         self._indicator = cc_dump.tui.error_indicator.IndicatorState()
         # // [LAW:one-source-of-truth] All per-block view state lives here.
         self._view_overrides = cc_dump.tui.view_overrides.ViewOverrides()
-        # Active streams keyed by canonical request_id.
-        # // [LAW:one-source-of-truth] request_id is the only stream identity key.
-        self._stream_turns: dict[str, TurnData] = {}
-        self._stream_meta: dict[str, dict] = {}
-        self._stream_order: list[str] = []
-        self._focused_stream_id: str | None = None
+        # Streaming preview rendering state (rendering concern).
+        # Block lists and delta buffers live in DomainStore.
+        self._stream_preview_turns: dict[str, TurnData] = {}
         self._attached_stream_id: str | None = None
+
+        # Wire domain store callbacks
+        self._wire_domain_store(self._domain_store)
+
+    def _wire_domain_store(self, ds) -> None:
+        """Register rendering callbacks on domain store."""
+        ds.on_turn_added = self._on_turn_added
+        ds.on_stream_started = self._on_stream_started
+        ds.on_stream_block = self._on_stream_block
+        ds.on_stream_finalized = self._on_stream_finalized
+        ds.on_focus_changed = self._on_focus_changed
 
     # // [LAW:one-source-of-truth] Follow state stored as string in view store.
     # String comparison is stable across hot-reloads (enum class identity changes).
@@ -512,6 +523,55 @@ class ConversationView(ScrollView):
             self._resolve_anchor()
         self.refresh()
 
+    # ─── Unified render invalidation ─────────────────────────────────────────
+
+    # // [LAW:single-enforcer] _invalidate is the single entry point for all render invalidation.
+    # // [LAW:dataflow-not-control-flow] Dispatch table drives behavior, not branches.
+    _INVALIDATION_DISPATCH = {
+        "new_turn":          "_render_new_turn",
+        "stream_started":    "_render_stream_started",
+        "stream_delta":      "_render_stream_delta",
+        "stream_finalized":  "_render_stream_finalized",
+        "focus_changed":     "_render_focus_changed",
+        "filters_changed":   "_rerender_affected",
+        "block_toggled":     "_render_single_turn",
+        "region_toggled":    "_render_single_turn",
+        "search":            "_rerender_affected",
+        "resize":            "_render_all_turns",
+        "restore":           "_render_restore",
+    }
+
+    def _invalidate(self, reason: str, **kwargs) -> None:
+        """Single entry point for all render invalidation.
+
+        // [LAW:single-enforcer] All render triggers go through here.
+        Dispatches to reason-specific render method, then runs uniform post-render.
+        """
+        method_name = self._INVALIDATION_DISPATCH.get(reason)
+        if method_name is None:
+            return
+        method = getattr(self, method_name)
+        method(**kwargs)
+        self._post_render(reason)
+
+    # // [LAW:dataflow-not-control-flow] Post-render behavior varies by data (reason), not control flow.
+    _FOLLOW_REASONS = frozenset({
+        "new_turn", "stream_delta", "stream_finalized", "focus_changed",
+    })
+    _ANCHOR_REASONS = frozenset({
+        "filters_changed", "block_toggled", "region_toggled", "search",
+    })
+
+    def _post_render(self, reason: str) -> None:
+        """Uniform post-render: offsets, follow-scroll or anchor resolve."""
+        if reason in self._FOLLOW_REASONS:
+            if self._is_following:
+                with self._programmatic_scroll():
+                    self.scroll_end(animate=False, immediate=False, x_axis=False)
+        elif reason in self._ANCHOR_REASONS:
+            if not self._is_following:
+                self._resolve_anchor()
+
     def _recalculate_offsets(self):
         """Rebuild line offsets and virtual size."""
         self._recalculate_offsets_from(0)
@@ -546,8 +606,20 @@ class ConversationView(ScrollView):
         self._line_cache.clear()
         self._cache_keys_by_turn.clear()  # Clear tracking when cache is cleared
 
-    def add_turn(self, blocks: list, filters: dict = None):
-        """Add a completed turn from block list."""
+    def _on_turn_added(self, blocks: list, index: int) -> None:
+        """Domain store callback: a completed turn was added."""
+        self._invalidate("new_turn", blocks=blocks)
+
+    def _render_new_turn(self, blocks: list, filters: dict = None) -> None:
+        """Render blocks to TurnData and append as completed turn.
+
+        // [LAW:single-enforcer] Called via _invalidate("new_turn").
+        Post-render (follow-scroll) handled by _post_render.
+        """
+        self._render_and_append_turn(blocks, filters)
+
+    def _render_and_append_turn(self, blocks: list, filters: dict = None) -> None:
+        """Render blocks to TurnData and append as completed turn."""
         if filters is None:
             filters = self._last_filters
         width = self._content_width if self._size_known else self._last_width
@@ -573,9 +645,12 @@ class ConversationView(ScrollView):
         }
         self._append_completed_turn(td)
 
-        if self._is_following:
-            with self._programmatic_scroll():
-                self.scroll_end(animate=False, immediate=False, x_axis=False)
+    def add_turn(self, blocks: list, filters: dict = None):
+        """Add a completed turn from block list.
+
+        Delegates to domain_store.add_turn() which fires _on_turn_added callback.
+        """
+        self._domain_store.add_turn(blocks)
 
     def _append_completed_turn(self, td: TurnData) -> None:
         """Append completed turn while preserving focused streaming preview at end."""
@@ -587,17 +662,19 @@ class ConversationView(ScrollView):
         td.turn_index = len(self._turns)
         self._turns.append(td)
 
-        if attached is not None and self._focused_stream_id and self._focused_stream_id in self._stream_turns:
+        # Re-attach focused stream preview if one is active
+        focused_id = self._domain_store.get_focused_stream_id()
+        if attached is not None and focused_id and focused_id in self._stream_preview_turns:
             attached.turn_index = len(self._turns)
             self._turns.append(attached)
-            self._attached_stream_id = self._focused_stream_id
+            self._attached_stream_id = focused_id
 
         self._recalculate_offsets()
 
     def _attach_focused_stream(self) -> None:
         """Ensure focused active stream preview is attached as the last turn."""
-        focused = self._focused_stream_id
-        if not focused or focused not in self._stream_turns:
+        focused = self._domain_store.get_focused_stream_id()
+        if not focused or focused not in self._stream_preview_turns:
             self._detach_stream_preview()
             return
 
@@ -605,7 +682,7 @@ class ConversationView(ScrollView):
             return
 
         self._detach_stream_preview()
-        td = self._stream_turns[focused]
+        td = self._stream_preview_turns[focused]
         td.turn_index = len(self._turns)
         self._turns.append(td)
         self._attached_stream_id = focused
@@ -620,16 +697,15 @@ class ConversationView(ScrollView):
         self._attached_stream_id = None
         self._recalculate_offsets()
 
-    # ─── Request-scoped streaming ────────────────────────────────────────────
+    # ─── Domain store callbacks (rendering side) ─────────────────────────────
 
-    def begin_stream(self, request_id: str, stream_meta: dict | None = None) -> None:
-        """Create an active stream bucket for request_id.
+    def _on_stream_started(self, request_id: str, meta: dict) -> None:
+        """Domain store callback: a new stream was created."""
+        self._invalidate("stream_started", request_id=request_id, meta=meta)
 
-        // [LAW:one-source-of-truth] request_id is canonical stream identity.
-        """
-        if request_id in self._stream_turns:
-            if stream_meta:
-                self._stream_meta[request_id] = dict(stream_meta)
+    def _render_stream_started(self, request_id: str, meta: dict = None) -> None:
+        """Create streaming preview TurnData for a new stream."""
+        if request_id in self._stream_preview_turns:
             return
 
         td = TurnData(
@@ -638,22 +714,18 @@ class ConversationView(ScrollView):
             strips=[],
             is_streaming=True,
         )
-        self._stream_turns[request_id] = td
-        self._stream_meta[request_id] = dict(stream_meta or {})
-        self._stream_order.append(request_id)
-
-        if self._focused_stream_id is None:
-            self._focused_stream_id = request_id
+        self._stream_preview_turns[request_id] = td
         self._attach_focused_stream()
 
-    def _refresh_streaming_delta(self, td: TurnData):
+    def _refresh_streaming_delta(self, request_id: str, td: TurnData):
         """Re-render delta buffer with lightweight streaming preview.
 
         Uses render_streaming_preview() — Markdown + gutter only, bypassing
         the full rendering pipeline (visibility, dispatch, truncation, caching).
         Finalization re-renders through the full pipeline.
         """
-        if not td._text_delta_buffer:
+        delta_text = self._domain_store.get_delta_text(request_id)
+        if not delta_text:
             td.strips = td.strips[: td._stable_strip_count]
             td._widest_strip = _compute_widest(td.strips)
             return
@@ -661,7 +733,7 @@ class ConversationView(ScrollView):
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
 
-        combined_text = "".join(td._text_delta_buffer)
+        combined_text = "".join(delta_text)
         delta_strips = cc_dump.tui.rendering.render_streaming_preview(
             combined_text, console, width
         )
@@ -669,107 +741,43 @@ class ConversationView(ScrollView):
         td.strips = td.strips[: td._stable_strip_count] + delta_strips
         td._widest_strip = _compute_widest(td.strips)
 
-    def _update_streaming_size(self, td: TurnData):
-        """Update total_lines and virtual_size for streaming turn.
-
-        Delegates to _recalculate_offsets() to avoid code duplication.
-        """
-        self._recalculate_offsets()
-
-    def append_stream_block(self, request_id: str, block, filters: dict | None = None) -> None:
-        """Append a block to the request-scoped streaming turn."""
-        if filters is None:
-            filters = self._last_filters
-
-        if request_id not in self._stream_turns:
-            self.begin_stream(request_id)
-        td = self._stream_turns[request_id]
-
-        # Add block to blocks list (always store)
-        td.blocks.append(block)
+    def _on_stream_block(self, request_id: str, block) -> None:
+        """Domain store callback: a block was appended to a stream."""
+        td = self._stream_preview_turns.get(request_id)
+        if td is None:
+            return
 
         # // [LAW:dataflow-not-control-flow] Block declares streaming behavior via property
-        if block.show_during_streaming:
-            # Buffer deltas for all streams; only focused stream renders live preview.
-            td._text_delta_buffer.append(block.content)
-        is_focused = request_id == self._focused_stream_id
+        focused_id = self._domain_store.get_focused_stream_id()
+        is_focused = request_id == focused_id
         if block.show_during_streaming and is_focused:
-            self._attach_focused_stream()
-            # TextDeltaBlock: progressive display for the focused stream.
-            self._refresh_streaming_delta(td)
-            # Update virtual size and auto-scroll
-            self._update_streaming_size(td)
-            if self._is_following:
-                with self._programmatic_scroll():
-                    self.scroll_end(animate=False, immediate=False, x_axis=False)
-        # Other blocks: stored only, rendered at finalization.
+            self._invalidate("stream_delta", request_id=request_id)
 
-    def finalize_stream(self, request_id: str) -> list:
-        """Finalize a request-scoped streaming turn.
-
-        Consolidates TextDeltaBlocks → TextContentBlocks, wraps content in
-        MessageBlock container, full re-render from final blocks, marks turn
-        as non-streaming.
-
-        Returns the final block list.
-        """
-        td = self._stream_turns.get(request_id)
+    def _render_stream_delta(self, request_id: str) -> None:
+        """Re-render focused stream preview after new delta block."""
+        td = self._stream_preview_turns.get(request_id)
         if td is None:
-            return []
+            return
+        self._attach_focused_stream()
+        self._refresh_streaming_delta(request_id, td)
+        self._recalculate_offsets()
 
-        was_focused = request_id == self._focused_stream_id
+    def _on_stream_finalized(self, request_id: str, final_blocks: list, was_focused: bool) -> None:
+        """Domain store callback: a stream was finalized with consolidated blocks."""
+        self._invalidate("stream_finalized", request_id=request_id, final_blocks=final_blocks, was_focused=was_focused)
+
+    def _render_stream_finalized(self, request_id: str, final_blocks: list, was_focused: bool = False) -> None:
+        """Finalize stream: full re-render from consolidated blocks."""
+        td = self._stream_preview_turns.get(request_id)
+
         if was_focused:
             self._detach_stream_preview()
-
-        consolidated: list[cc_dump.formatting.FormattedBlock] = []
-        delta_buffer = []
-
-        for block in td.blocks:
-            if type(block).__name__ == "TextDeltaBlock":
-                delta_buffer.append(block.content)
-            else:
-                # Flush accumulated deltas as a single TextContentBlock with ASSISTANT category
-                if delta_buffer:
-                    combined_text = "".join(delta_buffer)
-                    consolidated.append(
-                        cc_dump.formatting.TextContentBlock(content=combined_text, category=cc_dump.formatting.Category.ASSISTANT)
-                    )
-                    delta_buffer.clear()
-                # Add the non-delta block
-                consolidated.append(block)
-
-        # Flush any remaining deltas
-        if delta_buffer:
-            combined_text = "".join(delta_buffer)
-            consolidated.append(
-                cc_dump.formatting.TextContentBlock(content=combined_text, category=cc_dump.formatting.Category.ASSISTANT)
-            )
-
-        # // [LAW:one-source-of-truth] Wrap content in MessageBlock, matching request-side structure.
-        # Metadata blocks (StreamInfoBlock, StopReasonBlock) stay outside the container.
-        _metadata_types = {"StreamInfoBlock", "StopReasonBlock"}
-        content_children = [b for b in consolidated if type(b).__name__ not in _metadata_types]
-        metadata = [b for b in consolidated if type(b).__name__ in _metadata_types]
-        consolidated = metadata[:1] + [cc_dump.formatting.MessageBlock(
-            role="assistant",
-            msg_index=0,
-            children=content_children,
-            category=cc_dump.formatting.Category.ASSISTANT,
-        )] + metadata[1:]
-
-        # Eagerly populate content_regions for all text blocks (recursive tree walk)
-        # // [LAW:single-enforcer] Uses module-level import for hot-reload safety
-        def _walk_populate(block_list):
-            for block in block_list:
-                cc_dump.formatting.populate_content_regions(block)
-                _walk_populate(getattr(block, "children", []))
-        _walk_populate(consolidated)
 
         # Full re-render from consolidated blocks
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
         strips, block_strip_map, flat_blocks = cc_dump.tui.rendering.render_turn_to_strips(
-            consolidated,
+            final_blocks,
             self._last_filters,
             console,
             width,
@@ -777,8 +785,10 @@ class ConversationView(ScrollView):
             overrides=self._view_overrides,
         )
 
-        # Update turn data
-        td.blocks = consolidated
+        # Create or reuse TurnData for the finalized turn
+        if td is None:
+            td = TurnData(turn_index=-1, blocks=[], strips=[], is_streaming=False)
+        td.blocks = final_blocks
         td.strips = strips
         td.block_strip_map = block_strip_map
         td._flat_blocks = flat_blocks
@@ -793,56 +803,52 @@ class ConversationView(ScrollView):
             k: self._last_filters.get(k, cc_dump.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
         }
 
-        # Remove from active stream registries.
-        self._stream_turns.pop(request_id, None)
-        self._stream_meta.pop(request_id, None)
-        self._stream_order = [rid for rid in self._stream_order if rid != request_id]
+        # Remove from preview registry
+        self._stream_preview_turns.pop(request_id, None)
 
         # Append as a completed turn while preserving active preview at end.
         self._append_completed_turn(td)
 
-        if was_focused:
-            self._focused_stream_id = self._stream_order[0] if self._stream_order else None
-            self._attach_focused_stream()
+        # Reattach if there's a new focused stream
+        self._attach_focused_stream()
 
-        if self._is_following:
-            with self._programmatic_scroll():
-                self.scroll_end(animate=False, immediate=False, x_axis=False)
-        return consolidated
+    def _on_focus_changed(self, request_id: str) -> None:
+        """Domain store callback: focused stream changed."""
+        self._invalidate("focus_changed", request_id=request_id)
+
+    def _render_focus_changed(self, request_id: str) -> None:
+        """Re-render after focus stream change."""
+        td = self._stream_preview_turns.get(request_id)
+        if td is not None:
+            self._refresh_streaming_delta(request_id, td)
+        self._attach_focused_stream()
+
+    # ─── Delegating accessors (read from domain_store) ─────────────────────
 
     def get_focused_stream_id(self) -> str | None:
-        return self._focused_stream_id
+        return self._domain_store.get_focused_stream_id()
 
     def set_focused_stream(self, request_id: str) -> bool:
         """Focus an active stream for live rendering preview."""
-        if request_id not in self._stream_turns:
-            return False
-        self._focused_stream_id = request_id
-        focused = self._stream_turns[request_id]
-        # Rebuild delta preview from buffered text for the newly-focused stream.
-        self._refresh_streaming_delta(focused)
-        self._attach_focused_stream()
-        if self._is_following:
-            with self._programmatic_scroll():
-                self.scroll_end(animate=False, immediate=False, x_axis=False)
-        return True
+        return self._domain_store.set_focused_stream(request_id)
 
     def get_active_stream_chips(self) -> tuple[tuple[str, str, str], ...]:
-        """Return active stream tuples for footer chips.
-
-        Tuple item shape: (request_id, label, kind)
-        """
-        result: list[tuple[str, str, str]] = []
-        for request_id in self._stream_order:
-            if request_id not in self._stream_turns:
-                continue
-            meta = self._stream_meta.get(request_id, {})
-            label = str(meta.get("agent_label") or request_id[:8])
-            kind = str(meta.get("agent_kind") or "unknown")
-            result.append((request_id, label, kind))
-        return tuple(result)
+        """Return active stream tuples for footer chips."""
+        return self._domain_store.get_active_stream_chips()
 
     # Backward-compat wrappers for existing call sites/tests.
+    def begin_stream(self, request_id: str, stream_meta: dict | None = None) -> None:
+        """Delegate to domain_store."""
+        self._domain_store.begin_stream(request_id, stream_meta)
+
+    def append_stream_block(self, request_id: str, block, filters: dict | None = None) -> None:
+        """Delegate to domain_store. filters param ignored (rendering reads _last_filters)."""
+        self._domain_store.append_stream_block(request_id, block)
+
+    def finalize_stream(self, request_id: str) -> list:
+        """Delegate to domain_store."""
+        return self._domain_store.finalize_stream(request_id)
+
     def begin_streaming_turn(self):
         self.begin_stream("__default__", {"agent_label": "main", "agent_kind": "main"})
 
@@ -857,8 +863,7 @@ class ConversationView(ScrollView):
     def rerender(self, filters: dict, search_ctx=None, force: bool = False):
         """Re-render affected turns in place. Preserves scroll position.
 
-        Uses stored block-level anchor (set on user scroll) to maintain
-        stable scroll position across vis_state changes.
+        // [LAW:single-enforcer] Delegates to _invalidate for actual rendering.
 
         Args:
             filters: Current filter state (category name -> Level)
@@ -870,8 +875,20 @@ class ConversationView(ScrollView):
         self._last_search_ctx = search_ctx  # Store for lazy rerenders
 
         if self._pending_restore is not None:
-            self._rebuild_from_state(filters)
+            self._invalidate("restore", filters=filters)
             return
+
+        reason = "search" if search_ctx is not None else "filters_changed"
+        self._invalidate(reason, filters=filters, search_ctx=search_ctx, force=force)
+
+    def _rerender_affected(self, filters: dict = None, search_ctx=None, force: bool = False) -> None:
+        """Re-render affected turns in place using viewport-only strategy.
+
+        // [LAW:single-enforcer] Called via _invalidate("filters_changed") or _invalidate("search").
+        Post-render (anchor resolve) handled by _post_render.
+        """
+        if filters is None:
+            filters = self._last_filters
 
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
@@ -913,10 +930,6 @@ class ConversationView(ScrollView):
         if first_changed is not None:
             self._recalculate_offsets_from(first_changed)
 
-        # Resolve stored block-level anchor to restore scroll position
-        if not self._is_following:
-            self._resolve_anchor()
-
     def ensure_turn_rendered(self, turn_index: int):
         """Force-render a specific turn, then recalculate offsets.
 
@@ -949,23 +962,28 @@ class ConversationView(ScrollView):
         width = self._content_width
         if width != self._last_width and width > 0:
             self._last_width = width
-            console = self.app.console
-            for td in self._turns:
-                # Skip re-rendering streaming turns on resize
-                if td.is_streaming:
-                    continue
-                td.strips, td.block_strip_map, td._flat_blocks = (
-                    cc_dump.tui.rendering.render_turn_to_strips(
-                        td.blocks,
-                        self._last_filters,
-                        console,
-                        width,
-                        block_cache=self._block_strip_cache,
-                        overrides=self._view_overrides,
-                    )
+            self._invalidate("resize")
+
+    def _render_all_turns(self) -> None:
+        """Re-render all turns at current width. Used for resize."""
+        width = self._last_width
+        console = self.app.console
+        for td in self._turns:
+            # Skip re-rendering streaming turns on resize
+            if td.is_streaming:
+                continue
+            td.strips, td.block_strip_map, td._flat_blocks = (
+                cc_dump.tui.rendering.render_turn_to_strips(
+                    td.blocks,
+                    self._last_filters,
+                    console,
+                    width,
+                    block_cache=self._block_strip_cache,
+                    overrides=self._view_overrides,
                 )
-                td._widest_strip = _compute_widest(td.strips)
-            self._recalculate_offsets()
+            )
+            td._widest_strip = _compute_widest(td.strips)
+        self._recalculate_offsets()
 
     # ─── Sprint 2: Follow mode ───────────────────────────────────────────────
 
@@ -1363,22 +1381,9 @@ class ConversationView(ScrollView):
         new_expanded = None if current_exp is False else False
         rvs.expanded = new_expanded
 
-        # Re-render just this turn
+        # // [LAW:single-enforcer] Re-render via _invalidate
         if not turn.is_streaming:
-            width = self._content_width if self._size_known else self._last_width
-            console = self.app.console
-            turn.re_render(
-                self._last_filters,
-                console,
-                width,
-                force=True,
-                block_cache=self._block_strip_cache,
-                overrides=self._view_overrides,
-            )
-            self._recalculate_offsets()
-            # Resolve anchor to maintain scroll position
-            if not self._is_following:
-                self._resolve_anchor()
+            self._invalidate("region_toggled", turn=turn)
 
     def _toggle_block_expand(self, turn: TurnData, block_idx: int):
         """Toggle expand state for a single block and re-render its turn."""
@@ -1401,22 +1406,25 @@ class ConversationView(ScrollView):
         # // [LAW:one-source-of-truth] View state in overrides only
         bvs.expanded = override_value
 
-        # Re-render just this turn
+        # // [LAW:single-enforcer] Re-render via _invalidate
         if not turn.is_streaming:
-            width = self._content_width if self._size_known else self._last_width
-            console = self.app.console
-            turn.re_render(
-                self._last_filters,
-                console,
-                width,
-                force=True,
-                block_cache=self._block_strip_cache,
-                overrides=self._view_overrides,
-            )
-            self._recalculate_offsets()
-            # Resolve anchor to maintain scroll position after expand/collapse
-            if not self._is_following:
-                self._resolve_anchor()
+            self._invalidate("block_toggled", turn=turn)
+
+    def _render_single_turn(self, turn: TurnData = None) -> None:
+        """Re-render a single turn after toggle. Post-render via _post_render."""
+        if turn is None:
+            return
+        width = self._content_width if self._size_known else self._last_width
+        console = self.app.console
+        turn.re_render(
+            self._last_filters,
+            console,
+            width,
+            force=True,
+            block_cache=self._block_strip_cache,
+            overrides=self._view_overrides,
+        )
+        self._recalculate_offsets()
 
     # ─── Error indicator ────────────────────────────────────────────────────
 
@@ -1445,21 +1453,11 @@ class ConversationView(ScrollView):
     # ─── State management ────────────────────────────────────────────────────
 
     def get_state(self) -> dict:
-        """Extract state for hot-reload preservation.
+        """Extract view state for hot-reload preservation.
 
-        Preserves completed turns plus active request-scoped streams.
+        Domain data (block lists, streams) lives in DomainStore and persists
+        across widget replacement. This only captures view/rendering state.
         """
-        all_blocks = [td.blocks for td in self._turns if not td.is_streaming]
-        active_streams = {
-            rid: {
-                "blocks": td.blocks,
-                "text_delta_buffer": list(td._text_delta_buffer),
-                "stable_strip_count": td._stable_strip_count,
-                "meta": dict(self._stream_meta.get(rid, {})),
-            }
-            for rid, td in self._stream_turns.items()
-        }
-
         # Serialize scroll anchor for position preservation across hot-reload
         anchor = self._scroll_anchor
         anchor_dict = (
@@ -1469,21 +1467,16 @@ class ConversationView(ScrollView):
         )
 
         return {
-            "all_blocks": all_blocks,
             "follow_state": self._follow_state.value,
-            "turn_count": len(self._turns),
-            "streaming_states": [],  # backward-compatible key (legacy singleton stream path)
-            "active_streams": active_streams,
-            "stream_order": list(self._stream_order),
-            "focused_stream_id": self._focused_stream_id,
             "scroll_anchor": anchor_dict,
             "view_overrides": self._view_overrides.to_dict(),
         }
 
     def restore_state(self, state: dict):
-        """Restore state from a previous instance.
+        """Restore view state from a previous instance.
 
-        Restores streaming turn state and re-renders from preserved blocks.
+        Domain data (block lists, streams) lives in DomainStore and persists
+        across widget replacement. This restores view/rendering state only.
         """
         self._pending_restore = state
         # Support both new follow_state (str) and old follow_mode (bool) for backward compat
@@ -1498,83 +1491,57 @@ class ConversationView(ScrollView):
         vo_data = state.get("view_overrides", {})
         self._view_overrides = cc_dump.tui.view_overrides.ViewOverrides.from_dict(vo_data)
 
-        # Restore streaming states after _rebuild_from_state is called
-        streaming_states = state.get("streaming_states", [])
-        if streaming_states:
-            # Store for application after rebuild
-            self._pending_streaming_states = streaming_states
+    def _render_restore(self, filters: dict = None) -> None:
+        """Dispatch target for _invalidate("restore"). Delegates to _rebuild_from_state."""
+        self._rebuild_from_state(filters or self._last_filters)
 
     def _rebuild_from_state(self, filters: dict):
-        """Rebuild from restored state."""
+        """Rebuild rendering from domain store data + restored view state."""
         state = self._pending_restore
         self._pending_restore = None
         self._turns.clear()
-        self._stream_turns.clear()
-        self._stream_meta.clear()
-        self._stream_order.clear()
-        self._focused_stream_id = None
+        self._stream_preview_turns.clear()
         self._attached_stream_id = None
 
-        all_blocks = state.get("all_blocks", [])
-        for block_list in all_blocks:
-            self.add_turn(block_list, filters)
-
-        # Restore request-scoped active streams.
-        active_streams = state.get("active_streams", {})
-        if isinstance(active_streams, dict):
-            width = self._content_width if self._size_known else self._last_width
-            console = self.app.console
-            for request_id, payload in active_streams.items():
-                if not isinstance(payload, dict):
-                    continue
-                blocks = payload.get("blocks", [])
-                meta = payload.get("meta", {})
-                self.begin_stream(str(request_id), meta if isinstance(meta, dict) else None)
-                td = self._stream_turns[str(request_id)]
-                td.blocks = blocks if isinstance(blocks, list) else []
-                td._text_delta_buffer = list(payload.get("text_delta_buffer", []))
-                td._stable_strip_count = int(payload.get("stable_strip_count", 0))
-                # Rebuild baseline strips for completeness; focused stream preview
-                # is refreshed below.
-                strips, block_strip_map, flat_blocks = cc_dump.tui.rendering.render_turn_to_strips(
-                    td.blocks,
-                    filters,
-                    console,
-                    width,
-                    block_cache=self._block_strip_cache,
-                    overrides=self._view_overrides,
-                )
-                td.strips = strips
-                td.block_strip_map = block_strip_map
-                td._flat_blocks = flat_blocks
-                td._widest_strip = _compute_widest(td.strips)
-
-            order = state.get("stream_order", [])
-            if isinstance(order, list):
-                self._stream_order = [rid for rid in order if rid in self._stream_turns]
-            if not self._stream_order:
-                self._stream_order = list(self._stream_turns.keys())
-            focused = state.get("focused_stream_id")
-            if isinstance(focused, str) and focused in self._stream_turns:
-                self._focused_stream_id = focused
-            elif self._stream_order:
-                self._focused_stream_id = self._stream_order[0]
-            if self._focused_stream_id:
-                self._refresh_streaming_delta(self._stream_turns[self._focused_stream_id])
-                self._attach_focused_stream()
-
-        self._recalculate_offsets()
+        self._rebuild_from_domain_store(filters)
 
         # Restore scroll anchor and resolve position (when not following)
-        anchor_dict = state.get("scroll_anchor")
-        if anchor_dict is not None:
-            self._scroll_anchor = ScrollAnchor(
-                turn_index=anchor_dict["turn_index"],
-                block_index=anchor_dict["block_index"],
-                line_in_block=anchor_dict["line_in_block"],
-            )
-            if not self._is_following:
-                self._resolve_anchor()
+        if state is not None:
+            anchor_dict = state.get("scroll_anchor")
+            if anchor_dict is not None:
+                self._scroll_anchor = ScrollAnchor(
+                    turn_index=anchor_dict["turn_index"],
+                    block_index=anchor_dict["block_index"],
+                    line_in_block=anchor_dict["line_in_block"],
+                )
+                if not self._is_following:
+                    self._resolve_anchor()
+
+    def _rebuild_from_domain_store(self, filters: dict) -> None:
+        """Re-render all turns from domain store data.
+
+        Used after hot-reload widget replacement. Domain store persists
+        across widget replacement, so we just re-render from its data.
+        """
+        # Re-render completed turns
+        for block_list in self._domain_store.iter_completed_blocks():
+            self._render_and_append_turn(block_list, filters)
+
+        # Rebuild streaming preview turns
+        ds = self._domain_store
+        for request_id in ds._stream_order:
+            if request_id not in ds._stream_turns:
+                continue
+            meta = ds._stream_meta.get(request_id, {})
+            self._on_stream_started(request_id, meta)
+            td = self._stream_preview_turns.get(request_id)
+            if td is not None:
+                # Rebuild delta preview from domain store's accumulated buffer
+                self._refresh_streaming_delta(request_id, td)
+
+        # Reattach focused stream preview
+        self._attach_focused_stream()
+        self._recalculate_offsets()
 
 
 class StatsPanel(Static):
@@ -1888,9 +1855,9 @@ class LogsPanel(RichLog):
 
 
 # Factory functions for creating widgets
-def create_conversation_view(view_store=None) -> ConversationView:
+def create_conversation_view(view_store=None, domain_store=None) -> ConversationView:
     """Create a new ConversationView instance."""
-    return ConversationView(view_store=view_store)
+    return ConversationView(view_store=view_store, domain_store=domain_store)
 
 
 def create_stats_panel() -> StatsPanel:

@@ -250,7 +250,7 @@ async def _replace_all_widgets_inner(app) -> None:
     info_visible = old_info.display if old_info else app.show_info
 
     # 2. Create ALL new widgets (without IDs yet — set after mounting).
-    new_conv = cc_dump.tui.widget_factory.create_conversation_view(view_store=app._view_store)
+    new_conv = cc_dump.tui.widget_factory.create_conversation_view(view_store=app._view_store, domain_store=app._domain_store)
     new_conv.restore_state(conv_state)
 
     # [LAW:one-source-of-truth] Create cycling panels from registry

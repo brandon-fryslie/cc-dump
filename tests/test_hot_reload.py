@@ -338,9 +338,14 @@ class TestWidgetStatePreservation:
         assert new_widget.models_seen == set()
 
     def test_content_region_state_roundtrip(self):
-        """Content regions survive via block reference; expanded state in ViewOverrides."""
+        """Content regions survive via domain store; expanded state in ViewOverrides.
+
+        // [LAW:one-source-of-truth] Block lists live in DomainStore.
+        // ConversationView.get_state() returns only view state (follow, anchor, overrides).
+        """
         from cc_dump.formatting import TextContentBlock, ContentRegion
-        from cc_dump.tui.widget_factory import ConversationView, TurnData
+        from cc_dump.domain_store import DomainStore
+        from cc_dump.tui.widget_factory import ConversationView
 
         block = TextContentBlock(content="test")
         block.content_regions = [
@@ -351,15 +356,17 @@ class TestWidgetStatePreservation:
         widget = ConversationView()
         # Set region expanded state via ViewOverrides
         widget._view_overrides.get_region(block.block_id, 0).expanded = False
-        td = TurnData(turn_index=0, blocks=[block], strips=[])
-        widget._turns.append(td)
+        # Add blocks directly to domain store (bypass rendering callback for unit test)
+        widget._domain_store._completed.append([block])
 
+        # Block structure lives in domain store
+        completed = widget._domain_store.iter_completed_blocks()
+        assert len(completed) == 1
+        assert completed[0][0].content_regions[0].kind == "xml_block"
+        assert completed[0][0].content_regions[1].kind == "md"
+
+        # ViewOverrides state survives get_state/restore_state roundtrip
         state = widget.get_state()
-        restored_blocks = state["all_blocks"][0]
-        # Block structure survives roundtrip
-        assert restored_blocks[0].content_regions[0].kind == "xml_block"
-        assert restored_blocks[0].content_regions[1].kind == "md"
-        # ViewOverrides state survives roundtrip
         assert state["view_overrides"] is not None
 
     def test_timeline_panel_state_roundtrip(self):

@@ -9,6 +9,8 @@ import json
 import pytest
 from unittest.mock import MagicMock
 
+from cc_dump.domain_store import DomainStore
+
 from cc_dump.formatting import (
     FormattedBlock,
     StreamInfoBlock,
@@ -83,12 +85,14 @@ def _mock_widgets():
     """Create minimal mock widgets for event handler tests."""
     conv = MagicMock()
     stats = MagicMock()
+    ds = DomainStore()
     return {
         "conv": conv,
         "stats": stats,
         "filters": {},
         "refresh_callbacks": {},
         "analytics_store": None,
+        "domain_store": ds,
     }
 
 
@@ -201,9 +205,11 @@ class TestNonStreamingEventHandler:
 
         handle_response_non_streaming(event, state, widgets, app_state, lambda *a: None)
 
-        # Verify add_turn was called with blocks
-        widgets["conv"].add_turn.assert_called_once()
-        blocks = widgets["conv"].add_turn.call_args[0][0]
+        # Verify blocks were added to domain store
+        ds = widgets["domain_store"]
+        completed = ds.iter_completed_blocks()
+        assert len(completed) == 1
+        blocks = completed[0]
         assert len(blocks) > 0
         assert all(isinstance(b, FormattedBlock) for b in blocks)
 
@@ -220,7 +226,8 @@ class TestNonStreamingEventHandler:
 
         handle_response_non_streaming(event, state, widgets, app_state, lambda *a: None)
 
-        blocks = widgets["conv"].add_turn.call_args[0][0]
+        ds = widgets["domain_store"]
+        blocks = ds.iter_completed_blocks()[0]
         for block in blocks:
             assert block.session_id == "sess_xyz"
 
@@ -237,7 +244,8 @@ class TestNonStreamingEventHandler:
 
         handle_response_non_streaming(event, state, widgets, app_state, lambda *a: None)
 
-        blocks = widgets["conv"].add_turn.call_args[0][0]
+        ds = widgets["domain_store"]
+        blocks = ds.iter_completed_blocks()[0]
         text_blocks = _find_blocks(blocks, TextDeltaBlock)
         assert any("Visible content" in b.content for b in text_blocks)
 
@@ -326,11 +334,12 @@ class TestReplayEndToEnd:
                     event, state, widgets, app_state, lambda *a: None
                 )
 
-        # conv.add_turn should have been called twice (request + response)
-        assert widgets["conv"].add_turn.call_count == 2
+        # domain_store should have 2 completed turns (request + response)
+        ds = widgets["domain_store"]
+        assert ds.completed_count == 2
 
         # Response turn should contain the answer text
-        response_blocks = widgets["conv"].add_turn.call_args_list[1][0][0]
+        response_blocks = ds.iter_completed_blocks()[1]
         text_blocks = _find_blocks(response_blocks, TextDeltaBlock)
         assert any("2+2 = 4" in b.content for b in text_blocks)
 
@@ -373,7 +382,8 @@ class TestReplayEndToEnd:
 
         assert state["current_session"] == session_uuid
         # Response blocks are lane-attributed from in-band session metadata.
-        response_blocks = widgets["conv"].add_turn.call_args_list[1][0][0]
+        ds = widgets["domain_store"]
+        response_blocks = ds.iter_completed_blocks()[1]
         assert all(getattr(block, "agent_kind", "") in {"main", "subagent", "unknown"} for block in response_blocks)
 
     def test_multi_turn_replay(self, tmp_path):
@@ -413,5 +423,6 @@ class TestReplayEndToEnd:
                         event, state, widgets, app_state, lambda *a: None
                     )
 
-        # 2 request turns + 2 response turns = 4 add_turn calls
-        assert widgets["conv"].add_turn.call_count == 4
+        # 2 request turns + 2 response turns = 4 completed turns
+        ds = widgets["domain_store"]
+        assert ds.completed_count == 4

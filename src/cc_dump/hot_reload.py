@@ -33,6 +33,7 @@ _RELOAD_ORDER = [
     "cc_dump.tui.chip",  # depends on: nothing (pure widget)
     "cc_dump.tui.custom_footer",  # depends on: chip, palette, rendering
     "cc_dump.tui.panel_renderers",  # depends on: analysis
+    "cc_dump.domain_store",  # depends on: formatting
     "cc_dump.tui.stream_registry",  # depends on: formatting
     "cc_dump.tui.event_handlers",  # depends on: analysis, formatting
     "cc_dump.tui.error_indicator",  # depends on: nothing (pure rendering)

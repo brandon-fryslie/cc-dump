@@ -1061,12 +1061,12 @@ class TestRequestScopedStreaming:
 
             # req-2 is active but not focused, so its live strips are not rendered into viewport.
             assert conv.get_focused_stream_id() == "req-1"
-            assert conv._stream_turns["req-1"]._text_delta_buffer == ["hello ", "again"]
-            assert conv._stream_turns["req-2"]._text_delta_buffer == ["world "]
+            assert conv._domain_store.get_delta_text("req-1") == ["hello ", "again"]
+            assert conv._domain_store.get_delta_text("req-2") == ["world "]
 
             conv.finalize_stream("req-1")
-            assert "req-1" not in conv._stream_turns
-            assert "req-2" in conv._stream_turns
+            assert "req-1" not in conv._stream_preview_turns
+            assert "req-2" in conv._stream_preview_turns
 
     def test_focus_switch_renders_selected_stream(self):
         conv = ConversationView()
@@ -1082,4 +1082,4 @@ class TestRequestScopedStreaming:
             assert conv.get_focused_stream_id() == "req-1"
             assert conv.set_focused_stream("req-2") is True
             assert conv.get_focused_stream_id() == "req-2"
-            assert len(conv._stream_turns["req-2"].strips) > 0
+            assert len(conv._stream_preview_turns["req-2"].strips) > 0

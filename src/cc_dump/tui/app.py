@@ -57,6 +57,7 @@ import cc_dump.har_replayer
 import cc_dump.sessions
 
 from cc_dump.stderr_tee import get_tee as _get_tee
+import cc_dump.domain_store
 import snarfx
 from snarfx import transaction
 from snarfx import textual as stx
@@ -133,6 +134,7 @@ class CcDumpApp(App):
         data_dispatcher=None,
         settings_store=None,
         view_store=None,
+        domain_store=None,
         store_context=None,
     ):
         super().__init__()
@@ -153,6 +155,7 @@ class CcDumpApp(App):
         self._data_dispatcher = data_dispatcher
         self._settings_store = settings_store
         self._view_store = view_store
+        self._domain_store = domain_store if domain_store is not None else cc_dump.domain_store.DomainStore()
         self._store_context = store_context
         self._closing = False
         self._quit_requested_at: float | None = None
@@ -298,7 +301,7 @@ class CcDumpApp(App):
             widget.id = self._panel_ids[spec.name]
             yield widget
 
-        conv = cc_dump.tui.widget_factory.create_conversation_view(view_store=self._view_store)
+        conv = cc_dump.tui.widget_factory.create_conversation_view(view_store=self._view_store, domain_store=self._domain_store)
         conv.id = self._conv_id
         yield conv
 
@@ -566,6 +569,7 @@ class CcDumpApp(App):
             "stats": stats,
             "filters": self.active_filters,
             "view_store": self._view_store,
+            "domain_store": self._domain_store,
             "refresh_callbacks": {
                 "refresh_economics": self._refresh_economics,
                 "refresh_timeline": self._refresh_timeline,
