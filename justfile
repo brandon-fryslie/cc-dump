@@ -39,6 +39,10 @@ test-seq *args:
 smoke-d6u:
     uv run pytest tests/test_d6u_smoke_checks.py
 
+# Offline HAR + subagent log enrichment report (JSON)
+subagent-enrich har projects="~/.claude/projects":
+    uv run python -m cc_dump.subagent_enrichment {{har}} --claude-projects-root {{projects}}
+
 # Format code with ruff
 fmt:
     uv run ruff format src/
