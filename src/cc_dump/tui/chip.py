@@ -1,7 +1,7 @@
 """Reusable chip widgets — lightweight clickable text controls.
 
-This module is STABLE (never hot-reloaded). Other reloadable modules
-can safely use `from cc_dump.tui.chip import Chip, ToggleChip`.
+This module is RELOADABLE. It appears in _RELOAD_ORDER before its
+consumers (custom_footer, settings_panel, side_channel_panel).
 """
 
 from textual.widgets import Static
@@ -50,7 +50,7 @@ class ToggleChip(Static):
     ToggleChip.-off {
         text-style: initial;
         opacity: 0.5;
-        background: transparent;
+        background: $panel-lighten-2;
     }
 
     ToggleChip.-off:hover {

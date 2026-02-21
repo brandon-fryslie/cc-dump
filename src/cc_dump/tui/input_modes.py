@@ -28,17 +28,13 @@ class InputMode(Enum):
 # SEARCH_EDIT: empty (all keys consumed for text input)
 MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
     InputMode.NORMAL: {
-        # Navigation
+        # Navigation (printable — NORMAL only)
         "g": "go_top",
         "G": "go_bottom",
         "j": "scroll_down_line",
         "k": "scroll_up_line",
         "h": "scroll_left_col",
         "l": "scroll_right_col",
-        "ctrl+f": "page_down",
-        "ctrl+b": "page_up",
-        "ctrl+d": "half_page_down",
-        "ctrl+u": "half_page_up",
 
         # Visibility toggles (number keys) — 6 categories
         "1": "toggle_vis('user')",
@@ -78,13 +74,12 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         "t": "toggle_expand('metadata')",
         "y": "toggle_expand('thinking')",
 
-        # Panels
+        # Panels (printable — NORMAL only)
         ".": "cycle_panel",
         "full_stop": "cycle_panel",
         ",": "cycle_panel_mode",
         "comma": "cycle_panel_mode",
         "f": "toggle_follow",
-        "ctrl+l": "toggle_logs",
 
         # Info panel
         "i": "toggle_info",
@@ -98,21 +93,12 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         "z": "toggle_tmux_zoom",
         "Z": "toggle_auto_zoom",
 
-        # Filterset cycling
+        # Filterset cycling (printable — NORMAL only)
         "=": "next_filterset",
         "equals_sign": "next_filterset",
         "-": "prev_filterset",
         "minus": "prev_filterset",
 
-        # Filterset presets (F3 not usable — terminal emulators intercept it)
-        "f1": "apply_filterset('1')",
-        "f2": "apply_filterset('2')",
-        "f4": "apply_filterset('4')",
-        "f5": "apply_filterset('5')",
-        "f6": "apply_filterset('6')",
-        "f7": "apply_filterset('7')",
-        "f8": "apply_filterset('8')",
-        "f9": "apply_filterset('9')",
         # Settings panel
         "S": "toggle_settings",
 
@@ -122,7 +108,7 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         # Side channel (AI panel)
         "X": "toggle_side_channel",
 
-        # Theme (try both key names - Textual might use descriptive names)
+        # Theme
         "[": "prev_theme",
         "left_square_bracket": "prev_theme",
         "]": "next_theme",
@@ -148,9 +134,10 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
     },
 
     InputMode.SIDE_CHANNEL: {
-        # Empty - all keys handled specially for panel interaction
+        # Empty - panel interaction handled specially in on_key
     },
 }
+
 
 
 # [LAW:one-source-of-truth] Footer display per mode.

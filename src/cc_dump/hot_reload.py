@@ -27,7 +27,8 @@ _RELOAD_ORDER = [
     "cc_dump.tui.search",  # depends on: palette
     "cc_dump.tui.rendering",  # depends on: formatting, palette
     "cc_dump.tui.dump_formatting",  # depends on: formatting
-    "cc_dump.tui.custom_footer",  # depends on: palette, rendering
+    "cc_dump.tui.chip",  # depends on: nothing (pure widget)
+    "cc_dump.tui.custom_footer",  # depends on: chip, palette, rendering
     "cc_dump.tui.panel_renderers",  # depends on: analysis
     "cc_dump.tui.event_handlers",  # depends on: analysis, formatting
     "cc_dump.tui.error_indicator",  # depends on: nothing (pure rendering)
@@ -38,6 +39,9 @@ _RELOAD_ORDER = [
     "cc_dump.tui.launch_config_panel",  # depends on: palette, settings_panel
     "cc_dump.tui.session_panel",  # depends on: panel_renderers
     "cc_dump.tui.widget_factory",  # depends on: analysis, rendering, panel_renderers, error_indicator
+    "cc_dump.tui.dump_export",  # depends on: dump_formatting
+    "cc_dump.tui.theme_controller",  # depends on: rendering
+    "cc_dump.tui.action_handlers",  # depends on: formatting, action_config, rendering, widget_factory
 ]
 
 # Files to explicitly exclude from watching
@@ -58,12 +62,8 @@ _EXCLUDED_FILES = {
 # Directories/modules to exclude
 _EXCLUDED_MODULES = {
     "tui/app.py",  # live app instance, can't safely reload
-    "tui/chip.py",  # stable widget, imported by reloadable modules
     "tui/category_config.py",  # pure data, but referenced at init time
-    "tui/action_handlers.py",  # accesses live app/widget state
     "tui/search_controller.py",  # accesses live app/widget state
-    "tui/dump_export.py",  # accesses live app/widget state
-    "tui/theme_controller.py",  # accesses live app/widget state
     "tui/hot_reload_controller.py",  # accesses live app/widget state
     "tui/panel_registry.py",  # stable pure data, referenced at init time
 }
@@ -75,8 +75,8 @@ _STALENESS_WATCHLIST = {
     "proxy.py", "cli.py", "event_types.py", "response_assembler.py",
     "tmux_controller.py", "stderr_tee.py", "side_channel.py", "data_dispatcher.py",
     # from _EXCLUDED_MODULES
-    "tui/app.py", "tui/category_config.py", "tui/action_handlers.py",
-    "tui/search_controller.py", "tui/dump_export.py", "tui/theme_controller.py",
+    "tui/app.py", "tui/category_config.py",
+    "tui/search_controller.py",
     "tui/hot_reload_controller.py",
 }
 

@@ -4,7 +4,7 @@
 // [LAW:locality-or-seam] All action logic here — app.py keeps thin delegates.
 // [LAW:one-type-per-behavior] Scroll actions are instances of _conv_action.
 
-Not hot-reloadable (accesses app widgets and reactive state).
+Hot-reloadable — imported as module object in app.py, all functions take app as param.
 """
 
 import cc_dump.formatting

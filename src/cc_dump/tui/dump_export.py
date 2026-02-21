@@ -3,8 +3,7 @@
 // [LAW:one-way-deps] Depends on dump_formatting (for block rendering). No upward deps.
 // [LAW:locality-or-seam] All dump logic here — changes don't touch app.py.
 
-Not hot-reloadable (accesses app widgets and state).
-Block-to-text rendering delegated to dump_formatting (hot-reloadable).
+Hot-reloadable — imported as module object in app.py, delegates to dump_formatting.
 """
 
 import os

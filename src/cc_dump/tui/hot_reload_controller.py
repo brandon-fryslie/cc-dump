@@ -21,8 +21,8 @@ import cc_dump.settings_store
 import cc_dump.view_store
 import cc_dump.tui.launch_config_panel
 import cc_dump.tui.side_channel_panel
-from cc_dump.tui.search_controller import clear_search_expand, run_search, navigate_to_current, update_search_bar
-from cc_dump.tui.theme_controller import apply_markdown_theme
+import cc_dump.tui.search_controller
+import cc_dump.tui.theme_controller
 from cc_dump.tui.category_config import CATEGORY_CONFIG
 
 from cc_dump.tui.panel_registry import PANEL_REGISTRY
@@ -96,7 +96,7 @@ async def _do_hot_reload(app) -> None:
     if old_search.debounce_timer is not None:
         old_search.debounce_timer.stop()
     if search_was_active:
-        clear_search_expand(app)
+        cc_dump.tui.search_controller.clear_search_expand(app)
 
     # Reset to fresh state (matches, expanded_blocks, debounce_timer discarded)
     app._search_state = cc_dump.tui.search.SearchState()
@@ -106,7 +106,7 @@ async def _do_hot_reload(app) -> None:
 
     # Rebuild theme state after modules reload (before any rendering)
     cc_dump.tui.rendering.set_theme(app.current_theme)
-    apply_markdown_theme(app)
+    cc_dump.tui.theme_controller.apply_markdown_theme(app)
 
     # Reconcile settings store (values survive, reactions re-register)
     settings_store = getattr(app, "_settings_store", None)
@@ -169,14 +169,14 @@ async def _do_hot_reload(app) -> None:
         state.saved_scroll_y = conv.scroll_offset.y if conv is not None else None
 
         # Re-execute search against fresh blocks
-        run_search(app)
+        cc_dump.tui.search_controller.run_search(app)
 
         # Restore phase and navigate if we had results
         state.phase = saved_phase
         if saved_phase == SearchPhase.NAVIGATING and state.matches:
-            navigate_to_current(app)
+            cc_dump.tui.search_controller.navigate_to_current(app)
 
-        update_search_bar(app)
+        cc_dump.tui.search_controller.update_search_bar(app)
 
 
 async def replace_all_widgets(app) -> None:

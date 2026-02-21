@@ -965,13 +965,7 @@ class CcDumpApp(App):
             if event.key == "escape":
                 event.prevent_default()
                 self._close_side_channel()
-            return
-        elif mode == InputMode.LAUNCH_CONFIG:
-            # Panel handles its own keys via Textual messages
-            return
-        elif mode == InputMode.SETTINGS:
-            # Panel handles its own keys via Textual messages
-            return
+                return
         elif mode == InputMode.NORMAL:
             if event.character == "/":
                 event.prevent_default()
@@ -986,7 +980,10 @@ class CcDumpApp(App):
                 event.prevent_default()
                 return
 
-        keymap = MODE_KEYMAP.get(mode, {})
+        # // [LAW:one-source-of-truth] Panel modes (SETTINGS, LAUNCH_CONFIG, SIDE_CHANNEL)
+        # fall through here — Textual's event bubbling lets focused Input widgets
+        # consume their keys before on_key fires. No keymap = use NORMAL's.
+        keymap = MODE_KEYMAP.get(mode) or MODE_KEYMAP[InputMode.NORMAL]
         action_name = keymap.get(event.key)
         if action_name:
             event.prevent_default()

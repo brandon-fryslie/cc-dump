@@ -3,7 +3,7 @@
 // [LAW:one-way-deps] Depends on rendering module. No upward deps.
 // [LAW:locality-or-seam] All theme logic here — app.py just delegates.
 
-Not hot-reloadable (accesses app console and theme state).
+Hot-reloadable — imported as module object in app.py, stateless.
 """
 
 import cc_dump.tui.rendering
