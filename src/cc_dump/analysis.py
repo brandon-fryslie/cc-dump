@@ -5,6 +5,7 @@ cc_dump modules.
 """
 
 import json
+import re
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -418,22 +419,43 @@ def classify_model(model_str: str) -> tuple[str, ModelPricing]:
     return ("unknown", FALLBACK_PRICING)
 
 
-# [LAW:dataflow-not-control-flow] [LAW:one-source-of-truth] Model display names
-# NOTE: update when model versions change (e.g. 4.5 → 5.0)
-_MODEL_DISPLAY = {
-    "opus": "Opus 4.5",
-    "sonnet": "Sonnet 4.5",
-    "haiku": "Haiku 4.5",
+# [LAW:one-source-of-truth] Family display labels used by model formatters.
+_MODEL_FAMILY_DISPLAY = {
+    "opus": "Opus",
+    "sonnet": "Sonnet",
+    "haiku": "Haiku",
 }
+
+
+def _extract_model_version(model: str, family: str) -> str:
+    """Extract short version token from model identifier.
+
+    Examples:
+        "claude-sonnet-4-6-20260114" -> "4.6"
+        "claude-opus-4-20251101" -> "4"
+        "sonnet" -> ""
+    """
+    if not model or not family or family == "unknown":
+        return ""
+    pattern = rf"{re.escape(family)}-(\d+)(?:-(\d{{1,2}}))?(?:-|$)"
+    match = re.search(pattern, model.lower())
+    if match is None:
+        return ""
+    major = str(int(match.group(1)))
+    minor = match.group(2)
+    if minor:
+        return f"{major}.{int(minor)}"
+    return major
 
 
 def format_model_short(model: str) -> str:
     """Format model string as short display name.
 
     Examples:
-        "claude-opus-4-20250514" -> "Opus 4.5"
-        "claude-sonnet-4-20250514" -> "Sonnet 4.5"
-        "claude-haiku-4-20250514" -> "Haiku 4.5"
+        "claude-opus-4-6-20260114" -> "Opus 4.6"
+        "claude-sonnet-4-20250514" -> "Sonnet 4"
+        "claude-haiku-4-20250514" -> "Haiku 4"
+        "sonnet" -> "Sonnet"
         "" -> "Unknown"
         "some-long-unknown-model-name-12345678" -> "some-long-unknown-mo"
     """
@@ -442,10 +464,13 @@ def format_model_short(model: str) -> str:
 
     # [LAW:one-source-of-truth] Reuse classify_model for family detection
     family, _ = classify_model(model)
-    display_name = _MODEL_DISPLAY.get(family)
+    display_name = _MODEL_FAMILY_DISPLAY.get(family)
+    if display_name:
+        version = _extract_model_version(model, family)
+        return f"{display_name} {version}" if version else display_name
 
     # Fallback: truncate to 20 chars for truly unknown models
-    return display_name if display_name else model[:20]
+    return model[:20]
 
 
 def format_model_ultra_short(model: str) -> str:

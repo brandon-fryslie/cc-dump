@@ -10,23 +10,23 @@ from cc_dump.tui.panel_renderers import render_economics_panel
 
 
 def test_format_model_short_sonnet():
-    """Sonnet models formatted as 'Sonnet 4.5'."""
-    assert format_model_short("claude-sonnet-4-20250514") == "Sonnet 4.5"
-    assert format_model_short("claude-sonnet-4") == "Sonnet 4.5"
-    assert format_model_short("sonnet") == "Sonnet 4.5"
+    """Sonnet models formatted from parsed version tokens."""
+    assert format_model_short("claude-sonnet-4-6-20260114") == "Sonnet 4.6"
+    assert format_model_short("claude-sonnet-4-20250514") == "Sonnet 4"
+    assert format_model_short("sonnet") == "Sonnet"
 
 
 def test_format_model_short_opus():
-    """Opus models formatted as 'Opus 4.5'."""
-    assert format_model_short("claude-opus-4-20251101") == "Opus 4.5"
-    assert format_model_short("claude-opus-4") == "Opus 4.5"
-    assert format_model_short("opus") == "Opus 4.5"
+    """Opus models formatted from parsed version tokens."""
+    assert format_model_short("claude-opus-4-6-20260114") == "Opus 4.6"
+    assert format_model_short("claude-opus-4") == "Opus 4"
+    assert format_model_short("opus") == "Opus"
 
 
 def test_format_model_short_haiku():
-    """Haiku models formatted as 'Haiku 4.5'."""
-    assert format_model_short("claude-haiku-4-20250514") == "Haiku 4.5"
-    assert format_model_short("haiku") == "Haiku 4.5"
+    """Haiku models formatted from parsed version tokens."""
+    assert format_model_short("claude-haiku-4-6-20260114") == "Haiku 4.6"
+    assert format_model_short("haiku") == "Haiku"
 
 
 def test_format_model_short_unknown():
@@ -115,20 +115,20 @@ def test_render_economics_panel_model_names_shortened():
     """Model names displayed as short form in breakdown view."""
     rows = [
         ToolEconomicsRow(name="Read", calls=1, input_tokens=600, result_tokens=3000,
-                        cache_read_tokens=0, norm_cost=10800.0, model="claude-sonnet-4-20250514"),
+                        cache_read_tokens=0, norm_cost=10800.0, model="claude-sonnet-4-6-20260114"),
         ToolEconomicsRow(name="Bash", calls=1, input_tokens=400, result_tokens=2000,
-                        cache_read_tokens=0, norm_cost=7200.0, model="claude-opus-4-20251101"),
+                        cache_read_tokens=0, norm_cost=7200.0, model="claude-opus-4-6-20260114"),
     ]
 
     text = render_economics_panel(rows)
 
     # Should show short names
-    assert "Sonnet 4.5" in text
-    assert "Opus 4.5" in text
+    assert "Sonnet 4.6" in text
+    assert "Opus 4.6" in text
 
     # Should not show full model strings
-    assert "claude-sonnet-4-20250514" not in text
-    assert "claude-opus-4-20251101" not in text
+    assert "claude-sonnet-4-6-20260114" not in text
+    assert "claude-opus-4-6-20260114" not in text
 
 
 def test_render_economics_panel_breakdown_formatting():
