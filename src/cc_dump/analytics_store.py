@@ -56,6 +56,7 @@ class TurnRecord:
     cache_creation_tokens: int
     request_json: str  # For timeline budget calculation
     purpose: str = "primary"
+    prompt_version: str = ""
     is_side_channel: bool = False
     tool_invocations: list[ToolInvocationRecord] = field(default_factory=list)
 
@@ -68,6 +69,7 @@ class _PendingTurn:
     request_body: dict
     model: str
     purpose: str
+    prompt_version: str
     is_side_channel: bool
 
 
@@ -155,6 +157,7 @@ class AnalyticsStore:
                 request_body=body,
                 model=str(body.get("model", "") or ""),
                 purpose=marker.purpose if marker is not None else "primary",
+                prompt_version=marker.prompt_version if marker is not None else "",
                 is_side_channel=marker is not None,
             )
 
@@ -227,6 +230,7 @@ class AnalyticsStore:
             ),
             request_json=json.dumps(pending.request_body),
             purpose=pending.purpose,
+            prompt_version=pending.prompt_version,
             is_side_channel=pending.is_side_channel,
             tool_invocations=tool_records,
         )
@@ -483,6 +487,7 @@ class AnalyticsStore:
                     "output_tokens": 0,
                     "cache_read_tokens": 0,
                     "cache_creation_tokens": 0,
+                    "prompt_versions": {},
                 }
                 summary[turn.purpose] = row
             row["turns"] += 1
@@ -490,6 +495,10 @@ class AnalyticsStore:
             row["output_tokens"] += turn.output_tokens
             row["cache_read_tokens"] += turn.cache_read_tokens
             row["cache_creation_tokens"] += turn.cache_creation_tokens
+            if turn.prompt_version:
+                versions = row["prompt_versions"]
+                if isinstance(versions, dict):
+                    versions[turn.prompt_version] = int(versions.get(turn.prompt_version, 0)) + 1
         return summary
 
     def get_tool_economics(self, group_by_model: bool = False) -> list[ToolEconomicsRow]:
@@ -617,6 +626,7 @@ class AnalyticsStore:
                     "cache_creation_tokens": t.cache_creation_tokens,
                     "request_json": t.request_json,
                     "purpose": t.purpose,
+                    "prompt_version": t.prompt_version,
                     "is_side_channel": t.is_side_channel,
                     "tool_invocations": [
                         {
@@ -638,6 +648,7 @@ class AnalyticsStore:
                     "request_body": p.request_body,
                     "model": p.model,
                     "purpose": p.purpose,
+                    "prompt_version": p.prompt_version,
                     "is_side_channel": p.is_side_channel,
                 }
                 for p in self._pending.values()
@@ -669,6 +680,7 @@ class AnalyticsStore:
                     cache_creation_tokens=t_data["cache_creation_tokens"],
                     request_json=t_data["request_json"],
                     purpose=str(t_data.get("purpose", "primary") or "primary"),
+                    prompt_version=str(t_data.get("prompt_version", "") or ""),
                     is_side_channel=bool(t_data.get("is_side_channel", False)),
                     tool_invocations=tool_invocations,
                 )
@@ -690,5 +702,6 @@ class AnalyticsStore:
                 request_body=request_body,
                 model=str(p_data.get("model", "") or ""),
                 purpose=str(p_data.get("purpose", "primary") or "primary"),
+                prompt_version=str(p_data.get("prompt_version", "") or ""),
                 is_side_channel=bool(p_data.get("is_side_channel", False)),
             )

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from cc_dump.prompt_registry import get_prompt_spec
+from cc_dump.prompt_registry import get_prompt_spec, PromptSpec
 from cc_dump.side_channel import SideChannelManager
 from cc_dump.side_channel_analytics import SideChannelAnalytics
 
@@ -59,11 +59,13 @@ class DataDispatcher:
         if not self._side_channel.enabled:
             return fallback
 
-        prompt = _build_summary_prompt(messages, purpose="block_summary")
+        spec = get_prompt_spec("block_summary")
+        prompt = _build_summary_prompt(messages, spec)
         profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
         result = self._side_channel.run(
             prompt=prompt,
             purpose="block_summary",
+            prompt_version=spec.version,
             timeout=60,
             source_session_id=source_session_id,
             profile=profile,
@@ -87,7 +89,7 @@ class DataDispatcher:
         return self._analytics.snapshot()
 
 
-def _build_summary_prompt(messages: list[dict], purpose: str) -> str:
+def _build_summary_prompt(messages: list[dict], spec: PromptSpec) -> str:
     """Build a purpose-scoped prompt from conversation messages."""
     lines: list[str] = []
     for msg in messages:
@@ -106,7 +108,6 @@ def _build_summary_prompt(messages: list[dict], purpose: str) -> str:
         lines.append(f"[{role}]: {content}")
 
     context = "\n".join(lines)
-    spec = get_prompt_spec(purpose)
     return (
         f"{spec.instruction}\n\n"
         f"{context}"

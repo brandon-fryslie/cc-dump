@@ -23,6 +23,7 @@ def test_encode_and_extract_marker_from_string_content():
     assert parsed.run_id == "abc123"
     assert parsed.purpose == "block_summary"
     assert parsed.source_session_id == "sess-1"
+    assert parsed.prompt_version == "v1"
 
 
 def test_strip_marker_from_body_removes_prefix_line():
@@ -68,6 +69,7 @@ def test_encode_marker_has_expected_delimiters():
     encoded = encode_marker(marker)
     assert encoded.startswith("<<CC_DUMP_SIDE_CHANNEL:")
     assert encoded.endswith(">>")
+    assert '"prompt_version":"v1"' in encoded
 
 
 def test_extract_marker_normalizes_unknown_purpose_to_utility_custom():

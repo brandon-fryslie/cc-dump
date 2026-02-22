@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from cc_dump.side_channel_purpose import normalize_purpose
+from cc_dump.side_channel_purpose import normalize_purpose, UTILITY_CUSTOM_PURPOSE
 
 
 @dataclass(frozen=True)
@@ -82,6 +82,12 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
     ),
 }
 
+_UTILITY_CUSTOM_PROMPT = PromptSpec(
+    purpose=UTILITY_CUSTOM_PURPOSE,
+    version="v1",
+    instruction="Process the provided context according to the request.",
+)
+
 
 def get_prompt_spec(purpose: str) -> PromptSpec:
     """Return prompt spec for purpose with utility fallback."""
@@ -89,8 +95,4 @@ def get_prompt_spec(purpose: str) -> PromptSpec:
     spec = PROMPT_REGISTRY.get(canonical_purpose)
     if spec is not None:
         return spec
-    return PromptSpec(
-        purpose=canonical_purpose,
-        version="v1",
-        instruction="Process the provided context according to the request.",
-    )
+    return _UTILITY_CUSTOM_PROMPT

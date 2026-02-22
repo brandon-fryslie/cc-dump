@@ -293,13 +293,15 @@ class HARRecordingSubscriber:
             marker = extract_marker(pending.request_body or {})
             if marker is not None:
                 entry["comment"] = (
-                    f"cc-dump side-channel run={marker.run_id} purpose={marker.purpose}"
+                    f"cc-dump side-channel run={marker.run_id} purpose={marker.purpose} "
+                    f"prompt_version={marker.prompt_version}"
                 )
                 # HAR allows custom fields using underscore prefix.
                 entry["_cc_dump"] = {
                     "category": "side_channel",
                     "run_id": marker.run_id,
                     "purpose": marker.purpose,
+                    "prompt_version": marker.prompt_version,
                     "source_session_id": marker.source_session_id,
                 }
 

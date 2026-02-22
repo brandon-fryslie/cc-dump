@@ -20,6 +20,7 @@ class SideChannelMarker:
     run_id: str
     purpose: str
     source_session_id: str = ""
+    prompt_version: str = "v1"
 
 
 def encode_marker(marker: SideChannelMarker) -> str:
@@ -28,6 +29,7 @@ def encode_marker(marker: SideChannelMarker) -> str:
         "run_id": marker.run_id,
         "purpose": marker.purpose,
         "source_session_id": marker.source_session_id,
+        "prompt_version": marker.prompt_version,
     }
     return f"{MARKER_PREFIX}{json.dumps(payload, separators=(',', ':'))}{MARKER_SUFFIX}"
 
@@ -127,17 +129,21 @@ def _parse_marker_text(text: str) -> SideChannelMarker | None:
     run_id = payload.get("run_id", "")
     purpose = payload.get("purpose", "")
     source_session_id = payload.get("source_session_id", "")
+    prompt_version = payload.get("prompt_version", "v1")
     if not isinstance(run_id, str) or not run_id:
         return None
     if not isinstance(purpose, str) or not purpose:
         return None
     if not isinstance(source_session_id, str):
         source_session_id = ""
+    if not isinstance(prompt_version, str) or not prompt_version:
+        prompt_version = "v1"
     normalized_purpose = normalize_purpose(purpose)
     return SideChannelMarker(
         run_id=run_id,
         purpose=normalized_purpose,
         source_session_id=source_session_id,
+        prompt_version=prompt_version,
     )
 
 

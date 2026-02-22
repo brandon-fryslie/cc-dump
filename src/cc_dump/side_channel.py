@@ -34,6 +34,7 @@ class SideChannelResult:
     elapsed_ms: int  # wall-clock time in milliseconds
     run_id: str = ""
     purpose: str = "block_summary"
+    prompt_version: str = "v1"
     profile: str = "ephemeral_default"
 
 
@@ -89,6 +90,7 @@ class SideChannelManager:
             timeout=timeout,
             source_session_id="",
             profile="ephemeral_default",
+            prompt_version="v1",
         )
 
     def run(
@@ -99,6 +101,7 @@ class SideChannelManager:
         timeout: int = 60,
         source_session_id: str = "",
         profile: str = "ephemeral_default",
+        prompt_version: str = "v1",
     ) -> SideChannelResult:
         """Run a synchronous query against claude -p.
 
@@ -117,6 +120,7 @@ class SideChannelManager:
                 elapsed_ms=0,
                 run_id=run_id,
                 purpose=normalized_purpose,
+                prompt_version=prompt_version,
                 profile=profile,
             )
         if not self._enabled:
@@ -126,6 +130,7 @@ class SideChannelManager:
                 elapsed_ms=0,
                 run_id=run_id,
                 purpose=normalized_purpose,
+                prompt_version=prompt_version,
                 profile=profile,
             )
 
@@ -140,6 +145,7 @@ class SideChannelManager:
                 run_id=run_id,
                 purpose=normalized_purpose,
                 source_session_id=source_session_id,
+                prompt_version=prompt_version,
             ),
         )
         env = os.environ.copy()
@@ -164,6 +170,7 @@ class SideChannelManager:
                     elapsed_ms=elapsed,
                     run_id=run_id,
                     purpose=normalized_purpose,
+                    prompt_version=prompt_version,
                     profile=profile,
                 )
             return SideChannelResult(
@@ -172,6 +179,7 @@ class SideChannelManager:
                 elapsed_ms=elapsed,
                 run_id=run_id,
                 purpose=normalized_purpose,
+                prompt_version=prompt_version,
                 profile=profile,
             )
         except subprocess.TimeoutExpired:
@@ -182,6 +190,7 @@ class SideChannelManager:
                 elapsed_ms=elapsed,
                 run_id=run_id,
                 purpose=normalized_purpose,
+                prompt_version=prompt_version,
                 profile=profile,
             )
         except FileNotFoundError:
@@ -192,6 +201,7 @@ class SideChannelManager:
                 elapsed_ms=elapsed,
                 run_id=run_id,
                 purpose=normalized_purpose,
+                prompt_version=prompt_version,
                 profile=profile,
             )
         finally:

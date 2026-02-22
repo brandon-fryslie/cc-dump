@@ -42,6 +42,7 @@ class TestSideChannelManager:
         ]
         assert "Summarize this" in args[1]["input"]
         assert "CC_DUMP_SIDE_CHANNEL" in args[1]["input"]
+        assert '"prompt_version":"v1"' in args[1]["input"]
         assert args[1]["capture_output"] is True
         assert args[1]["text"] is True
 
@@ -176,6 +177,8 @@ class TestDataDispatcher:
         assert enriched.text == "AI summary here"
         assert enriched.elapsed_ms == 500
         mgr.run.assert_called_once()
+        call = mgr.run.call_args
+        assert call.kwargs["prompt_version"] == "v1"
 
     def test_summarize_when_disabled(self):
         """Disabled dispatcher returns fallback without calling AI."""
@@ -219,6 +222,7 @@ class TestDataDispatcher:
     def test_prompt_construction_with_content_blocks(self):
         """Content blocks (list format) are correctly extracted."""
         from cc_dump.data_dispatcher import _build_summary_prompt
+        from cc_dump.prompt_registry import get_prompt_spec
 
         messages = [
             {
@@ -229,7 +233,7 @@ class TestDataDispatcher:
                 ],
             }
         ]
-        prompt = _build_summary_prompt(messages, purpose="block_summary")
+        prompt = _build_summary_prompt(messages, get_prompt_spec("block_summary"))
 
         assert "What is Python?" in prompt
         assert "[user]" in prompt
@@ -237,9 +241,10 @@ class TestDataDispatcher:
     def test_prompt_truncates_long_messages(self):
         """Individual messages are truncated to 500 chars."""
         from cc_dump.data_dispatcher import _build_summary_prompt
+        from cc_dump.prompt_registry import get_prompt_spec
 
         messages = [{"role": "assistant", "content": "x" * 1000}]
-        prompt = _build_summary_prompt(messages, purpose="block_summary")
+        prompt = _build_summary_prompt(messages, get_prompt_spec("block_summary"))
 
         # Should be truncated to 500 + "..."
         assert "..." in prompt

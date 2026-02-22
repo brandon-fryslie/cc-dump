@@ -594,6 +594,7 @@ def test_side_channel_purpose_summary_aggregates_marker_tagged_turns():
     assert row["cache_read_tokens"] == 20
     assert row["cache_creation_tokens"] == 2
     assert row["output_tokens"] == 5
+    assert row["prompt_versions"] == {"v1": 1}
 
 
 def test_side_channel_summary_excludes_primary_turns():
