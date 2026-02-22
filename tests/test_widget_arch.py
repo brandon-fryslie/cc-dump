@@ -991,6 +991,25 @@ class TestViewportOnlyRerender:
             f"(vp_end={vp_end}, total_turns={len(conv._turns)})"
         )
 
+    def test_background_rerender_processes_deferred_turns(self):
+        """Deferred off-viewport turns are rerendered incrementally in background."""
+        console = Console()
+        filters_initial = {"tools": ALWAYS_VISIBLE}
+        conv = self._make_conv_with_turns(console, 200, filters_initial)
+
+        with self._patch_scroll(conv, scroll_y=0, height=10):
+            conv.call_later = MagicMock()
+            conv._background_rerender_chunk_size = 1000
+            conv._follow_state = FollowState.OFF
+            conv.rerender({"tools": HIDDEN})
+
+            # First scheduled callback is background rerender.
+            assert conv.call_later.called
+            background_cb = conv.call_later.call_args.args[0]
+            background_cb()
+
+        assert all(td._pending_filter_snapshot is None for td in conv._turns if not td.is_streaming)
+
     def test_viewport_turns_get_re_rendered(self):
         """Viewport turns should be re-rendered, not deferred."""
         console = Console()

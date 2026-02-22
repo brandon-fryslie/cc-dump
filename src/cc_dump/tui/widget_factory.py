@@ -269,6 +269,8 @@ class ConversationView(ScrollView):
         self._multi_stream_preview_id = "__multi_stream_preview__"
         self._pending_stream_delta_request_ids: set[str] = set()
         self._stream_delta_flush_scheduled: bool = False
+        self._background_rerender_scheduled: bool = False
+        self._background_rerender_chunk_size: int = 8
 
         # Wire domain store callbacks
         self._wire_domain_store(self._domain_store)
@@ -581,6 +583,53 @@ class ConversationView(ScrollView):
         if not self._is_following:
             self._resolve_anchor()
         self.refresh()
+
+    def _schedule_background_rerender(self) -> None:
+        """Schedule incremental off-viewport rerender work."""
+        if self._background_rerender_scheduled:
+            return
+        self._background_rerender_scheduled = True
+        self.call_later(self._background_rerender)
+
+    def _background_rerender(self) -> None:
+        """Incrementally rerender deferred turns in background.
+
+        Processes a bounded number of turns per tick to keep UI responsive.
+        """
+        self._background_rerender_scheduled = False
+        width = self._content_width if self._size_known else self._last_width
+        console = self.app.console
+
+        first_changed: int | None = None
+        processed = 0
+        for idx, td in enumerate(self._turns):
+            if td.is_streaming or td._pending_filter_snapshot is None:
+                continue
+            if td.re_render(
+                self._last_filters,
+                console,
+                width,
+                block_cache=self._block_strip_cache,
+                search_ctx=self._last_search_ctx,
+                overrides=self._view_overrides,
+            ):
+                if first_changed is None:
+                    first_changed = idx
+            processed += 1
+            if processed >= self._background_rerender_chunk_size:
+                break
+
+        if first_changed is not None:
+            self._recalculate_offsets_from(first_changed)
+            if not self._is_following:
+                self._resolve_anchor()
+            self.refresh()
+
+        if any(
+            (not td.is_streaming and td._pending_filter_snapshot is not None)
+            for td in self._turns
+        ):
+            self._schedule_background_rerender()
 
     # ─── Unified render invalidation ─────────────────────────────────────────
 
@@ -1170,6 +1219,7 @@ class ConversationView(ScrollView):
         force = force or search_ctx is not None
 
         first_changed = None
+        has_deferred = False
         for idx, td in enumerate(self._turns):
             # Skip streaming turns during filter changes
             if td.is_streaming:
@@ -1196,9 +1246,12 @@ class ConversationView(ScrollView):
                 }
                 if force or snapshot != td._last_filter_snapshot:
                     td._pending_filter_snapshot = snapshot
+                    has_deferred = True
 
         if first_changed is not None:
             self._recalculate_offsets_from(first_changed)
+        if has_deferred:
+            self._schedule_background_rerender()
 
     def ensure_turn_rendered(self, turn_index: int):
         """Force-render a specific turn, then recalculate offsets.
