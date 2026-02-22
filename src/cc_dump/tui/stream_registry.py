@@ -99,6 +99,7 @@ class StreamRegistry:
         self._session_lanes: dict[str, StreamLane] = {}
         self._next_subagent_index: int = 1
         self._main_session_id: str = ""
+        self._pending_task_request_ids: set[str] = set()
 
     def _sync_session_contexts(self, session_id: str, lane: StreamLane) -> None:
         """Update all known request contexts for one session."""
@@ -209,11 +210,14 @@ class StreamRegistry:
     ) -> RequestStreamContext:
         """Register request metadata and return request context."""
         session_id = _extract_session_id(body)
+        has_pending_task = request_id in self._pending_task_request_ids
 
         # // [LAW:single-enforcer] Task lineage-based main-session promotion is
         # centralized in StreamRegistry and runs for every request.
-        if _extract_task_lineage_ids(body):
+        if _extract_task_lineage_ids(body) or (has_pending_task and session_id):
             self._adopt_main_session(session_id)
+        if has_pending_task and session_id:
+            self._pending_task_request_ids.discard(request_id)
 
         lane = self._allocate_lane(session_id, request_id, session_hint=session_hint)
 
@@ -250,8 +254,10 @@ class StreamRegistry:
         """Promote the emitting request session to main via Task tool lineage."""
         _ = tool_use_id
         ctx = self.ensure_context(request_id, seq=seq, recv_ns=recv_ns)
+        self._pending_task_request_ids.add(request_id)
         if ctx.session_id:
             self._adopt_main_session(ctx.session_id)
+            self._pending_task_request_ids.discard(request_id)
             lane = self._session_lanes.get(ctx.session_id)
             if lane is not None:
                 ctx.lane_id = lane.lane_id
@@ -267,6 +273,7 @@ class StreamRegistry:
     def mark_done(self, request_id: str, *, seq: int = 0, recv_ns: int = 0) -> RequestStreamContext:
         ctx = self.ensure_context(request_id, seq=seq, recv_ns=recv_ns)
         ctx.state = "done"
+        self._pending_task_request_ids.discard(request_id)
         return ctx
 
     def get(self, request_id: str) -> RequestStreamContext | None:

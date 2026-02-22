@@ -228,6 +228,68 @@ class TestEventHandlersRequestScopedStreaming:
         assert sub_ctx.agent_kind == "subagent"
         assert main_ctx.agent_kind == "main"
 
+    def test_task_tool_use_before_request_event_still_promotes_main_lane(self):
+        state = {
+            "positions": {},
+            "known_hashes": {},
+            "next_id": 0,
+            "next_color": 0,
+            "request_counter": 0,
+            "current_session": None,
+        }
+        app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
+        domain_store = DomainStore()
+        widgets = _mk_widgets(_FakeConv(), _FakeStats(), _FakeViewStore(), domain_store)
+        log_fn = lambda *args, **kwargs: None
+
+        event_handlers.handle_request(
+            RequestBodyEvent(
+                body=_req_body("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+                request_id="req-sub-first",
+                seq=1,
+                recv_ns=1,
+            ),
+            state,
+            widgets,
+            app_state,
+            log_fn,
+        )
+        event_handlers.handle_response_event(
+            ResponseSSEEvent(
+                sse_event=ToolUseBlockStartEvent(index=0, id="toolu_task_1", name="Task"),
+                request_id="req-main",
+                seq=2,
+                recv_ns=2,
+            ),
+            state,
+            widgets,
+            app_state,
+            log_fn,
+        )
+        event_handlers.handle_request(
+            RequestBodyEvent(
+                body=_req_body("11111111-2222-3333-4444-555555555555"),
+                request_id="req-main",
+                seq=3,
+                recv_ns=3,
+            ),
+            state,
+            widgets,
+            app_state,
+            log_fn,
+        )
+
+        reg = app_state["stream_registry"]
+        sub_ctx = reg.get("req-sub-first")
+        main_ctx = reg.get("req-main")
+        assert sub_ctx is not None
+        assert main_ctx is not None
+        assert sub_ctx.agent_kind == "subagent"
+        assert main_ctx.agent_kind == "main"
+
+        chips = domain_store.get_active_stream_chips()
+        assert any(rid == "req-main" and kind == "main" for rid, _label, kind in chips)
+
     def test_task_promotion_restamps_active_stream_blocks_and_chips(self):
         state = {
             "positions": {},

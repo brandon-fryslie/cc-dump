@@ -377,7 +377,6 @@ def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_s
             seq=event.seq,
             recv_ns=event.recv_ns,
         )
-        _fallback_session(ctx, state)
         if event.task_tool_use_id:
             ctx = stream_registry.note_task_tool_use(
                 event.request_id,
@@ -385,7 +384,7 @@ def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_s
                 seq=event.seq,
                 recv_ns=event.recv_ns,
             )
-            _fallback_session(ctx, state)
+        _fallback_session(ctx, state)
 
         _maybe_update_main_session(state, ctx)
 

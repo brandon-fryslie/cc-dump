@@ -113,3 +113,23 @@ class TestStreamRegistry:
         sub = reg.get("req-sub-first")
         assert sub is not None
         assert sub.agent_kind == "subagent"
+
+    def test_task_tool_use_before_request_registration_promotes_when_session_arrives(self):
+        reg = StreamRegistry()
+        _ = reg.register_request(
+            "req-sub-first",
+            _body_with_session("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+        )
+        pending = reg.note_task_tool_use("req-main", "toolu_task_1")
+        assert pending.agent_kind == "unknown"
+
+        promoted = reg.register_request(
+            "req-main",
+            _body_with_session("11111111-2222-3333-4444-555555555555"),
+        )
+        assert promoted.agent_kind == "main"
+        assert promoted.lane_id == "main"
+
+        sub = reg.get("req-sub-first")
+        assert sub is not None
+        assert sub.agent_kind == "subagent"
