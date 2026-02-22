@@ -2169,6 +2169,48 @@ def _block_cache(ctx: _RenderContext) -> MutableMapping[tuple[object, ...], obje
     return cast(MutableMapping[tuple[object, ...], object] | None, ctx.block_cache)
 
 
+_STRUCTURAL_EMPTY_BLOCK_TYPES = frozenset(
+    {
+        "NewlineBlock",
+    }
+)
+
+
+def _strip_has_visible_text(strip: Strip) -> bool:
+    """Whether a strip contains non-whitespace text."""
+    return "".join(seg.text for seg in strip).strip() != ""
+
+
+def _block_has_visible_text(block_strips: list[Strip]) -> bool:
+    """Whether any strip line has non-whitespace text."""
+    return any(_strip_has_visible_text(strip) for strip in block_strips)
+
+
+def _hide_empty_leaf_blocks(block: FormattedBlock, block_strips: list[Strip]) -> bool:
+    """Drop empty leaf blocks from rendered output.
+
+    // [LAW:behavior-not-structure] Decision is based on rendered content only.
+    // [LAW:locality-or-seam] Rendering-only transform; formatting IR is untouched.
+    """
+    type_name = type(block).__name__
+    if type_name in _STRUCTURAL_EMPTY_BLOCK_TYPES:
+        return True
+    if getattr(block, "children", None):
+        return True
+    return _block_has_visible_text(block_strips)
+
+
+# // [LAW:single-enforcer] Render-stage block filtering lives in one transform chain.
+_BLOCK_TRANSFORMS: tuple[Callable[[FormattedBlock, list[Strip]], bool], ...] = (
+    _hide_empty_leaf_blocks,
+)
+
+
+def _should_render_block(block: FormattedBlock, block_strips: list[Strip]) -> bool:
+    """Apply render-stage block transforms."""
+    return all(transform(block, block_strips) for transform in _BLOCK_TRANSFORMS)
+
+
 def _collapse_children(
     children: list[FormattedBlock], tools_on: bool, overrides=None,
 ) -> list[FormattedBlock]:
@@ -2365,11 +2407,6 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
             text, ctx.search_ctx, ctx.turn_index, 0, block=block
         )
 
-    # Record using sequential key: block_strip_map[i] corresponds to flat_blocks[i]
-    seq_key = len(ctx.flat_blocks)
-    ctx.block_strip_map[seq_key] = len(ctx.all_strips)
-    ctx.flat_blocks.append(block)
-
     # Standard rendering path (non-region)
     if not has_regions:
         cache_key = (
@@ -2447,18 +2484,24 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
             else ""
         )
 
-    # Unified gutter path
-    is_neutral = indicator_name is None
-    final_strips = _add_gutter_to_strips(
-        block_strips_for_gutter,
-        indicator_name,
-        is_expandable,
-        arrow,
-        ctx.width,
-        neutral=is_neutral,
-        show_right=ctx.show_right,
-    )
-    ctx.all_strips.extend(final_strips)
+    if _should_render_block(block, block_strips_for_gutter):
+        # Record using sequential key: block_strip_map[i] corresponds to flat_blocks[i]
+        seq_key = len(ctx.flat_blocks)
+        ctx.block_strip_map[seq_key] = len(ctx.all_strips)
+        ctx.flat_blocks.append(block)
+
+        # Unified gutter path
+        is_neutral = indicator_name is None
+        final_strips = _add_gutter_to_strips(
+            block_strips_for_gutter,
+            indicator_name,
+            is_expandable,
+            arrow,
+            ctx.width,
+            neutral=is_neutral,
+            show_right=ctx.show_right,
+        )
+        ctx.all_strips.extend(final_strips)
 
     # Recurse into children when container is visible and expanded
     if children and vis.visible and vis.expanded:
