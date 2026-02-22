@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from cc_dump.proxy import RequestPipeline, _build_synthetic_sse_bytes
+from cc_dump.side_channel_marker import extract_marker, strip_marker_from_body
 from cc_dump.sentinel import extract_sentinel_command, make_interceptor
 
 
@@ -268,6 +269,28 @@ class TestRequestPipeline:
         body, _, response = pipeline.process({}, "http://x.com")
         assert response == "was flagged"
         assert body["flagged"] is True
+
+    def test_side_channel_marker_strip_transform_preserves_local_classification_input(self):
+        marker_body = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"run-1","purpose":"block_summary",'
+                        '"source_session_id":"sess-1"}>>\nSummarize this'
+                    ),
+                }
+            ]
+        }
+        assert extract_marker(marker_body) is not None
+
+        pipeline = RequestPipeline(
+            transforms=[lambda body, url: (strip_marker_from_body(body), url)]
+        )
+        forwarded, _, response = pipeline.process(dict(marker_body), "https://api.anthropic.com/v1/messages")
+        assert response is None
+        assert extract_marker(forwarded) is None
+        assert "CC_DUMP_SIDE_CHANNEL" not in forwarded["messages"][0]["content"]
 
 
 # ─── make_interceptor ────────────────────────────────────────────────────────

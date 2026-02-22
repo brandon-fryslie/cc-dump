@@ -36,3 +36,5 @@ Definition of ready:
 - side-channel stream visible earlier than subprocess completion
 - no contamination of primary lane/event subscribers
 
+Benchmark reference:
+- `docs/side-channel/BENCHMARK_PROXY_INTERCEPTION.md`

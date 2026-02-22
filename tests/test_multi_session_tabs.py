@@ -2,6 +2,7 @@
 
 import pytest
 
+from cc_dump.event_types import RequestBodyEvent, ResponseProgressEvent
 from tests.harness import run_app, strips_to_text
 
 
@@ -164,3 +165,85 @@ async def test_side_channel_replay_routes_to_separate_lane_without_primary_conta
         assert "side-response" in side_text
         assert "primary-request" not in side_text
         assert "primary-response" not in side_text
+
+
+async def test_side_channel_stream_progress_routes_to_side_lane_without_primary_leakage():
+    session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    user_id = f"user_deadbeef_account_{_ACCOUNT_ID}_session_{session_a}"
+    side_request_id = "req-side-progress"
+    main_request_id = "req-main-progress"
+    side_marker = (
+        "<<CC_DUMP_SIDE_CHANNEL:"
+        f'{{"run_id":"run-{session_a[:4]}","purpose":"block_summary","source_session_id":"{session_a}"}}'
+        ">>\n"
+    )
+
+    async with run_app() as (pilot, app):
+        app._event_queue.put(
+            RequestBodyEvent(
+                body={
+                    "model": "claude-haiku-4-5",
+                    "metadata": {"user_id": user_id},
+                    "messages": [{"role": "user", "content": "primary-stream-request"}],
+                },
+                request_id=main_request_id,
+                seq=1,
+            )
+        )
+        app._event_queue.put(
+            ResponseProgressEvent(
+                request_id=main_request_id,
+                seq=2,
+                delta_text="primary stream chunk",
+            )
+        )
+
+        app._event_queue.put(
+            RequestBodyEvent(
+                body={
+                    "model": "claude-haiku-4-5",
+                    "metadata": {"user_id": user_id},
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": side_marker + "side-stream-request",
+                        }
+                    ],
+                },
+                request_id=side_request_id,
+                seq=3,
+            )
+        )
+        app._event_queue.put(
+            ResponseProgressEvent(
+                request_id=side_request_id,
+                seq=4,
+                delta_text="side stream chunk",
+            )
+        )
+        await pilot.pause()
+
+        side_key = f"side-channel:block_summary:{session_a}"
+        primary_ds = app._get_domain_store(session_a)
+        side_ds = app._get_domain_store(side_key)
+
+        primary_blocks = primary_ds.get_stream_blocks(main_request_id)
+        side_blocks = side_ds.get_stream_blocks(side_request_id)
+        assert primary_blocks
+        assert side_blocks
+
+        primary_text = "".join(
+            getattr(block, "content", "")
+            for block in primary_blocks
+            if isinstance(getattr(block, "content", None), str)
+        )
+        side_text = "".join(
+            getattr(block, "content", "")
+            for block in side_blocks
+            if isinstance(getattr(block, "content", None), str)
+        )
+
+        assert "primary stream chunk" in primary_text
+        assert "side stream chunk" not in primary_text
+        assert "side stream chunk" in side_text
+        assert "primary stream chunk" not in side_text
