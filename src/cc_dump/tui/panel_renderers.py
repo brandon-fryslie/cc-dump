@@ -70,6 +70,19 @@ def render_analytics_summary(snapshot: dict) -> str:
             active_subagent_streams,
         ),
     ]
+
+    capacity_total = int(summary.get("capacity_total", 0) or 0)
+    if capacity_total > 0:
+        lines.append(
+            "  Capacity: {:.0f}% used | {} / {} | remaining {}".format(
+                float(summary.get("capacity_used_pct", 0.0)),
+                _fmt_tokens(int(summary.get("capacity_used", 0))),
+                _fmt_tokens(capacity_total),
+                _fmt_tokens(int(summary.get("capacity_remaining", 0))),
+            )
+        )
+    else:
+        lines.append("  Capacity: n/a (set CC_DUMP_TOKEN_CAPACITY)")
     return "\n".join(lines)
 
 

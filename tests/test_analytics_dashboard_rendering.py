@@ -78,6 +78,23 @@ def test_render_analytics_summary():
     assert "Models: 2 active" in text
     assert "2 main turns" in text
     assert "1 subagent turns" in text
+    assert "Capacity: n/a" in text
+
+
+def test_render_analytics_summary_with_capacity():
+    snap = _snapshot()
+    snap["summary"].update(
+        {
+            "capacity_total": 10000,
+            "capacity_used": 5800,
+            "capacity_remaining": 4200,
+            "capacity_used_pct": 58.0,
+        }
+    )
+
+    text = render_analytics_summary(snap)
+    assert "Capacity: 58% used" in text
+    assert "remaining 4.2k" in text
 
 
 def test_render_analytics_timeline():

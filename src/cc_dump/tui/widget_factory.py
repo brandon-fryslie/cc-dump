@@ -7,6 +7,7 @@ instances from the updated class definitions and swap them in.
 import datetime
 import hashlib
 import json
+import os
 import sys
 import traceback
 from contextlib import contextmanager
@@ -1933,6 +1934,21 @@ class StatsPanel(Static):
         summary["active_main_streams"] = int(active_lane_counts.get("main", 0))
         summary["active_subagent_streams"] = int(active_lane_counts.get("subagent", 0))
         summary["active_unknown_streams"] = int(active_lane_counts.get("unknown", 0))
+
+        # Optional local capacity baseline (not provided by API).
+        capacity_raw = str(os.environ.get("CC_DUMP_TOKEN_CAPACITY", "") or "").strip()
+        try:
+            capacity_total = int(capacity_raw) if capacity_raw else 0
+        except ValueError:
+            capacity_total = 0
+        if capacity_total > 0:
+            used_tokens = int(summary.get("total_tokens", 0))
+            remaining_tokens = max(0, capacity_total - used_tokens)
+            used_pct = min(100.0, (used_tokens / capacity_total) * 100.0)
+            summary["capacity_total"] = capacity_total
+            summary["capacity_used"] = used_tokens
+            summary["capacity_remaining"] = remaining_tokens
+            summary["capacity_used_pct"] = used_pct
 
         snapshot["summary"] = summary
         self._last_snapshot = snapshot
