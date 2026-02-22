@@ -343,6 +343,31 @@ class CcDumpApp(App):
             lambda: self.action_next_special("tool_use_list"),
         )
         yield SystemCommand(
+            "Next region tag",
+            "Jump to next tagged content region",
+            self.action_next_region_tag,
+        )
+        yield SystemCommand(
+            "Previous region tag",
+            "Jump to previous tagged content region",
+            self.action_prev_region_tag,
+        )
+        yield SystemCommand(
+            "Next thinking region",
+            "Jump to next <thinking> content region",
+            lambda: self.action_next_region_tag("thinking"),
+        )
+        yield SystemCommand(
+            "Next CLAUDE.md region",
+            "Jump to next region tagged from CLAUDE.md content",
+            lambda: self.action_next_region_tag("claude_md"),
+        )
+        yield SystemCommand(
+            "Next Bash region",
+            "Jump to next region tagged with bash",
+            lambda: self.action_next_region_tag("bash"),
+        )
+        yield SystemCommand(
             "Next theme", "Cycle to next theme (])", self.action_next_theme
         )
         yield SystemCommand(
@@ -1039,6 +1064,12 @@ class CcDumpApp(App):
 
     def action_prev_special(self, marker_key: str = "all"):
         _actions.prev_special(self, marker_key)
+
+    def action_next_region_tag(self, tag: str = "all"):
+        _actions.next_region_tag(self, tag)
+
+    def action_prev_region_tag(self, tag: str = "all"):
+        _actions.prev_region_tag(self, tag)
 
     def action_go_top(self):
         _actions.go_top(self)

@@ -7,6 +7,8 @@
 Hot-reloadable — imported as module object in app.py, all functions take app as param.
 """
 
+from dataclasses import dataclass
+
 import cc_dump.formatting
 import cc_dump.special_content
 import cc_dump.settings
@@ -285,6 +287,56 @@ def _special_nav_cursor_map(app) -> dict[str, int]:
     return cursor_map
 
 
+def _region_nav_cursor_map(app) -> dict[str, int]:
+    """Return mutable cursor map for region-tag navigation."""
+    cursor_map = app._app_state.get("region_nav_cursor")
+    if not isinstance(cursor_map, dict):
+        cursor_map = {}
+        app._app_state["region_nav_cursor"] = cursor_map
+    return cursor_map
+
+
+@dataclass(frozen=True)
+class _RegionTagLocation:
+    tag: str
+    turn_index: int
+    block_index: int
+    block: object
+
+
+def _iter_descendants_with_top_index(block, top_index: int):
+    """Yield (top_index, block) for a block tree in pre-order."""
+    yield top_index, block
+    for child in getattr(block, "children", []) or []:
+        yield from _iter_descendants_with_top_index(child, top_index)
+
+
+def _collect_region_tag_locations(turns: list, tag: str) -> list[_RegionTagLocation]:
+    """Collect region-tag locations in chronological render order.
+
+    // [LAW:one-source-of-truth] Region tags originate from ContentRegion.tags only.
+    """
+    locations: list[_RegionTagLocation] = []
+    for turn_index, turn in enumerate(turns):
+        if getattr(turn, "is_streaming", False):
+            continue
+        for block_index, top_block in enumerate(turn.blocks):
+            for top_idx, block in _iter_descendants_with_top_index(top_block, block_index):
+                for region in getattr(block, "content_regions", []) or []:
+                    for region_tag in region.tags:
+                        if tag != "all" and region_tag != tag:
+                            continue
+                        locations.append(
+                            _RegionTagLocation(
+                                tag=region_tag,
+                                turn_index=turn_index,
+                                block_index=top_idx,
+                                block=block,
+                            )
+                        )
+    return locations
+
+
 def _navigate_special(app, marker_key: str, direction: int) -> None:
     """Navigate to next/previous special request marker.
 
@@ -333,6 +385,48 @@ def next_special(app, marker_key: str = "all") -> None:
 
 def prev_special(app, marker_key: str = "all") -> None:
     _navigate_special(app, marker_key, -1)
+
+
+def _navigate_region_tag(app, tag: str, direction: int) -> None:
+    """Navigate to next/previous ContentRegion tag location."""
+    conv = app._get_conv()
+    if conv is None:
+        return
+
+    locations = _collect_region_tag_locations(conv._turns, tag=tag)
+    if not locations:
+        app.notify("No matching region tags")
+        return
+
+    cursor_map = _region_nav_cursor_map(app)
+    default_idx = -1 if direction > 0 else 0
+    idx = int(cursor_map.get(tag, default_idx))
+    idx = (idx + direction) % len(locations)
+    cursor_map[tag] = idx
+
+    loc = locations[idx]
+    location = cc_dump.tui.location_navigation.BlockLocation(
+        turn_index=loc.turn_index,
+        block_index=loc.block_index,
+        block=loc.block,
+    )
+    ok = cc_dump.tui.location_navigation.go_to_location(
+        conv,
+        location,
+        rerender=lambda: conv.rerender(app.active_filters),
+    )
+    if not ok:
+        app.notify("Region tag location unavailable")
+        return
+    app.notify(f"{loc.tag}: {idx + 1}/{len(locations)}")
+
+
+def next_region_tag(app, tag: str = "all") -> None:
+    _navigate_region_tag(app, tag, 1)
+
+
+def prev_region_tag(app, tag: str = "all") -> None:
+    _navigate_region_tag(app, tag, -1)
 
 
 def go_top(app) -> None:

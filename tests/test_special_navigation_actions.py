@@ -1,7 +1,7 @@
 """Tests for special-content navigation actions."""
 
 import cc_dump.tui.action_handlers as actions
-from cc_dump.formatting import ConfigContentBlock, ToolUseBlock
+from cc_dump.formatting import ConfigContentBlock, ToolUseBlock, TextContentBlock, populate_content_regions
 
 
 class _Turn:
@@ -91,3 +91,32 @@ def test_next_special_notifies_when_no_locations():
 
     assert conv.scroll_calls == []
     assert app.notifications[-1] == "No matching special sections"
+
+
+def test_next_region_tag_navigates_to_matching_region():
+    block = TextContentBlock(
+        content="Intro\n<thinking>\ninner\n</thinking>\nOutro",
+    )
+    populate_content_regions(block)
+    conv = _Conv([_Turn([block])])
+    app = _App(conv)
+
+    actions.next_region_tag(app, "thinking")
+
+    assert conv.ensure_calls == [0]
+    assert conv.scroll_calls == [(0, 0)]
+    assert conv.rerender_calls == 1
+    assert app._app_state["region_nav_cursor"]["thinking"] == 0
+    assert any("thinking" in msg for msg in app.notifications)
+
+
+def test_next_region_tag_notifies_when_no_matching_tags():
+    block = TextContentBlock(content="plain text")
+    populate_content_regions(block)
+    conv = _Conv([_Turn([block])])
+    app = _App(conv)
+
+    actions.next_region_tag(app, "thinking")
+
+    assert conv.scroll_calls == []
+    assert app.notifications[-1] == "No matching region tags"
