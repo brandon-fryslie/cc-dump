@@ -243,6 +243,14 @@ class FormattedBlock:
     agent_kind: str = ""  # "main" | "subagent" | "unknown"
     agent_label: str = ""
 
+    # Lazy segmentation cache populated by rendering pipeline.
+    # // [LAW:one-source-of-truth] Segment cache is a declared field, not monkey-patched.
+    _segment_result: cc_dump.segmentation.SegmentResult | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+
 
 @dataclass
 class SeparatorBlock(FormattedBlock):

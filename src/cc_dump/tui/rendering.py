@@ -712,8 +712,7 @@ def _render_tracked_content_full(
 
 def _get_or_segment(block):
     """Lazy segmentation, cached on the block object."""
-    if not hasattr(block, "_segment_result"):
-
+    if block._segment_result is None:
         block._segment_result = cc_dump.segmentation.segment(block.content)
     return block._segment_result
 
