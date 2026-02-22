@@ -77,6 +77,8 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         "full_stop": "cycle_panel",
         ",": "cycle_panel_mode",
         "comma": "cycle_panel_mode",
+        "tab": "cycle_panel_mode",
+        "shift+tab": "cycle_panel_mode",
         "f": "toggle_follow",
 
         # Info panel
@@ -144,7 +146,7 @@ FOOTER_KEYS: dict[InputMode, list[tuple[str, str]]] = {
         ("qwerty", "expand"),
         ("QWERTY", "detail"),
         (".", "panel"),
-        (",", "mode"),
+        ("tab/,", "mode"),
         ("f", "follow"),
         ("[]", "theme"),
         ("i", "info"),
@@ -187,7 +189,7 @@ KEY_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("Panels", [
         (".", "Cycle panel"),
-        (",", "Panel mode"),
+        ("tab/,", "Panel mode"),
         ("f", "Follow mode"),
         ("^L", "Debug logs"),
         ("i", "Server info"),

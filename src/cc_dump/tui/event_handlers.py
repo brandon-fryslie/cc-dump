@@ -179,7 +179,7 @@ def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool =
         if budget_vis.visible:
             conv.rerender(filters)
 
-    for cb_name in ("refresh_economics", "refresh_timeline", "refresh_session"):
+    for cb_name in ("refresh_session",):
         cb = refresh_callbacks.get(cb_name)
         if cb:
             cb()

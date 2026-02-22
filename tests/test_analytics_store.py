@@ -280,6 +280,84 @@ def test_get_latest_turn_stats_with_data():
     assert latest["output_tokens"] == 75
 
 
+# ─── Unified Analytics Dashboard Snapshot Tests ───────────────────────────────
+
+
+def test_get_dashboard_snapshot_empty():
+    """Empty store yields zeroed summary and no timeline/model rows."""
+    store = AnalyticsStore()
+    snapshot = store.get_dashboard_snapshot()
+
+    summary = snapshot["summary"]
+    assert summary["turn_count"] == 0
+    assert summary["input_tokens"] == 0
+    assert summary["output_tokens"] == 0
+    assert summary["cache_read_tokens"] == 0
+    assert summary["cache_creation_tokens"] == 0
+    assert summary["total_tokens"] == 0
+    assert summary["cost_usd"] == 0.0
+    assert snapshot["timeline"] == []
+    assert snapshot["models"] == []
+
+
+def test_get_dashboard_snapshot_aggregates_real_usage_fields():
+    """Snapshot aggregates summary/timeline/models from canonical turn usage fields."""
+    store = setup_test_store()
+    snapshot = store.get_dashboard_snapshot()
+
+    summary = snapshot["summary"]
+    # setup_test_store totals:
+    # input=1500, output=700, cache_read=3000, cache_creation=0
+    assert summary["turn_count"] == 2
+    assert summary["input_tokens"] == 1500
+    assert summary["output_tokens"] == 700
+    assert summary["cache_read_tokens"] == 3000
+    assert summary["cache_creation_tokens"] == 0
+    assert summary["input_total"] == 4500
+    assert summary["total_tokens"] == 5200
+    assert summary["cache_pct"] == pytest.approx(66.666, abs=0.1)
+
+    timeline = snapshot["timeline"]
+    assert len(timeline) == 2
+    assert timeline[0]["sequence_num"] == 1
+    assert timeline[0]["delta_input"] == 0
+    # Turn 2 input_total = 1500, turn 1 input_total = 3000 -> delta -1500
+    assert timeline[1]["delta_input"] == -1500
+
+    models = snapshot["models"]
+    assert len(models) == 2
+    labels = {row["model_label"] for row in models}
+    assert "Sonnet 4" in labels
+    assert "Haiku 4" in labels
+    assert all(row["turns"] == 1 for row in models)
+
+
+def test_get_dashboard_snapshot_merges_current_turn():
+    """In-progress current_turn is merged as synthetic tail row."""
+    store = setup_test_store()
+    snapshot = store.get_dashboard_snapshot(
+        current_turn={
+            "model": "claude-sonnet-4",
+            "input_tokens": 200,
+            "output_tokens": 100,
+            "cache_read_tokens": 300,
+            "cache_creation_tokens": 10,
+        }
+    )
+
+    summary = snapshot["summary"]
+    assert summary["turn_count"] == 3
+    assert summary["input_tokens"] == 1700
+    assert summary["output_tokens"] == 800
+    assert summary["cache_read_tokens"] == 3300
+    assert summary["cache_creation_tokens"] == 10
+
+    tail = snapshot["timeline"][-1]
+    assert tail["sequence_num"] == 3
+    assert tail["model"] == "claude-sonnet-4"
+    assert tail["input_total"] == 500
+
+
 # ─── Tool Economics Query Tests ────────────────────────────────────────────────
 
 

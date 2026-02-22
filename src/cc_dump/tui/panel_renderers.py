@@ -8,9 +8,139 @@ import cc_dump.analysis
 import cc_dump.palette
 import cc_dump.tui.input_modes
 from rich.text import Text
+from collections.abc import Callable
 
 # [LAW:one-source-of-truth] Shared compact token formatter lives in analysis.py.
 _fmt_tokens = cc_dump.analysis.fmt_tokens
+
+
+def _dashboard_tabs(active: str) -> str:
+    tabs = ["summary", "timeline", "models"]
+    labels = []
+    for tab in tabs:
+        labels.append(tab.upper() if tab == active else tab)
+    return "Analytics: {}  (Tab/, cycle)".format(" | ".join(labels))
+
+
+def render_analytics_summary(snapshot: dict) -> str:
+    """Render dashboard summary view from canonical snapshot data."""
+    summary = snapshot.get("summary", {})
+    turn_count = int(summary.get("turn_count", 0))
+    if turn_count == 0:
+        return _dashboard_tabs("summary") + "\nSummary: (no turns yet)"
+
+    input_tokens = int(summary.get("input_tokens", 0))
+    output_tokens = int(summary.get("output_tokens", 0))
+    cache_read_tokens = int(summary.get("cache_read_tokens", 0))
+    cache_creation_tokens = int(summary.get("cache_creation_tokens", 0))
+    input_total = int(summary.get("input_total", 0))
+    total_tokens = int(summary.get("total_tokens", 0))
+    cache_pct = float(summary.get("cache_pct", 0.0))
+    cost_usd = float(summary.get("cost_usd", 0.0))
+    fresh_tokens = input_tokens
+
+    lines = [
+        _dashboard_tabs("summary"),
+        "Summary:",
+        "  Turns: {}  Total: {}  Cost: ${:.4f}".format(
+            turn_count, _fmt_tokens(total_tokens), cost_usd
+        ),
+        "  Input: {} fresh + {} cached = {}  |  Output: {}".format(
+            _fmt_tokens(fresh_tokens),
+            _fmt_tokens(cache_read_tokens),
+            _fmt_tokens(input_total),
+            _fmt_tokens(output_tokens),
+        ),
+        "  Cache: {:.0f}% hit  |  Cache writes: {}".format(
+            cache_pct, _fmt_tokens(cache_creation_tokens)
+        ),
+    ]
+    return "\n".join(lines)
+
+
+def render_analytics_timeline(snapshot: dict, max_rows: int = 12) -> str:
+    """Render dashboard timeline view from canonical snapshot data."""
+    rows = snapshot.get("timeline", [])
+    if not rows:
+        return _dashboard_tabs("timeline") + "\nTimeline: (no turns yet)"
+
+    tail = rows[-max_rows:]
+    lines = [
+        _dashboard_tabs("timeline"),
+        "Timeline:",
+        "  {:>4}  {:<11}  {:>7}  {:>7}  {:>6}  {:>7}".format(
+            "Turn",
+            "Model",
+            "In",
+            "Out",
+            "Cache%",
+            "\u0394In",
+        ),
+    ]
+    for row in tail:
+        delta_input = int(row.get("delta_input", 0))
+        delta_str = (
+            ("+" if delta_input >= 0 else "") + _fmt_tokens(delta_input)
+            if delta_input != 0
+            else "--"
+        )
+        lines.append(
+            "  {:>4}  {:<11}  {:>7}  {:>7}  {:>6}  {:>7}".format(
+                int(row.get("sequence_num", 0)),
+                cc_dump.analysis.format_model_ultra_short(str(row.get("model", "")))[:11],
+                _fmt_tokens(int(row.get("input_total", 0))),
+                _fmt_tokens(int(row.get("output_tokens", 0))),
+                "{:.0f}%".format(float(row.get("cache_pct", 0.0))),
+                delta_str,
+            )
+        )
+    return "\n".join(lines)
+
+
+def render_analytics_models(snapshot: dict) -> str:
+    """Render dashboard model breakdown view from canonical snapshot data."""
+    rows = snapshot.get("models", [])
+    if not rows:
+        return _dashboard_tabs("models") + "\nModels: (no turns yet)"
+
+    lines = [
+        _dashboard_tabs("models"),
+        "Models:",
+        "  {:<13} {:>5}  {:>8}  {:>8}  {:>6}  {:>9}".format(
+            "Model",
+            "Turns",
+            "Input",
+            "Output",
+            "Cache%",
+            "Cost",
+        ),
+    ]
+    for row in rows:
+        lines.append(
+            "  {:<13} {:>5}  {:>8}  {:>8}  {:>6}  {:>9}".format(
+                str(row.get("model_label", "Unknown"))[:13],
+                int(row.get("turns", 0)),
+                _fmt_tokens(int(row.get("input_total", 0))),
+                _fmt_tokens(int(row.get("output_tokens", 0))),
+                "{:.0f}%".format(float(row.get("cache_pct", 0.0))),
+                "${:.3f}".format(float(row.get("cost_usd", 0.0))),
+            )
+        )
+    return "\n".join(lines)
+
+
+# [LAW:dataflow-not-control-flow] Mode-to-renderer dispatch for unified analytics dashboard.
+_ANALYTICS_VIEW_RENDERERS = {
+    "summary": render_analytics_summary,
+    "timeline": render_analytics_timeline,
+    "models": render_analytics_models,
+}  # type: dict[str, Callable[[dict], str]]
+
+
+def render_analytics_panel(snapshot: dict, view_mode: str) -> str:
+    """Render unified analytics dashboard by view mode."""
+    renderer = _ANALYTICS_VIEW_RENDERERS.get(view_mode, render_analytics_summary)
+    return renderer(snapshot)
 
 
 def render_stats_panel(

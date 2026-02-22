@@ -48,28 +48,31 @@ async def test_follow_mode_toggle():
 
 
 async def test_panel_mode_cycling_comma():
-    """Press ',' cycles intra-panel mode on the active panel."""
+    """Press ',' and Tab cycles analytics dashboard views on the active panel."""
     async with run_app() as (pilot, app):
-        # Cycle to economics panel (has breakdown mode)
+        # Cycle to stats/analytics panel (has summary/timeline/models modes)
         from cc_dump.tui.panel_registry import PANEL_ORDER
 
-        econ_idx = PANEL_ORDER.index("economics")
-        for _ in range(econ_idx):
+        stats_idx = PANEL_ORDER.index("stats")
+        for _ in range(stats_idx):
             await press_and_settle(pilot, ".")
-        assert is_panel_visible(app, "economics")
+        assert is_panel_visible(app, "stats")
 
-        # Get economics widget and check initial mode
-        economics = app._get_economics()
-        assert economics is not None
-        assert economics._breakdown_mode is False
+        stats = app._get_stats()
+        assert stats is not None
+        assert stats._view_index == 0
 
-        # Press comma to toggle breakdown mode
+        # Comma advances mode
         await press_and_settle(pilot, ",")
-        assert economics._breakdown_mode is True
+        assert stats._view_index == 1
 
-        # Press comma again to toggle back
+        # Tab also advances mode
+        await press_and_settle(pilot, "tab")
+        assert stats._view_index == 2
+
+        # Wraps back to first mode
         await press_and_settle(pilot, ",")
-        assert economics._breakdown_mode is False
+        assert stats._view_index == 0
 
 
 async def test_panels_initial_state():

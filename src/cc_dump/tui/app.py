@@ -271,7 +271,7 @@ class CcDumpApp(App):
             "Keys", "Show keyboard shortcuts", self.action_toggle_keys
         )
         yield SystemCommand(
-            "Cycle panel", "Cycle stats/economics/timeline", self.action_cycle_panel
+            "Cycle panel", "Cycle session/analytics", self.action_cycle_panel
         )
         yield SystemCommand("Toggle logs", "Debug logs", self.action_toggle_logs)
         yield SystemCommand("Toggle info", "Server info panel", self.action_toggle_info)
@@ -571,8 +571,6 @@ class CcDumpApp(App):
             "view_store": self._view_store,
             "domain_store": self._domain_store,
             "refresh_callbacks": {
-                "refresh_economics": self._refresh_economics,
-                "refresh_timeline": self._refresh_timeline,
                 "refresh_session": self._refresh_session,
             },
             "analytics_store": self._analytics_store,

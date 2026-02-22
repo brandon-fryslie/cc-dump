@@ -12,6 +12,7 @@ import json
 import sys
 import traceback
 from dataclasses import dataclass, field
+from typing import TypedDict
 
 from cc_dump.event_types import (
     PipelineEvent,
@@ -22,6 +23,8 @@ from cc_dump.event_types import (
 from cc_dump.analysis import (
     correlate_tools,
     classify_model,
+    compute_session_cost,
+    format_model_short,
     HAIKU_BASE_UNIT,
     ToolEconomicsRow,
 )
@@ -52,6 +55,47 @@ class TurnRecord:
     cache_creation_tokens: int
     request_json: str  # For timeline budget calculation
     tool_invocations: list[ToolInvocationRecord] = field(default_factory=list)
+
+
+class DashboardTurnRow(TypedDict):
+    sequence_num: int
+    model: str
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_creation_tokens: int
+
+
+class DashboardTimelineRow(DashboardTurnRow):
+    input_total: int
+    cache_pct: float
+    delta_input: int
+
+
+class DashboardModelRow(TypedDict):
+    model: str
+    model_label: str
+    turns: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_creation_tokens: int
+    cost_usd: float
+    input_total: int
+    total_tokens: int
+    cache_pct: float
+
+
+class DashboardSummary(TypedDict):
+    turn_count: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_creation_tokens: int
+    cost_usd: float
+    input_total: int
+    total_tokens: int
+    cache_pct: float
 
 
 class AnalyticsStore:
@@ -212,11 +256,12 @@ class AnalyticsStore:
 
         Returns:
             List of dicts with keys: sequence_num, input_tokens, output_tokens,
-            cache_read_tokens, cache_creation_tokens, request_json
+            cache_read_tokens, cache_creation_tokens, request_json, model
         """
         return [
             {
                 "sequence_num": t.sequence_num,
+                "model": t.model,
                 "input_tokens": t.input_tokens,
                 "output_tokens": t.output_tokens,
                 "cache_read_tokens": t.cache_read_tokens,
@@ -225,6 +270,147 @@ class AnalyticsStore:
             }
             for t in self._turns
         ]
+
+    def get_dashboard_snapshot(self, current_turn: dict | None = None) -> dict[str, object]:
+        """Build canonical analytics dashboard data from real API usage fields only.
+
+        // [LAW:one-source-of-truth] Dashboard derives from TurnRecord token fields only.
+        """
+        base_rows: list[DashboardTurnRow] = [
+            {
+                "sequence_num": t.sequence_num,
+                "model": t.model or "",
+                "input_tokens": t.input_tokens,
+                "output_tokens": t.output_tokens,
+                "cache_read_tokens": t.cache_read_tokens,
+                "cache_creation_tokens": t.cache_creation_tokens,
+            }
+            for t in self._turns
+        ]
+
+        pending = current_turn if isinstance(current_turn, dict) else {}
+        pending_row: DashboardTurnRow = {
+            "sequence_num": len(base_rows) + 1,
+            "model": str(pending.get("model", "") or ""),
+            "input_tokens": int(pending.get("input_tokens", 0) or 0),
+            "output_tokens": int(pending.get("output_tokens", 0) or 0),
+            "cache_read_tokens": int(pending.get("cache_read_tokens", 0) or 0),
+            "cache_creation_tokens": int(pending.get("cache_creation_tokens", 0) or 0),
+        }
+        include_pending = (
+            pending_row["input_tokens"] > 0
+            or pending_row["output_tokens"] > 0
+            or pending_row["cache_read_tokens"] > 0
+            or pending_row["cache_creation_tokens"] > 0
+        )
+        rows: list[DashboardTurnRow] = base_rows + ([pending_row] if include_pending else [])
+
+        timeline_rows: list[DashboardTimelineRow] = []
+        prev_input_total = 0
+        for row in rows:
+            input_total = row["input_tokens"] + row["cache_read_tokens"]
+            cache_pct = (
+                (100.0 * row["cache_read_tokens"] / input_total)
+                if input_total > 0
+                else 0.0
+            )
+            delta_input = input_total - prev_input_total if prev_input_total > 0 else 0
+            prev_input_total = input_total
+            timeline_rows.append(
+                {
+                    "sequence_num": row["sequence_num"],
+                    "model": row["model"],
+                    "input_tokens": row["input_tokens"],
+                    "output_tokens": row["output_tokens"],
+                    "cache_read_tokens": row["cache_read_tokens"],
+                    "cache_creation_tokens": row["cache_creation_tokens"],
+                    "input_total": input_total,
+                    "cache_pct": cache_pct,
+                    "delta_input": delta_input,
+                }
+            )
+
+        model_agg: dict[str, DashboardModelRow] = {}
+        for row in rows:
+            model = row["model"]
+            if model not in model_agg:
+                model_agg[model] = {
+                    "model": model,
+                    "model_label": format_model_short(model),
+                    "turns": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "cache_creation_tokens": 0,
+                    "cost_usd": 0.0,
+                    "input_total": 0,
+                    "total_tokens": 0,
+                    "cache_pct": 0.0,
+                }
+            agg = model_agg[model]
+            agg["turns"] += 1
+            agg["input_tokens"] += row["input_tokens"]
+            agg["output_tokens"] += row["output_tokens"]
+            agg["cache_read_tokens"] += row["cache_read_tokens"]
+            agg["cache_creation_tokens"] += row["cache_creation_tokens"]
+            agg["cost_usd"] += compute_session_cost(
+                row["input_tokens"],
+                row["output_tokens"],
+                row["cache_read_tokens"],
+                row["cache_creation_tokens"],
+                model,
+            )
+
+        model_rows: list[DashboardModelRow] = []
+        for model, agg in model_agg.items():
+            input_total = agg["input_tokens"] + agg["cache_read_tokens"]
+            total_tokens = input_total + agg["output_tokens"]
+            cache_pct = (
+                (100.0 * agg["cache_read_tokens"] / input_total)
+                if input_total > 0
+                else 0.0
+            )
+            model_rows.append(
+                {
+                    "model": model,
+                    "model_label": format_model_short(model),
+                    "turns": agg["turns"],
+                    "input_tokens": agg["input_tokens"],
+                    "output_tokens": agg["output_tokens"],
+                    "cache_read_tokens": agg["cache_read_tokens"],
+                    "cache_creation_tokens": agg["cache_creation_tokens"],
+                    "cost_usd": agg["cost_usd"],
+                    "input_total": input_total,
+                    "total_tokens": total_tokens,
+                    "cache_pct": cache_pct,
+                }
+            )
+        model_rows.sort(key=lambda row: (-row["total_tokens"], row["model_label"]))
+
+        summary: DashboardSummary = {
+            "turn_count": len(rows),
+            "input_tokens": sum(row["input_tokens"] for row in rows),
+            "output_tokens": sum(row["output_tokens"] for row in rows),
+            "cache_read_tokens": sum(row["cache_read_tokens"] for row in rows),
+            "cache_creation_tokens": sum(row["cache_creation_tokens"] for row in rows),
+            "cost_usd": sum(row["cost_usd"] for row in model_rows),
+            "input_total": 0,
+            "total_tokens": 0,
+            "cache_pct": 0.0,
+        }
+        summary["input_total"] = summary["input_tokens"] + summary["cache_read_tokens"]
+        summary["total_tokens"] = summary["input_total"] + summary["output_tokens"]
+        summary["cache_pct"] = (
+            (100.0 * summary["cache_read_tokens"] / summary["input_total"])
+            if summary["input_total"] > 0
+            else 0.0
+        )
+
+        return {
+            "summary": summary,
+            "timeline": timeline_rows,
+            "models": model_rows,
+        }
 
     def get_tool_economics(self, group_by_model: bool = False) -> list[ToolEconomicsRow]:
         """Query per-tool economics with real token counts and cache attribution.

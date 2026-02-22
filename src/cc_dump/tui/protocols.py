@@ -70,7 +70,7 @@ class CyclingPanel(Protocol):
     """Protocol for cycling panels that refresh from the analytics store.
 
     Extends HotSwappableWidget with refresh_from_store() and cycle_mode().
-    All cycling panels (stats, economics, timeline, session) implement this shape.
+    All cycling panels (session, stats/analytics) implement this shape.
     """
 
     def refresh_from_store(self, store, **kwargs) -> None:

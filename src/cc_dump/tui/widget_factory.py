@@ -1793,14 +1793,17 @@ class ConversationView(ScrollView):
 
 
 class StatsPanel(Static):
-    """Live statistics display showing request counts, tokens, and models.
+    """Unified analytics dashboard (summary/timeline/models).
 
-    Queries database as single source of truth for token counts.
-    Only tracks request_count and models_seen in memory (not in DB).
+    // [LAW:one-source-of-truth] All displayed metrics come from AnalyticsStore snapshot data.
     """
+
+    _VIEW_ORDER = ("summary", "timeline", "models")
 
     def __init__(self):
         super().__init__("")
+        self._view_index = 0
+        self._last_snapshot: dict = {"summary": {}, "timeline": [], "models": []}
         self.request_count = 0
         self.models_seen: set = set()
 
@@ -1815,129 +1818,53 @@ class StatsPanel(Static):
         if "model" in kwargs and kwargs["model"]:
             self.models_seen.add(kwargs["model"])
 
-        # No longer accumulating token counts here - they come from analytics store
+        # Request/model tracking is retained for compatibility with existing handlers/tests.
 
     def refresh_from_store(self, store, current_turn: dict = None):
-        """Refresh token counts from analytics store.
+        """Refresh dashboard data from analytics store.
 
         Args:
             store: AnalyticsStore instance
             current_turn: Optional dict with in-progress turn data to merge for real-time display
-                         Expected keys: input_tokens, output_tokens, cache_read_tokens,
-                         cache_creation_tokens, model
+                          Expected keys: input_tokens, output_tokens, cache_read_tokens,
+                          cache_creation_tokens, model
         """
         if store is None:
-            # No store - show only in-memory fields with defaults
-            self._refresh_display(
-                turn_count=self.request_count,
-                context_total=0,
-                context_window=200_000,
-                cache_pct=0.0,
-                output_total=0,
-                cost_estimate=0.0,
-                model_str="unknown",
-            )
+            self._last_snapshot = {"summary": {}, "timeline": [], "models": []}
+            self._refresh_display()
             return
 
-        # Query session cumulative stats
-        session_stats = store.get_session_stats(current_turn)
+        self._last_snapshot = store.get_dashboard_snapshot(current_turn=current_turn)
+        self._refresh_display()
 
-        # Query latest turn stats (for context window usage)
-        latest_turn = store.get_latest_turn_stats()
-
-        # If we have a current_turn (streaming), merge it for latest turn values
-        if current_turn:
-            # During streaming, current_turn represents the latest (incomplete) turn
-            latest_input = current_turn.get("input_tokens", 0)
-            latest_cache_read = current_turn.get("cache_read_tokens", 0)
-            latest_cache_creation = current_turn.get("cache_creation_tokens", 0)
-            latest_model = current_turn.get("model", "unknown")
-        elif latest_turn:
-            # Use completed latest turn from store
-            latest_input = latest_turn["input_tokens"]
-            latest_cache_read = latest_turn["cache_read_tokens"]
-            latest_cache_creation = latest_turn["cache_creation_tokens"]
-            latest_model = latest_turn["model"] or "unknown"
-        else:
-            # No turns yet
-            latest_input = 0
-            latest_cache_read = 0
-            latest_cache_creation = 0
-            latest_model = "unknown"
-
-        # Compute derived values
-        context_total = latest_input + latest_cache_read + latest_cache_creation
-        context_window = cc_dump.analysis.get_context_window(latest_model)
-
-        # Cache hit percentage for latest turn
-        total_input_latest = latest_input + latest_cache_read
-        cache_pct = (100.0 * latest_cache_read / total_input_latest) if total_input_latest > 0 else 0.0
-
-        # Cumulative output across session
-        output_total = session_stats["output_tokens"]
-
-        # Cost estimate using session cumulative stats
-        # For cost, we need a representative model - use latest turn's model
-        cost_estimate = cc_dump.analysis.compute_session_cost(
-            session_stats["input_tokens"],
-            session_stats["output_tokens"],
-            session_stats["cache_read_tokens"],
-            session_stats["cache_creation_tokens"],
-            latest_model,
-        )
-
-        # Model display name
-        model_display = cc_dump.analysis.format_model_ultra_short(latest_model)
-
-        self._refresh_display(
-            turn_count=self.request_count,
-            context_total=context_total,
-            context_window=context_window,
-            cache_pct=cache_pct,
-            output_total=output_total,
-            cost_estimate=cost_estimate,
-            model_str=model_display,
-        )
-
-    def _refresh_display(
-        self,
-        turn_count: int,
-        context_total: int,
-        context_window: int,
-        cache_pct: float,
-        output_total: int,
-        cost_estimate: float,
-        model_str: str,
-    ):
+    def _refresh_display(self):
         """Rebuild the display text."""
-        rich_text = cc_dump.tui.panel_renderers.render_stats_panel(
-            turn_count,
-            context_total,
-            context_window,
-            cache_pct,
-            output_total,
-            cost_estimate,
-            model_str,
+        view_mode = self._VIEW_ORDER[self._view_index]
+        text = cc_dump.tui.panel_renderers.render_analytics_panel(
+            self._last_snapshot,
+            view_mode,
         )
-        self.update(rich_text)
+        self.update(text)
 
     def cycle_mode(self):
-        """No-op — StatsPanel has no sub-modes."""
+        """Cycle dashboard view mode."""
+        self._view_index = (self._view_index + 1) % len(self._VIEW_ORDER)
+        self._refresh_display()
 
     def get_state(self) -> dict:
         """Extract state for transfer to a new instance."""
         return {
             "request_count": self.request_count,
             "models_seen": set(self.models_seen),
+            "view_index": self._view_index,
         }
 
     def restore_state(self, state: dict):
         """Restore state from a previous instance."""
         self.request_count = state.get("request_count", 0)
         self.models_seen = state.get("models_seen", set())
-        # Note: Display refresh will happen when refresh_from_store() is called
-        # after the widget is mounted in the app. Don't call _refresh_display()
-        # here as it requires an app context for Rich Text rendering.
+        self._view_index = int(state.get("view_index", 0)) % len(self._VIEW_ORDER)
+        self._refresh_display()
 
 
 class ToolEconomicsPanel(Static):

@@ -37,9 +37,11 @@ SearchBar {
 }
 
 StatsPanel {
-    height: 1;
+    height: auto;
+    max-height: 12;
     dock: top;
     padding: 0 1;
+    border: solid $accent;
 }
 
 SessionPanel {
@@ -47,4 +49,3 @@ SessionPanel {
     dock: top;
     padding: 0 1;
 }
-
