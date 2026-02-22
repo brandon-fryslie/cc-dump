@@ -20,6 +20,9 @@ def _snapshot() -> dict:
             "total_tokens": 5800,
             "cache_pct": 66.0,
             "cost_usd": 0.1234,
+            "cache_savings_usd": 0.0456,
+            "active_model_count": 2,
+            "latest_model_label": "Sonnet 4",
         },
         "timeline": [
             {
@@ -46,6 +49,7 @@ def _snapshot() -> dict:
                 "input_total": 3200,
                 "output_tokens": 500,
                 "cache_pct": 62.0,
+                "token_share_pct": 64.0,
                 "cost_usd": 0.091,
             },
             {
@@ -54,6 +58,7 @@ def _snapshot() -> dict:
                 "input_total": 1800,
                 "output_tokens": 300,
                 "cache_pct": 72.0,
+                "token_share_pct": 36.0,
                 "cost_usd": 0.032,
             },
         ],
@@ -66,11 +71,14 @@ def test_render_analytics_summary():
     assert "SUMMARY" in text
     assert "Turns: 3" in text
     assert "Cache: 66%" in text
+    assert "Savings: $0.0456" in text
+    assert "Models: 2 active" in text
 
 
 def test_render_analytics_timeline():
     text = render_analytics_timeline(_snapshot())
     assert "TIMELINE" in text
+    assert "Trend In:" in text
     assert "Turn" in text
     assert "+200" in text
 
@@ -79,6 +87,7 @@ def test_render_analytics_models():
     text = render_analytics_models(_snapshot())
     assert "MODELS" in text
     assert "Sonnet 4" in text
+    assert "64%" in text
     assert "$0.091" in text
 
 

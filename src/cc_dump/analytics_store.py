@@ -84,6 +84,7 @@ class DashboardModelRow(TypedDict):
     input_total: int
     total_tokens: int
     cache_pct: float
+    token_share_pct: float
 
 
 class DashboardSummary(TypedDict):
@@ -96,6 +97,9 @@ class DashboardSummary(TypedDict):
     input_total: int
     total_tokens: int
     cache_pct: float
+    cache_savings_usd: float
+    active_model_count: int
+    latest_model_label: str
 
 
 class AnalyticsStore:
@@ -346,6 +350,7 @@ class AnalyticsStore:
                     "input_total": 0,
                     "total_tokens": 0,
                     "cache_pct": 0.0,
+                    "token_share_pct": 0.0,
                 }
             agg = model_agg[model]
             agg["turns"] += 1
@@ -383,9 +388,18 @@ class AnalyticsStore:
                     "input_total": input_total,
                     "total_tokens": total_tokens,
                     "cache_pct": cache_pct,
+                    "token_share_pct": 0.0,
                 }
             )
-        model_rows.sort(key=lambda row: (-row["total_tokens"], row["model_label"]))
+        model_rows.sort(key=lambda mrow: (-mrow["total_tokens"], mrow["model_label"]))
+
+        summary_total_tokens = sum(mrow["total_tokens"] for mrow in model_rows)
+        for mrow in model_rows:
+            mrow["token_share_pct"] = (
+                (100.0 * mrow["total_tokens"] / summary_total_tokens)
+                if summary_total_tokens > 0
+                else 0.0
+            )
 
         summary: DashboardSummary = {
             "turn_count": len(rows),
@@ -393,10 +407,13 @@ class AnalyticsStore:
             "output_tokens": sum(row["output_tokens"] for row in rows),
             "cache_read_tokens": sum(row["cache_read_tokens"] for row in rows),
             "cache_creation_tokens": sum(row["cache_creation_tokens"] for row in rows),
-            "cost_usd": sum(row["cost_usd"] for row in model_rows),
+            "cost_usd": sum(mrow["cost_usd"] for mrow in model_rows),
             "input_total": 0,
             "total_tokens": 0,
             "cache_pct": 0.0,
+            "cache_savings_usd": 0.0,
+            "active_model_count": len(model_rows),
+            "latest_model_label": format_model_short(rows[-1]["model"]) if rows else "Unknown",
         }
         summary["input_total"] = summary["input_tokens"] + summary["cache_read_tokens"]
         summary["total_tokens"] = summary["input_total"] + summary["output_tokens"]
@@ -405,6 +422,13 @@ class AnalyticsStore:
             if summary["input_total"] > 0
             else 0.0
         )
+        cache_savings = 0.0
+        for row in rows:
+            _, pricing = classify_model(row["model"])
+            cache_savings += (
+                row["cache_read_tokens"] * (pricing.base_input - pricing.cache_hit) / 1_000_000
+            )
+        summary["cache_savings_usd"] = cache_savings
 
         return {
             "summary": summary,

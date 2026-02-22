@@ -296,6 +296,8 @@ def test_get_dashboard_snapshot_empty():
     assert summary["cache_creation_tokens"] == 0
     assert summary["total_tokens"] == 0
     assert summary["cost_usd"] == 0.0
+    assert summary["cache_savings_usd"] == 0.0
+    assert summary["active_model_count"] == 0
     assert snapshot["timeline"] == []
     assert snapshot["models"] == []
 
@@ -316,6 +318,9 @@ def test_get_dashboard_snapshot_aggregates_real_usage_fields():
     assert summary["input_total"] == 4500
     assert summary["total_tokens"] == 5200
     assert summary["cache_pct"] == pytest.approx(66.666, abs=0.1)
+    assert summary["cache_savings_usd"] > 0.0
+    assert summary["active_model_count"] == 2
+    assert summary["latest_model_label"] == "Haiku 4"
 
     timeline = snapshot["timeline"]
     assert len(timeline) == 2
@@ -330,6 +335,7 @@ def test_get_dashboard_snapshot_aggregates_real_usage_fields():
     assert "Sonnet 4" in labels
     assert "Haiku 4" in labels
     assert all(row["turns"] == 1 for row in models)
+    assert pytest.approx(sum(row["token_share_pct"] for row in models), abs=0.01) == 100.0
 
 
 def test_get_dashboard_snapshot_merges_current_turn():

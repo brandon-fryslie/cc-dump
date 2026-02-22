@@ -37,6 +37,9 @@ def render_analytics_summary(snapshot: dict) -> str:
     total_tokens = int(summary.get("total_tokens", 0))
     cache_pct = float(summary.get("cache_pct", 0.0))
     cost_usd = float(summary.get("cost_usd", 0.0))
+    cache_savings_usd = float(summary.get("cache_savings_usd", 0.0))
+    active_model_count = int(summary.get("active_model_count", 0))
+    latest_model_label = str(summary.get("latest_model_label", "Unknown"))
     fresh_tokens = input_tokens
 
     lines = [
@@ -51,11 +54,26 @@ def render_analytics_summary(snapshot: dict) -> str:
             _fmt_tokens(input_total),
             _fmt_tokens(output_tokens),
         ),
-        "  Cache: {:.0f}% hit  |  Cache writes: {}".format(
-            cache_pct, _fmt_tokens(cache_creation_tokens)
+        "  Cache: {:.0f}% hit  |  Writes: {}  |  Savings: ${:.4f}".format(
+            cache_pct, _fmt_tokens(cache_creation_tokens), cache_savings_usd
+        ),
+        "  Models: {} active  |  Latest: {}".format(
+            active_model_count,
+            latest_model_label,
         ),
     ]
     return "\n".join(lines)
+
+
+def _sparkline(values: list[int]) -> str:
+    if not values:
+        return ""
+    glyphs = "▁▂▃▄▅▆▇█"
+    high = max(values)
+    if high <= 0:
+        return glyphs[0] * len(values)
+    # [LAW:dataflow-not-control-flow] Each sample always maps through the same transform.
+    return "".join(glyphs[min((value * (len(glyphs) - 1)) // high, len(glyphs) - 1)] for value in values)
 
 
 def render_analytics_timeline(snapshot: dict, max_rows: int = 12) -> str:
@@ -65,9 +83,11 @@ def render_analytics_timeline(snapshot: dict, max_rows: int = 12) -> str:
         return _dashboard_tabs("timeline") + "\nTimeline: (no turns yet)"
 
     tail = rows[-max_rows:]
+    trend = _sparkline([int(row.get("input_total", 0)) for row in tail])
     lines = [
         _dashboard_tabs("timeline"),
         "Timeline:",
+        f"  Trend In: {trend}",
         "  {:>4}  {:<11}  {:>7}  {:>7}  {:>6}  {:>7}".format(
             "Turn",
             "Model",
@@ -106,23 +126,25 @@ def render_analytics_models(snapshot: dict) -> str:
     lines = [
         _dashboard_tabs("models"),
         "Models:",
-        "  {:<13} {:>5}  {:>8}  {:>8}  {:>6}  {:>9}".format(
+        "  {:<13} {:>5}  {:>8}  {:>8}  {:>6}  {:>6}  {:>9}".format(
             "Model",
             "Turns",
             "Input",
             "Output",
             "Cache%",
+            "Share",
             "Cost",
         ),
     ]
     for row in rows:
         lines.append(
-            "  {:<13} {:>5}  {:>8}  {:>8}  {:>6}  {:>9}".format(
+            "  {:<13} {:>5}  {:>8}  {:>8}  {:>6}  {:>6}  {:>9}".format(
                 str(row.get("model_label", "Unknown"))[:13],
                 int(row.get("turns", 0)),
                 _fmt_tokens(int(row.get("input_total", 0))),
                 _fmt_tokens(int(row.get("output_tokens", 0))),
                 "{:.0f}%".format(float(row.get("cache_pct", 0.0))),
+                "{:.0f}%".format(float(row.get("token_share_pct", 0.0))),
                 "${:.3f}".format(float(row.get("cost_usd", 0.0))),
             )
         )
