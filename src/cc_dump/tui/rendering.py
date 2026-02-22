@@ -55,6 +55,7 @@ from cc_dump.formatting import (
 )
 
 import cc_dump.palette
+import cc_dump.special_content
 
 import re
 import os
@@ -1044,6 +1045,15 @@ def _tool_result_header(block: ToolResultBlock, color: str) -> Text:
     return t
 
 
+def _append_special_marker_badges(t: Text, block: FormattedBlock) -> None:
+    """Append compact special-content badges for renderer highlighting.
+
+    // [LAW:one-source-of-truth] Marker classification lives in special_content.
+    """
+    for marker in cc_dump.special_content.display_markers_for_block(block):
+        t.append(f" [{marker.label}]", style="bold dim")
+
+
 # ─── ToolUseBlock renderers ────────────────────────────────────────────────────
 
 
@@ -1057,6 +1067,7 @@ def _render_tool_use_oneliner(block: ToolUseBlock) -> Text | None:
     t.append("[Use: {}]".format(block.name), style="bold {}".format(color))
     if block.detail:
         t.append(" {}".format(block.detail), style="dim")
+    _append_special_marker_badges(t, block)
     t.append(" ({} lines)".format(block.input_size))
     return t
 
@@ -1066,6 +1077,7 @@ def _render_tool_use_summary_collapsed(block: ToolUseBlock) -> Text | None:
     color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
     t = Text("  ")
     t.append("[Use: {}]".format(block.name), style="bold {}".format(color))
+    _append_special_marker_badges(t, block)
     return t
 
 
@@ -1091,6 +1103,7 @@ def _render_tool_use_bash_full(block: ToolUseBlock) -> ConsoleRenderable | None:
     color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
     header = Text("  ")
     header.append("[Use: Bash]", style="bold {}".format(color))
+    _append_special_marker_badges(header, block)
     header.append(" ({} lines)".format(block.input_size))
 
     command = block.tool_input.get("command", "")
@@ -1117,6 +1130,7 @@ def _render_tool_use_edit_full(block: ToolUseBlock) -> Text | None:
     t.append("[Use: Edit]", style="bold {}".format(color))
     if block.detail:
         t.append(" {}".format(block.detail), style="dim")
+    _append_special_marker_badges(t, block)
     t.append(" ({} lines)".format(block.input_size))
 
     old_str = block.tool_input.get("old_string", "")
@@ -1140,6 +1154,7 @@ def _render_tool_use_read_full(block: ToolUseBlock) -> Text | None:
     t.append("[Use: Read]", style=f"bold {color}")
     if block.detail:
         t.append(f" {block.detail}", style="dim")
+    _append_special_marker_badges(t, block)
     t.append(f" ({block.input_size} lines)")
 
     file_path = str(block.tool_input.get("file_path", "") or "")
@@ -1165,6 +1180,7 @@ def _render_tool_use_write_full(block: ToolUseBlock) -> Text | None:
     t.append("[Use: Write]", style=f"bold {color}")
     if block.detail:
         t.append(f" {block.detail}", style="dim")
+    _append_special_marker_badges(t, block)
     t.append(f" ({block.input_size} lines)")
 
     content = str(block.tool_input.get("content", "") or "")
@@ -1186,6 +1202,7 @@ def _render_tool_use_grep_full(block: ToolUseBlock) -> Text | None:
     t.append("[Use: Grep]", style=f"bold {color}")
     if block.detail:
         t.append(f" {block.detail}", style="dim")
+    _append_special_marker_badges(t, block)
     t.append(f" ({block.input_size} lines)")
 
     pattern = str(block.tool_input.get("pattern", "") or "")
@@ -1207,6 +1224,7 @@ def _render_tool_use_glob_full(block: ToolUseBlock) -> Text | None:
     t.append("[Use: Glob]", style=f"bold {color}")
     if block.detail:
         t.append(f" {block.detail}", style="dim")
+    _append_special_marker_badges(t, block)
     t.append(f" ({block.input_size} lines)")
 
     pattern = str(block.tool_input.get("pattern", "") or "")
@@ -1712,6 +1730,7 @@ def _render_config_content(block: FormattedBlock) -> ConsoleRenderable | None:
     content = getattr(block, "content", "")
     header = Text()
     header.append(f"[config: {source}]", style="bold dim")
+    _append_special_marker_badges(header, block)
     if not content:
         return header
     return Group(header, _render_text_as_markdown(content))
@@ -1724,6 +1743,7 @@ def _render_config_content_summary(block: FormattedBlock) -> ConsoleRenderable |
     line_count = len(content.splitlines()) if content else 0
     t = Text()
     t.append(f"[config: {source}]", style="bold dim")
+    _append_special_marker_badges(t, block)
     if line_count:
         t.append(f" ({line_count} lines)", style="dim")
         t.append(" ", style="dim")
@@ -1737,6 +1757,7 @@ def _render_hook_output(block: FormattedBlock) -> ConsoleRenderable | None:
     content = getattr(block, "content", "")
     header = Text()
     header.append(f"[hook: {hook_name}]", style="bold dim")
+    _append_special_marker_badges(header, block)
     if not content:
         return header
     return Group(header, _render_text_as_markdown(content))
@@ -1749,6 +1770,7 @@ def _render_hook_output_summary(block: FormattedBlock) -> ConsoleRenderable | No
     line_count = len(content.splitlines()) if content else 0
     t = Text()
     t.append(f"[hook: {hook_name}]", style="bold dim")
+    _append_special_marker_badges(t, block)
     if line_count:
         t.append(f" ({line_count} lines)", style="dim")
         t.append(" ", style="dim")
@@ -1808,6 +1830,7 @@ def _render_tool_defs_section(block: FormattedBlock) -> ConsoleRenderable | None
     tokens = getattr(block, "total_tokens", 0)
     t = Text()
     t.append(f"{count} tools", style="bold dim")
+    _append_special_marker_badges(t, block)
     if tokens:
         t.append(f" / {_fmt_tokens(tokens)} tokens", style="dim")
     return t

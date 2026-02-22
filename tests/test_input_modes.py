@@ -279,3 +279,11 @@ class TestKeymapCompleteness:
 
         missing = expected_actions - mapped_actions
         assert not missing, f"Actions missing from MODE_KEYMAP: {missing}"
+
+    def test_special_navigation_shortcuts_are_mapped(self):
+        """Alt+n/Alt+p are mapped to special-section navigation actions."""
+        from cc_dump.tui.input_modes import MODE_KEYMAP, InputMode
+
+        normal_keymap = MODE_KEYMAP[InputMode.NORMAL]
+        assert normal_keymap["alt+n"] == "next_special"
+        assert normal_keymap["alt+p"] == "prev_special"

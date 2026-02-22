@@ -8,8 +8,10 @@ Hot-reloadable — imported as module object in app.py, all functions take app a
 """
 
 import cc_dump.formatting
+import cc_dump.special_content
 import cc_dump.settings
 import cc_dump.tui.action_config  # module-style for hot-reload
+import cc_dump.tui.location_navigation
 import cc_dump.tui.rendering
 
 # [LAW:one-source-of-truth] Panel order derived from registry
@@ -272,6 +274,65 @@ def toggle_stream_view_mode(app) -> None:
     conv = app._get_conv()
     if conv is not None:
         conv.set_stream_view_mode(next_mode)
+
+
+def _special_nav_cursor_map(app) -> dict[str, int]:
+    """Return mutable cursor map for special-navigation markers."""
+    cursor_map = app._app_state.get("special_nav_cursor")
+    if not isinstance(cursor_map, dict):
+        cursor_map = {}
+        app._app_state["special_nav_cursor"] = cursor_map
+    return cursor_map
+
+
+def _navigate_special(app, marker_key: str, direction: int) -> None:
+    """Navigate to next/previous special request marker.
+
+    // [LAW:one-source-of-truth] Marker classification comes from special_content.
+    // [LAW:single-enforcer] Location jump executes through location_navigation.go_to_location.
+    """
+    conv = app._get_conv()
+    if conv is None:
+        return
+
+    locations = cc_dump.special_content.collect_special_locations(conv._turns, marker_key=marker_key)
+    if not locations:
+        app.notify("No matching special sections")
+        return
+
+    cursor_key = marker_key
+    cursor_map = _special_nav_cursor_map(app)
+    default_idx = -1 if direction > 0 else 0
+    idx = int(cursor_map.get(cursor_key, default_idx))
+    idx = (idx + direction) % len(locations)
+    cursor_map[cursor_key] = idx
+
+    loc = locations[idx]
+    location = cc_dump.tui.location_navigation.BlockLocation(
+        turn_index=loc.turn_index,
+        block_index=loc.block_index,
+        block=loc.block,
+    )
+    ok = cc_dump.tui.location_navigation.go_to_location(
+        conv,
+        location,
+        rerender=lambda: conv.rerender(app.active_filters),
+    )
+    if not ok:
+        app.notify("Special section unavailable")
+        return
+
+    app.notify(
+        f"{loc.marker.label}: {idx + 1}/{len(locations)}"
+    )
+
+
+def next_special(app, marker_key: str = "all") -> None:
+    _navigate_special(app, marker_key, 1)
+
+
+def prev_special(app, marker_key: str = "all") -> None:
+    _navigate_special(app, marker_key, -1)
 
 
 def go_top(app) -> None:

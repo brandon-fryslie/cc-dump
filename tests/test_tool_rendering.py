@@ -110,6 +110,19 @@ class TestRenderToolUseWithDetail:
         assert "commit" in plain
         assert "50 lines" in plain
 
+    def test_skill_tool_use_shows_special_badge(self):
+        """Skill tool use includes special marker badge."""
+        block = ToolUseBlock(
+            name="Skill",
+            input_size=10,
+            msg_color_idx=1,
+            detail="commit",
+        )
+        result = _render_tool_use_oneliner(block)
+
+        assert result is not None
+        assert "skill send" in result.plain
+
     def test_detail_styled_dim(self):
         """Detail text is styled dim."""
         block = ToolUseBlock(

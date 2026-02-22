@@ -9,6 +9,7 @@ Not hot-reloadable (accesses app state and widgets).
 
 import cc_dump.formatting
 import cc_dump.tui.search
+import cc_dump.tui.location_navigation
 from cc_dump.tui.category_config import CATEGORY_CONFIG
 
 
@@ -372,21 +373,17 @@ def navigate_to_current(app) -> None:
             conv._view_overrides._search_block_ids.add(matched_block.block_id)
         state.expanded_blocks.append((match.turn_index, match.block_index, matched_block.block_id))
 
-    # Re-render with search context, ensure target is materialized
-    search_rerender(app)
-    conv.ensure_turn_rendered(match.turn_index)
-
-    # Find flat scroll key by identity: walk td._flat_blocks to find the
-    # actual block object, then use the corresponding block_strip_map key.
-    scroll_key = match.block_index  # fallback: hierarchical index
-    if matched_block is not None:
-        bsm_keys = list(td.block_strip_map.keys())
-        for i, flat_block in enumerate(td._flat_blocks):
-            if flat_block is matched_block and i < len(bsm_keys):
-                scroll_key = bsm_keys[i]
-                break
-
-    conv.scroll_to_block(match.turn_index, scroll_key)
+    # Re-render with search context, then navigate via shared location helper.
+    location = cc_dump.tui.location_navigation.BlockLocation(
+        turn_index=match.turn_index,
+        block_index=match.block_index,
+        block=matched_block,
+    )
+    cc_dump.tui.location_navigation.go_to_location(
+        conv,
+        location,
+        rerender=lambda: search_rerender(app),
+    )
     update_search_bar(app)
 
 

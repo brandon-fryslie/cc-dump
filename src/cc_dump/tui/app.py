@@ -305,6 +305,41 @@ class CcDumpApp(App):
             "Toggle follow mode", "Auto-scroll", self.action_toggle_follow
         )
         yield SystemCommand(
+            "Next special section",
+            "Jump to next special request marker (alt+n)",
+            self.action_next_special,
+        )
+        yield SystemCommand(
+            "Previous special section",
+            "Jump to previous special request marker (alt+p)",
+            self.action_prev_special,
+        )
+        yield SystemCommand(
+            "Next CLAUDE.md section",
+            "Jump to next CLAUDE.md-derived section",
+            lambda: self.action_next_special("claude_md"),
+        )
+        yield SystemCommand(
+            "Next hook section",
+            "Jump to next hook insertion section",
+            lambda: self.action_next_special("hook"),
+        )
+        yield SystemCommand(
+            "Next skill consideration",
+            "Jump to next skill consideration section",
+            lambda: self.action_next_special("skill_consideration"),
+        )
+        yield SystemCommand(
+            "Next skill send",
+            "Jump to next Skill tool-use section",
+            lambda: self.action_next_special("skill_send"),
+        )
+        yield SystemCommand(
+            "Next tool list",
+            "Jump to next tool-list section",
+            lambda: self.action_next_special("tool_use_list"),
+        )
+        yield SystemCommand(
             "Next theme", "Cycle to next theme (])", self.action_next_theme
         )
         yield SystemCommand(
@@ -924,6 +959,12 @@ class CcDumpApp(App):
 
     def action_toggle_stream_view_mode(self):
         _actions.toggle_stream_view_mode(self)
+
+    def action_next_special(self, marker_key: str = "all"):
+        _actions.next_special(self, marker_key)
+
+    def action_prev_special(self, marker_key: str = "all"):
+        _actions.prev_special(self, marker_key)
 
     def action_go_top(self):
         _actions.go_top(self)
