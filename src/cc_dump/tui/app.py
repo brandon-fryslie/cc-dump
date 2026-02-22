@@ -62,6 +62,7 @@ import cc_dump.har_replayer
 import cc_dump.sessions
 import cc_dump.memory_stats
 import cc_dump.event_types
+import cc_dump.view_store
 
 from cc_dump.stderr_tee import get_tee as _get_tee
 import cc_dump.domain_store
@@ -597,6 +598,8 @@ class CcDumpApp(App):
         yield cc_dump.tui.custom_footer.StatusFooter()
 
     def on_mount(self):
+        self._bind_view_store_reactions()
+
         # [LAW:one-source-of-truth] Restore persisted theme choice
         saved = self._settings_store.get("theme") if self._settings_store else None
         if saved and saved in self.available_themes:
@@ -674,6 +677,32 @@ class CcDumpApp(App):
             self._process_replay_data()
         if self._resume_ui_state is not None:
             self._apply_resume_ui_state_postload()
+
+    def _bind_view_store_reactions(self) -> None:
+        """(Re)bind view-store reactions after app mount.
+
+        // [LAW:single-enforcer] View-store reaction lifecycle is owned here.
+        // [LAW:one-source-of-truth] _store_context is canonical reaction context.
+        """
+        if self._view_store is None:
+            return
+        ctx = self._store_context if isinstance(self._store_context, dict) else {}
+        self._store_context = ctx
+        ctx["app"] = self
+        ctx.update(cc_dump.tui.view_store_bridge.build_reaction_context(self))
+
+        old_disposers = getattr(self._view_store, "_reaction_disposers", None)
+        if isinstance(old_disposers, list):
+            for dispose in old_disposers:
+                if callable(dispose):
+                    try:
+                        dispose()
+                    except Exception:
+                        pass
+
+        self._view_store._reaction_disposers = cc_dump.view_store.setup_reactions(
+            self._view_store, ctx
+        )
 
     async def action_quit(self) -> None:
         now = time.monotonic()

@@ -71,12 +71,13 @@ async def run_app(
         # Ensure on_mount processing (including replay) has completed
         await pilot.pause()
 
-        # Wire view store reactions AFTER app is running so autorun
-        # tracks dependencies (is_safe(app) requires app.is_running=True).
-        store_context = {"app": app}
-        store_context.update(cc_dump.tui.view_store_bridge.build_reaction_context(app))
-        view_store._reaction_disposers = cc_dump.view_store.setup_reactions(
-            view_store, store_context
-        )
+        # View-store reactions are bound by app.on_mount(); keep test harness
+        # fallback for older app instances that don't provide mount binding.
+        if not getattr(view_store, "_reaction_disposers", None):
+            store_context = {"app": app}
+            store_context.update(cc_dump.tui.view_store_bridge.build_reaction_context(app))
+            view_store._reaction_disposers = cc_dump.view_store.setup_reactions(
+                view_store, store_context
+            )
 
         yield pilot, app
