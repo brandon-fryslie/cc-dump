@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 
+from cc_dump.decision_ledger import DecisionLedgerStore, parse_decision_entries, DecisionLedgerEntry
 from cc_dump.prompt_registry import get_prompt_spec, PromptSpec
 from cc_dump.side_channel import SideChannelManager
 from cc_dump.side_channel_analytics import SideChannelAnalytics
@@ -34,6 +35,14 @@ class EnrichedResult:
     elapsed_ms: int
 
 
+@dataclass
+class DecisionLedgerResult:
+    entries: list[DecisionLedgerEntry]
+    source: str  # "ai" | "fallback" | "error"
+    elapsed_ms: int
+    error: str = ""
+
+
 class DataDispatcher:
     """Routes enrichment requests to AI or fallback.
 
@@ -46,6 +55,7 @@ class DataDispatcher:
         self._side_channel = side_channel
         self._analytics = SideChannelAnalytics()
         self._summary_cache = summary_cache if summary_cache is not None else SummaryCache()
+        self._decision_ledger = DecisionLedgerStore()
 
     def summarize_messages(self, messages: list[dict], source_session_id: str = "") -> EnrichedResult:
         """Summarize a list of API messages.
@@ -121,6 +131,38 @@ class DataDispatcher:
     def side_channel_usage_snapshot(self) -> dict[str, dict[str, int]]:
         """Return purpose-level side-channel usage snapshot."""
         return self._analytics.snapshot()
+
+    def extract_decision_ledger(
+        self, messages: list[dict], *, source_session_id: str = "", request_id: str = ""
+    ) -> DecisionLedgerResult:
+        """Extract decision ledger entries from messages."""
+        if not self._side_channel.enabled:
+            return DecisionLedgerResult(entries=[], source="fallback", elapsed_ms=0, error="side-channel disabled")
+
+        spec = get_prompt_spec("decision_ledger")
+        context = _build_summary_context(messages)
+        prompt = _build_summary_prompt(context, spec)
+        profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
+        result = self._side_channel.run(
+            prompt=prompt,
+            purpose="decision_ledger",
+            prompt_version=spec.version,
+            timeout=None,
+            source_session_id=source_session_id,
+            profile=profile,
+        )
+        if result.error is not None:
+            if result.error.startswith("Guardrail:"):
+                logger.info("decision ledger blocked: %s", result.error)
+                return DecisionLedgerResult(entries=[], source="fallback", elapsed_ms=result.elapsed_ms, error=result.error)
+            return DecisionLedgerResult(entries=[], source="error", elapsed_ms=result.elapsed_ms, error=result.error)
+
+        entries = parse_decision_entries(result.text, request_id=request_id)
+        merged = self._decision_ledger.upsert_many(entries)
+        return DecisionLedgerResult(entries=merged, source="ai", elapsed_ms=result.elapsed_ms)
+
+    def decision_ledger_snapshot(self) -> list[DecisionLedgerEntry]:
+        return self._decision_ledger.snapshot()
 
 
 def _build_summary_context(messages: list[dict]) -> str:

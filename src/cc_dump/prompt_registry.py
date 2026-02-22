@@ -30,8 +30,11 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
         purpose="decision_ledger",
         version="v1",
         instruction=(
-            "Extract explicit decisions, rationale, alternatives, and status. "
-            "Return concise bullet points."
+            "Extract explicit decisions and return strict JSON only with shape "
+            "{\"decisions\":[{\"decision_id\":\"\",\"statement\":\"\",\"rationale\":\"\","
+            "\"alternatives\":[],\"consequences\":[],\"status\":\"proposed|accepted|revised|deprecated\","
+            "\"source_links\":[{\"message_index\":0}],\"supersedes\":[]}]}. "
+            "Use empty arrays for unknown fields."
         ),
     ),
     "action_extraction": PromptSpec(

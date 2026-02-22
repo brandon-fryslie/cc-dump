@@ -43,3 +43,5 @@ Definition of ready:
 - ledger entries are source-linked and queryable
 - false-positive rate acceptable in pilot usage
 
+Implementation reference:
+- `docs/side-channel/DECISION_LEDGER_SCHEMA.md`

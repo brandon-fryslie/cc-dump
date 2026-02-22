@@ -415,3 +415,44 @@ class TestDataDispatcher:
         assert second.source == "cache"
         assert second.text == "AI summary here"
         mgr.run.assert_called_once()
+
+    def test_extract_decision_ledger_from_ai_json(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        mgr.run = MagicMock(
+            return_value=SideChannelResult(
+                text=(
+                    '{"decisions":[{"decision_id":"dec_x","statement":"Use queue-based routing",'
+                    '"status":"accepted","source_links":[{"message_index":1}]}]}'
+                ),
+                error=None,
+                elapsed_ms=12,
+            )
+        )
+        result = dispatcher.extract_decision_ledger(
+            [{"role": "user", "content": "decide routing"}],
+            source_session_id="sess-1",
+            request_id="req-1",
+        )
+        assert result.source == "ai"
+        assert len(result.entries) == 1
+        assert result.entries[0].decision_id == "dec_x"
+        assert result.entries[0].status == "accepted"
+        assert result.entries[0].source_links[0].message_index == 1
+        assert result.entries[0].source_links[0].request_id == "req-1"
+
+    def test_extract_decision_ledger_guardrail_falls_back(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        mgr.run = MagicMock(
+            return_value=SideChannelResult(
+                text="",
+                error="Guardrail: purpose disabled (decision_ledger)",
+                elapsed_ms=0,
+            )
+        )
+        result = dispatcher.extract_decision_ledger(
+            [{"role": "user", "content": "decide routing"}],
+            source_session_id="sess-1",
+            request_id="req-1",
+        )
+        assert result.source == "fallback"
+        assert result.entries == []
