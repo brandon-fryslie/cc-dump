@@ -42,6 +42,20 @@ _USER_ID_PATTERN = re.compile(
     r"user_([a-f0-9]+)_account_([a-f0-9-]+)_session_([a-f0-9-]+)"
 )
 
+_SKILL_CONSIDERATION_RE = re.compile(
+    r"(following skills are available|skills are available for use with the skill tool|skill considerations?)",
+    re.IGNORECASE,
+)
+_TOOL_USE_LIST_RE = re.compile(
+    r"(following tools are available|available tools|tool use list|tool list)",
+    re.IGNORECASE,
+)
+_CONTENT_DERIVED_TAG_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("claude_md", re.compile(r"\bclaude\.md\b", re.IGNORECASE)),
+    ("skill_consideration", _SKILL_CONSIDERATION_RE),
+    ("tool_use_list", _TOOL_USE_LIST_RE),
+)
+
 
 def parse_user_id(user_id: str) -> dict | None:
     """Parse compound user_id into user, account, session components.
@@ -125,6 +139,28 @@ class ContentRegion:
     tags: list[str] = field(default_factory=list)  # Semantic labels for navigation
 
 
+def _merge_region_tags(*groups: list[str]) -> list[str]:
+    """Merge tag groups preserving order and uniqueness."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for group in groups:
+        for tag in group:
+            if tag in seen:
+                continue
+            seen.add(tag)
+            result.append(tag)
+    return result
+
+
+def _derived_region_tags(text_slice: str) -> list[str]:
+    """Derive semantic tags from region text content."""
+    tags: list[str] = []
+    for key, pattern in _CONTENT_DERIVED_TAG_PATTERNS:
+        if pattern.search(text_slice):
+            tags.append(key)
+    return tags
+
+
 def populate_content_regions(block: "FormattedBlock") -> None:
     """Eagerly populate content_regions from text segmentation.
 
@@ -157,6 +193,10 @@ def populate_content_regions(block: "FormattedBlock") -> None:
             tags = [sb.meta.tag_name]
         elif sb.kind == cc_dump.segmentation.SubBlockKind.CODE_FENCE and sb.meta.info:
             tags = [sb.meta.info]
+
+        text_slice = text[sb.span.start : sb.span.end]
+        # // [LAW:single-enforcer] Content-derived tagging is centralized here.
+        tags = _merge_region_tags(tags, _derived_region_tags(text_slice))
 
         regions.append(ContentRegion(index=i, kind=kind, tags=tags))
 

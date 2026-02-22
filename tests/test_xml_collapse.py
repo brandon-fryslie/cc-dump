@@ -272,6 +272,36 @@ def test_populate_tag_values():
     assert code_regions[0].tags == ["javascript"]
 
 
+def test_populate_content_regions_derives_claude_md_tag():
+    """Content-derived tags include CLAUDE.md marker for MD regions."""
+    text = "Please read CLAUDE.md before running this workflow."
+    block = TextContentBlock(content=text, category=Category.USER)
+    populate_content_regions(block)
+
+    assert len(block.content_regions) == 1
+    assert block.content_regions[0].kind == "md"
+    assert "claude_md" in block.content_regions[0].tags
+
+
+def test_populate_content_regions_merges_xml_and_derived_tags():
+    """XML regions keep structural tag names and append derived semantic tags."""
+    text = (
+        "<system-reminder>\n"
+        "The following skills are available for use with the Skill tool.\n"
+        "The following tools are available.\n"
+        "</system-reminder>\n"
+    )
+    block = TextContentBlock(content=text, category=Category.SYSTEM)
+    populate_content_regions(block)
+
+    xml_regions = [r for r in block.content_regions if r.kind == "xml_block"]
+    assert len(xml_regions) == 1
+    tags = set(xml_regions[0].tags)
+    assert "system-reminder" in tags
+    assert "skill_consideration" in tags
+    assert "tool_use_list" in tags
+
+
 # ─── _render_region_parts ─────────────────────────────────────────────────
 
 
@@ -648,5 +678,4 @@ def test_collapsibility_guard_md_not_collapsible():
 def test_collapsibility_guard_code_fence_not_collapsible():
     """code_fence kind is NOT in COLLAPSIBLE_REGION_KINDS (yet)."""
     assert "code_fence" not in COLLAPSIBLE_REGION_KINDS
-
 
