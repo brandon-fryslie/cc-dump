@@ -104,6 +104,19 @@ class TestBuildThemeColors:
             assert key in md, f"Missing markdown theme key: {key}"
             assert md[key], f"Empty markdown theme value for: {key}"
 
+    def test_markdown_theme_uses_theme_foreground_for_textual_elements(self):
+        """Markdown body/table/hr styles should be theme-derived, not generic color names."""
+        tc = build_theme_colors(BUILTIN_THEMES["textual-dark"])
+        md = tc.markdown_theme_dict
+
+        assert md["markdown.text"] == tc.foreground
+        assert md["markdown.paragraph"] == tc.foreground
+        assert md["markdown.item"] == tc.foreground
+        assert tc.foreground in md["markdown.table.border"]
+        assert tc.foreground in md["markdown.hr"]
+        assert md["markdown.table.border"] != "dim"
+        assert md["markdown.hr"] != "dim"
+
 
 class TestSetTheme:
     """Tests for set_theme() rebuilding module state."""

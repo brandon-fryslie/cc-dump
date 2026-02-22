@@ -225,14 +225,15 @@ def render_stats_panel(
     # Model
     parts.append(model_display)
 
-    # [LAW:dataflow-not-control-flow] Color selection driven by data, not control flow
-    # Traffic-light colors for context percentage
+    # [LAW:dataflow-not-control-flow] Color selection driven by data, not control flow.
+    # Use theme semantic colors rather than fixed color names.
+    tc = cc_dump.tui.rendering.get_theme_colors()
     if context_pct < 60.0:
-        ctx_color = "green"
+        ctx_color = tc.success
     elif context_pct < 80.0:
-        ctx_color = "yellow"
+        ctx_color = tc.warning
     else:
-        ctx_color = "red"
+        ctx_color = tc.error
 
     # Build Rich Text with colored context section
     result = Text()

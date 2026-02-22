@@ -199,6 +199,11 @@ def build_theme_colors(textual_theme) -> ThemeColors:
     md_h_dim = "dim italic"
 
     markdown_theme_dict = {
+        "markdown.text": foreground,
+        "markdown.paragraph": foreground,
+        "markdown.item": foreground,
+        "markdown.strong": f"bold {foreground}",
+        "markdown.em": f"italic {foreground}",
         "markdown.code": md_code_style,
         "markdown.code_block": f"on {surface}",
         "markdown.h1": f"bold underline {primary}",
@@ -210,9 +215,9 @@ def build_theme_colors(textual_theme) -> ThemeColors:
         "markdown.link": f"underline {primary}",
         "markdown.link_url": f"dim underline {primary}",
         "markdown.block_quote": f"italic {foreground}",
-        "markdown.table.border": "dim",
+        "markdown.table.border": f"dim {foreground}",
         "markdown.table.header": f"bold {primary}",
-        "markdown.hr": "dim",
+        "markdown.hr": f"dim {foreground}",
     }
 
     filter_colors = cc_dump.palette.generate_filter_colors(
