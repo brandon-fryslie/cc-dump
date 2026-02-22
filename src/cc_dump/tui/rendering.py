@@ -815,10 +815,10 @@ def _render_tracked_new(
     header.append(" {} ".format(block.tag_id), style=tag_style)
     header.append(" NEW ({} lines):".format(content_len))
 
-    # Render content as Markdown
-    content_md = _render_text_as_markdown(block.content)
-
-    return Group(header, content_md)
+    preview = _render_full_collapsed_snippet(block.content, max_lines=5)
+    if preview is None:
+        return header
+    return Group(header, preview)
 
 
 def _render_tracked_ref(block: TrackedContentBlock, tag_style: str) -> Text:
@@ -829,16 +829,29 @@ def _render_tracked_ref(block: TrackedContentBlock, tag_style: str) -> Text:
     return t
 
 
-def _render_tracked_changed(block: TrackedContentBlock, tag_style: str) -> Text:
+def _render_tracked_changed(
+    block: TrackedContentBlock, tag_style: str
+) -> ConsoleRenderable:
     """Render a TrackedContentBlock with status='changed'."""
     old_len = len(block.old_content.splitlines())
     new_len = len(block.new_content.splitlines())
     t = Text(block.indent + "  ")
     t.append(" {} ".format(block.tag_id), style=tag_style)
-    t.append(" CHANGED ({} -> {} lines):\n".format(old_len, new_len))
+    t.append(" CHANGED ({} -> {} lines):".format(old_len, new_len))
     diff_lines = make_diff_lines(block.old_content, block.new_content)
-    t.append(_render_diff(diff_lines, block.indent + "    "))
-    return t
+    shown = diff_lines[:5]
+    hidden = max(len(diff_lines) - len(shown), 0)
+    if not shown:
+        return t
+
+    preview = _render_diff(shown, block.indent + "    ")
+    if hidden > 0:
+        preview.append("\n")
+        preview.append(
+            "{}    ··· {} more diff lines".format(block.indent, hidden),
+            style="dim italic",
+        )
+    return Group(t, preview)
 
 
 # [LAW:dataflow-not-control-flow] TrackedContentBlock status dispatch
@@ -1398,6 +1411,95 @@ def _render_tool_use_summary_expanded(block: ToolUseBlock) -> ConsoleRenderable 
     return Group(base, desc_text)
 
 
+def _tool_use_preview_bash(block: ToolUseBlock) -> str:
+    command = str(block.tool_input.get("command", "") or "")
+    first = command.splitlines()[0].strip() if command.splitlines() else command.strip()
+    return "$ " + first if first else ""
+
+
+def _tool_use_preview_edit(block: ToolUseBlock) -> str:
+    old_str = str(block.tool_input.get("old_string", "") or "")
+    new_str = str(block.tool_input.get("new_string", "") or "")
+    old_lines = old_str.count("\n") + (1 if old_str else 0)
+    new_lines = new_str.count("\n") + (1 if new_str else 0)
+    return "replace {} -> {} lines".format(old_lines, new_lines) if old_lines or new_lines else ""
+
+
+def _tool_use_preview_read(block: ToolUseBlock) -> str:
+    file_path = str(block.tool_input.get("file_path", "") or "")
+    offset = block.tool_input.get("offset")
+    limit = block.tool_input.get("limit")
+    if not file_path and offset is None and limit is None:
+        return ""
+    return "{} (offset={} limit={})".format(
+        file_path or "<unknown>",
+        offset if offset is not None else 0,
+        limit if limit is not None else "all",
+    )
+
+
+def _tool_use_preview_write(block: ToolUseBlock) -> str:
+    file_path = str(block.tool_input.get("file_path", "") or "")
+    content = str(block.tool_input.get("content", "") or "")
+    first = content.splitlines()[0] if content.splitlines() else content
+    preview = first[:80] + ("..." if len(first) > 80 else "")
+    if file_path and preview:
+        return "{} + {}".format(file_path, preview)
+    return file_path or preview
+
+
+def _tool_use_preview_grep(block: ToolUseBlock) -> str:
+    pattern = str(block.tool_input.get("pattern", "") or "")
+    path = str(block.tool_input.get("path", "") or "")
+    if pattern and path:
+        return "/{}/ in {}".format(pattern, path)
+    if pattern:
+        return "/{}/".format(pattern)
+    return path
+
+
+def _tool_use_preview_glob(block: ToolUseBlock) -> str:
+    pattern = str(block.tool_input.get("pattern", "") or "")
+    path = str(block.tool_input.get("path", "") or "")
+    if pattern and path:
+        return "{} @ {}".format(pattern, path)
+    return pattern or path
+
+
+def _tool_use_preview_generic(block: ToolUseBlock) -> str:
+    detail = (block.detail or "").strip()
+    if detail:
+        return detail
+    return ""
+
+
+# [LAW:one-source-of-truth] Tool preview extraction for full-collapsed tool-use rendering.
+_TOOL_USE_COLLAPSED_PREVIEWS: dict[str, Callable[[ToolUseBlock], str]] = {
+    "Bash": _tool_use_preview_bash,
+    "Edit": _tool_use_preview_edit,
+    "Read": _tool_use_preview_read,
+    "Write": _tool_use_preview_write,
+    "Grep": _tool_use_preview_grep,
+    "Glob": _tool_use_preview_glob,
+}
+
+
+def _render_tool_use_full_collapsed(block: ToolUseBlock) -> ConsoleRenderable | None:
+    """Full-collapsed ToolUse renderer: one-line identity + one-line input preview."""
+    header = _render_tool_use_oneliner(block)
+    if header is None:
+        return None
+
+    preview_fn = _TOOL_USE_COLLAPSED_PREVIEWS.get(block.name, _tool_use_preview_generic)
+    preview = preview_fn(block)
+    if not preview:
+        return header
+
+    preview_line = Text("    ")
+    preview_line.append(preview, style="dim")
+    return Group(header, preview_line)
+
+
 def _render_tool_use_bash_full(block: ToolUseBlock) -> ConsoleRenderable | None:
     """Full ToolUseBlock for Bash: header + $ command with syntax highlighting.
 
@@ -1889,7 +1991,7 @@ def _render_tool_use_summary_block_full_collapsed(block: ToolUseSummaryBlock) ->
         "[used {} tool{}]".format(block.total, "" if block.total == 1 else "s"),
         style="dim",
     )
-    shown = entries[:4]
+    shown = entries[:3]
     for name, count in shown:
         t.append("\n    ")
         t.append("- {}: {}x".format(name, count), style="dim")
@@ -2185,6 +2287,12 @@ def _render_newline_summary_collapsed(block: NewlineBlock) -> Text | None:
 
 def _render_newline_summary_expanded(block: NewlineBlock) -> Text | None:
     """Summary-expanded newline renderer: preserve visual spacing."""
+    _ = block
+    return Text("")
+
+
+def _render_newline_full_expanded(block: NewlineBlock) -> Text | None:
+    """Full-expanded newline renderer: one-line spacer with dedicated state renderer."""
     _ = block
     return Text("")
 
@@ -2676,14 +2784,48 @@ def _render_message_block(block: FormattedBlock) -> ConsoleRenderable | None:
     return _render_message_header(block, include_timestamp=True, include_agent=True)
 
 
+def _message_child_counts(children: list[FormattedBlock]) -> Counter[str]:
+    """Count message children by resolved category value."""
+    counts: Counter[str] = Counter()
+    for child in children:
+        cat = get_category(child)
+        key = cat.value if cat is not None else "other"
+        counts[key] += 1
+    return counts
+
+
+def _message_content_count(counts: Counter[str]) -> int:
+    """Count content-bearing message children (user/assistant/system)."""
+    return (
+        counts.get(Category.USER.value, 0)
+        + counts.get(Category.ASSISTANT.value, 0)
+        + counts.get(Category.SYSTEM.value, 0)
+    )
+
+
 def _render_message_block_summary_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render MessageBlock summary-collapsed header."""
     return _render_message_header(block, include_timestamp=False, include_agent=False)
 
 
 def _render_message_block_summary_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
-    """Render MessageBlock summary-expanded header."""
-    return _render_message_header(block, include_timestamp=True, include_agent=True)
+    """Render MessageBlock summary-expanded header with compact composition stats."""
+    header = _render_message_header(block, include_timestamp=True, include_agent=True)
+    children = getattr(block, "children", None) or []
+    total = len(children)
+    if total == 0:
+        return header
+
+    counts = _message_child_counts(children)
+    header.append(f"  | summary blocks: {total}", style="dim")
+    content_total = _message_content_count(counts)
+    if content_total:
+        header.append(f" content:{content_total}", style="dim")
+    if counts.get(Category.TOOLS.value, 0):
+        header.append(f" tools:{counts[Category.TOOLS.value]}", style="dim")
+    if counts.get(Category.THINKING.value, 0):
+        header.append(f" thinking:{counts[Category.THINKING.value]}", style="dim")
+    return header
 
 
 def _render_message_block_full_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
@@ -2694,17 +2836,8 @@ def _render_message_block_full_collapsed(block: FormattedBlock) -> ConsoleRender
     if total == 0:
         return header
 
-    cat_counts: Counter[str] = Counter()
-    for child in children:
-        cat = get_category(child)
-        key = cat.value if cat is not None else "other"
-        cat_counts[key] += 1
-
-    content_total = (
-        cat_counts.get(Category.USER.value, 0)
-        + cat_counts.get(Category.ASSISTANT.value, 0)
-        + cat_counts.get(Category.SYSTEM.value, 0)
-    )
+    cat_counts = _message_child_counts(children)
+    content_total = _message_content_count(cat_counts)
 
     header.append(f"  | blocks: {total}", style="dim")
     if content_total:
@@ -3183,6 +3316,7 @@ BLOCK_STATE_RENDERERS: dict[
     ("SeparatorBlock", True, True, False): _render_separator_full_collapsed,
     ("NewlineBlock", True, False, False): _render_newline_summary_collapsed,
     ("NewlineBlock", True, False, True): _render_newline_summary_expanded,
+    ("NewlineBlock", True, True, True): _render_newline_full_expanded,
     ("NewSessionBlock", True, False, False): _render_new_session_summary_collapsed,
     ("NewSessionBlock", True, False, True): _render_new_session_summary_expanded,
     ("NewSessionBlock", True, True, False): _render_new_session_full_collapsed,
@@ -3247,6 +3381,7 @@ BLOCK_STATE_RENDERERS: dict[
     # ToolUseBlock: summary states + description at full expanded
     ("ToolUseBlock", True, False, False): _render_tool_use_summary_collapsed,
     ("ToolUseBlock", True, False, True): _render_tool_use_summary_expanded,
+    ("ToolUseBlock", True, True, False): _render_tool_use_full_collapsed,
     ("ToolUseBlock", True, True, True): _render_tool_use_full_with_desc,
     # ToolUseSummaryBlock: compact summary states + distinct full collapsed/expanded.
     ("ToolUseSummaryBlock", True, False, False): _render_tool_use_summary_block_collapsed,
@@ -3603,7 +3738,7 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
     3. Compute _expandable (has children OR different expanded renderer OR exceeds limit)
     4. Apply truncation, add gutter
     5. Record in ctx.block_strip_map/flat_blocks using sequential key
-    6. If block has expanded children: collapse them, recurse
+    6. If block is full-expanded and has children: collapse them, recurse
 
     // [LAW:single-enforcer] All visibility logic in this function.
     // [LAW:dataflow-not-control-flow] Same operations every call; values decide outcomes.
@@ -3830,8 +3965,9 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
         ctx.all_strips.extend(final_strips)
         ctx.last_rendered_indicator = indicator_name
 
-    # Recurse into children when container is visible and expanded
-    if children and vis.visible and vis.expanded:
+    # Recurse into children only at full-expanded to keep summary views bounded.
+    # // [LAW:single-enforcer] Child-recursion policy is centralized at this boundary.
+    if children and vis.visible and vis.full and vis.expanded:
         tools_filter = ctx.filters.get("tools", ALWAYS_VISIBLE)
         collapsed = _collapse_children(children, tools_filter.full, overrides=ctx.overrides)
         for child in collapsed:

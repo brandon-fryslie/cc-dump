@@ -48,6 +48,7 @@ from cc_dump.tui.rendering import (
     BLOCK_RENDERERS,
     BLOCK_STATE_RENDERERS,
     RENDERERS,
+    TRUNCATION_LIMITS,
     render_turn_to_strips,
     set_theme,
 )
@@ -75,6 +76,17 @@ def _renderable_plain(renderable) -> str:
 
 def setup_module() -> None:
     set_theme(BUILTIN_THEMES["textual-dark"])
+
+
+def test_truncation_limits_match_visibility_policy():
+    assert TRUNCATION_LIMITS[VisState(False, False, False)] == 0
+    assert TRUNCATION_LIMITS[VisState(False, False, True)] == 0
+    assert TRUNCATION_LIMITS[VisState(False, True, False)] == 0
+    assert TRUNCATION_LIMITS[VisState(False, True, True)] == 0
+    assert TRUNCATION_LIMITS[SUMMARY_COLLAPSED] == 3
+    assert TRUNCATION_LIMITS[SUMMARY_EXPANDED] == 8
+    assert TRUNCATION_LIMITS[FULL_COLLAPSED] == 5
+    assert TRUNCATION_LIMITS[FULL_EXPANDED] is None
 
 
 def test_content_block_renderer_registry_has_four_distinct_visible_states():
@@ -115,6 +127,443 @@ def test_content_block_renderer_registry_has_four_distinct_visible_states():
             key = (type_name, vis.visible, vis.full, vis.expanded)
             names.append(BLOCK_STATE_RENDERERS.get(key, base).__name__)
         assert len(set(names)) == 4, f"{type_name} should map SC/SE/FC/FE to distinct renderers: {names}"
+
+
+def test_all_block_types_have_four_distinct_visible_state_renderers():
+    visible_states = [
+        SUMMARY_COLLAPSED,
+        SUMMARY_EXPANDED,
+        FULL_COLLAPSED,
+        FULL_EXPANDED,
+    ]
+
+    for type_name, base in BLOCK_RENDERERS.items():
+        names = []
+        for vis in visible_states:
+            key = (type_name, vis.visible, vis.full, vis.expanded)
+            names.append(BLOCK_STATE_RENDERERS.get(key, base).__name__)
+        assert len(set(names)) == 4, f"{type_name} should map SC/SE/FC/FE to distinct renderers: {names}"
+
+
+def test_core_content_blocks_respect_state_line_budgets():
+    cases = [
+        (
+            "TextContentBlock",
+            TextContentBlock(
+                content="\n".join(f"line {i}" for i in range(1, 60)),
+                category=Category.ASSISTANT,
+            ),
+            "assistant",
+        ),
+        (
+            "ToolUseBlock",
+            ToolUseBlock(
+                name="Bash",
+                input_size=20,
+                msg_color_idx=0,
+                detail="git status",
+                description="Run shell commands in a controlled environment.",
+                tool_input={"command": "git status\npwd\nls -la\nwhoami\nenv"},
+            ),
+            "tools",
+        ),
+        (
+            "ToolResultBlock",
+            ToolResultBlock(
+                size=30,
+                tool_name="Read",
+                msg_color_idx=0,
+                content="\n".join(f"res {i}" for i in range(1, 60)),
+            ),
+            "tools",
+        ),
+        (
+            "TrackedContentBlock",
+            TrackedContentBlock(
+                status="changed",
+                tag_id="sp-1",
+                content="\n".join(f"tracked {i}" for i in range(1, 60)),
+                old_content="\n".join(f"old {i}" for i in range(1, 60)),
+                new_content="\n".join(f"new {i}" for i in range(1, 60)),
+            ),
+            "system",
+        ),
+        (
+            "ThinkingBlock",
+            ThinkingBlock(content="\n".join(f"thought {i}" for i in range(1, 60))),
+            "thinking",
+        ),
+        (
+            "ConfigContentBlock",
+            ConfigContentBlock(
+                source="CLAUDE.md",
+                content="\n".join(f"cfg {i}" for i in range(1, 60)),
+                category=Category.USER,
+            ),
+            "user",
+        ),
+        (
+            "HookOutputBlock",
+            HookOutputBlock(
+                hook_name="system-reminder",
+                content="\n".join(f"hook {i}" for i in range(1, 60)),
+                category=Category.USER,
+            ),
+            "user",
+        ),
+        (
+            "TextDeltaBlock",
+            TextDeltaBlock(
+                content="\n".join(f"delta {i}" for i in range(1, 60)),
+                category=Category.ASSISTANT,
+            ),
+            "assistant",
+        ),
+        (
+            "ToolUseSummaryBlock",
+            ToolUseSummaryBlock(
+                tool_counts={f"Tool{i}": i for i in range(1, 12)},
+                total=sum(range(1, 12)),
+            ),
+            "tools",
+        ),
+    ]
+
+    for name, block, category in cases:
+        _, sc_lines = _render_plain(block, category, SUMMARY_COLLAPSED, width=180)
+        _, se_lines = _render_plain(block, category, SUMMARY_EXPANDED, width=180)
+        _, fc_lines = _render_plain(block, category, FULL_COLLAPSED, width=180)
+        assert sc_lines <= 3, f"{name} summary-collapsed should be <=3 lines, got {sc_lines}"
+        assert se_lines <= 8, f"{name} summary-expanded should be <=8 lines, got {se_lines}"
+        assert fc_lines <= 5, f"{name} full-collapsed should be <=5 lines, got {fc_lines}"
+
+
+def test_auxiliary_content_blocks_respect_state_line_budgets():
+    cases = [
+        (
+            "MetadataBlock",
+            MetadataBlock(
+                model="claude-sonnet",
+                max_tokens="8192",
+                stream=True,
+                tool_count=4,
+                user_hash="abcdef123456",
+                account_id="112233445566",
+                session_id="998877665544",
+            ),
+            "metadata",
+        ),
+        (
+            "HttpHeadersBlock",
+            HttpHeadersBlock(
+                headers={f"x-header-{i}": f"value-{i}" for i in range(1, 20)},
+                header_type="response",
+                status_code=200,
+            ),
+            "metadata",
+        ),
+        (
+            "TurnBudgetBlock",
+            TurnBudgetBlock(
+                budget=TurnBudget(
+                    total_est=120000,
+                    system_tokens_est=20000,
+                    tool_defs_tokens_est=15000,
+                    user_text_tokens_est=28000,
+                    assistant_text_tokens_est=22000,
+                    tool_use_tokens_est=18000,
+                    tool_result_tokens_est=17000,
+                    actual_input_tokens=1200,
+                    actual_cache_read_tokens=800,
+                ),
+                tool_result_by_name={"Read": 3000, "Bash": 2200, "Grep": 1400},
+            ),
+            "metadata",
+        ),
+        (
+            "ToolUseSummaryBlock",
+            ToolUseSummaryBlock(
+                tool_counts={f"Tool{i}": i for i in range(1, 12)},
+                total=sum(range(1, 12)),
+            ),
+            "tools",
+        ),
+        (
+            "ToolDefBlock",
+            ToolDefBlock(
+                name="Read",
+                token_estimate=500,
+                description="Read file contents from disk with optional offset and limit.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "file_path": {"type": "string"},
+                        "offset": {"type": "integer"},
+                        "limit": {"type": "integer"},
+                    },
+                    "required": ["file_path"],
+                },
+            ),
+            "tools",
+        ),
+        (
+            "SkillDefChild",
+            SkillDefChild(
+                name="review-pr",
+                description="Review pull requests and identify regressions.",
+                plugin_source="do",
+            ),
+            "tools",
+        ),
+        (
+            "AgentDefChild",
+            AgentDefChild(
+                name="researcher",
+                description="Gather context and synthesize technical findings.",
+                available_tools="All tools",
+            ),
+            "tools",
+        ),
+        (
+            "ErrorBlock",
+            ErrorBlock(code=429, reason="rate_limit", category=Category.METADATA),
+            "metadata",
+        ),
+        (
+            "ProxyErrorBlock",
+            ProxyErrorBlock(error="timeout", category=Category.METADATA),
+            "metadata",
+        ),
+        (
+            "ImageBlock",
+            ImageBlock(media_type="image/png", category=Category.USER),
+            "user",
+        ),
+        (
+            "StreamInfoBlock",
+            StreamInfoBlock(model="claude-sonnet-4-5-20250929"),
+            "metadata",
+        ),
+        (
+            "StreamToolUseBlock",
+            StreamToolUseBlock(name="Read"),
+            "tools",
+        ),
+        (
+            "StopReasonBlock",
+            StopReasonBlock(reason="end_turn"),
+            "metadata",
+        ),
+    ]
+
+    for name, block, category in cases:
+        _, sc_lines = _render_plain(block, category, SUMMARY_COLLAPSED, width=180)
+        _, se_lines = _render_plain(block, category, SUMMARY_EXPANDED, width=180)
+        _, fc_lines = _render_plain(block, category, FULL_COLLAPSED, width=180)
+        assert sc_lines <= 3, f"{name} summary-collapsed should be <=3 lines, got {sc_lines}"
+        assert se_lines <= 8, f"{name} summary-expanded should be <=8 lines, got {se_lines}"
+        assert fc_lines <= 5, f"{name} full-collapsed should be <=5 lines, got {fc_lines}"
+
+
+def test_container_blocks_keep_summary_views_bounded():
+    metadata_section = MetadataSection(
+        children=[
+            MetadataBlock(
+                model="claude-sonnet",
+                max_tokens="8192",
+                stream=True,
+                tool_count=4,
+                user_hash="abcdef123456",
+                account_id="112233445566",
+                session_id="998877665544",
+            ),
+            HttpHeadersBlock(
+                headers={f"x-header-{i}": f"value-{i}" for i in range(1, 20)},
+                header_type="response",
+                status_code=200,
+            ),
+            TurnBudgetBlock(
+                budget=TurnBudget(
+                    total_est=120000,
+                    system_tokens_est=20000,
+                    tool_defs_tokens_est=15000,
+                    user_text_tokens_est=28000,
+                    assistant_text_tokens_est=22000,
+                    tool_use_tokens_est=18000,
+                    tool_result_tokens_est=17000,
+                    actual_input_tokens=1200,
+                    actual_cache_read_tokens=800,
+                ),
+                tool_result_by_name={"Read": 3000, "Bash": 2200, "Grep": 1400},
+            ),
+        ]
+    )
+    system_section = SystemSection(
+        children=[
+            TrackedContentBlock(status="new", tag_id="sp-1", content="\n".join(f"n{i}" for i in range(40))),
+            TrackedContentBlock(
+                status="changed",
+                tag_id="sp-2",
+                content="\n".join(f"c{i}" for i in range(40)),
+                old_content="\n".join(f"old{i}" for i in range(40)),
+                new_content="\n".join(f"new{i}" for i in range(40)),
+            ),
+            TrackedContentBlock(status="ref", tag_id="sp-3", content="same"),
+        ]
+    )
+    tool_defs_section = ToolDefsSection(
+        tool_count=8,
+        total_tokens=6400,
+        children=[
+            ToolDefBlock(
+                name=f"Tool{i}",
+                token_estimate=800,
+                description="tool description",
+                input_schema={
+                    "type": "object",
+                    "properties": {f"p{j}": {"type": "string"} for j in range(6)},
+                    "required": ["p0", "p1"],
+                },
+            )
+            for i in range(8)
+        ],
+    )
+    response_metadata = ResponseMetadataSection(
+        children=[
+            HeaderBlock(label="RESPONSE", header_type="response"),
+            HttpHeadersBlock(
+                headers={f"h{i}": f"v{i}" for i in range(1, 12)},
+                header_type="response",
+                status_code=204,
+            ),
+            StreamInfoBlock(model="claude-sonnet-4-5-20250929"),
+        ]
+    )
+    message = MessageBlock(
+        role="assistant",
+        msg_index=9,
+        timestamp="11:00:00",
+        category=Category.ASSISTANT,
+        agent_label="planner",
+        agent_kind="subagent",
+        children=[
+            TextContentBlock(content="\n".join(f"line {i}" for i in range(60)), category=Category.ASSISTANT),
+            ToolUseBlock(
+                name="Bash",
+                input_size=20,
+                msg_color_idx=0,
+                detail="git status",
+                tool_input={"command": "git status\npwd\nls -la"},
+            ),
+            ToolResultBlock(
+                size=20,
+                tool_name="Bash",
+                msg_color_idx=0,
+                content="\n".join(f"out {i}" for i in range(20)),
+            ),
+        ],
+    )
+
+    cases = [
+        ("MetadataSection", metadata_section, "metadata"),
+        ("SystemSection", system_section, "system"),
+        ("ToolDefsSection", tool_defs_section, "tools"),
+        ("ResponseMetadataSection", response_metadata, "metadata"),
+        ("MessageBlock", message, "assistant"),
+    ]
+
+    for name, block, category in cases:
+        _, sc_lines = _render_plain(block, category, SUMMARY_COLLAPSED, width=180)
+        _, se_lines = _render_plain(block, category, SUMMARY_EXPANDED, width=180)
+        _, fc_lines = _render_plain(block, category, FULL_COLLAPSED, width=180)
+        assert sc_lines <= 3, f"{name} summary-collapsed should be <=3 lines, got {sc_lines}"
+        assert se_lines <= 8, f"{name} summary-expanded should be <=8 lines, got {se_lines}"
+        assert fc_lines <= 5, f"{name} full-collapsed should be <=5 lines, got {fc_lines}"
+
+
+def test_message_and_section_summary_expanded_hide_child_content():
+    unique_text = "CHILD_UNIQUE_MARKER_123"
+    message = MessageBlock(
+        role="assistant",
+        msg_index=4,
+        timestamp="10:30:00",
+        category=Category.ASSISTANT,
+        children=[
+            TextContentBlock(
+                content=f"header line\n{unique_text}\nfooter line",
+                category=Category.ASSISTANT,
+            ),
+            ToolUseBlock(
+                name="Bash",
+                input_size=3,
+                msg_color_idx=0,
+                tool_input={"command": f"echo {unique_text}"},
+            ),
+        ],
+    )
+    msg_se, _ = _render_plain(message, "assistant", SUMMARY_EXPANDED, width=180)
+    msg_fe, _ = _render_plain(message, "assistant", FULL_EXPANDED, width=180)
+    assert unique_text not in msg_se
+    assert unique_text in msg_fe
+
+    metadata_section = MetadataSection(
+        children=[
+            MetadataBlock(
+                model=unique_text,
+                max_tokens="4096",
+                stream=True,
+            ),
+            HttpHeadersBlock(
+                headers={"x-marker": unique_text},
+                header_type="response",
+                status_code=200,
+            ),
+        ]
+    )
+    sec_se, _ = _render_plain(metadata_section, "metadata", SUMMARY_EXPANDED, width=180)
+    sec_fe, _ = _render_plain(metadata_section, "metadata", FULL_EXPANDED, width=180)
+    assert unique_text not in sec_se
+    assert unique_text in sec_fe
+
+
+def test_container_full_collapsed_hides_child_content():
+    unique_text = "FULL_CHILD_MARKER_456"
+    message = MessageBlock(
+        role="assistant",
+        msg_index=5,
+        timestamp="10:31:00",
+        category=Category.ASSISTANT,
+        children=[
+            TextContentBlock(
+                content=f"line one\n{unique_text}\nline three",
+                category=Category.ASSISTANT,
+            ),
+            ToolResultBlock(
+                size=3,
+                tool_name="Read",
+                msg_color_idx=0,
+                content=unique_text,
+            ),
+        ],
+    )
+    msg_fc, _ = _render_plain(message, "assistant", FULL_COLLAPSED, width=180)
+    msg_fe, _ = _render_plain(message, "assistant", FULL_EXPANDED, width=180)
+    assert unique_text not in msg_fc
+    assert unique_text in msg_fe
+
+    system_section = SystemSection(
+        children=[
+            TrackedContentBlock(
+                status="new",
+                tag_id="sp-9",
+                content=f"intro\n{unique_text}\noutro",
+            )
+        ]
+    )
+    sys_fc, _ = _render_plain(system_section, "system", FULL_COLLAPSED, width=180)
+    sys_fe, _ = _render_plain(system_section, "system", FULL_EXPANDED, width=180)
+    assert unique_text not in sys_fc
+    assert unique_text in sys_fe
 
 
 def test_text_content_state_matrix_is_distinct():
@@ -159,6 +608,7 @@ def test_tool_use_state_matrix_is_distinct():
     assert "git status" in se_text
     assert "lines" in se_text
     assert "$ git status" in fc_text
+    assert "pwd" not in fc_text
     assert "Run shell commands" in fe_text
     assert sc_text != fc_text
     assert se_text != fe_text
@@ -287,12 +737,15 @@ def test_newline_summary_collapsed_is_suppressed():
     sc_text, sc_lines = _render_plain(block, "metadata", SUMMARY_COLLAPSED)
     se_text, se_lines = _render_plain(block, "metadata", SUMMARY_EXPANDED)
     fc_text, fc_lines = _render_plain(block, "metadata", FULL_COLLAPSED)
+    fe_text, fe_lines = _render_plain(block, "metadata", FULL_EXPANDED)
 
     assert sc_lines == 0
     assert sc_text == ""
     assert se_lines == 1
     assert fc_lines == 1
+    assert fe_lines == 1
     assert se_text != fc_text
+    assert fc_text != fe_text
 
 
 def test_metadata_summary_states_are_distinct():
@@ -366,7 +819,9 @@ def test_message_block_state_matrix_is_distinct():
     assert "10:45:00" not in sc_text
     assert "10:45:00" in se_text
     assert "planner" in se_text
+    assert "summary blocks: 3" in se_text
     assert "blocks: 3" in fc_text
+    assert "summary blocks: 3" not in fc_text
     assert "tools:2" in fc_text
     assert "blocks: 3" not in fe_text
     assert sc_text != se_text

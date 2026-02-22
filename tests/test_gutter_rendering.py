@@ -88,7 +88,7 @@ def test_gutter_on_truncated_blocks():
     )
 
     console = Console()
-    # Set tools to FULL but collapsed (will truncate to 4 lines)
+    # Set tools to FULL but collapsed (will truncate to 5 lines)
     filters = {"tools": type("VisState", (), {"visible": True, "full": True, "expanded": False})()}
 
     strips, _, _ = render_turn_to_strips(
@@ -264,8 +264,7 @@ def test_arrow_state_matches_visstate():
     theme = BUILTIN_THEMES["textual-dark"]
     set_theme(theme)
 
-    # Use ToolResultBlock with newline-separated content that won't be wrapped
-    # This ensures we get exactly 20 lines that will be truncated at 4-line limits
+    # Use ToolResultBlock to verify full-collapsed vs full-expanded arrow states.
     long_content = "\n".join([f"Result line {i}" for i in range(20)])
     block = ToolResultBlock(
         tool_name="test",
@@ -279,8 +278,8 @@ def test_arrow_state_matches_visstate():
     # Test cases: At full=True level (tools visible individually), test expanded state
     # At summary level (full=False), tools are collapsed into ToolUseSummaryBlock
     test_cases = [
-        # Full level collapsed - truncated to 4 lines, shows full collapsed arrow ▶
-        (True, False, "▶", "full collapsed (truncated)"),
+        # Full level collapsed uses compact renderer and shows full-collapsed arrow ▶
+        (True, False, "▶", "full collapsed (compact)"),
         # Full level expanded - no truncation (None limit), shows full expanded arrow ▼
         (True, True, "▼", "full expanded (not truncated)"),
     ]
