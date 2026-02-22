@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -53,9 +53,11 @@ class EvalCheck:
 
 
 def run_evaluation(corpus_path: Path) -> dict[str, Any]:
-    corpus = json.loads(corpus_path.read_text(encoding="utf-8"))
+    raw = corpus_path.read_bytes()
+    corpus = json.loads(raw.decode("utf-8"))
+    corpus_sha256 = hashlib.sha256(raw).hexdigest()
     checks = _collect_checks(corpus)
-    return _build_report(checks)
+    return _build_report(checks, corpus_sha256=corpus_sha256)
 
 
 def _collect_checks(corpus: dict[str, Any]) -> list[EvalCheck]:
@@ -279,7 +281,7 @@ def _evaluate_budget_guardrails() -> list[EvalCheck]:
     ]
 
 
-def _build_report(checks: list[EvalCheck]) -> dict[str, Any]:
+def _build_report(checks: list[EvalCheck], corpus_sha256: str) -> dict[str, Any]:
     by_purpose: dict[str, list[EvalCheck]] = {}
     for check in checks:
         by_purpose.setdefault(check.purpose, []).append(check)
@@ -303,7 +305,8 @@ def _build_report(checks: list[EvalCheck]) -> dict[str, Any]:
     passed_checks = sum(1 for check in checks if check.passed)
     summary_rate = passed_checks / total_checks if total_checks else 0.0
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "report_version": 1,
+        "corpus_sha256": corpus_sha256,
         "summary": {
             "checks_total": total_checks,
             "checks_passed": passed_checks,
