@@ -125,7 +125,6 @@ class TestFollowMode:
     def test_scrolling_programmatically_guard_exists(self):
         """_scrolling_programmatically flag should exist and be used."""
         conv = ConversationView()
-        assert hasattr(conv, '_scrolling_programmatically')
         assert conv._scrolling_programmatically is False
 
     def test_scrolling_programmatically_set_during_scroll_to_bottom(self):

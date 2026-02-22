@@ -14,6 +14,7 @@ from unittest.mock import patch, PropertyMock, MagicMock
 from rich.console import Console
 from rich.style import Style
 from textual.geometry import Offset
+from textual.strip import Strip
 
 import cc_dump.tui.rendering
 from cc_dump.formatting import (
@@ -139,8 +140,7 @@ class TestRenderTurnToStrips:
 
         # Should produce at least one strip
         assert len(strips) > 0
-        # Each strip should be a Strip object with cell_length
-        assert all(hasattr(strip, 'cell_length') for strip in strips)
+        assert all(isinstance(strip, Strip) for strip in strips)
         # Block map should map block 0 to strip 0
         assert block_map == {0: 0}
 

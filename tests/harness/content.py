@@ -4,6 +4,7 @@ Uses strip._segments (private API) for plain text extraction.
 Acceptable for test utilities; fragile across Textual major versions.
 """
 
+from rich.text import Text
 from textual.strip import Strip
 
 from cc_dump.tui.app import CcDumpApp
@@ -38,7 +39,7 @@ def widget_text(app: CcDumpApp, selector: str) -> str:
     try:
         widget = app.query_one(selector)
         renderable = widget.render()
-        if hasattr(renderable, "plain"):
+        if isinstance(renderable, Text):
             return renderable.plain
         return str(renderable)
     except Exception:
