@@ -9,11 +9,11 @@ Goal:
 
 - Input: selected range or latest checkpoint window.
 - Output sections:
-- what changed
-- decisions made
-- unfinished work
-- known risks/blockers
-- immediate next steps
+- changed
+- decisions
+- open work
+- risks
+- next steps
 - Save as durable note artifact with source links.
 
 ## Value
@@ -26,11 +26,17 @@ Goal:
 - Usually Low-Medium (small targeted context).
 - Can become High if run over entire long histories repeatedly.
 
-## Ready to start?
+## Implemented now
 
-Yes for user-triggered MVP.
+- Standard handoff artifact contract with required sections and source links.
+- Dispatcher generation flow:
+  - `DataDispatcher.generate_handoff_note(...)`
+  - fallback artifact when side-channel disabled/blocked/error
+- Durable in-memory artifacts for resume continuity:
+  - `DataDispatcher.latest_handoff_note(...)`
+  - `DataDispatcher.handoff_note_snapshot(...)`
 
-Definition of ready:
-- notes are concise, structured, and source-linked
-- recipients can resume work without reading full transcript
+## Deferred follow-ups
 
+- UI surface for generating/inspecting handoff notes.
+- Optional persistent-on-disk storage strategy.

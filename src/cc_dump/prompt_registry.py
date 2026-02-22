@@ -51,7 +51,10 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
         purpose="handoff_note",
         version="v1",
         instruction=(
-            "Generate a handoff note with sections: changed, decisions, open work, risks."
+            "Generate a handoff note and return strict JSON only with shape "
+            "{\"sections\":{\"changed\":[{\"text\":\"\",\"source_links\":[{\"message_index\":0}]}],"
+            "\"decisions\":[],\"open_work\":[],\"risks\":[],\"next_steps\":[]}}. "
+            "Every section key is required; use empty arrays when unknown."
         ),
     ),
     "release_notes": PromptSpec(

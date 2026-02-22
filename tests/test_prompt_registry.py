@@ -26,3 +26,11 @@ def test_action_extraction_prompt_requires_strict_json():
     assert spec.purpose == "action_extraction"
     assert "strict JSON" in spec.instruction
     assert "\"kind\":\"action|deferred\"" in spec.instruction
+
+
+def test_handoff_prompt_requires_fixed_sections():
+    spec = get_prompt_spec("handoff_note")
+    assert spec.purpose == "handoff_note"
+    assert "strict JSON" in spec.instruction
+    assert "\"changed\"" in spec.instruction
+    assert "\"next_steps\"" in spec.instruction

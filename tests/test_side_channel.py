@@ -626,3 +626,66 @@ class TestDataDispatcher:
         )
         assert len(accepted) == 1
         assert accepted[0].beads_issue_id == ""
+
+    def test_generate_handoff_note_returns_required_sections(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        mgr.run = MagicMock(
+            return_value=SideChannelResult(
+                text=(
+                    '{"sections":{"changed":[{"text":"Implemented lane routing",'
+                    '"source_links":[{"message_index":1}]}],'
+                    '"decisions":[{"text":"Use side-channel marker","source_links":[{"message_index":2}]}],'
+                    '"open_work":[],"risks":[],"next_steps":[{"text":"Wire UI","source_links":[{"message_index":3}]}]}}'
+                ),
+                error=None,
+                elapsed_ms=17,
+            )
+        )
+        result = dispatcher.generate_handoff_note(
+            [{"role": "user", "content": "handoff context"}],
+            source_start=0,
+            source_end=0,
+            source_session_id="sess-1",
+            request_id="req-1",
+        )
+        assert result.source == "ai"
+        assert "## changed" in result.markdown
+        assert "## decisions" in result.markdown
+        assert "## open work" in result.markdown
+        assert "## risks" in result.markdown
+        assert "## next steps" in result.markdown
+
+    def test_generate_handoff_note_fallback_when_disabled(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=False)
+        mgr.run = MagicMock()
+        result = dispatcher.generate_handoff_note(
+            [{"role": "assistant", "content": "worked on cache"}],
+            source_start=0,
+            source_end=0,
+            source_session_id="sess-1",
+            request_id="req-1",
+        )
+        assert result.source == "fallback"
+        assert "## changed" in result.markdown
+        assert "## next steps" in result.markdown
+        mgr.run.assert_not_called()
+
+    def test_latest_handoff_note_available_for_resume_flow(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        mgr.run = MagicMock(
+            return_value=SideChannelResult(
+                text='{"sections":{"changed":[{"text":"A","source_links":[{"message_index":0}]}]}}',
+                error=None,
+                elapsed_ms=11,
+            )
+        )
+        result = dispatcher.generate_handoff_note(
+            [{"role": "assistant", "content": "A"}],
+            source_start=0,
+            source_end=0,
+            source_session_id="sess-2",
+            request_id="req-2",
+        )
+        latest = dispatcher.latest_handoff_note("sess-2")
+        assert latest is not None
+        assert latest.handoff_id == result.artifact.handoff_id

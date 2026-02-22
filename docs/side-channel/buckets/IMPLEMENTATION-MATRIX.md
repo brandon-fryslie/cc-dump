@@ -118,8 +118,10 @@ Implemented now:
 Implementation:
 - fixed template output sections + source links
 
-Placeholder:
-- prompt/purpose contract only
+Implemented now:
+- fixed section contract with required headings/source refs
+- dispatcher handoff generation + fallback behavior
+- latest artifact snapshot API for resume workflows
 
 ## 11 Release notes/changelog
 

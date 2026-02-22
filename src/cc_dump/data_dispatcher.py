@@ -24,6 +24,13 @@ from cc_dump.checkpoints import (
     render_checkpoint_diff,
 )
 from cc_dump.decision_ledger import DecisionLedgerStore, parse_decision_entries, DecisionLedgerEntry
+from cc_dump.handoff_notes import (
+    HandoffArtifact,
+    HandoffStore,
+    fallback_handoff_artifact,
+    parse_handoff_artifact,
+    render_handoff_markdown,
+)
 from cc_dump.prompt_registry import get_prompt_spec, PromptSpec
 from cc_dump.side_channel import SideChannelManager
 from cc_dump.side_channel_analytics import SideChannelAnalytics
@@ -69,6 +76,15 @@ class ActionExtractionResult:
     error: str = ""
 
 
+@dataclass
+class HandoffResult:
+    artifact: HandoffArtifact
+    markdown: str
+    source: str  # "ai" | "fallback" | "error"
+    elapsed_ms: int
+    error: str = ""
+
+
 class DataDispatcher:
     """Routes enrichment requests to AI or fallback.
 
@@ -84,6 +100,7 @@ class DataDispatcher:
         self._decision_ledger = DecisionLedgerStore()
         self._checkpoint_store = CheckpointStore()
         self._action_items = ActionItemStore()
+        self._handoff_store = HandoffStore()
 
     def summarize_messages(self, messages: list[dict], source_session_id: str = "") -> EnrichedResult:
         """Summarize a list of API messages.
@@ -359,6 +376,92 @@ class DataDispatcher:
 
     def accepted_action_items_snapshot(self) -> list[ActionWorkItem]:
         return self._action_items.accepted_snapshot()
+
+    def generate_handoff_note(
+        self,
+        messages: list[dict],
+        *,
+        source_start: int,
+        source_end: int,
+        source_session_id: str = "",
+        request_id: str = "",
+    ) -> HandoffResult:
+        """Generate structured handoff artifact for selected scope."""
+        spec = get_prompt_spec("handoff_note")
+        normalized_start, normalized_end = _normalize_message_range(
+            total_messages=len(messages),
+            source_start=source_start,
+            source_end=source_end,
+        )
+        selected_messages = _slice_messages_for_range(messages, normalized_start, normalized_end)
+        fallback_artifact = fallback_handoff_artifact(
+            purpose=spec.purpose,
+            prompt_version=spec.version,
+            source_session_id=source_session_id,
+            request_id=request_id,
+            source_start=normalized_start,
+            source_end=normalized_end,
+            summary_text=_fallback_summary(selected_messages),
+        )
+        profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
+
+        if not self._side_channel.enabled:
+            artifact = self._handoff_store.add(fallback_artifact)
+            return HandoffResult(
+                artifact=artifact,
+                markdown=render_handoff_markdown(artifact),
+                source="fallback",
+                elapsed_ms=0,
+            )
+
+        context = _build_summary_context(selected_messages)
+        prompt = _build_summary_prompt(context, spec)
+        result = self._side_channel.run(
+            prompt=prompt,
+            purpose=spec.purpose,
+            prompt_version=spec.version,
+            timeout=None,
+            source_session_id=source_session_id,
+            profile=profile,
+        )
+        self._analytics.record(purpose=result.purpose)
+        if result.error is not None:
+            source = "error"
+            if result.error.startswith("Guardrail:"):
+                logger.info("handoff blocked: %s", result.error)
+                source = "fallback"
+            artifact = self._handoff_store.add(fallback_artifact)
+            return HandoffResult(
+                artifact=artifact,
+                markdown=render_handoff_markdown(artifact),
+                source=source,
+                elapsed_ms=result.elapsed_ms,
+                error=result.error,
+            )
+
+        artifact = self._handoff_store.add(
+            parse_handoff_artifact(
+                result.text,
+                purpose=spec.purpose,
+                prompt_version=spec.version,
+                source_session_id=source_session_id,
+                request_id=request_id,
+                source_start=normalized_start,
+                source_end=normalized_end,
+            )
+        )
+        return HandoffResult(
+            artifact=artifact,
+            markdown=render_handoff_markdown(artifact),
+            source="ai",
+            elapsed_ms=result.elapsed_ms,
+        )
+
+    def latest_handoff_note(self, source_session_id: str = "") -> HandoffArtifact | None:
+        return self._handoff_store.latest(source_session_id=source_session_id)
+
+    def handoff_note_snapshot(self) -> list[HandoffArtifact]:
+        return self._handoff_store.snapshot()
 
 
 def _build_summary_context(messages: list[dict]) -> str:
