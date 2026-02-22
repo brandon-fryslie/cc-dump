@@ -8,7 +8,7 @@ import ast
 import importlib
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -118,6 +118,44 @@ class TestHotReloadWatcherLifecycle:
         controller._watcher_stream = None
         controller.stop_file_watcher()
         assert controller._watcher_stream is None
+
+
+class TestHotReloadMountSeam:
+    @pytest.mark.asyncio
+    async def test_mount_replacement_conversation_uses_original_non_app_parent(self):
+        from cc_dump.tui.hot_reload_controller import _mount_replacement_conversation
+
+        parent = AsyncMock()
+        app = AsyncMock()
+        new_conv = object()
+        prev_widget = object()
+
+        await _mount_replacement_conversation(
+            app,
+            new_conv,
+            prev_widget=prev_widget,
+            old_conv_parent=parent,
+        )
+
+        parent.mount.assert_awaited_once_with(new_conv)
+        app.mount.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_mount_replacement_conversation_uses_app_mount_for_root_parent(self):
+        from cc_dump.tui.hot_reload_controller import _mount_replacement_conversation
+
+        app = AsyncMock()
+        new_conv = object()
+        prev_widget = object()
+
+        await _mount_replacement_conversation(
+            app,
+            new_conv,
+            prev_widget=prev_widget,
+            old_conv_parent=app,
+        )
+
+        app.mount.assert_awaited_once_with(new_conv, after=prev_widget)
 
 
 # ============================================================================

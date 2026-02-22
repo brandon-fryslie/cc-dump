@@ -240,6 +240,7 @@ async def _replace_all_widgets_inner(app) -> None:
 
     # 1. Capture state from old widgets
     old_conv = app._get_conv()
+    old_conv_parent = old_conv.parent if old_conv is not None else None
     old_logs = app._get_logs()
     old_info = app._get_info()
     old_footer = app._get_footer()
@@ -337,7 +338,12 @@ async def _replace_all_widgets_inner(app) -> None:
         await app.mount(new_panels[spec.name], after=prev_widget)
         prev_widget = new_panels[spec.name]
 
-    await app.mount(new_conv, after=prev_widget)
+    await _mount_replacement_conversation(
+        app,
+        new_conv,
+        prev_widget=prev_widget,
+        old_conv_parent=old_conv_parent,
+    )
     await app.mount(new_logs, after=new_conv)
     await app.mount(new_info, after=new_logs)
 
@@ -383,6 +389,27 @@ def _rehydrate_panels_from_store(app, new_panels: dict[str, object]) -> None:
             session_id=getattr(app, "_session_id", None),
             last_message_time=app_state.get("last_message_time"),
         )
+
+
+async def _mount_replacement_conversation(
+    app,
+    new_conv,
+    *,
+    prev_widget,
+    old_conv_parent,
+) -> None:
+    """Mount replacement conversation view in its original parent container.
+
+    // [LAW:locality-or-seam] Parent-aware mount is centralized here to enable
+    // future tabbed/multi-container layouts without changing swap logic.
+    """
+    if old_conv_parent is app:
+        await app.mount(new_conv, after=prev_widget)
+        return
+    if old_conv_parent is not None:
+        await old_conv_parent.mount(new_conv)
+        return
+    await app.mount(new_conv, after=prev_widget)
 
 
 def _validate_and_restore_widget_state(widget, state: dict, *, widget_name: str) -> None:
