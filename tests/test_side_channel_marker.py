@@ -1,0 +1,71 @@
+from cc_dump.side_channel_marker import (
+    SideChannelMarker,
+    encode_marker,
+    extract_marker,
+    prepend_marker,
+    strip_marker_from_body,
+)
+
+
+def test_encode_and_extract_marker_from_string_content():
+    marker = SideChannelMarker(
+        run_id="abc123",
+        purpose="block_summary",
+        source_session_id="sess-1",
+    )
+    body = {
+        "messages": [
+            {"role": "user", "content": prepend_marker("hello", marker)},
+        ]
+    }
+    parsed = extract_marker(body)
+    assert parsed is not None
+    assert parsed.run_id == "abc123"
+    assert parsed.purpose == "block_summary"
+    assert parsed.source_session_id == "sess-1"
+
+
+def test_strip_marker_from_body_removes_prefix_line():
+    marker = SideChannelMarker(
+        run_id="abc123",
+        purpose="block_summary",
+        source_session_id="sess-1",
+    )
+    body = {
+        "messages": [
+            {"role": "assistant", "content": "ignore"},
+            {"role": "user", "content": prepend_marker("real prompt", marker)},
+        ]
+    }
+    stripped = strip_marker_from_body(body)
+    assert stripped["messages"][-1]["content"] == "real prompt"
+
+
+def test_extract_marker_from_block_content():
+    marker = SideChannelMarker(
+        run_id="abc123",
+        purpose="action_extraction",
+        source_session_id="sess-2",
+    )
+    body = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prepend_marker("prompt", marker)},
+                ],
+            }
+        ]
+    }
+    parsed = extract_marker(body)
+    assert parsed is not None
+    assert parsed.purpose == "action_extraction"
+    assert parsed.source_session_id == "sess-2"
+
+
+def test_encode_marker_has_expected_delimiters():
+    marker = SideChannelMarker(run_id="x", purpose="block_summary")
+    encoded = encode_marker(marker)
+    assert encoded.startswith("<<CC_DUMP_SIDE_CHANNEL:")
+    assert encoded.endswith(">>")
+

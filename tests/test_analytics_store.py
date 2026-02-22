@@ -560,3 +560,54 @@ def test_get_state_restore_state_handles_old_format():
     assert store._seq == 3
     assert "_current_response_events" not in vars(store)
     assert "_current_text" not in vars(store)
+
+
+def test_side_channel_purpose_summary_aggregates_marker_tagged_turns():
+    store = AnalyticsStore()
+    marker = '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"r1","purpose":"block_summary","source_session_id":"s1"}>>\n'
+    request = {
+        "model": "claude-haiku-4-5",
+        "messages": [{"role": "user", "content": marker + "Summarize this"}],
+    }
+    store.on_event(RequestBodyEvent(body=request, request_id="req-1"))
+    store.on_event(
+        ResponseCompleteEvent(
+            body={
+                "model": "claude-haiku-4-5",
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_read_input_tokens": 20,
+                    "cache_creation_input_tokens": 2,
+                },
+                "stop_reason": "end_turn",
+            },
+            request_id="req-1",
+        )
+    )
+
+    by_purpose = store.get_side_channel_purpose_summary()
+    assert "block_summary" in by_purpose
+    row = by_purpose["block_summary"]
+    assert row["turns"] == 1
+    assert row["input_tokens"] == 10
+    assert row["cache_read_tokens"] == 20
+    assert row["cache_creation_tokens"] == 2
+    assert row["output_tokens"] == 5
+
+
+def test_side_channel_summary_excludes_primary_turns():
+    store = AnalyticsStore()
+    request = {"model": "claude-sonnet-4", "messages": [{"role": "user", "content": "Hello"}]}
+    store.on_event(RequestBodyEvent(body=request, request_id="req-p"))
+    store.on_event(
+        ResponseCompleteEvent(
+            body={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+                "stop_reason": "end_turn",
+            },
+            request_id="req-p",
+        )
+    )
+    assert store.get_side_channel_purpose_summary() == {}

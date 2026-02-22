@@ -28,6 +28,7 @@ from cc_dump.analysis import (
     HAIKU_BASE_UNIT,
     ToolEconomicsRow,
 )
+from cc_dump.side_channel_marker import extract_marker
 from cc_dump.token_counter import count_tokens
 
 
@@ -54,7 +55,20 @@ class TurnRecord:
     cache_read_tokens: int
     cache_creation_tokens: int
     request_json: str  # For timeline budget calculation
+    purpose: str = "primary"
+    is_side_channel: bool = False
     tool_invocations: list[ToolInvocationRecord] = field(default_factory=list)
+
+
+@dataclass
+class _PendingTurn:
+    """Request-scoped pending turn state keyed by request_id."""
+
+    request_id: str
+    request_body: dict
+    model: str
+    purpose: str
+    is_side_channel: bool
 
 
 class DashboardTurnRow(TypedDict):
@@ -112,11 +126,7 @@ class AnalyticsStore:
     def __init__(self):
         self._turns: list[TurnRecord] = []
         self._seq = 0
-        # Accumulator state for current turn
-        self._current_request = None
-        self._current_usage = {}
-        self._current_stop = ""
-        self._current_model = ""
+        self._pending: dict[str, _PendingTurn] = {}
 
     @property
     def turn_count(self) -> int:
@@ -138,36 +148,55 @@ class AnalyticsStore:
 
         if kind == PipelineEventKind.REQUEST:
             assert isinstance(event, RequestBodyEvent)
-            # Start accumulating a new turn
-            self._current_request = event.body
-            self._current_usage = {}
-            self._current_stop = ""
-            self._current_model = self._current_request.get("model", "")
+            body = event.body if isinstance(event.body, dict) else {}
+            marker = extract_marker(body)
+            self._pending[event.request_id] = _PendingTurn(
+                request_id=event.request_id,
+                request_body=body,
+                model=str(body.get("model", "") or ""),
+                purpose=marker.purpose if marker is not None else "primary",
+                is_side_channel=marker is not None,
+            )
 
         elif kind == PipelineEventKind.RESPONSE_COMPLETE:
             # [LAW:one-source-of-truth] Extract all response data from complete body
             assert isinstance(event, ResponseCompleteEvent)
+            pending = self._pending.get(event.request_id)
+            if pending is None:
+                return
             body = event.body
             usage = body.get("usage", {})
-            self._current_usage = {
+            usage_map = {
                 "input_tokens": usage.get("input_tokens", 0),
                 "output_tokens": usage.get("output_tokens", 0),
                 "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0),
                 "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0),
             }
-            self._current_model = body.get("model", "") or self._current_model
-            self._current_stop = body.get("stop_reason", "") or ""
-            self._commit_turn()
+            model = body.get("model", "") or pending.model
+            stop_reason = body.get("stop_reason", "") or ""
+            self._commit_turn(
+                pending=pending,
+                usage=usage_map,
+                model=str(model),
+                stop_reason=str(stop_reason),
+            )
 
-    def _commit_turn(self):
+    def _commit_turn(
+        self,
+        *,
+        pending: _PendingTurn,
+        usage: dict[str, int],
+        model: str,
+        stop_reason: str,
+    ) -> None:
         """Store accumulated turn in memory."""
-        if not self._current_request:
+        if not pending.request_body:
             return
 
         self._seq += 1
 
         # Build tool invocations with token counts
-        messages = self._current_request.get("messages", [])
+        messages = pending.request_body.get("messages", [])
         invocations = correlate_tools(messages)
         tool_records = []
         for inv in invocations:
@@ -188,22 +217,22 @@ class AnalyticsStore:
         # Create turn record
         turn = TurnRecord(
             sequence_num=self._seq,
-            model=self._current_model,
-            stop_reason=self._current_stop,
-            input_tokens=self._current_usage.get("input_tokens", 0),
-            output_tokens=self._current_usage.get("output_tokens", 0),
-            cache_read_tokens=self._current_usage.get("cache_read_input_tokens", 0),
-            cache_creation_tokens=self._current_usage.get(
+            model=model,
+            stop_reason=stop_reason,
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+            cache_read_tokens=usage.get("cache_read_input_tokens", 0),
+            cache_creation_tokens=usage.get(
                 "cache_creation_input_tokens", 0
             ),
-            request_json=json.dumps(self._current_request),
+            request_json=json.dumps(pending.request_body),
+            purpose=pending.purpose,
+            is_side_channel=pending.is_side_channel,
             tool_invocations=tool_records,
         )
 
         self._turns.append(turn)
-
-        # Clear accumulator
-        self._current_request = None
+        self._pending.pop(pending.request_id, None)
 
     # ─── Query methods (translated from db_queries.py SQL) ─────────────────
 
@@ -440,6 +469,29 @@ class AnalyticsStore:
             "models": model_rows,
         }
 
+    def get_side_channel_purpose_summary(self) -> dict[str, dict[str, int]]:
+        """Aggregate side-channel token usage by purpose."""
+        summary: dict[str, dict[str, int]] = {}
+        for turn in self._turns:
+            if not turn.is_side_channel:
+                continue
+            row = summary.get(turn.purpose)
+            if row is None:
+                row = {
+                    "turns": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "cache_creation_tokens": 0,
+                }
+                summary[turn.purpose] = row
+            row["turns"] += 1
+            row["input_tokens"] += turn.input_tokens
+            row["output_tokens"] += turn.output_tokens
+            row["cache_read_tokens"] += turn.cache_read_tokens
+            row["cache_creation_tokens"] += turn.cache_creation_tokens
+        return summary
+
     def get_tool_economics(self, group_by_model: bool = False) -> list[ToolEconomicsRow]:
         """Query per-tool economics with real token counts and cache attribution.
 
@@ -564,6 +616,8 @@ class AnalyticsStore:
                     "cache_read_tokens": t.cache_read_tokens,
                     "cache_creation_tokens": t.cache_creation_tokens,
                     "request_json": t.request_json,
+                    "purpose": t.purpose,
+                    "is_side_channel": t.is_side_channel,
                     "tool_invocations": [
                         {
                             "tool_name": inv.tool_name,
@@ -578,11 +632,16 @@ class AnalyticsStore:
                 for t in self._turns
             ],
             "seq": self._seq,
-            # Accumulator state (for in-progress turns)
-            "current_request": self._current_request,
-            "current_usage": self._current_usage,
-            "current_stop": self._current_stop,
-            "current_model": self._current_model,
+            "pending": [
+                {
+                    "request_id": p.request_id,
+                    "request_body": p.request_body,
+                    "model": p.model,
+                    "purpose": p.purpose,
+                    "is_side_channel": p.is_side_channel,
+                }
+                for p in self._pending.values()
+            ],
         }
 
     def restore_state(self, state: dict):
@@ -609,12 +668,27 @@ class AnalyticsStore:
                     cache_read_tokens=t_data["cache_read_tokens"],
                     cache_creation_tokens=t_data["cache_creation_tokens"],
                     request_json=t_data["request_json"],
+                    purpose=str(t_data.get("purpose", "primary") or "primary"),
+                    is_side_channel=bool(t_data.get("is_side_channel", False)),
                     tool_invocations=tool_invocations,
                 )
             )
 
         self._seq = state.get("seq", 0)
-        self._current_request = state.get("current_request")
-        self._current_usage = state.get("current_usage", {})
-        self._current_stop = state.get("current_stop", "")
-        self._current_model = state.get("current_model", "")
+        self._pending = {}
+        for p_data in state.get("pending", []):
+            if not isinstance(p_data, dict):
+                continue
+            request_id = str(p_data.get("request_id", "") or "")
+            if not request_id:
+                continue
+            request_body = p_data.get("request_body", {})
+            if not isinstance(request_body, dict):
+                request_body = {}
+            self._pending[request_id] = _PendingTurn(
+                request_id=request_id,
+                request_body=request_body,
+                model=str(p_data.get("model", "") or ""),
+                purpose=str(p_data.get("purpose", "primary") or "primary"),
+                is_side_channel=bool(p_data.get("is_side_channel", False)),
+            )

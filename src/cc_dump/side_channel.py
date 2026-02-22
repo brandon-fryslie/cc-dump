@@ -11,9 +11,28 @@ Import as: import cc_dump.side_channel
 
 from __future__ import annotations
 
+import os
 import subprocess
+import threading
 import time
+import uuid
 from dataclasses import dataclass
+
+from cc_dump.side_channel_marker import SideChannelMarker, prepend_marker
+
+
+SIDE_CHANNEL_PURPOSES: tuple[str, ...] = (
+    "core_debug_lane",
+    "block_summary",
+    "decision_ledger",
+    "action_extraction",
+    "handoff_note",
+    "release_notes",
+    "incident_timeline",
+    "conversation_qa",
+    "checkpoint_summary",
+    "compaction",
+)
 
 
 @dataclass
@@ -26,6 +45,9 @@ class SideChannelResult:
     text: str  # response text, or ""
     error: str | None  # error message, or None for success
     elapsed_ms: int  # wall-clock time in milliseconds
+    run_id: str = ""
+    purpose: str = "block_summary"
+    profile: str = "ephemeral_default"
 
 
 class SideChannelManager:
@@ -39,6 +61,9 @@ class SideChannelManager:
     def __init__(self, claude_command: str = "claude") -> None:
         self._claude_command = claude_command
         self._enabled = True
+        self._global_kill = False
+        self._base_url: str = ""
+        self._run_slots = threading.Semaphore(1)
 
     @property
     def enabled(self) -> bool:
@@ -52,7 +77,42 @@ class SideChannelManager:
         """Update the claude command (e.g., from settings change)."""
         self._claude_command = cmd
 
+    def set_base_url(self, url: str) -> None:
+        """Set ANTHROPIC_BASE_URL used for subprocess requests."""
+        self._base_url = url
+
+    def set_max_concurrent(self, value: int) -> None:
+        """Set max concurrent side-channel subprocesses (placeholder control)."""
+        max_runs = max(1, int(value))
+        self._run_slots = threading.Semaphore(max_runs)
+
+    @property
+    def global_kill(self) -> bool:
+        return self._global_kill
+
+    @global_kill.setter
+    def global_kill(self, value: bool) -> None:
+        self._global_kill = bool(value)
+
     def query(self, prompt: str, timeout: int = 60) -> SideChannelResult:
+        """Compatibility helper for existing callsites."""
+        return self.run(
+            prompt=prompt,
+            purpose="block_summary",
+            timeout=timeout,
+            source_session_id="",
+            profile="ephemeral_default",
+        )
+
+    def run(
+        self,
+        *,
+        prompt: str,
+        purpose: str,
+        timeout: int = 60,
+        source_session_id: str = "",
+        profile: str = "ephemeral_default",
+    ) -> SideChannelResult:
         """Run a synchronous query against claude -p.
 
         BLOCKING — must be called from a worker thread, never from the TUI thread.
@@ -61,21 +121,52 @@ class SideChannelManager:
         future optimization to a persistent instance without API change.
         """
         start = time.monotonic()
-        cmd = [
-            self._claude_command,
-            "-p",
-            "--model",
-            "haiku",
-            "--allowedTools",
-            "",
-        ]
+        run_id = uuid.uuid4().hex
+        normalized_purpose = _normalize_purpose(purpose)
+        if self._global_kill:
+            return SideChannelResult(
+                text="",
+                error="Blocked by global side-channel kill switch",
+                elapsed_ms=0,
+                run_id=run_id,
+                purpose=normalized_purpose,
+                profile=profile,
+            )
+        if not self._enabled:
+            return SideChannelResult(
+                text="",
+                error="Side-channel disabled",
+                elapsed_ms=0,
+                run_id=run_id,
+                purpose=normalized_purpose,
+                profile=profile,
+            )
+
+        cmd = _build_cmd(
+            claude_command=self._claude_command,
+            profile=profile,
+            source_session_id=source_session_id,
+        )
+        tagged_prompt = prepend_marker(
+            prompt,
+            SideChannelMarker(
+                run_id=run_id,
+                purpose=normalized_purpose,
+                source_session_id=source_session_id,
+            ),
+        )
+        env = os.environ.copy()
+        if self._base_url:
+            env["ANTHROPIC_BASE_URL"] = self._base_url
         try:
+            self._run_slots.acquire()
             result = subprocess.run(
                 cmd,
-                input=prompt,
+                input=tagged_prompt,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                env=env,
             )
             elapsed = int((time.monotonic() - start) * 1000)
             if result.returncode != 0:
@@ -84,11 +175,17 @@ class SideChannelManager:
                     text="",
                     error=f"Exit code {result.returncode}: {stderr_snippet}",
                     elapsed_ms=elapsed,
+                    run_id=run_id,
+                    purpose=normalized_purpose,
+                    profile=profile,
                 )
             return SideChannelResult(
                 text=result.stdout.strip(),
                 error=None,
                 elapsed_ms=elapsed,
+                run_id=run_id,
+                purpose=normalized_purpose,
+                profile=profile,
             )
         except subprocess.TimeoutExpired:
             elapsed = int((time.monotonic() - start) * 1000)
@@ -96,6 +193,9 @@ class SideChannelManager:
                 text="",
                 error=f"Timeout ({timeout}s)",
                 elapsed_ms=elapsed,
+                run_id=run_id,
+                purpose=normalized_purpose,
+                profile=profile,
             )
         except FileNotFoundError:
             elapsed = int((time.monotonic() - start) * 1000)
@@ -103,4 +203,39 @@ class SideChannelManager:
                 text="",
                 error=f"Command not found: {self._claude_command}",
                 elapsed_ms=elapsed,
+                run_id=run_id,
+                purpose=normalized_purpose,
+                profile=profile,
             )
+        finally:
+            try:
+                self._run_slots.release()
+            except ValueError:
+                # Release can fail only if acquisition didn't happen.
+                pass
+
+
+def _normalize_purpose(purpose: str) -> str:
+    return purpose if purpose in SIDE_CHANNEL_PURPOSES else "utility_custom"
+
+
+def _build_cmd(
+    *,
+    claude_command: str,
+    profile: str,
+    source_session_id: str,
+) -> list[str]:
+    cmd = [
+        claude_command,
+        "-p",
+        "--model",
+        "haiku",
+        "--tools",
+        "",
+    ]
+
+    if profile == "cache_probe_resume" and source_session_id:
+        return cmd + ["--resume", source_session_id, "--fork-session"]
+    if profile == "isolated_fixed_id":
+        return cmd + ["--session-id", str(uuid.uuid4()), "--no-session-persistence"]
+    return cmd + ["--no-session-persistence"]

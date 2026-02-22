@@ -25,6 +25,7 @@ import cc_dump.launch_config
 import cc_dump.side_channel
 import cc_dump.data_dispatcher
 import cc_dump.sentinel
+import cc_dump.side_channel_marker
 import cc_dump.session_sidecar
 from cc_dump.proxy import RequestPipeline
 import cc_dump.view_store
@@ -273,11 +274,14 @@ def main():
     sc_enabled = bool(settings_store.get("side_channel_enabled"))
     side_channel_mgr = cc_dump.side_channel.SideChannelManager()
     side_channel_mgr.enabled = sc_enabled
+    side_channel_mgr.set_base_url(f"http://{args.host}:{actual_port}")
     data_dispatcher = cc_dump.data_dispatcher.DataDispatcher(side_channel_mgr)
 
     # Request pipeline — transforms + interceptors run before forwarding
     pipeline = RequestPipeline(
-        transforms=[],
+        transforms=[
+            lambda body, url: (cc_dump.side_channel_marker.strip_marker_from_body(body), url),
+        ],
         interceptors=[cc_dump.sentinel.make_interceptor(tmux_ctrl)],
     )
     ProxyHandler.request_pipeline = pipeline

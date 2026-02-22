@@ -13,7 +13,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from cc_dump.prompt_registry import get_prompt_spec
 from cc_dump.side_channel import SideChannelManager
+from cc_dump.side_channel_analytics import SideChannelAnalytics
 
 
 @dataclass
@@ -38,8 +40,9 @@ class DataDispatcher:
 
     def __init__(self, side_channel: SideChannelManager) -> None:
         self._side_channel = side_channel
+        self._analytics = SideChannelAnalytics()
 
-    def summarize_messages(self, messages: list[dict]) -> EnrichedResult:
+    def summarize_messages(self, messages: list[dict], source_session_id: str = "") -> EnrichedResult:
         """Summarize a list of API messages.
 
         BLOCKING — must be called from a worker thread, never from the TUI thread.
@@ -56,8 +59,16 @@ class DataDispatcher:
         if not self._side_channel.enabled:
             return fallback
 
-        prompt = _build_summary_prompt(messages)
-        result = self._side_channel.query(prompt)
+        prompt = _build_summary_prompt(messages, purpose="block_summary")
+        profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
+        result = self._side_channel.run(
+            prompt=prompt,
+            purpose="block_summary",
+            timeout=60,
+            source_session_id=source_session_id,
+            profile=profile,
+        )
+        self._analytics.record(purpose=result.purpose)
 
         if result.error is not None:
             return EnrichedResult(
@@ -71,9 +82,13 @@ class DataDispatcher:
             elapsed_ms=result.elapsed_ms,
         )
 
+    def side_channel_usage_snapshot(self) -> dict[str, dict[str, int]]:
+        """Return purpose-level side-channel usage snapshot."""
+        return self._analytics.snapshot()
 
-def _build_summary_prompt(messages: list[dict]) -> str:
-    """Build the prompt for claude -p summarization."""
+
+def _build_summary_prompt(messages: list[dict], purpose: str) -> str:
+    """Build a purpose-scoped prompt from conversation messages."""
     lines: list[str] = []
     for msg in messages:
         role = msg.get("role", "unknown")
@@ -91,9 +106,9 @@ def _build_summary_prompt(messages: list[dict]) -> str:
         lines.append(f"[{role}]: {content}")
 
     context = "\n".join(lines)
+    spec = get_prompt_spec(purpose)
     return (
-        "Summarize this conversation concisely. "
-        "Focus on what was accomplished and key decisions made.\n\n"
+        f"{spec.instruction}\n\n"
         f"{context}"
     )
 

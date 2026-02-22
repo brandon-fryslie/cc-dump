@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 SCHEMA: dict[str, object] = {
     "auto_zoom_default": False,
     "side_channel_enabled": True,
+    "side_channel_global_kill": False,
+    "side_channel_max_concurrent": 1,
     "theme": None,
 }
 
@@ -51,6 +53,16 @@ def setup_reactions(store, context=None):
             disposers.append(reaction(
                 lambda: store.get("side_channel_enabled"),
                 lambda val, m=mgr: setattr(m, "enabled", val),
+                fire_immediately=True,
+            ))
+            disposers.append(reaction(
+                lambda: store.get("side_channel_global_kill"),
+                lambda val, m=mgr: setattr(m, "global_kill", bool(val)),
+                fire_immediately=True,
+            ))
+            disposers.append(reaction(
+                lambda: int(store.get("side_channel_max_concurrent") or 1),
+                lambda val, m=mgr: m.set_max_concurrent(int(val)),
                 fire_immediately=True,
             ))
 

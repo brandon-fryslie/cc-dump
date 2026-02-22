@@ -20,6 +20,7 @@ from cc_dump.event_types import (
     RequestBodyEvent,
     ResponseHeadersEvent,
 )
+from cc_dump.side_channel_marker import extract_marker
 
 
 def build_har_request(method: str, url: str, headers: dict, body: dict) -> dict:
@@ -289,6 +290,18 @@ class HARRecordingSubscriber:
                     "receive": 0,
                 },
             }
+            marker = extract_marker(pending.request_body or {})
+            if marker is not None:
+                entry["comment"] = (
+                    f"cc-dump side-channel run={marker.run_id} purpose={marker.purpose}"
+                )
+                # HAR allows custom fields using underscore prefix.
+                entry["_cc_dump"] = {
+                    "category": "side_channel",
+                    "run_id": marker.run_id,
+                    "purpose": marker.purpose,
+                    "source_session_id": marker.source_session_id,
+                }
 
             # Serialize entry (compact JSON, no indent)
             entry_json = json.dumps(entry, ensure_ascii=False)

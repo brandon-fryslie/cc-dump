@@ -31,8 +31,17 @@ class TestSideChannelManager:
         assert result.elapsed_ms >= 0
         # Verify subprocess args
         args = mock_run.call_args
-        assert args[0][0] == ["claude", "-p", "--model", "haiku", "--allowedTools", ""]
-        assert args[1]["input"] == "Summarize this"
+        assert args[0][0] == [
+            "claude",
+            "-p",
+            "--model",
+            "haiku",
+            "--tools",
+            "",
+            "--no-session-persistence",
+        ]
+        assert "Summarize this" in args[1]["input"]
+        assert "CC_DUMP_SIDE_CHANNEL" in args[1]["input"]
         assert args[1]["capture_output"] is True
         assert args[1]["text"] is True
 
@@ -108,6 +117,26 @@ class TestSideChannelManager:
 
         assert "(no stderr)" in result.error
 
+    def test_global_kill_switch_blocks_run(self):
+        mgr = SideChannelManager()
+        mgr.global_kill = True
+        result = mgr.query("test")
+        assert "kill switch" in str(result.error).lower()
+
+    def test_profile_resume_uses_resume_and_fork_flags(self):
+        mgr = SideChannelManager()
+        mock_result = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            _ = mgr.run(
+                prompt="test",
+                purpose="block_summary",
+                source_session_id="123e4567-e89b-12d3-a456-426614174000",
+                profile="cache_probe_resume",
+            )
+        cmd = mock_run.call_args[0][0]
+        assert "--resume" in cmd
+        assert "--fork-session" in cmd
+
 
 # ─── DataDispatcher tests ────────────────────────────────────────────
 
@@ -120,7 +149,7 @@ class TestDataDispatcher:
         mgr = SideChannelManager()
         mgr.enabled = enabled
         if query_result is not None:
-            mgr.query = MagicMock(return_value=query_result)
+            mgr.run = MagicMock(return_value=query_result)
         return DataDispatcher(mgr), mgr
 
     def test_summarize_when_enabled(self):
@@ -134,12 +163,12 @@ class TestDataDispatcher:
         assert enriched.source == "ai"
         assert enriched.text == "AI summary here"
         assert enriched.elapsed_ms == 500
-        mgr.query.assert_called_once()
+        mgr.run.assert_called_once()
 
     def test_summarize_when_disabled(self):
         """Disabled dispatcher returns fallback without calling AI."""
         dispatcher, mgr = self._make_dispatcher(enabled=False)
-        mgr.query = MagicMock()
+        mgr.run = MagicMock()
 
         messages = [
             {"role": "user", "content": "hello"},
@@ -152,7 +181,7 @@ class TestDataDispatcher:
         assert "1 assistant" in enriched.text
         assert "1 user" in enriched.text
         assert enriched.elapsed_ms == 0
-        mgr.query.assert_not_called()
+        mgr.run.assert_not_called()
 
     def test_summarize_on_error(self):
         """AI error returns error text with fallback appended."""
@@ -188,7 +217,7 @@ class TestDataDispatcher:
                 ],
             }
         ]
-        prompt = _build_summary_prompt(messages)
+        prompt = _build_summary_prompt(messages, purpose="block_summary")
 
         assert "What is Python?" in prompt
         assert "[user]" in prompt
@@ -198,7 +227,7 @@ class TestDataDispatcher:
         from cc_dump.data_dispatcher import _build_summary_prompt
 
         messages = [{"role": "assistant", "content": "x" * 1000}]
-        prompt = _build_summary_prompt(messages)
+        prompt = _build_summary_prompt(messages, purpose="block_summary")
 
         # Should be truncated to 500 + "..."
         assert "..." in prompt

@@ -63,6 +63,7 @@ import cc_dump.sessions
 import cc_dump.memory_stats
 import cc_dump.event_types
 import cc_dump.view_store
+import cc_dump.side_channel_marker
 
 from cc_dump.stderr_tee import get_tee as _get_tee
 import cc_dump.domain_store
@@ -286,6 +287,9 @@ class CcDumpApp(App):
     def _normalize_session_key(self, session_id: str) -> str:
         return session_id if session_id else self._default_session_key
 
+    def _is_side_channel_session_key(self, session_key: str) -> bool:
+        return session_key.startswith("side-channel:")
+
     def _active_session_key_from_tabs(self) -> str:
         tabs = self._get_conv_tabs()
         if tabs is None:
@@ -310,6 +314,10 @@ class CcDumpApp(App):
     def _session_tab_title(self, session_key: str) -> str:
         if session_key == self._default_session_key:
             return "Session"
+        if self._is_side_channel_session_key(session_key):
+            parts = session_key.split(":", 2)
+            suffix = parts[2] if len(parts) > 2 else session_key
+            return "SC " + suffix[:8]
         return session_key[:8]
 
     def _ensure_session_surface(self, session_key: str) -> None:
@@ -349,6 +357,7 @@ class CcDumpApp(App):
         if (
             self._active_session_key == self._default_session_key
             and key != self._default_session_key
+            and not self._is_side_channel_session_key(key)
             and default_store.completed_count == 0
             and not default_store.get_active_stream_ids()
         ):
@@ -398,7 +407,18 @@ class CcDumpApp(App):
         key = self._default_session_key
         if event.kind == cc_dump.event_types.PipelineEventKind.REQUEST:
             body = getattr(event, "body", {})
-            key = self._normalize_session_key(self._extract_session_id_from_body(body))
+            marker = (
+                cc_dump.side_channel_marker.extract_marker(body)
+                if isinstance(body, dict)
+                else None
+            )
+            if marker is not None:
+                source_session = marker.source_session_id or self._extract_session_id_from_body(body)
+                key = self._normalize_session_key(
+                    f"side-channel:{marker.purpose}:{source_session or marker.run_id[:8]}"
+                )
+            else:
+                key = self._normalize_session_key(self._extract_session_id_from_body(body))
             self._bind_request_session(request_id, key)
             self._ensure_session_surface(key)
             return key
@@ -1332,8 +1352,10 @@ class CcDumpApp(App):
 
         dispatcher = self._data_dispatcher
 
+        source_session_id = self._active_resume_session_id()
+
         def _do_summarize():
-            result = dispatcher.summarize_messages(messages)
+            result = dispatcher.summarize_messages(messages, source_session_id=source_session_id)
             self.call_from_thread(self._on_side_channel_result, result)
 
         self.run_worker(_do_summarize, thread=True, exclusive=False)

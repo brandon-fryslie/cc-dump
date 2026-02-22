@@ -25,6 +25,8 @@ class TestCreate:
         store = cc_dump.settings_store.create()
         assert store.get("auto_zoom_default") is False
         assert store.get("side_channel_enabled") is True
+        assert store.get("side_channel_global_kill") is False
+        assert store.get("side_channel_max_concurrent") == 1
         assert store.get("theme") is None
 
     def test_seeds_from_disk(self, tmp_settings):
@@ -61,15 +63,21 @@ class TestSetupReactions:
         store = cc_dump.settings_store.create()
         mgr = MagicMock()
         mgr.enabled = True
+        mgr.global_kill = False
         context = {"side_channel_manager": mgr}
         disposers = cc_dump.settings_store.setup_reactions(store, context)
         store._reaction_disposers = disposers
 
         # fire_immediately syncs initial value
         assert mgr.enabled is True
+        assert mgr.global_kill is False
 
         store.set("side_channel_enabled", False)
         assert mgr.enabled is False
+        store.set("side_channel_global_kill", True)
+        assert mgr.global_kill is True
+        store.set("side_channel_max_concurrent", 3)
+        mgr.set_max_concurrent.assert_called_with(3)
 
     def test_tmux_auto_zoom_sync(self, tmp_settings):
         store = cc_dump.settings_store.create()
