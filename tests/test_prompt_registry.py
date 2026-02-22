@@ -34,3 +34,11 @@ def test_handoff_prompt_requires_fixed_sections():
     assert "strict JSON" in spec.instruction
     assert "\"changed\"" in spec.instruction
     assert "\"next_steps\"" in spec.instruction
+
+
+def test_incident_timeline_prompt_declares_facts_and_hypotheses():
+    spec = get_prompt_spec("incident_timeline")
+    assert spec.purpose == "incident_timeline"
+    assert "strict JSON" in spec.instruction
+    assert "\"facts\"" in spec.instruction
+    assert "\"hypotheses\"" in spec.instruction

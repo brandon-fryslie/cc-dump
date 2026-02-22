@@ -66,7 +66,10 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
         purpose="incident_timeline",
         version="v1",
         instruction=(
-            "Create a chronological incident timeline with timestamps, actions, outcomes."
+            "Create a chronological incident timeline and return strict JSON only with shape "
+            "{\"facts\":[{\"timestamp\":\"\",\"actor\":\"\",\"action\":\"\",\"outcome\":\"\","
+            "\"source_links\":[{\"message_index\":0}]}],\"hypotheses\":[]}. "
+            "Keep facts in chronological order. Include hypotheses only when requested."
         ),
     ),
     "conversation_qa": PromptSpec(

@@ -138,8 +138,10 @@ Implementation:
 - chronological extractor using selected ranges/events
 - source-linked timeline entries
 
-Placeholder:
-- prompt/purpose contract only
+Implemented now:
+- normalized timeline entry schema with source links
+- dispatcher extraction flow with fallback safety
+- facts-only default + optional hypothesis mode toggle
 
 ## 13 Lightweight utilities
 

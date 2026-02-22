@@ -689,3 +689,69 @@ class TestDataDispatcher:
         latest = dispatcher.latest_handoff_note("sess-2")
         assert latest is not None
         assert latest.handoff_id == result.artifact.handoff_id
+
+    def test_generate_incident_timeline_facts_only(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        mgr.run = MagicMock(
+            return_value=SideChannelResult(
+                text=(
+                    '{"facts":[{"timestamp":"2026-02-22T10:00:00Z","actor":"svc","action":"recover","outcome":"ok","source_links":[{"message_index":2}]},'
+                    '{"timestamp":"2026-02-22T09:00:00Z","actor":"svc","action":"error","outcome":"failed","source_links":[{"message_index":1}]}],'
+                    '"hypotheses":[{"timestamp":"2026-02-22T09:05:00Z","actor":"ops","action":"suspect cache","outcome":"unknown","source_links":[{"message_index":3}]}]}'
+                ),
+                error=None,
+                elapsed_ms=13,
+            )
+        )
+        result = dispatcher.generate_incident_timeline(
+            [{"role": "assistant", "content": "incident"}],
+            source_start=0,
+            source_end=0,
+            source_session_id="sess-1",
+            request_id="req-1",
+            include_hypotheses=False,
+        )
+        assert result.source == "ai"
+        assert "## facts" in result.markdown
+        assert "## hypotheses" not in result.markdown
+        assert result.artifact.hypotheses == []
+        assert result.artifact.facts[0].timestamp == "2026-02-22T09:00:00Z"
+
+    def test_generate_incident_timeline_with_hypotheses(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        mgr.run = MagicMock(
+            return_value=SideChannelResult(
+                text=(
+                    '{"facts":[{"timestamp":"2026-02-22T09:00:00Z","actor":"svc","action":"error","outcome":"failed"}],'
+                    '"hypotheses":[{"timestamp":"2026-02-22T09:05:00Z","actor":"ops","action":"suspect cache","outcome":"unknown"}]}'
+                ),
+                error=None,
+                elapsed_ms=13,
+            )
+        )
+        result = dispatcher.generate_incident_timeline(
+            [{"role": "assistant", "content": "incident"}],
+            source_start=0,
+            source_end=0,
+            source_session_id="sess-1",
+            request_id="req-1",
+            include_hypotheses=True,
+        )
+        assert result.source == "ai"
+        assert "## hypotheses" in result.markdown
+        assert len(result.artifact.hypotheses) == 1
+
+    def test_generate_incident_timeline_fallback_when_disabled(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=False)
+        mgr.run = MagicMock()
+        result = dispatcher.generate_incident_timeline(
+            [{"role": "assistant", "content": "incident"}],
+            source_start=0,
+            source_end=0,
+            source_session_id="sess-1",
+            request_id="req-1",
+            include_hypotheses=False,
+        )
+        assert result.source == "fallback"
+        assert "## facts" in result.markdown
+        mgr.run.assert_not_called()

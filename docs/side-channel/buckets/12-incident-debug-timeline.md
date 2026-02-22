@@ -8,8 +8,8 @@ Goal:
 ## How it could work
 
 - Ingest selected message/event ranges.
-- Extract timeline entries with timestamps, actor, action, result, impact.
-- Optionally tag likely root-cause hypotheses and unresolved questions.
+- Extract timeline entries with timestamps, actor, action, outcome, source links.
+- Support facts-only default and optional hypothesis mode.
 
 ## Value
 
@@ -21,14 +21,19 @@ Goal:
 - Medium (needs broader context + temporal reasoning).
 - Can be reduced by scoping to selected ranges.
 
-## Ready to start?
+## Implemented now
 
-Yes for scoped/manual MVP.
+- Canonical incident timeline artifact schema:
+  - `TimelineEntry` (`timestamp`, `actor`, `action`, `outcome`, `source_links`)
+  - `IncidentTimelineArtifact` with separate `facts` and `hypotheses`
+- Dispatcher generation flow:
+  - `DataDispatcher.generate_incident_timeline(...)`
+  - selected-scope extraction, chronological ordering, fallback-safe behavior
+- Mode support:
+  - facts-only default excludes hypothesis section
+  - optional hypothesis mode includes `hypotheses` section
 
-Unknowns:
-- best balance between strict chronology and semantic grouping
+## Deferred follow-ups
 
-Definition of ready:
-- generated timeline is chronologically coherent
-- users can map entries back to source artifacts quickly
-
+- UI for timeline generation and navigation.
+- Timeline grouping controls beyond strict chronological ordering.
