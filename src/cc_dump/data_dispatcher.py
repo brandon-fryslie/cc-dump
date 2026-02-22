@@ -17,6 +17,7 @@ import logging
 from cc_dump.prompt_registry import get_prompt_spec, PromptSpec
 from cc_dump.side_channel import SideChannelManager
 from cc_dump.side_channel_analytics import SideChannelAnalytics
+from cc_dump.summary_cache import SummaryCache
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ class EnrichedResult:
     """
 
     text: str
-    source: str  # "ai" | "fallback" | "error"
+    source: str  # "ai" | "cache" | "fallback" | "error"
     elapsed_ms: int
 
 
@@ -41,9 +42,10 @@ class DataDispatcher:
     fallback data is returned immediately.
     """
 
-    def __init__(self, side_channel: SideChannelManager) -> None:
+    def __init__(self, side_channel: SideChannelManager, summary_cache: SummaryCache | None = None) -> None:
         self._side_channel = side_channel
         self._analytics = SideChannelAnalytics()
+        self._summary_cache = summary_cache if summary_cache is not None else SummaryCache()
 
     def summarize_messages(self, messages: list[dict], source_session_id: str = "") -> EnrichedResult:
         """Summarize a list of API messages.
@@ -53,17 +55,32 @@ class DataDispatcher:
         When side-channel is disabled, returns fallback summary.
         On error, returns error text with fallback appended.
         """
+        fallback_text = _fallback_summary(messages)
         fallback = EnrichedResult(
-            text=_fallback_summary(messages),
+            text=fallback_text,
             source="fallback",
             elapsed_ms=0,
         )
 
+        spec = get_prompt_spec("block_summary")
+        context = _build_summary_context(messages)
+        cache_key = self._summary_cache.make_key(
+            purpose=spec.purpose,
+            prompt_version=spec.version,
+            content=context,
+        )
+        cached = self._summary_cache.get(cache_key)
+        if cached is not None and cached.summary_text:
+            return EnrichedResult(
+                text=cached.summary_text,
+                source="cache",
+                elapsed_ms=0,
+            )
+
         if not self._side_channel.enabled:
             return fallback
 
-        spec = get_prompt_spec("block_summary")
-        prompt = _build_summary_prompt(messages, spec)
+        prompt = _build_summary_prompt(context, spec)
         profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
         result = self._side_channel.run(
             prompt=prompt,
@@ -88,6 +105,13 @@ class DataDispatcher:
                 source="error",
                 elapsed_ms=result.elapsed_ms,
             )
+        self._summary_cache.put(
+            key=cache_key,
+            purpose=spec.purpose,
+            prompt_version=spec.version,
+            content=context,
+            summary_text=result.text,
+        )
         return EnrichedResult(
             text=result.text,
             source="ai",
@@ -99,8 +123,8 @@ class DataDispatcher:
         return self._analytics.snapshot()
 
 
-def _build_summary_prompt(messages: list[dict], spec: PromptSpec) -> str:
-    """Build a purpose-scoped prompt from conversation messages."""
+def _build_summary_context(messages: list[dict]) -> str:
+    """Build a stable context string for prompt and cache-key derivation."""
     lines: list[str] = []
     for msg in messages:
         role = msg.get("role", "unknown")
@@ -117,7 +141,13 @@ def _build_summary_prompt(messages: list[dict], spec: PromptSpec) -> str:
             content = content[:500] + "..."
         lines.append(f"[{role}]: {content}")
 
-    context = "\n".join(lines)
+    return "\n".join(lines)
+
+
+def _build_summary_prompt(context: str, spec: PromptSpec) -> str:
+    """Build a purpose-scoped prompt from normalized context text."""
+    if not context:
+        return spec.instruction
     return (
         f"{spec.instruction}\n\n"
         f"{context}"

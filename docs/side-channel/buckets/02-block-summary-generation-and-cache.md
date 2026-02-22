@@ -42,3 +42,5 @@ Definition of ready:
 - cache hit rate measurable
 - summary quality acceptable in at least 2 target block categories
 
+Implementation reference:
+- `docs/side-channel/SUMMARY_CACHE_SCHEMA.md`

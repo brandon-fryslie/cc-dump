@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import threading
 import time
+from dataclasses import dataclass
 from unittest.mock import patch, MagicMock
 
 from cc_dump.side_channel import SideChannelManager, SideChannelResult
@@ -275,18 +276,36 @@ class TestSideChannelManager:
 class TestDataDispatcher:
     """Tests for DataDispatcher routing and fallback."""
 
-    def _make_dispatcher(self, enabled=True, query_result=None):
+    @dataclass
+    class _CacheEntry:
+        summary_text: str
+
+    class _MemorySummaryCache:
+        def __init__(self):
+            self._entries = {}
+
+        def make_key(self, *, purpose: str, prompt_version: str, content: str) -> str:
+            return f"{purpose}:{prompt_version}:{content}"
+
+        def get(self, key: str):
+            return self._entries.get(key)
+
+        def put(self, *, key: str, purpose: str, prompt_version: str, content: str, summary_text: str):
+            self._entries[key] = TestDataDispatcher._CacheEntry(summary_text=summary_text)
+
+    def _make_dispatcher(self, enabled=True, query_result=None, summary_cache=None):
         """Helper to create a dispatcher with a mock side-channel."""
         mgr = SideChannelManager()
         mgr.enabled = enabled
         if query_result is not None:
             mgr.run = MagicMock(return_value=query_result)
-        return DataDispatcher(mgr), mgr
+        cache = summary_cache if summary_cache is not None else self._MemorySummaryCache()
+        return DataDispatcher(mgr, summary_cache=cache), mgr, cache
 
     def test_summarize_when_enabled(self):
         """Enabled dispatcher routes to AI."""
         result = SideChannelResult(text="AI summary here", error=None, elapsed_ms=500)
-        dispatcher, mgr = self._make_dispatcher(enabled=True, query_result=result)
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True, query_result=result)
 
         messages = [{"role": "user", "content": "hello"}]
         enriched = dispatcher.summarize_messages(messages)
@@ -300,7 +319,7 @@ class TestDataDispatcher:
 
     def test_summarize_when_disabled(self):
         """Disabled dispatcher returns fallback without calling AI."""
-        dispatcher, mgr = self._make_dispatcher(enabled=False)
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=False)
         mgr.run = MagicMock()
 
         messages = [
@@ -319,7 +338,7 @@ class TestDataDispatcher:
     def test_summarize_on_error(self):
         """AI error returns error text with fallback appended."""
         result = SideChannelResult(text="", error="Timeout (60s)", elapsed_ms=60000)
-        dispatcher, _ = self._make_dispatcher(enabled=True, query_result=result)
+        dispatcher, _, _cache = self._make_dispatcher(enabled=True, query_result=result)
 
         messages = [{"role": "user", "content": "hello"}]
         enriched = dispatcher.summarize_messages(messages)
@@ -334,7 +353,7 @@ class TestDataDispatcher:
             error="Guardrail: budget cap reached for block_summary: used=120 cap=100",
             elapsed_ms=0,
         )
-        dispatcher, _ = self._make_dispatcher(enabled=True, query_result=result)
+        dispatcher, _, _cache = self._make_dispatcher(enabled=True, query_result=result)
         messages = [{"role": "user", "content": "hello"}]
         enriched = dispatcher.summarize_messages(messages)
         assert enriched.source == "fallback"
@@ -343,7 +362,7 @@ class TestDataDispatcher:
 
     def test_fallback_summary_empty(self):
         """Empty message list produces appropriate fallback."""
-        dispatcher, _ = self._make_dispatcher(enabled=False)
+        dispatcher, _, _cache = self._make_dispatcher(enabled=False)
 
         enriched = dispatcher.summarize_messages([])
 
@@ -352,7 +371,7 @@ class TestDataDispatcher:
 
     def test_prompt_construction_with_content_blocks(self):
         """Content blocks (list format) are correctly extracted."""
-        from cc_dump.data_dispatcher import _build_summary_prompt
+        from cc_dump.data_dispatcher import _build_summary_context, _build_summary_prompt
         from cc_dump.prompt_registry import get_prompt_spec
 
         messages = [
@@ -364,20 +383,35 @@ class TestDataDispatcher:
                 ],
             }
         ]
-        prompt = _build_summary_prompt(messages, get_prompt_spec("block_summary"))
+        context = _build_summary_context(messages)
+        prompt = _build_summary_prompt(context, get_prompt_spec("block_summary"))
 
         assert "What is Python?" in prompt
         assert "[user]" in prompt
 
     def test_prompt_truncates_long_messages(self):
         """Individual messages are truncated to 500 chars."""
-        from cc_dump.data_dispatcher import _build_summary_prompt
+        from cc_dump.data_dispatcher import _build_summary_context, _build_summary_prompt
         from cc_dump.prompt_registry import get_prompt_spec
 
         messages = [{"role": "assistant", "content": "x" * 1000}]
-        prompt = _build_summary_prompt(messages, get_prompt_spec("block_summary"))
+        context = _build_summary_context(messages)
+        prompt = _build_summary_prompt(context, get_prompt_spec("block_summary"))
 
         # Should be truncated to 500 + "..."
         assert "..." in prompt
         # The full 1000 chars should NOT be present
         assert "x" * 1000 not in prompt
+
+    def test_repeated_summary_request_hits_cache(self):
+        result = SideChannelResult(text="AI summary here", error=None, elapsed_ms=500)
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True, query_result=result)
+        messages = [{"role": "user", "content": "hello"}]
+
+        first = dispatcher.summarize_messages(messages)
+        second = dispatcher.summarize_messages(messages)
+
+        assert first.source == "ai"
+        assert second.source == "cache"
+        assert second.text == "AI summary here"
+        mgr.run.assert_called_once()
