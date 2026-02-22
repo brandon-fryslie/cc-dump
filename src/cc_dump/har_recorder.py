@@ -7,6 +7,7 @@ pairs in HAR 1.2 format for replay and analysis in standard tools.
 import json
 import os
 import sys
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import traceback
@@ -131,7 +132,8 @@ class HARRecordingSubscriber:
         self.path = path
 
         # [LAW:one-source-of-truth] Request-scoped pending exchange state.
-        self._pending_by_request: dict[str, _PendingExchange] = {}
+        self._pending_by_request: OrderedDict[str, _PendingExchange] = OrderedDict()
+        self._max_pending_requests = self._read_max_pending_requests()
 
         # Diagnostic counters for investigation if something goes wrong
         self._events_received: dict[str, int] = {}
@@ -141,6 +143,26 @@ class HARRecordingSubscriber:
         self._entries_end_pos = 0
         self._first_entry = True
         self._entry_count = 0
+
+    def _read_max_pending_requests(self) -> int:
+        """Read bounded pending-request cap from env with safe fallback."""
+        raw = str(os.environ.get("CC_DUMP_HAR_MAX_PENDING", "256") or "").strip()
+        try:
+            parsed = int(raw)
+        except ValueError:
+            parsed = 256
+        return max(1, parsed)
+
+    def _prune_pending_requests(self) -> None:
+        """Bound pending exchange map to prevent unbounded growth."""
+        # // [LAW:single-enforcer] Pending request cap is enforced only here.
+        while len(self._pending_by_request) > self._max_pending_requests:
+            evicted_request_id, _ = self._pending_by_request.popitem(last=False)
+            sys.stderr.write(
+                f"[har] WARN: evicted incomplete pending request {evicted_request_id} "
+                f"(max_pending={self._max_pending_requests})\n"
+            )
+            sys.stderr.flush()
 
     def _open_file(self) -> None:
         """Create the HAR file and write the header. Called on first entry only."""
@@ -190,6 +212,9 @@ class HARRecordingSubscriber:
         if pending is None:
             pending = _PendingExchange()
             self._pending_by_request[request_key] = pending
+            self._prune_pending_requests()
+        else:
+            self._pending_by_request.move_to_end(request_key)
 
         if kind == PipelineEventKind.REQUEST_HEADERS:
             assert isinstance(event, RequestHeadersEvent)

@@ -578,6 +578,21 @@ def test_har_subscriber_incomplete_stream(tmp_path):
     assert subscriber._events_received["REQUEST"] == 1
 
 
+def test_har_subscriber_bounds_pending_requests(tmp_path, monkeypatch, capsys):
+    """Incomplete pending requests are bounded by configured max."""
+    monkeypatch.setenv("CC_DUMP_HAR_MAX_PENDING", "2")
+    har_path = tmp_path / "test.har"
+    subscriber = HARRecordingSubscriber(str(har_path))
+
+    subscriber.on_event(RequestHeadersEvent(headers={"x-id": "1"}, request_id="req-1"))
+    subscriber.on_event(RequestHeadersEvent(headers={"x-id": "2"}, request_id="req-2"))
+    subscriber.on_event(RequestHeadersEvent(headers={"x-id": "3"}, request_id="req-3"))
+
+    assert list(subscriber._pending_by_request.keys()) == ["req-2", "req-3"]
+    captured = capsys.readouterr()
+    assert "evicted incomplete pending request req-1" in captured.err
+
+
 def test_har_subscriber_large_content(tmp_path):
     """Subscriber handles large content blocks."""
     har_path = tmp_path / "test.har"
