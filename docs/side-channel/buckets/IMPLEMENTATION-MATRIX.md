@@ -107,8 +107,11 @@ Implementation:
 - extraction schema and approval workflow
 - optional beads creation bridge
 
-Placeholder:
-- prompt/purpose contract only
+Implemented now:
+- normalized action/deferred schema + parser
+- staged review workflow (no auto-persist)
+- explicit acceptance persistence with `create_beads` confirmation gate
+- default beads bridge adapter (`bd create`) for accepted-item issue links
 
 ## 10 Handoff notes
 

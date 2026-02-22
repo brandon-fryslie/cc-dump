@@ -9,12 +9,14 @@ Goal:
 
 - Run extraction prompt on selected messages/turn windows.
 - Output structured items:
-- action text
-- priority/confidence
-- optional owner
-- due hint
-- source links
-- optionally create/update beads issues from approved items.
+  - kind (`action`/`deferred`)
+  - action text
+  - confidence
+  - optional owner
+  - due hint
+  - source links
+- stage extracted items for review first (no automatic persistence)
+- persist only accepted items; optional beads linking hook on acceptance
 
 ## Value
 
@@ -26,14 +28,22 @@ Goal:
 - Low-Medium per extraction pass.
 - Higher only if run continuously on all turns.
 
-## Ready to start?
+## Implemented now
 
-Yes for manual trigger MVP.
+- Canonical normalized schema:
+  - `ActionWorkItem` + `ActionSourceLink`
+  - parser: `parse_action_items(...)`
+  - review/persistence store: `ActionItemStore`
+- Dispatcher workflow:
+  - extraction: `DataDispatcher.extract_action_items(...)`
+  - review access: `DataDispatcher.pending_action_items(...)`
+  - explicit persistence: `DataDispatcher.accept_action_items(...)`
+  - accepted snapshot: `DataDispatcher.accepted_action_items_snapshot(...)`
+- Optional beads issue linking:
+  - explicit `create_beads=True` confirmation gate on acceptance
+  - default bridge adapter creates `bd` tasks and stores linked issue IDs
 
-Unknowns:
-- acceptable confidence threshold for auto-suggestions
+## Deferred follow-ups
 
-Definition of ready:
-- extracted items are source-linked
-- user can accept/reject items before persistence
-
+- UI review panel for accept/reject actions.
+- Confidence threshold defaults and auto-suggest policy.

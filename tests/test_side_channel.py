@@ -547,3 +547,82 @@ class TestDataDispatcher:
         assert before.artifact.checkpoint_id in diff_text
         assert after.artifact.checkpoint_id in diff_text
         assert "source_ranges:0-0|0-1" in diff_text
+
+    def test_extract_action_items_stages_pending_without_auto_persist(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        mgr.run = MagicMock(
+            return_value=SideChannelResult(
+                text=(
+                    '{"items":[{"kind":"action","text":"Write tests for extraction",'
+                    '"confidence":0.8,"source_links":[{"message_index":1}]}]}'
+                ),
+                error=None,
+                elapsed_ms=12,
+            )
+        )
+        result = dispatcher.extract_action_items(
+            [{"role": "user", "content": "next steps"}],
+            source_session_id="sess-1",
+            request_id="req-1",
+        )
+        assert result.source == "ai"
+        assert len(result.items) == 1
+        assert dispatcher.accepted_action_items_snapshot() == []
+        pending = dispatcher.pending_action_items(result.batch_id)
+        assert len(pending) == 1
+        assert pending[0].text == "Write tests for extraction"
+
+    def test_accept_action_items_persists_selected_items(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        mgr.run = MagicMock(
+            return_value=SideChannelResult(
+                text=(
+                    '{"items":[{"kind":"action","text":"Ship am0",'
+                    '"confidence":0.9,"source_links":[{"message_index":1}]}]}'
+                ),
+                error=None,
+                elapsed_ms=12,
+            )
+        )
+        extraction = dispatcher.extract_action_items(
+            [{"role": "user", "content": "next steps"}],
+            source_session_id="sess-1",
+            request_id="req-1",
+        )
+        item_id = extraction.items[0].item_id
+        accepted = dispatcher.accept_action_items(
+            batch_id=extraction.batch_id,
+            item_ids=[item_id],
+            create_beads=True,
+            beads_hook=lambda _item: "cc-dump-901",
+        )
+        assert len(accepted) == 1
+        assert accepted[0].status == "accepted"
+        assert accepted[0].beads_issue_id == "cc-dump-901"
+        snapshot = dispatcher.accepted_action_items_snapshot()
+        assert len(snapshot) == 1
+        assert snapshot[0].item_id == item_id
+
+    def test_accept_action_items_ignores_beads_hook_without_confirmation(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        mgr.run = MagicMock(
+            return_value=SideChannelResult(
+                text='{"items":[{"kind":"action","text":"Draft notes","source_links":[{"message_index":0}]}]}',
+                error=None,
+                elapsed_ms=12,
+            )
+        )
+        extraction = dispatcher.extract_action_items(
+            [{"role": "user", "content": "next steps"}],
+            source_session_id="sess-1",
+            request_id="req-1",
+        )
+        item_id = extraction.items[0].item_id
+        accepted = dispatcher.accept_action_items(
+            batch_id=extraction.batch_id,
+            item_ids=[item_id],
+            create_beads=False,
+            beads_hook=lambda _item: "cc-dump-should-not-appear",
+        )
+        assert len(accepted) == 1
+        assert accepted[0].beads_issue_id == ""

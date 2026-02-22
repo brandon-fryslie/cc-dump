@@ -19,3 +19,10 @@ def test_lookup_is_deterministic_for_unknown_purpose():
     spec_a = get_prompt_spec("x")
     spec_b = get_prompt_spec("x")
     assert spec_a == spec_b
+
+
+def test_action_extraction_prompt_requires_strict_json():
+    spec = get_prompt_spec("action_extraction")
+    assert spec.purpose == "action_extraction"
+    assert "strict JSON" in spec.instruction
+    assert "\"kind\":\"action|deferred\"" in spec.instruction

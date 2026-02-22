@@ -13,7 +13,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+from collections.abc import Callable
 
+from cc_dump.action_items import ActionItemStore, ActionWorkItem, parse_action_items
+from cc_dump.action_items_beads import create_beads_issue_for_item
 from cc_dump.checkpoints import (
     CheckpointArtifact,
     CheckpointStore,
@@ -57,6 +60,15 @@ class CheckpointCreateResult:
     error: str = ""
 
 
+@dataclass
+class ActionExtractionResult:
+    batch_id: str
+    items: list[ActionWorkItem]
+    source: str  # "ai" | "fallback" | "error"
+    elapsed_ms: int
+    error: str = ""
+
+
 class DataDispatcher:
     """Routes enrichment requests to AI or fallback.
 
@@ -71,6 +83,7 @@ class DataDispatcher:
         self._summary_cache = summary_cache if summary_cache is not None else SummaryCache()
         self._decision_ledger = DecisionLedgerStore()
         self._checkpoint_store = CheckpointStore()
+        self._action_items = ActionItemStore()
 
     def summarize_messages(self, messages: list[dict], source_session_id: str = "") -> EnrichedResult:
         """Summarize a list of API messages.
@@ -268,6 +281,84 @@ class DataDispatcher:
             ]
             return "missing_checkpoints:" + ",".join(missing_ids)
         return render_checkpoint_diff(before=before, after=after)
+
+    def extract_action_items(
+        self,
+        messages: list[dict],
+        *,
+        source_session_id: str = "",
+        request_id: str = "",
+    ) -> ActionExtractionResult:
+        """Extract action/deferred candidates and stage them for explicit review."""
+        if not self._side_channel.enabled:
+            batch_id = self._action_items.stage([])
+            return ActionExtractionResult(
+                batch_id=batch_id,
+                items=[],
+                source="fallback",
+                elapsed_ms=0,
+                error="side-channel disabled",
+            )
+
+        spec = get_prompt_spec("action_extraction")
+        context = _build_summary_context(messages)
+        prompt = _build_summary_prompt(context, spec)
+        profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
+        result = self._side_channel.run(
+            prompt=prompt,
+            purpose=spec.purpose,
+            prompt_version=spec.version,
+            timeout=None,
+            source_session_id=source_session_id,
+            profile=profile,
+        )
+        self._analytics.record(purpose=result.purpose)
+        if result.error is not None:
+            source = "error"
+            if result.error.startswith("Guardrail:"):
+                logger.info("action extraction blocked: %s", result.error)
+                source = "fallback"
+            batch_id = self._action_items.stage([])
+            return ActionExtractionResult(
+                batch_id=batch_id,
+                items=[],
+                source=source,
+                elapsed_ms=result.elapsed_ms,
+                error=result.error,
+            )
+        extracted = parse_action_items(result.text, request_id=request_id)
+        batch_id = self._action_items.stage(extracted)
+        return ActionExtractionResult(
+            batch_id=batch_id,
+            items=extracted,
+            source="ai",
+            elapsed_ms=result.elapsed_ms,
+        )
+
+    def pending_action_items(self, batch_id: str) -> list[ActionWorkItem]:
+        return self._action_items.pending(batch_id)
+
+    def accept_action_items(
+        self,
+        *,
+        batch_id: str,
+        item_ids: list[str],
+        create_beads: bool = False,
+        beads_hook: Callable[[ActionWorkItem], str] | None = None,
+    ) -> list[ActionWorkItem]:
+        """Persist accepted action/deferred items, optionally linking beads issues."""
+        # [LAW:single-enforcer] create_beads gate is enforced only here.
+        resolved_beads_hook = None
+        if create_beads:
+            resolved_beads_hook = beads_hook if beads_hook is not None else create_beads_issue_for_item
+        return self._action_items.accept(
+            batch_id=batch_id,
+            item_ids=item_ids,
+            beads_hook=resolved_beads_hook,
+        )
+
+    def accepted_action_items_snapshot(self) -> list[ActionWorkItem]:
+        return self._action_items.accepted_snapshot()
 
 
 def _build_summary_context(messages: list[dict]) -> str:

@@ -41,8 +41,10 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
         purpose="action_extraction",
         version="v1",
         instruction=(
-            "Extract concrete action items and deferred work. "
-            "Include owner hints only if explicit."
+            "Extract action and deferred items and return strict JSON only with shape "
+            "{\"items\":[{\"kind\":\"action|deferred\",\"text\":\"\",\"confidence\":0.0,"
+            "\"owner\":\"\",\"due_hint\":\"\",\"source_links\":[{\"message_index\":0}]}]}. "
+            "Only include explicit actions/deferred work. Use empty strings or arrays when unknown."
         ),
     ),
     "handoff_note": PromptSpec(
