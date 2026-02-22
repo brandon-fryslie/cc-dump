@@ -9,6 +9,7 @@ import pytest
 from cc_dump.sessions import (
     list_recordings,
     get_latest_recording,
+    cleanup_recordings,
     format_size,
     get_recordings_dir,
 )
@@ -67,6 +68,16 @@ def create_har_file(path: Path, entry_count: int = 1, session_id: str = "test") 
 
     with open(path, "w", encoding="utf-8") as f:
         json.dump(har, f)
+
+
+def set_har_started(path: Path, started: str) -> None:
+    """Set first entry startedDateTime for deterministic ordering."""
+    with open(path, "r+", encoding="utf-8") as f:
+        har = json.load(f)
+        har["log"]["entries"][0]["startedDateTime"] = started
+        f.seek(0)
+        json.dump(har, f)
+        f.truncate()
 
 
 # Test: list_recordings returns empty list for non-existent directory
@@ -213,6 +224,56 @@ def test_get_latest_recording_multiple(recordings_dir):
 
     latest = get_latest_recording(str(recordings_dir))
     assert latest == str(har2)  # bbb has the latest timestamp
+
+
+def test_cleanup_recordings_dry_run_keeps_files(recordings_dir):
+    """Dry-run cleanup reports removals without deleting files."""
+    har_old = recordings_dir / "recording-old.har"
+    har_mid = recordings_dir / "recording-mid.har"
+    har_new = recordings_dir / "recording-new.har"
+    create_har_file(har_old)
+    create_har_file(har_mid)
+    create_har_file(har_new)
+    set_har_started(har_old, "2026-02-01T10:00:00")
+    set_har_started(har_mid, "2026-02-02T10:00:00")
+    set_har_started(har_new, "2026-02-03T10:00:00")
+
+    result = cleanup_recordings(str(recordings_dir), keep=1, dry_run=True)
+
+    assert result["dry_run"] is True
+    assert result["removed"] == 2
+    assert result["kept"] == 1
+    assert har_old.exists()
+    assert har_mid.exists()
+    assert har_new.exists()
+
+
+def test_cleanup_recordings_deletes_old_har_and_sidecar(recordings_dir):
+    """Cleanup removes old recordings, sidecars, and empty session dirs."""
+    session_old = recordings_dir / "old-session"
+    session_new = recordings_dir / "new-session"
+    session_old.mkdir()
+    session_new.mkdir()
+
+    har_old = session_old / "recording-old.har"
+    har_new = session_new / "recording-new.har"
+    create_har_file(har_old)
+    create_har_file(har_new)
+    set_har_started(har_old, "2026-02-01T10:00:00")
+    set_har_started(har_new, "2026-02-03T10:00:00")
+
+    sidecar_old = Path(str(har_old) + ".ui.json")
+    sidecar_old.write_text('{"version":1}', encoding="utf-8")
+
+    result = cleanup_recordings(str(recordings_dir), keep=1, dry_run=False)
+
+    assert result["dry_run"] is False
+    assert result["removed"] == 1
+    assert not har_old.exists()
+    assert not sidecar_old.exists()
+    assert not session_old.exists()
+    assert har_new.exists()
+    assert session_new.exists()
 
 
 # Test: format_size handles various sizes

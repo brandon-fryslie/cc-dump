@@ -22,6 +22,14 @@ class RecordingInfo(TypedDict):
     size_bytes: int
 
 
+class CleanupResult(TypedDict):
+    kept: int
+    removed: int
+    bytes_freed: int
+    removed_paths: list[str]
+    dry_run: bool
+
+
 def get_recordings_dir() -> str:
     """Get the default recordings directory path.
 
@@ -138,6 +146,81 @@ def get_latest_recording(recordings_dir: Optional[str] = None) -> Optional[str]:
     # Sort by created timestamp and return the latest
     recordings.sort(key=lambda r: r["created"])
     return recordings[-1]["path"]
+
+
+def cleanup_recordings(
+    recordings_dir: Optional[str] = None,
+    *,
+    keep: int = 20,
+    dry_run: bool = False,
+) -> CleanupResult:
+    """Delete older HAR recordings and optional sidecars, keeping newest N.
+
+    Args:
+        recordings_dir: Base recordings directory (default: ~/.local/share/cc-dump/recordings)
+        keep: Number of newest recordings to keep
+        dry_run: When True, report only (no filesystem changes)
+    """
+    if keep < 0:
+        keep = 0
+    if recordings_dir is None:
+        recordings_dir = get_recordings_dir()
+
+    recordings = list_recordings(recordings_dir)
+    if not recordings:
+        return {
+            "kept": 0,
+            "removed": 0,
+            "bytes_freed": 0,
+            "removed_paths": [],
+            "dry_run": dry_run,
+        }
+
+    # Newest first by created timestamp.
+    recordings.sort(key=lambda r: r["created"], reverse=True)
+    survivors = recordings[:keep]
+    to_remove = recordings[keep:]
+
+    removed_paths: list[str] = []
+    bytes_freed = 0
+    touched_dirs: set[Path] = set()
+
+    for rec in to_remove:
+        har_path = Path(rec["path"])
+        sidecar_path = Path(str(har_path) + ".ui.json")
+
+        for candidate in (har_path, sidecar_path):
+            if not candidate.exists():
+                continue
+            size = candidate.stat().st_size
+            bytes_freed += size
+            removed_paths.append(str(candidate))
+            touched_dirs.add(candidate.parent)
+            if not dry_run:
+                candidate.unlink()
+
+    # Best-effort cleanup of now-empty session subdirectories.
+    if not dry_run:
+        root = Path(recordings_dir).resolve()
+        for directory in sorted(touched_dirs, key=lambda p: len(p.parts), reverse=True):
+            try:
+                resolved = directory.resolve()
+            except OSError:
+                continue
+            if resolved == root:
+                continue
+            try:
+                directory.rmdir()
+            except OSError:
+                continue
+
+    return {
+        "kept": len(survivors),
+        "removed": len(to_remove),
+        "bytes_freed": bytes_freed,
+        "removed_paths": removed_paths,
+        "dry_run": dry_run,
+    }
 
 
 def format_size(size_bytes: int) -> str:

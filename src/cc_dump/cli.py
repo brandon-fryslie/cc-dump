@@ -83,6 +83,26 @@ def main():
         help="Resume UI state sidecar. Optional path; defaults to latest recording.",
     )
     parser.add_argument(
+        "--list-recordings",
+        action="store_true",
+        default=False,
+        help="List known HAR recordings and exit.",
+    )
+    parser.add_argument(
+        "--cleanup-recordings",
+        nargs="?",
+        const=20,
+        type=int,
+        default=None,
+        help="Delete older recordings, keeping newest N (default: 20).",
+    )
+    parser.add_argument(
+        "--cleanup-dry-run",
+        action="store_true",
+        default=False,
+        help="Preview recording cleanup without deleting files.",
+    )
+    parser.add_argument(
         "--seed-hue",
         type=float,
         default=None,
@@ -95,6 +115,26 @@ def main():
 
     # Initialize color palette before anything else imports it
     cc_dump.palette.init_palette(args.seed_hue)
+
+    if args.list_recordings:
+        recordings = cc_dump.sessions.list_recordings()
+        cc_dump.sessions.print_recordings_list(recordings)
+        return
+
+    if args.cleanup_recordings is not None:
+        result = cc_dump.sessions.cleanup_recordings(
+            keep=args.cleanup_recordings,
+            dry_run=bool(args.cleanup_dry_run),
+        )
+        mode = "Dry run" if result["dry_run"] else "Cleanup"
+        print(
+            f"{mode}: removed {result['removed']} recording(s), "
+            f"kept {result['kept']}, freed {cc_dump.sessions.format_size(result['bytes_freed'])}"
+        )
+        if result["removed_paths"]:
+            for path in result["removed_paths"]:
+                print(f"  - {path}")
+        return
 
     # Resolve --continue / --resume to load latest recording
     if args.resume is not None:
