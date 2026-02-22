@@ -285,6 +285,7 @@ class ConversationView(ScrollView):
         ds.on_stream_block = self._on_stream_block
         ds.on_stream_finalized = self._on_stream_finalized
         ds.on_focus_changed = self._on_focus_changed
+        ds.on_turns_pruned = self._on_turns_pruned
 
     # // [LAW:one-source-of-truth] Follow state stored as string in view store.
     # String comparison is stable across hot-reloads (enum class identity changes).
@@ -762,6 +763,40 @@ class ConversationView(ScrollView):
     def _on_turn_added(self, blocks: list, index: int) -> None:
         """Domain store callback: a completed turn was added."""
         self._invalidate("new_turn", blocks=blocks)
+
+    def _on_turns_pruned(self, pruned_count: int) -> None:
+        """Domain store callback: oldest completed turns were pruned."""
+        if pruned_count <= 0:
+            return
+        if pruned_count >= len(self._turns):
+            self._turns.clear()
+            self._scroll_anchor = None
+            self._clear_line_cache()
+            self._recalculate_offsets()
+            if self.is_attached:
+                self.refresh()
+            return
+
+        del self._turns[:pruned_count]
+        for idx, td in enumerate(self._turns):
+            td.turn_index = idx
+
+        if self._scroll_anchor is not None:
+            new_turn_index = self._scroll_anchor.turn_index - pruned_count
+            if new_turn_index < 0:
+                new_turn_index = 0
+            self._scroll_anchor = ScrollAnchor(
+                turn_index=new_turn_index,
+                block_index=self._scroll_anchor.block_index,
+                line_in_block=self._scroll_anchor.line_in_block,
+            )
+
+        self._clear_line_cache()
+        self._recalculate_offsets()
+        if not self._is_following and self.is_attached:
+            self._resolve_anchor()
+        if self.is_attached:
+            self.refresh()
 
     def _render_new_turn(self, blocks: list, filters: dict = None) -> None:
         """Render blocks to TurnData and append as completed turn.

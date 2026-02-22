@@ -7,6 +7,7 @@ RELOADABLE — hot-reload can update this module's code. The DomainStore
 instance persists on the app object across widget replacement.
 """
 
+import os
 from collections.abc import Callable
 
 import cc_dump.formatting
@@ -19,7 +20,14 @@ class DomainStore:
     All mutations go through public methods; callbacks fire after mutation.
     """
 
-    def __init__(self):
+    def __init__(self, max_completed_turns: int | None = None):
+        if max_completed_turns is None:
+            raw = str(os.environ.get("CC_DUMP_MAX_COMPLETED_TURNS", "5000") or "").strip()
+            try:
+                max_completed_turns = int(raw)
+            except ValueError:
+                max_completed_turns = 5000
+        self._max_completed_turns = max(0, max_completed_turns)
         self._completed: list[list] = []  # sealed turn block lists
         self._stream_turns: dict[str, list] = {}  # active stream block lists
         self._stream_delta_buffers: dict[str, list[str]] = {}  # text delta accumulators
@@ -38,6 +46,7 @@ class DomainStore:
         self.on_stream_block: Callable | None = None
         self.on_stream_finalized: Callable | None = None
         self.on_focus_changed: Callable | None = None
+        self.on_turns_pruned: Callable[[int], None] | None = None
 
     # ─── Completed turns ──────────────────────────────────────────────
 
@@ -47,6 +56,7 @@ class DomainStore:
         self._completed.append(blocks)
         if self.on_turn_added is not None:
             self.on_turn_added(blocks, index)
+        self._enforce_completed_retention()
 
     # ─── Request-scoped streaming ─────────────────────────────────────
 
@@ -211,6 +221,18 @@ class DomainStore:
 
         if self.on_stream_finalized is not None:
             self.on_stream_finalized(request_id, sealed_blocks, was_focused)
+        self._enforce_completed_retention()
+
+    def _enforce_completed_retention(self) -> None:
+        """Apply completed-turn retention policy and notify renderer."""
+        if self._max_completed_turns <= 0:
+            return
+        overflow = len(self._completed) - self._max_completed_turns
+        if overflow <= 0:
+            return
+        del self._completed[:overflow]
+        if self.on_turns_pruned is not None:
+            self.on_turns_pruned(overflow)
 
     def set_focused_stream(self, request_id: str) -> bool:
         """Focus an active stream for live rendering preview."""

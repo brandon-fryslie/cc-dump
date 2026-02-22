@@ -43,7 +43,13 @@ from cc_dump.formatting import (
     ALWAYS_VISIBLE,
 )
 from cc_dump.tui.rendering import BLOCK_RENDERERS, BLOCK_CATEGORY, render_turn_to_strips
-from cc_dump.tui.widget_factory import TurnData, ConversationView, FollowState, _hash_strips
+from cc_dump.tui.widget_factory import (
+    TurnData,
+    ConversationView,
+    FollowState,
+    ScrollAnchor,
+    _hash_strips,
+)
 
 
 class TestBlockCategoryCompleteness:
@@ -846,6 +852,25 @@ class TestIncrementalOffsets:
 
         assert len(conv._line_cache) <= conv._line_cache.maxsize
         assert indexed_key_count <= len(conv._line_cache)
+
+    def test_on_turns_pruned_reindexes_turns_and_adjusts_anchor(self):
+        """Pruning oldest turns keeps turn indices and anchor coherent."""
+        conv = ConversationView()
+        conv._follow_state = FollowState.OFF
+
+        for i in range(4):
+            conv._turns.append(
+                TurnData(turn_index=i, blocks=[], strips=[Strip.blank(80)])
+            )
+        conv._recalculate_offsets()
+        conv._scroll_anchor = ScrollAnchor(turn_index=3, block_index=0, line_in_block=0)
+
+        conv._on_turns_pruned(2)
+
+        assert len(conv._turns) == 2
+        assert [td.turn_index for td in conv._turns] == [0, 1]
+        assert conv._scroll_anchor is not None
+        assert conv._scroll_anchor.turn_index == 1
 
     def test_incremental_from_zero_matches_full(self):
         """_recalculate_offsets_from(0) is identical to _recalculate_offsets()."""
