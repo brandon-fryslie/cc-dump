@@ -281,7 +281,15 @@ def run_search(app) -> None:
         state.matches = []
         return
 
-    state.matches = cc_dump.tui.search.find_all_matches(conv._turns, pattern)
+    # // [LAW:no-shared-mutable-globals] Cache is state-owned; bounded locally.
+    if len(state.text_cache) > 20_000:
+        state.text_cache.clear()
+
+    state.matches = cc_dump.tui.search.find_all_matches(
+        conv._turns,
+        pattern,
+        text_cache=state.text_cache,
+    )
     if state.current_index >= len(state.matches):
         state.current_index = 0
 

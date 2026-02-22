@@ -106,6 +106,7 @@ class SearchState:
         self.expanded_blocks: list[tuple[int, int, object]] = []
         self.debounce_timer: object | None = None
         self.saved_scroll_y: float | None = None
+        self.text_cache: dict[tuple[str, int], str] = {}
 
     # ── Identity properties (delegated to store) ──
 
@@ -187,11 +188,34 @@ _TEXT_EXTRACTORS: dict[str, Callable] = {
 
 def get_searchable_text(block) -> str:
     """Extract plain searchable text from a FormattedBlock."""
+    return get_searchable_text_cached(block)
+
+
+def _search_cache_key(block) -> tuple[str, int]:
+    """Stable cache key for searchable text extraction."""
+    return (str(getattr(block, "block_id", "") or ""), id(block))
+
+
+def get_searchable_text_cached(
+    block,
+    cache: dict[tuple[str, int], str] | None = None,
+) -> str:
+    """Extract searchable text with optional cache.
+
+    // [LAW:one-source-of-truth] This function is the sole cache read/write boundary.
+    """
+    cache_key = _search_cache_key(block)
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
+
     type_name = type(block).__name__
     extractor = _TEXT_EXTRACTORS.get(type_name)
     if extractor is None:
         return ""
-    return extractor(block)
+    text = extractor(block)
+    if cache is not None:
+        cache[cache_key] = text
+    return text
 
 
 # ─── Pattern compilation ─────────────────────────────────────────────────────
@@ -238,7 +262,11 @@ def _collect_descendants(block, hier_idx: int) -> list[tuple[int, object]]:
     return items
 
 
-def find_all_matches(turns: list, pattern: re.Pattern) -> list[SearchMatch]:
+def find_all_matches(
+    turns: list,
+    pattern: re.Pattern,
+    text_cache: dict[tuple[str, int], str] | None = None,
+) -> list[SearchMatch]:
     """Find all matches across all turns, ordered most-recent-first.
 
     Iterates turns bottom-up, blocks bottom-up within each turn,
@@ -265,7 +293,7 @@ def find_all_matches(turns: list, pattern: re.Pattern) -> list[SearchMatch]:
             searchable = _collect_descendants(top_block, block_idx)
 
             for hier_idx, block in searchable:
-                text = get_searchable_text(block)
+                text = get_searchable_text_cached(block, text_cache)
                 if not text:
                     continue
 

@@ -181,6 +181,28 @@ class TestGetSearchableText:
         if not expected:
             assert text == "", f"Expected empty string, got: {text}"
 
+    def test_get_searchable_text_cached_reuses_cached_value(self, monkeypatch):
+        """Cached extraction should avoid repeated extractor execution for same block."""
+        import cc_dump.tui.search as search_mod
+
+        class CacheBlock:
+            block_id = "cache-block-1"
+
+        calls = {"count": 0}
+
+        def _extractor(_block):
+            calls["count"] += 1
+            return "cached text"
+
+        monkeypatch.setitem(search_mod._TEXT_EXTRACTORS, "CacheBlock", _extractor)
+
+        block = CacheBlock()
+        cache: dict[tuple[str, int], str] = {}
+
+        assert search_mod.get_searchable_text_cached(block, cache) == "cached text"
+        assert search_mod.get_searchable_text_cached(block, cache) == "cached text"
+        assert calls["count"] == 1
+
 
 # ─── Pattern compilation ─────────────────────────────────────────────────────
 
