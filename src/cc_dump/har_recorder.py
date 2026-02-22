@@ -7,6 +7,7 @@ pairs in HAR 1.2 format for replay and analysis in standard tools.
 import json
 import os
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import traceback
 
@@ -97,6 +98,18 @@ def build_har_response(
     }
 
 
+@dataclass
+class _PendingExchange:
+    """Per-request pending state used by HARRecordingSubscriber."""
+
+    request_body: dict | None = None
+    request_headers: dict | None = None
+    response_status: int | None = None
+    response_headers: dict | None = None
+    complete_message: dict | None = None
+    request_start_time: datetime | None = None
+
+
 
 class HARRecordingSubscriber:
     """Subscriber that accumulates events and writes HAR entries incrementally.
@@ -117,13 +130,8 @@ class HARRecordingSubscriber:
         """
         self.path = path
 
-        # State machine for current request/response
-        self.pending_request = None
-        self.pending_request_headers = None
-        self.response_status = None
-        self.response_headers = None
-        self._complete_message: dict | None = None
-        self.request_start_time = None
+        # [LAW:one-source-of-truth] Request-scoped pending exchange state.
+        self._pending_by_request: dict[str, _PendingExchange] = {}
 
         # Diagnostic counters for investigation if something goes wrong
         self._events_received: dict[str, int] = {}
@@ -177,30 +185,38 @@ class HARRecordingSubscriber:
     def _handle(self, event: PipelineEvent) -> None:
         """Internal event handler - may raise exceptions."""
         kind = event.kind
+        request_key = event.request_id or "__legacy__"
+        pending = self._pending_by_request.get(request_key)
+        if pending is None:
+            pending = _PendingExchange()
+            self._pending_by_request[request_key] = pending
 
         if kind == PipelineEventKind.REQUEST_HEADERS:
             assert isinstance(event, RequestHeadersEvent)
-            self.pending_request_headers = event.headers
-            self.request_start_time = datetime.now(timezone.utc)
+            pending.request_headers = event.headers
+            pending.request_start_time = datetime.now(timezone.utc)
 
         elif kind == PipelineEventKind.REQUEST:
             assert isinstance(event, RequestBodyEvent)
-            self.pending_request = event.body
+            pending.request_body = event.body
 
         elif kind == PipelineEventKind.RESPONSE_HEADERS:
             assert isinstance(event, ResponseHeadersEvent)
-            self.response_status = event.status_code
-            self.response_headers = event.headers
+            pending.response_status = event.status_code
+            pending.response_headers = event.headers
 
         elif kind == PipelineEventKind.RESPONSE_COMPLETE:
             # [LAW:one-source-of-truth] Complete message from ResponseAssembler
             assert isinstance(event, ResponseCompleteEvent)
-            self._complete_message = event.body
-            self._commit_entry()
+            pending.complete_message = event.body
+            self._commit_entry(request_key)
 
-    def _commit_entry(self) -> None:
+    def _commit_entry(self, request_key: str) -> None:
         """Reconstruct complete message and write HAR entry to disk immediately."""
-        if not self.pending_request or not self._complete_message:
+        pending = self._pending_by_request.get(request_key)
+        if pending is None:
+            return
+        if not pending.request_body or not pending.complete_message:
             return
 
         # Lazy file creation — only when we have a real entry to write
@@ -208,13 +224,13 @@ class HARRecordingSubscriber:
             self._open_file()
 
         try:
-            complete_message = self._complete_message
+            complete_message = pending.complete_message
 
             # Calculate timing
             end_time = datetime.now(timezone.utc)
             time_ms = (
-                (end_time - self.request_start_time).total_seconds() * 1000
-                if self.request_start_time
+                (end_time - pending.request_start_time).total_seconds() * 1000
+                if pending.request_start_time
                 else 0.0
             )
 
@@ -222,21 +238,21 @@ class HARRecordingSubscriber:
             har_request = build_har_request(
                 method="POST",
                 url="https://api.anthropic.com/v1/messages",
-                headers=self.pending_request_headers or {},
-                body=self.pending_request,
+                headers=pending.request_headers or {},
+                body=pending.request_body,
             )
 
             har_response = build_har_response(
-                status=self.response_status or 200,
-                headers=self.response_headers or {},
+                status=pending.response_status or 200,
+                headers=pending.response_headers or {},
                 complete_message=complete_message,
                 time_ms=time_ms,
             )
 
             # Create HAR entry
             entry = {
-                "startedDateTime": self.request_start_time.isoformat()
-                if self.request_start_time
+                "startedDateTime": pending.request_start_time.isoformat()
+                if pending.request_start_time
                 else datetime.now(timezone.utc).isoformat(),
                 "time": time_ms,
                 "request": har_request,
@@ -276,13 +292,8 @@ class HARRecordingSubscriber:
             sys.stderr.write(f"[har] error serializing entry: {e}\n")
             sys.stderr.flush()
 
-        # Clear state for next request
-        self.pending_request = None
-        self.pending_request_headers = None
-        self.response_status = None
-        self.response_headers = None
-        self._complete_message = None
-        self.request_start_time = None
+        # Clear state for this request.
+        self._pending_by_request.pop(request_key, None)
 
     def close(self) -> None:
         """Close file handle and enforce non-empty invariant.

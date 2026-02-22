@@ -486,6 +486,65 @@ def test_har_subscriber_multiple_requests(tmp_path):
     )
 
 
+def test_har_subscriber_interleaved_requests_by_request_id(tmp_path):
+    """Interleaved concurrent requests are reconstructed by request_id."""
+    har_path = tmp_path / "test.har"
+    subscriber = HARRecordingSubscriber(str(har_path))
+
+    req1 = "req-1"
+    req2 = "req-2"
+
+    # Request setup interleaved.
+    subscriber.on_event(RequestHeadersEvent(headers={"x-req": "1"}, request_id=req1))
+    subscriber.on_event(
+        RequestBodyEvent(
+            body={
+                "model": "claude-3-opus-20240229",
+                "messages": [{"role": "user", "content": "first"}],
+            },
+            request_id=req1,
+        )
+    )
+    subscriber.on_event(RequestHeadersEvent(headers={"x-req": "2"}, request_id=req2))
+    subscriber.on_event(
+        RequestBodyEvent(
+            body={
+                "model": "claude-3-opus-20240229",
+                "messages": [{"role": "user", "content": "second"}],
+            },
+            request_id=req2,
+        )
+    )
+
+    # Response metadata interleaved.
+    subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={"x-resp": "1"}, request_id=req1))
+    subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={"x-resp": "2"}, request_id=req2))
+
+    # Complete responses in reverse order.
+    subscriber.on_event(ResponseCompleteEvent(body=_complete_msg(msg_id="msg_2", text="resp second"), request_id=req2))
+    subscriber.on_event(ResponseCompleteEvent(body=_complete_msg(msg_id="msg_1", text="resp first"), request_id=req1))
+
+    subscriber.close()
+
+    with open(har_path, "r") as f:
+        har = json.load(f)
+
+    entries = har["log"]["entries"]
+    assert len(entries) == 2
+
+    # Match request content -> response content pairs; they must remain aligned.
+    pairs = []
+    for entry in entries:
+        req_body = json.loads(entry["request"]["postData"]["text"])
+        req_text = req_body["messages"][0]["content"]
+        resp_body = json.loads(entry["response"]["content"]["text"])
+        resp_text = resp_body["content"][0]["text"]
+        pairs.append((req_text, resp_text))
+
+    assert ("first", "resp first") in pairs
+    assert ("second", "resp second") in pairs
+
+
 def test_har_subscriber_error_handling(tmp_path):
     """Subscriber logs errors but doesn't crash."""
     har_path = tmp_path / "test.har"
