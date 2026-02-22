@@ -339,6 +339,37 @@ async def _replace_all_widgets_inner(app) -> None:
 
     # 5. Re-render with current filters
     new_conv.rerender(app.active_filters)
+    _rehydrate_panels_from_store(app, new_panels)
+
+
+def _rehydrate_panels_from_store(app, new_panels: dict[str, object]) -> None:
+    """Rehydrate mounted panel data from canonical stores after widget swap.
+
+    // [LAW:one-source-of-truth] Panel content is always derived from live stores.
+    // [LAW:single-enforcer] Hot-reload panel hydration happens at this boundary.
+    """
+    analytics_store = getattr(app, "_analytics_store", None)
+    domain_store = getattr(app, "_domain_store", None)
+    app_state = getattr(app, "_app_state", {})
+
+    stats_panel = new_panels.get("stats")
+    if stats_panel is not None:
+        stats_panel.refresh_from_store(analytics_store, domain_store=domain_store)
+
+    economics_panel = new_panels.get("economics")
+    if economics_panel is not None:
+        economics_panel.refresh_from_store(analytics_store)
+
+    timeline_panel = new_panels.get("timeline")
+    if timeline_panel is not None:
+        timeline_panel.refresh_from_store(analytics_store)
+
+    session_panel = new_panels.get("session")
+    if session_panel is not None:
+        session_panel.refresh_session_state(
+            session_id=getattr(app, "_session_id", None),
+            last_message_time=app_state.get("last_message_time"),
+        )
 
 
 def _validate_and_restore_widget_state(widget, state: dict, *, widget_name: str) -> None:
