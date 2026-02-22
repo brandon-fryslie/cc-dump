@@ -37,6 +37,22 @@ The specific goals for each VisState (of which 5 are currently defined, see next
 
 ---
 
+## Region Default Expansion Policies
+
+`TextContentBlock` segmented regions use kind-specific default expansion when no explicit `ViewOverrides` value is set:
+
+- `code_fence`: expanded when line count `<= CC_DUMP_CODE_FENCE_DEFAULT_EXPANDED_MAX_LINES` (default `12`), otherwise collapsed.
+- `xml_block`: expanded when line count `<= CC_DUMP_XML_BLOCK_DEFAULT_EXPANDED_MAX_LINES` (default `10`), otherwise collapsed.
+- `md_fence`: expanded when line count `<= CC_DUMP_MD_FENCE_DEFAULT_EXPANDED_MAX_LINES` (default `14`), otherwise collapsed.
+
+Explicit region overrides still win:
+
+- `expanded = False` forces collapsed.
+- `expanded = True` forces expanded.
+- `expanded = None` uses the default policy above.
+
+---
+
 ## Turn Framing
 
 Blocks that delimit and label API request/response turns.

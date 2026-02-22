@@ -8,14 +8,17 @@ import tracemalloc
 
 def capture_snapshot(app) -> dict[str, int]:
     """Capture coarse-grained memory-related counters from app/store state."""
-    domain_store = getattr(app, "_domain_store", None)
+    iter_stores = getattr(app, "_iter_domain_stores", None)
+    if callable(iter_stores):
+        domain_stores = tuple(iter_stores())
+    else:
+        single = getattr(app, "_domain_store", None)
+        domain_stores = (single,) if single is not None else ()
     analytics_store = getattr(app, "_analytics_store", None)
     conv = app._get_conv() if hasattr(app, "_get_conv") else None
 
-    completed_turns = int(getattr(domain_store, "completed_count", 0)) if domain_store is not None else 0
-    active_streams = (
-        len(domain_store.get_active_stream_ids()) if domain_store is not None else 0
-    )
+    completed_turns = sum(int(getattr(ds, "completed_count", 0)) for ds in domain_stores)
+    active_streams = sum(len(ds.get_active_stream_ids()) for ds in domain_stores)
     analytics_turns = int(getattr(analytics_store, "turn_count", 0)) if analytics_store is not None else 0
 
     if conv is None:

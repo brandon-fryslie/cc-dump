@@ -29,6 +29,14 @@ import cc_dump.tui.widget_factory
 # ─── Visibility actions ────────────────────────────────────────────────
 
 
+def _active_domain_store(app):
+    """Return active tab domain store when available, fallback to singleton field."""
+    getter = getattr(app, "_get_active_domain_store", None)
+    if callable(getter):
+        return getter()
+    return getattr(app, "_domain_store", None)
+
+
 def _toggle_vis_dicts(app, category: str, spec_key: str) -> None:
     """// [LAW:one-type-per-behavior] Single function for all visibility mutations."""
     store = app._view_store
@@ -53,7 +61,7 @@ def clear_overrides(app, category_name: str) -> None:
     if conv is None:
         return
 
-    ds = getattr(app, "_domain_store", None)
+    ds = _active_domain_store(app)
     if ds is not None:
         all_blocks = [block for block_list in ds.iter_completed_blocks() for block in block_list]
     else:
@@ -259,7 +267,7 @@ def toggle_follow(app) -> None:
 
 def focus_stream(app, request_id: str) -> None:
     """Focus a live request stream from footer chips."""
-    ds = getattr(app, "_domain_store", None)
+    ds = _active_domain_store(app)
     if ds is None:
         return
     if not ds.set_focused_stream(request_id):
@@ -491,7 +499,7 @@ def refresh_panel(app, name: str) -> None:
     if panel is not None:
         # [LAW:dataflow-not-control-flow] Per-panel refresh kwargs via lookup table.
         panel_kwargs = {
-            "stats": {"domain_store": getattr(app, "_domain_store", None)},
+            "stats": {"domain_store": _active_domain_store(app)},
         }
         panel.refresh_from_store(app._analytics_store, **panel_kwargs.get(name, {}))
 

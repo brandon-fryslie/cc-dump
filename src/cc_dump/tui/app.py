@@ -61,6 +61,7 @@ import cc_dump.tui.view_store_bridge
 import cc_dump.har_replayer
 import cc_dump.sessions
 import cc_dump.memory_stats
+import cc_dump.event_types
 
 from cc_dump.stderr_tee import get_tee as _get_tee
 import cc_dump.domain_store
@@ -217,6 +218,19 @@ class CcDumpApp(App):
         self._conv_tabs_id = "conversation-tabs"
         self._conv_tab_main_id = "conversation-tab-main"
         self._search_bar_id = "search-bar"
+        self._default_session_key = "__default__"
+        # // [LAW:one-source-of-truth] Request/session routing ownership lives in app state.
+        self._request_session_keys: dict[str, str] = {}
+        self._session_domain_stores: dict[str, cc_dump.domain_store.DomainStore] = {
+            self._default_session_key: self._domain_store
+        }
+        self._session_conv_ids: dict[str, str] = {
+            self._default_session_key: self._conv_id
+        }
+        self._session_tab_ids: dict[str, str] = {
+            self._default_session_key: self._conv_tab_main_id
+        }
+        self._active_session_key = self._default_session_key
         # [LAW:one-source-of-truth] Panel IDs derived from registry
         self._panel_ids = dict(PANEL_CSS_IDS)
         self._logs_id = "logs-panel"
@@ -263,8 +277,143 @@ class CcDumpApp(App):
         except NoMatches:
             return None
 
-    def _get_conv(self):
-        return self._query_safe("#" + self._conv_id)
+    def _get_conv_tabs(self):
+        return self._query_safe("#" + self._conv_tabs_id)
+
+    def _normalize_session_key(self, session_id: str) -> str:
+        return session_id if session_id else self._default_session_key
+
+    def _active_session_key_from_tabs(self) -> str:
+        tabs = self._get_conv_tabs()
+        if tabs is None:
+            return self._active_session_key
+        active_tab_id = str(getattr(tabs, "active", "") or "")
+        for session_key, tab_id in self._session_tab_ids.items():
+            if tab_id == active_tab_id:
+                self._active_session_key = session_key
+                break
+        return self._active_session_key
+
+    def _get_domain_store(self, session_key: str | None = None):
+        key = session_key if session_key is not None else self._active_session_key_from_tabs()
+        return self._session_domain_stores.get(key, self._domain_store)
+
+    def _get_active_domain_store(self):
+        return self._get_domain_store(self._active_session_key_from_tabs())
+
+    def _iter_domain_stores(self):
+        return tuple(self._session_domain_stores.values())
+
+    def _session_tab_title(self, session_key: str) -> str:
+        if session_key == self._default_session_key:
+            return "Session"
+        return session_key[:8]
+
+    def _ensure_session_surface(self, session_key: str) -> None:
+        """Ensure one DomainStore + TabPane + ConversationView exists for session key.
+
+        // [LAW:one-source-of-truth] session_key owns DomainStore + ConversationView identity.
+        // [LAW:locality-or-seam] Dynamic tab/session creation is isolated here.
+        """
+        key = self._normalize_session_key(session_key)
+        if key in self._session_conv_ids and key in self._session_domain_stores:
+            return
+
+        tab_index = len(self._session_tab_ids)
+        conv_id = f"{self._conv_id}-{tab_index}"
+        tab_id = f"{self._conv_tab_main_id}-{tab_index}"
+        domain_store = cc_dump.domain_store.DomainStore()
+        conv = cc_dump.tui.widget_factory.create_conversation_view(
+            view_store=self._view_store,
+            domain_store=domain_store,
+        )
+        conv.id = conv_id
+
+        self._session_domain_stores[key] = domain_store
+        self._session_conv_ids[key] = conv_id
+        self._session_tab_ids[key] = tab_id
+
+        tabs = self._get_conv_tabs()
+        if tabs is None:
+            return
+
+        pane = TabPane(self._session_tab_title(key), conv, id=tab_id)
+        tabs.add_pane(pane)
+
+        # // [LAW:dataflow-not-control-flow] Default tab always exists; first real
+        # session auto-focuses only when default has no data.
+        default_store = self._session_domain_stores[self._default_session_key]
+        if (
+            self._active_session_key == self._default_session_key
+            and key != self._default_session_key
+            and default_store.completed_count == 0
+            and not default_store.get_active_stream_ids()
+        ):
+            tabs.active = tab_id
+
+    def _extract_session_id_from_body(self, body: object) -> str:
+        """Extract session_id from request body metadata.user_id."""
+        if not isinstance(body, dict):
+            return ""
+        metadata = body.get("metadata", {})
+        if not isinstance(metadata, dict):
+            return ""
+        user_id = metadata.get("user_id", "")
+        if not isinstance(user_id, str) or not user_id:
+            return ""
+        parsed = cc_dump.formatting.parse_user_id(user_id)
+        if not parsed:
+            return ""
+        session_id = parsed.get("session_id", "")
+        return session_id if isinstance(session_id, str) else ""
+
+    def _bind_request_session(self, request_id: str, session_key: str) -> None:
+        if not request_id:
+            return
+        self._request_session_keys[request_id] = self._normalize_session_key(session_key)
+
+    def _session_key_for_request_id(self, request_id: str) -> str:
+        key = self._request_session_keys.get(request_id)
+        if key:
+            return key
+        stream_registry = self._app_state.get("stream_registry")
+        if stream_registry is None:
+            return self._default_session_key
+        ctx = stream_registry.get(request_id)
+        if ctx is None:
+            return self._default_session_key
+        key = self._normalize_session_key(str(ctx.session_id or ""))
+        self._bind_request_session(request_id, key)
+        return key
+
+    def _resolve_event_session_key(self, event) -> str:
+        """Resolve session key for event routing.
+
+        // [LAW:one-source-of-truth] request_id -> session routing is resolved once here.
+        """
+        request_id = str(getattr(event, "request_id", "") or "")
+        key = self._default_session_key
+        if event.kind == cc_dump.event_types.PipelineEventKind.REQUEST:
+            body = getattr(event, "body", {})
+            key = self._normalize_session_key(self._extract_session_id_from_body(body))
+            self._bind_request_session(request_id, key)
+            self._ensure_session_surface(key)
+            return key
+        if request_id:
+            key = self._session_key_for_request_id(request_id)
+        self._ensure_session_surface(key)
+        return key
+
+    def _sync_active_stream_footer(self) -> None:
+        """Mirror active session stream chips/focus into the view store."""
+        ds = self._get_active_domain_store()
+        self._view_store.set("streams:active", ds.get_active_stream_chips())
+        self._view_store.set("streams:focused", ds.get_focused_stream_id() or "")
+
+    def _get_conv(self, session_key: str | None = None):
+        key = session_key if session_key is not None else self._active_session_key_from_tabs()
+        conv_id = self._session_conv_ids.get(key, self._conv_id)
+        return self._query_safe("#" + conv_id)
 
     def _get_panel(self, name: str):
         """// [LAW:one-source-of-truth] Generic panel accessor using registry IDs."""
@@ -492,6 +641,7 @@ class CcDumpApp(App):
                     self._view_store.footer_state.get()
                 )
             )
+        self._sync_active_stream_footer()
         self._log_memory_snapshot("startup")
 
         if self._replay_data:
@@ -754,18 +904,26 @@ class CcDumpApp(App):
             return
 
         kind = event.kind
-        conv = self._get_conv()
+        session_key = self._resolve_event_session_key(event)
+        conv = self._get_conv(session_key=session_key)
         stats = self._get_stats()
-        if conv is None or stats is None:
+        if stats is None:
             return
+        if conv is None:
+            conv = self._query_safe("#" + self._conv_id)
+        if conv is None:
+            return
+        domain_store = self._get_domain_store(session_key)
+        active_session_key = self._active_session_key_from_tabs()
+        is_active_session = session_key == active_session_key
 
         # [LAW:dataflow-not-control-flow] Unified context dict
         widgets = {
             "conv": conv,
             "stats": stats,
             "filters": self.active_filters,
-            "view_store": self._view_store,
-            "domain_store": self._domain_store,
+            "view_store": self._view_store if is_active_session else None,
+            "domain_store": domain_store,
             "refresh_callbacks": {
                 "refresh_session": self._refresh_session,
             },
@@ -782,6 +940,10 @@ class CcDumpApp(App):
         self._app_state = handler(
             event, self._state, widgets, self._app_state, self._app_log
         )
+        request_id = str(getattr(event, "request_id", "") or "")
+        if request_id:
+            resolved_key = self._session_key_for_request_id(request_id)
+            self._ensure_session_surface(resolved_key)
 
         # // [LAW:one-source-of-truth] Session ID comes from formatting state,
         # not from blocks or app_state side-channels.
@@ -794,6 +956,22 @@ class CcDumpApp(App):
             info = self._get_info()
             if info is not None:
                 info.update_info(self._build_server_info())
+        self._sync_active_stream_footer()
+
+    def on_tabbed_content_tab_activated(
+        self, event: TabbedContent.TabActivated
+    ) -> None:
+        """Sync active session context when conversation tab changes."""
+        if event.tabbed_content.id != self._conv_tabs_id:
+            return
+        pane_id = str(getattr(event.pane, "id", "") or "")
+        for session_key, tab_id in self._session_tab_ids.items():
+            if tab_id == pane_id:
+                self._active_session_key = session_key
+                break
+        # // [LAW:one-source-of-truth] Back-compat alias points to active session store.
+        self._domain_store = self._get_active_domain_store()
+        self._sync_active_stream_footer()
 
     # ─── Delegates to extracted modules ────────────────────────────────
     # Textual requires action_* and watch_* as methods on the App class.

@@ -287,6 +287,32 @@ class ConversationView(ScrollView):
         ds.on_focus_changed = self._on_focus_changed
         ds.on_turns_pruned = self._on_turns_pruned
 
+    def on_mount(self) -> None:
+        """Hydrate local render cache from domain store on mount.
+
+        // [LAW:one-source-of-truth] DomainStore remains canonical; widget cache is derived.
+        """
+        self._hydrate_from_domain_store()
+
+    def _hydrate_from_domain_store(self) -> None:
+        """Rebuild rendered turns from current domain store state."""
+        if not self.is_attached:
+            return
+        if self._view_store is not None:
+            self._last_filters = self._view_store.active_filters.get()
+        self._turns = []
+        self._stream_preview_turns = {}
+        self._attached_stream_id = None
+        self._pending_stream_delta_request_ids = set()
+        self._clear_line_cache()
+
+        for blocks in self._domain_store.iter_completed_blocks():
+            self._render_and_append_turn(blocks, self._last_filters)
+
+        self._attach_stream_preview()
+        self._recalculate_offsets()
+        self.refresh()
+
     # // [LAW:one-source-of-truth] Follow state stored as string in view store.
     # String comparison is stable across hot-reloads (enum class identity changes).
     # Falls back to local attribute when no store (tests).
@@ -762,10 +788,14 @@ class ConversationView(ScrollView):
 
     def _on_turn_added(self, blocks: list, index: int) -> None:
         """Domain store callback: a completed turn was added."""
+        if not self.is_attached:
+            return
         self._invalidate("new_turn", blocks=blocks)
 
     def _on_turns_pruned(self, pruned_count: int) -> None:
         """Domain store callback: oldest completed turns were pruned."""
+        if not self.is_attached:
+            return
         if pruned_count <= 0:
             return
         if pruned_count >= len(self._turns):
@@ -977,6 +1007,8 @@ class ConversationView(ScrollView):
 
     def _on_stream_started(self, request_id: str, meta: dict) -> None:
         """Domain store callback: a new stream was created."""
+        if not self.is_attached:
+            return
         self._invalidate("stream_started", request_id=request_id, meta=meta)
 
     def _render_stream_started(self, request_id: str, meta: dict = None) -> None:
@@ -1071,6 +1103,8 @@ class ConversationView(ScrollView):
 
     def _on_stream_block(self, request_id: str, block) -> None:
         """Domain store callback: a block was appended to a stream."""
+        if not self.is_attached:
+            return
         td = self._stream_preview_turns.get(request_id)
         if td is None:
             return
@@ -1110,6 +1144,8 @@ class ConversationView(ScrollView):
 
     def _on_stream_finalized(self, request_id: str, final_blocks: list, was_focused: bool) -> None:
         """Domain store callback: a stream was finalized with consolidated blocks."""
+        if not self.is_attached:
+            return
         self._invalidate("stream_finalized", request_id=request_id, final_blocks=final_blocks, was_focused=was_focused)
 
     def _render_stream_finalized(self, request_id: str, final_blocks: list, was_focused: bool = False) -> None:
@@ -1166,6 +1202,8 @@ class ConversationView(ScrollView):
 
     def _on_focus_changed(self, request_id: str) -> None:
         """Domain store callback: focused stream changed."""
+        if not self.is_attached:
+            return
         self._invalidate("focus_changed", request_id=request_id)
 
     def _render_focus_changed(self, request_id: str) -> None:
