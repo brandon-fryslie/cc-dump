@@ -821,17 +821,35 @@ _CODE_FENCE_DEFAULT_EXPANDED_MAX_LINES = 12
 _XML_BLOCK_DEFAULT_EXPANDED_MAX_LINES = 10
 
 
+def _read_region_default_max_lines(env_key: str, default: int) -> int:
+    """Read positive integer line limit for default region expansion policies."""
+    raw = str(os.environ.get(env_key, default)).strip()
+    try:
+        parsed = int(raw)
+    except ValueError:
+        parsed = default
+    return max(1, parsed)
+
+
 def _code_fence_default_expanded(inner_text: str) -> bool:
     """Default expansion policy for code_fence regions.
 
     // [LAW:no-mode-explosion] Single threshold controls default collapse behavior.
     """
-    return len(inner_text.splitlines()) <= _CODE_FENCE_DEFAULT_EXPANDED_MAX_LINES
+    max_lines = _read_region_default_max_lines(
+        "CC_DUMP_CODE_FENCE_DEFAULT_EXPANDED_MAX_LINES",
+        _CODE_FENCE_DEFAULT_EXPANDED_MAX_LINES,
+    )
+    return len(inner_text.splitlines()) <= max_lines
 
 
 def _xml_block_default_expanded(inner_text: str) -> bool:
     """Default expansion policy for xml_block regions."""
-    return len(inner_text.splitlines()) <= _XML_BLOCK_DEFAULT_EXPANDED_MAX_LINES
+    max_lines = _read_region_default_max_lines(
+        "CC_DUMP_XML_BLOCK_DEFAULT_EXPANDED_MAX_LINES",
+        _XML_BLOCK_DEFAULT_EXPANDED_MAX_LINES,
+    )
+    return len(inner_text.splitlines()) <= max_lines
 
 
 def _render_region_parts(

@@ -430,6 +430,20 @@ def test_region_parts_code_fence_short_defaults_expanded():
     assert "print('a')" in plain
 
 
+def test_region_parts_code_fence_default_threshold_from_env(monkeypatch):
+    """Code fence default expansion threshold can be tuned via env."""
+    _setup_theme()
+    monkeypatch.setenv("CC_DUMP_CODE_FENCE_DEFAULT_EXPANDED_MAX_LINES", "1")
+    text = "```python\nprint('a')\nprint('b')\n```"
+    block = TextContentBlock(content=text, category=Category.ASSISTANT)
+    populate_content_regions(block)
+
+    parts = _render_region_parts(block)
+    assert len(parts) == 1
+    plain = _render_to_text(parts[0][0])
+    assert "▷ ```python```" in plain
+
+
 def test_region_parts_xml_long_defaults_collapsed():
     """Long XML blocks default to collapsed without explicit override."""
     _setup_theme()
@@ -460,6 +474,21 @@ def test_region_parts_xml_short_defaults_expanded():
     assert "▷" not in plain
     assert "▽ <thinking>" in plain
     assert "line_1" in plain
+
+
+def test_region_parts_xml_default_threshold_from_env(monkeypatch):
+    """XML default expansion threshold can be tuned via env."""
+    _setup_theme()
+    monkeypatch.setenv("CC_DUMP_XML_BLOCK_DEFAULT_EXPANDED_MAX_LINES", "1")
+    text = "<thinking>\nline_1\nline_2\n</thinking>"
+    block = TextContentBlock(content=text, category=Category.ASSISTANT)
+    populate_content_regions(block)
+
+    parts = _render_region_parts(block)
+    assert len(parts) == 1
+    plain = _render_to_text(parts[0][0])
+    assert "▷" in plain
+    assert "<thinking>" in plain
 
 
 def test_region_parts_form_a_collapsed():
