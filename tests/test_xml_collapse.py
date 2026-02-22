@@ -399,6 +399,37 @@ def test_region_parts_code_fence_collapsed():
     assert "2 lines" in plain
 
 
+def test_region_parts_code_fence_long_defaults_collapsed():
+    """Long code fences default to collapsed without explicit override."""
+    _setup_theme()
+    long_code = "\n".join(f"line_{i}" for i in range(20))
+    text = f"```python\n{long_code}\n```"
+    block = TextContentBlock(content=text, category=Category.ASSISTANT)
+    populate_content_regions(block)
+
+    parts = _render_region_parts(block)
+    assert len(parts) == 1
+    renderable, _ = parts[0]
+    plain = _render_to_text(renderable)
+    assert "▷ ```python```" in plain
+    assert "20 lines" in plain
+
+
+def test_region_parts_code_fence_short_defaults_expanded():
+    """Short code fences remain expanded by default."""
+    _setup_theme()
+    text = "```python\nprint('a')\nprint('b')\n```"
+    block = TextContentBlock(content=text, category=Category.ASSISTANT)
+    populate_content_regions(block)
+
+    parts = _render_region_parts(block)
+    assert len(parts) == 1
+    renderable, _ = parts[0]
+    plain = _render_to_text(renderable)
+    assert "▷ ```python```" not in plain
+    assert "print('a')" in plain
+
+
 def test_region_parts_form_a_collapsed():
     """Form A collapsed: shows content preview from after open tag."""
     _setup_theme()

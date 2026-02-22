@@ -818,6 +818,17 @@ def _render_code_fence_collapsed(info: str | None, inner_text: str) -> Text:
     return t
 
 
+_CODE_FENCE_DEFAULT_EXPANDED_MAX_LINES = 12
+
+
+def _code_fence_default_expanded(inner_text: str) -> bool:
+    """Default expansion policy for code_fence regions.
+
+    // [LAW:no-mode-explosion] Single threshold controls default collapse behavior.
+    """
+    return len(inner_text.splitlines()) <= _CODE_FENCE_DEFAULT_EXPANDED_MAX_LINES
+
+
 def _render_region_parts(
     block, overrides=None,
 ) -> list[tuple[ConsoleRenderable, int | None]]:
@@ -871,7 +882,8 @@ def _render_region_parts(
                 rvs = overrides._regions.get((block.block_id, region.index))
                 if rvs is not None:
                     region_exp = rvs.expanded
-            is_expanded = region_exp is not False
+            default_expanded = _code_fence_default_expanded(inner)
+            is_expanded = default_expanded if region_exp is None else (region_exp is not False)
 
             if is_expanded:
                 parts.append(
