@@ -41,6 +41,7 @@ import cc_dump.tui.session_panel
 
 # Extracted controller modules (module-object imports — safe for hot-reload)
 from cc_dump.tui import action_handlers as _actions
+from cc_dump.tui.category_config import CATEGORY_CONFIG
 from cc_dump.tui.panel_registry import PANEL_REGISTRY, PANEL_ORDER, PANEL_CSS_IDS
 from cc_dump.tui import search_controller as _search
 from cc_dump.tui import dump_export as _dump
@@ -153,6 +154,7 @@ class CcDumpApp(App):
         replay_data: Optional[list] = None,
         recording_path: Optional[str] = None,
         replay_file: Optional[str] = None,
+        resume_ui_state: Optional[dict] = None,
         tmux_controller=None,
         side_channel_manager=None,
         data_dispatcher=None,
@@ -174,6 +176,7 @@ class CcDumpApp(App):
         self._replay_data = replay_data
         self._recording_path = recording_path
         self._replay_file = replay_file
+        self._resume_ui_state = resume_ui_state if isinstance(resume_ui_state, dict) else None
         self._tmux_controller = tmux_controller
         self._side_channel_manager = side_channel_manager
         self._data_dispatcher = data_dispatcher
@@ -439,6 +442,8 @@ class CcDumpApp(App):
         # Seed external state into view store for reactive footer
         self._sync_tmux_to_store()
         self._view_store.set("launch:active_name", cc_dump.launch_config.load_active_name())
+        if self._resume_ui_state is not None:
+            self._apply_resume_ui_state_preload()
         # Footer hydration — reactions are now active
         footer = self._get_footer()
         if footer:
@@ -450,6 +455,8 @@ class CcDumpApp(App):
 
         if self._replay_data:
             self._process_replay_data()
+        if self._resume_ui_state is not None:
+            self._apply_resume_ui_state_postload()
 
     async def action_quit(self) -> None:
         now = time.monotonic()
@@ -536,6 +543,73 @@ class CcDumpApp(App):
             "textual_version": textual.__version__,
             "pid": os.getpid(),
         }
+
+    def export_ui_state(self) -> dict:
+        """Capture durable UI state for sidecar persistence.
+
+        // [LAW:one-source-of-truth] Sidecar export shape is defined here.
+        """
+        view_state = {}
+        for key in (
+            "panel:active",
+            "panel:side_channel",
+            "panel:settings",
+            "panel:launch_config",
+            "nav:follow",
+            "filter:active",
+            "streams:view",
+            "search:phase",
+            "search:query",
+            "search:modes",
+            "search:cursor_pos",
+        ):
+            view_state[key] = self._view_store.get(key)
+
+        for _, name, _, _ in CATEGORY_CONFIG:
+            view_state[f"vis:{name}"] = self._view_store.get(f"vis:{name}")
+            view_state[f"full:{name}"] = self._view_store.get(f"full:{name}")
+            view_state[f"exp:{name}"] = self._view_store.get(f"exp:{name}")
+
+        conv_state = {}
+        conv = self._get_conv()
+        if conv is not None:
+            conv_state = conv.get_state()
+
+        return {
+            "view_store": view_state,
+            "conv": conv_state,
+            "app": {
+                "show_logs": bool(self.show_logs),
+                "show_info": bool(self.show_info),
+            },
+        }
+
+    def _apply_resume_ui_state_preload(self) -> None:
+        """Apply store + app state before replay processing."""
+        state = self._resume_ui_state or {}
+        view_state = state.get("view_store", {})
+        if isinstance(view_state, dict):
+            updates = {
+                key: value
+                for key, value in view_state.items()
+                if isinstance(key, str)
+            }
+            if updates:
+                self._view_store.update(updates)
+
+        app_state = state.get("app", {})
+        if isinstance(app_state, dict):
+            self.show_logs = bool(app_state.get("show_logs", self.show_logs))
+            self.show_info = bool(app_state.get("show_info", self.show_info))
+
+    def _apply_resume_ui_state_postload(self) -> None:
+        """Apply conversation-view state after replay/live initial hydration."""
+        state = self._resume_ui_state or {}
+        conv_state = state.get("conv", {})
+        conv = self._get_conv()
+        if conv is not None and isinstance(conv_state, dict) and conv_state:
+            conv.restore_state(conv_state)
+            conv.rerender(self.active_filters)
 
     def _rerender_if_mounted(self):
 

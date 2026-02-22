@@ -25,6 +25,7 @@ import cc_dump.launch_config
 import cc_dump.side_channel
 import cc_dump.data_dispatcher
 import cc_dump.sentinel
+import cc_dump.session_sidecar
 from cc_dump.proxy import RequestPipeline
 import cc_dump.view_store
 import cc_dump.hot_reload
@@ -75,6 +76,13 @@ def main():
         help="Continue from most recent recording (replay + live proxy)",
     )
     parser.add_argument(
+        "--resume",
+        nargs="?",
+        const="latest",
+        default=None,
+        help="Resume UI state sidecar. Optional path; defaults to latest recording.",
+    )
+    parser.add_argument(
         "--seed-hue",
         type=float,
         default=None,
@@ -88,7 +96,18 @@ def main():
     # Initialize color palette before anything else imports it
     cc_dump.palette.init_palette(args.seed_hue)
 
-    # Resolve --continue to load latest recording
+    # Resolve --continue / --resume to load latest recording
+    if args.resume is not None:
+        if args.resume == "latest":
+            latest = cc_dump.sessions.get_latest_recording()
+            if latest is None:
+                print("No recordings found to resume from.")
+                return
+            args.replay = latest
+        else:
+            args.replay = args.resume
+        print(f"🔄 Resuming from: {args.replay}")
+
     if args.continue_session:
         latest = cc_dump.sessions.get_latest_recording()
         if latest is None:
@@ -103,6 +122,7 @@ def main():
     server = None
     replay_data = None
 
+    resume_ui_state = None
     if args.replay:
         # Load HAR file (complete messages, NO event conversion)
         print(f"   Loading replay: {args.replay}")
@@ -110,6 +130,12 @@ def main():
         try:
             replay_data = cc_dump.har_replayer.load_har(args.replay)
             print(f"   Found {len(replay_data)} request/response pairs")
+            sidecar_payload = cc_dump.session_sidecar.load_ui_state(args.replay)
+            if isinstance(sidecar_payload, dict):
+                loaded_ui = sidecar_payload.get("ui_state", {})
+                if isinstance(loaded_ui, dict):
+                    resume_ui_state = loaded_ui
+                    print(f"   Loaded UI sidecar: {cc_dump.session_sidecar.sidecar_path_for_har(args.replay)}")
 
         except Exception as e:
             print(f"   Error loading HAR file: {e}")
@@ -251,6 +277,7 @@ def main():
         replay_data=replay_data,
         recording_path=record_path,
         replay_file=args.replay,
+        resume_ui_state=resume_ui_state,
         tmux_controller=tmux_ctrl,
         side_channel_manager=side_channel_mgr,
         data_dispatcher=data_dispatcher,
@@ -306,6 +333,20 @@ def main():
         if har_recorder:
             har_recorder.close()
 
+        # Persist UI sidecar next to active HAR (recording path or replay file).
+        sidecar_target = (
+            record_path if record_path and os.path.exists(record_path)
+            else args.replay if args.replay and os.path.exists(args.replay)
+            else None
+        )
+        if sidecar_target:
+            try:
+                ui_state = app.export_ui_state()
+                sidecar_path = cc_dump.session_sidecar.save_ui_state(sidecar_target, ui_state)
+                print(f"   UI state saved: {sidecar_path}", file=sys.stderr)
+            except Exception as e:
+                print(f"   UI state save failed: {e}", file=sys.stderr)
+
         # Print restart command — unstoppable (mask SIGINT so Ctrl+C can't suppress it)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         replay_path = (
@@ -315,7 +356,7 @@ def main():
         )
         cmd = f"{sys.argv[0]} --port {actual_port}"
         if replay_path:
-            cmd += f" --replay {replay_path}"
+            cmd += f" --resume {replay_path}"
         print(f"\n   To resume:\n   {cmd}", file=sys.stderr)
         sys.stderr.flush()
         signal.signal(signal.SIGINT, signal.SIG_DFL)
