@@ -587,6 +587,66 @@ class TestToolUseFullEdit:
         assert "new (0 lines)" in plain
 
 
+class TestToolUseFullReadWriteGrepGlob:
+    """Tests for additional specialized ToolUse full renderers."""
+
+    def test_read_full_shows_path_and_range(self):
+        block = ToolUseBlock(
+            name="Read",
+            input_size=120,
+            msg_color_idx=0,
+            tool_input={"file_path": "/src/app.py", "offset": 10, "limit": 50},
+        )
+        result = _render_tool_use_full(block)
+        assert result is not None
+        plain = result.plain
+        assert "[Use: Read]" in plain
+        assert "/src/app.py" in plain
+        assert "offset=10 limit=50" in plain
+
+    def test_write_full_shows_payload_preview(self):
+        block = ToolUseBlock(
+            name="Write",
+            input_size=60,
+            msg_color_idx=0,
+            tool_input={"content": "first line\nsecond line\nthird line"},
+        )
+        result = _render_tool_use_full(block)
+        assert result is not None
+        plain = result.plain
+        assert "[Use: Write]" in plain
+        assert "payload (3 lines)" in plain
+        assert "first line" in plain
+
+    def test_grep_full_shows_pattern_and_path(self):
+        block = ToolUseBlock(
+            name="Grep",
+            input_size=80,
+            msg_color_idx=0,
+            tool_input={"pattern": "TODO|FIXME", "path": "/repo/src"},
+        )
+        result = _render_tool_use_full(block)
+        assert result is not None
+        plain = result.plain
+        assert "[Use: Grep]" in plain
+        assert "/TODO|FIXME/" in plain
+        assert "/repo/src" in plain
+
+    def test_glob_full_shows_pattern_and_path(self):
+        block = ToolUseBlock(
+            name="Glob",
+            input_size=40,
+            msg_color_idx=0,
+            tool_input={"pattern": "**/*.py", "path": "/repo"},
+        )
+        result = _render_tool_use_full(block)
+        assert result is not None
+        plain = result.plain
+        assert "[Use: Glob]" in plain
+        assert "**/*.py" in plain
+        assert "/repo" in plain
+
+
 class TestToolUseSummaryLevel:
     """Tests confirming ToolUseBlock at summary level uses one-liner."""
 

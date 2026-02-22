@@ -1132,10 +1132,102 @@ def _render_tool_use_edit_full(block: ToolUseBlock) -> Text | None:
     return t
 
 
+def _render_tool_use_read_full(block: ToolUseBlock) -> Text | None:
+    """Full ToolUseBlock for Read: path + range hints."""
+    tc = get_theme_colors()
+    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    t = Text("  ")
+    t.append("[Use: Read]", style=f"bold {color}")
+    if block.detail:
+        t.append(f" {block.detail}", style="dim")
+    t.append(f" ({block.input_size} lines)")
+
+    file_path = str(block.tool_input.get("file_path", "") or "")
+    offset = block.tool_input.get("offset")
+    limit = block.tool_input.get("limit")
+    if file_path:
+        t.append("\n    ")
+        t.append(file_path, style=tc.secondary)
+    if offset is not None or limit is not None:
+        t.append("\n    ")
+        t.append(
+            "offset={} limit={}".format(offset if offset is not None else 0, limit if limit is not None else "all"),
+            style="dim",
+        )
+    return t
+
+
+def _render_tool_use_write_full(block: ToolUseBlock) -> Text | None:
+    """Full ToolUseBlock for Write: path + payload preview."""
+    tc = get_theme_colors()
+    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    t = Text("  ")
+    t.append("[Use: Write]", style=f"bold {color}")
+    if block.detail:
+        t.append(f" {block.detail}", style="dim")
+    t.append(f" ({block.input_size} lines)")
+
+    content = str(block.tool_input.get("content", "") or "")
+    if content:
+        first = content.splitlines()[0] if content.splitlines() else content
+        preview = first[:80] + ("..." if len(first) > 80 else "")
+        line_count = content.count("\n") + 1
+        t.append("\n    ")
+        t.append(f"+ payload ({line_count} lines): ", style=tc.success)
+        t.append(preview, style="dim")
+    return t
+
+
+def _render_tool_use_grep_full(block: ToolUseBlock) -> Text | None:
+    """Full ToolUseBlock for Grep: show regex pattern and path scope."""
+    tc = get_theme_colors()
+    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    t = Text("  ")
+    t.append("[Use: Grep]", style=f"bold {color}")
+    if block.detail:
+        t.append(f" {block.detail}", style="dim")
+    t.append(f" ({block.input_size} lines)")
+
+    pattern = str(block.tool_input.get("pattern", "") or "")
+    path = str(block.tool_input.get("path", "") or "")
+    if pattern:
+        t.append("\n    ")
+        t.append(f"/{pattern}/", style=f"bold {tc.accent}")
+    if path:
+        t.append("\n    ")
+        t.append(path, style=tc.secondary)
+    return t
+
+
+def _render_tool_use_glob_full(block: ToolUseBlock) -> Text | None:
+    """Full ToolUseBlock for Glob: show glob pattern and search root."""
+    tc = get_theme_colors()
+    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    t = Text("  ")
+    t.append("[Use: Glob]", style=f"bold {color}")
+    if block.detail:
+        t.append(f" {block.detail}", style="dim")
+    t.append(f" ({block.input_size} lines)")
+
+    pattern = str(block.tool_input.get("pattern", "") or "")
+    path = str(block.tool_input.get("path", "") or "")
+    if pattern:
+        t.append("\n    ")
+        t.append(pattern, style=tc.secondary)
+    if path:
+        t.append("\n    ")
+        t.append(path, style="dim")
+    return t
+
+
 # [LAW:dataflow-not-control-flow] Tool-specific full renderers for ToolUseBlock
 _TOOL_USE_FULL_RENDERERS: dict[str, Callable] = {
     "Bash": _render_tool_use_bash_full,
     "Edit": _render_tool_use_edit_full,
+    "Read": _render_tool_use_read_full,
+    "Write": _render_tool_use_write_full,
+    "Grep": _render_tool_use_grep_full,
+    "Glob": _render_tool_use_glob_full,
 }
 
 
