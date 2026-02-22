@@ -43,6 +43,10 @@ jobs:
       run: |
         uv run pytest tests/test_hot_reload.py -v
 
+    - name: Run side-channel evaluation gate
+      run: |
+        UV_CACHE_DIR=/tmp/uv-cache uv run python -m cc_dump.side_channel_eval --check --output .artifacts/side_channel_eval.json
+
   lint:
     runs-on: ubuntu-latest
     steps:

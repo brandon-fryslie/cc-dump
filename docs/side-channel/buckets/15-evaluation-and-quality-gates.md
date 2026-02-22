@@ -32,11 +32,19 @@ Goal:
 - Low to Medium (depends on benchmark corpus size).
 - Can be minimized with fixed evaluation corpora and periodic runs.
 
-## Ready to start?
+## Implemented now
 
-Yes.
+- Per-purpose machine-verifiable thresholds:
+  - canonical map in `src/cc_dump/side_channel_eval_metrics.py`
+  - documentation in `docs/side-channel/EVALUATION_METRICS.md`
+- Deterministic harness over fixed corpus:
+  - corpus: `docs/side-channel/eval/side_channel_eval_corpus.json`
+  - runner: `python -m cc_dump.side_channel_eval`
+  - output artifact: `.artifacts/side_channel_eval.json`
+- CI promotion gate:
+  - workflow runs `--check` mode and fails on threshold regressions
 
-Definition of ready:
-- every bucket has explicit acceptance checks
-- no bucket can move beyond MVP without an evaluation plan
+## Deferred follow-ups
 
+- Expand fixed corpus coverage as additional side-channel purposes ship.
+- Track trend comparisons across runs, not only threshold pass/fail.

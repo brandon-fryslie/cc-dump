@@ -169,8 +169,10 @@ Implementation:
 - benchmark harness per purpose
 - promotion gates tracked in CI
 
-Placeholder:
-- gate definitions documented
+Implemented now:
+- canonical per-purpose acceptance thresholds in code
+- deterministic fixed-corpus evaluation harness with JSON artifact output
+- CI gate step that fails on threshold regressions
 
 ## 16 Redaction and data boundaries
 
