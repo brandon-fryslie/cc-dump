@@ -19,6 +19,7 @@ import uuid
 from dataclasses import dataclass
 from collections.abc import Callable
 
+from cc_dump.side_channel_boundary import apply_boundary
 from cc_dump.side_channel_marker import SideChannelMarker, prepend_marker
 from cc_dump.side_channel_purpose import normalize_purpose, SIDE_CHANNEL_PURPOSES
 
@@ -50,6 +51,7 @@ class SideChannelResult:
     run_id: str = ""
     purpose: str = "block_summary"
     prompt_version: str = "v1"
+    policy_version: str = ""
     profile: str = "ephemeral_default"
 
 
@@ -175,6 +177,7 @@ class SideChannelManager:
                 run_id=run_id,
                 purpose=normalized_purpose,
                 prompt_version=prompt_version,
+                policy_version="",
                 profile=profile,
             )
         if not self._enabled:
@@ -185,6 +188,7 @@ class SideChannelManager:
                 run_id=run_id,
                 purpose=normalized_purpose,
                 prompt_version=prompt_version,
+                policy_version="",
                 profile=profile,
             )
         if not self._purpose_enabled.get(normalized_purpose, True):
@@ -195,6 +199,7 @@ class SideChannelManager:
                 run_id=run_id,
                 purpose=normalized_purpose,
                 prompt_version=prompt_version,
+                policy_version="",
                 profile=profile,
             )
         budget_err = self._budget_block_reason(normalized_purpose)
@@ -206,8 +211,10 @@ class SideChannelManager:
                 run_id=run_id,
                 purpose=normalized_purpose,
                 prompt_version=prompt_version,
+                policy_version="",
                 profile=profile,
             )
+        boundary = apply_boundary(prompt, normalized_purpose)
 
         cmd = _build_cmd(
             claude_command=self._claude_command,
@@ -215,12 +222,13 @@ class SideChannelManager:
             source_session_id=source_session_id,
         )
         tagged_prompt = prepend_marker(
-            prompt,
+            boundary.prompt,
             SideChannelMarker(
                 run_id=run_id,
                 purpose=normalized_purpose,
                 source_session_id=source_session_id,
                 prompt_version=prompt_version,
+                policy_version=boundary.policy_version,
             ),
         )
         env = os.environ.copy()
@@ -246,6 +254,7 @@ class SideChannelManager:
                     run_id=run_id,
                     purpose=normalized_purpose,
                     prompt_version=prompt_version,
+                    policy_version=boundary.policy_version,
                     profile=profile,
                 )
             return SideChannelResult(
@@ -255,6 +264,7 @@ class SideChannelManager:
                 run_id=run_id,
                 purpose=normalized_purpose,
                 prompt_version=prompt_version,
+                policy_version=boundary.policy_version,
                 profile=profile,
             )
         except subprocess.TimeoutExpired:
@@ -266,6 +276,7 @@ class SideChannelManager:
                 run_id=run_id,
                 purpose=normalized_purpose,
                 prompt_version=prompt_version,
+                policy_version=boundary.policy_version,
                 profile=profile,
             )
         except FileNotFoundError:
@@ -277,6 +288,7 @@ class SideChannelManager:
                 run_id=run_id,
                 purpose=normalized_purpose,
                 prompt_version=prompt_version,
+                policy_version=boundary.policy_version,
                 profile=profile,
             )
         finally:

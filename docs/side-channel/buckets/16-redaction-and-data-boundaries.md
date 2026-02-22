@@ -38,3 +38,5 @@ Definition of ready:
 - centralized redaction/minimization policy exists
 - tests prove policy is applied to every side-channel request
 
+Implementation reference:
+- `docs/side-channel/REDACTION_POLICY.md`

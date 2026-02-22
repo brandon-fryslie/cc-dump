@@ -564,7 +564,10 @@ def test_get_state_restore_state_handles_old_format():
 
 def test_side_channel_purpose_summary_aggregates_marker_tagged_turns():
     store = AnalyticsStore()
-    marker = '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"r1","purpose":"block_summary","source_session_id":"s1"}>>\n'
+    marker = (
+        '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"r1","purpose":"block_summary",'
+        '"source_session_id":"s1","prompt_version":"v1","policy_version":"redaction-v1"}>>\n'
+    )
     request = {
         "model": "claude-haiku-4-5",
         "messages": [{"role": "user", "content": marker + "Summarize this"}],
@@ -595,6 +598,7 @@ def test_side_channel_purpose_summary_aggregates_marker_tagged_turns():
     assert row["cache_creation_tokens"] == 2
     assert row["output_tokens"] == 5
     assert row["prompt_versions"] == {"v1": 1}
+    assert row["policy_versions"] == {"redaction-v1": 1}
 
 
 def test_side_channel_summary_excludes_primary_turns():
@@ -616,7 +620,10 @@ def test_side_channel_summary_excludes_primary_turns():
 
 def test_side_channel_summary_normalizes_unknown_purpose():
     store = AnalyticsStore()
-    marker = '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"r9","purpose":"weird_custom_label","source_session_id":"s1"}>>\n'
+    marker = (
+        '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"r9","purpose":"weird_custom_label",'
+        '"source_session_id":"s1","policy_version":"redaction-v1"}>>\n'
+    )
     request = {
         "model": "claude-haiku-4-5",
         "messages": [{"role": "user", "content": marker + "Do work"}],
@@ -635,3 +642,4 @@ def test_side_channel_summary_normalizes_unknown_purpose():
     summary = store.get_side_channel_purpose_summary()
     assert "utility_custom" in summary
     assert summary["utility_custom"]["turns"] == 1
+    assert summary["utility_custom"]["policy_versions"] == {"redaction-v1": 1}

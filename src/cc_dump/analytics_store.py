@@ -57,6 +57,7 @@ class TurnRecord:
     request_json: str  # For timeline budget calculation
     purpose: str = "primary"
     prompt_version: str = ""
+    policy_version: str = ""
     is_side_channel: bool = False
     tool_invocations: list[ToolInvocationRecord] = field(default_factory=list)
 
@@ -70,6 +71,7 @@ class _PendingTurn:
     model: str
     purpose: str
     prompt_version: str
+    policy_version: str
     is_side_channel: bool
 
 
@@ -158,6 +160,7 @@ class AnalyticsStore:
                 model=str(body.get("model", "") or ""),
                 purpose=marker.purpose if marker is not None else "primary",
                 prompt_version=marker.prompt_version if marker is not None else "",
+                policy_version=marker.policy_version if marker is not None else "",
                 is_side_channel=marker is not None,
             )
 
@@ -231,6 +234,7 @@ class AnalyticsStore:
             request_json=json.dumps(pending.request_body),
             purpose=pending.purpose,
             prompt_version=pending.prompt_version,
+            policy_version=pending.policy_version,
             is_side_channel=pending.is_side_channel,
             tool_invocations=tool_records,
         )
@@ -488,6 +492,7 @@ class AnalyticsStore:
                     "cache_read_tokens": 0,
                     "cache_creation_tokens": 0,
                     "prompt_versions": {},
+                    "policy_versions": {},
                 }
                 summary[turn.purpose] = row
             row["turns"] += 1
@@ -499,6 +504,12 @@ class AnalyticsStore:
                 versions = row["prompt_versions"]
                 if isinstance(versions, dict):
                     versions[turn.prompt_version] = int(versions.get(turn.prompt_version, 0)) + 1
+            if turn.policy_version:
+                policy_versions = row["policy_versions"]
+                if isinstance(policy_versions, dict):
+                    policy_versions[turn.policy_version] = int(
+                        policy_versions.get(turn.policy_version, 0)
+                    ) + 1
         return summary
 
     def get_tool_economics(self, group_by_model: bool = False) -> list[ToolEconomicsRow]:
@@ -627,6 +638,7 @@ class AnalyticsStore:
                     "request_json": t.request_json,
                     "purpose": t.purpose,
                     "prompt_version": t.prompt_version,
+                    "policy_version": t.policy_version,
                     "is_side_channel": t.is_side_channel,
                     "tool_invocations": [
                         {
@@ -649,6 +661,7 @@ class AnalyticsStore:
                     "model": p.model,
                     "purpose": p.purpose,
                     "prompt_version": p.prompt_version,
+                    "policy_version": p.policy_version,
                     "is_side_channel": p.is_side_channel,
                 }
                 for p in self._pending.values()
@@ -681,6 +694,7 @@ class AnalyticsStore:
                     request_json=t_data["request_json"],
                     purpose=str(t_data.get("purpose", "primary") or "primary"),
                     prompt_version=str(t_data.get("prompt_version", "") or ""),
+                    policy_version=str(t_data.get("policy_version", "") or ""),
                     is_side_channel=bool(t_data.get("is_side_channel", False)),
                     tool_invocations=tool_invocations,
                 )
@@ -703,5 +717,6 @@ class AnalyticsStore:
                 model=str(p_data.get("model", "") or ""),
                 purpose=str(p_data.get("purpose", "primary") or "primary"),
                 prompt_version=str(p_data.get("prompt_version", "") or ""),
+                policy_version=str(p_data.get("policy_version", "") or ""),
                 is_side_channel=bool(p_data.get("is_side_channel", False)),
             )

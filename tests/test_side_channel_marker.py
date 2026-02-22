@@ -24,6 +24,7 @@ def test_encode_and_extract_marker_from_string_content():
     assert parsed.purpose == "block_summary"
     assert parsed.source_session_id == "sess-1"
     assert parsed.prompt_version == "v1"
+    assert parsed.policy_version == ""
 
 
 def test_strip_marker_from_body_removes_prefix_line():
@@ -70,6 +71,7 @@ def test_encode_marker_has_expected_delimiters():
     assert encoded.startswith("<<CC_DUMP_SIDE_CHANNEL:")
     assert encoded.endswith(">>")
     assert '"prompt_version":"v1"' in encoded
+    assert '"policy_version":""' in encoded
 
 
 def test_extract_marker_normalizes_unknown_purpose_to_utility_custom():
@@ -84,3 +86,21 @@ def test_extract_marker_normalizes_unknown_purpose_to_utility_custom():
     parsed = extract_marker(body)
     assert parsed is not None
     assert parsed.purpose == "utility_custom"
+
+
+def test_extract_marker_reads_policy_version():
+    body = {
+        "messages": [
+            {
+                "role": "user",
+                "content": (
+                    '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"abc","purpose":"block_summary",'
+                    '"source_session_id":"s1","prompt_version":"v1",'
+                    '"policy_version":"redaction-v1"}>>\nhello'
+                ),
+            }
+        ]
+    }
+    parsed = extract_marker(body)
+    assert parsed is not None
+    assert parsed.policy_version == "redaction-v1"

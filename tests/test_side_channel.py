@@ -31,6 +31,7 @@ class TestSideChannelManager:
         assert result.text == "This is a summary."
         assert result.error is None
         assert result.elapsed_ms >= 0
+        assert result.policy_version == "redaction-v1"
         # Verify subprocess args
         args = mock_run.call_args
         assert args[0][0] == [
@@ -45,6 +46,7 @@ class TestSideChannelManager:
         assert "Summarize this" in args[1]["input"]
         assert "CC_DUMP_SIDE_CHANNEL" in args[1]["input"]
         assert '"prompt_version":"v1"' in args[1]["input"]
+        assert '"policy_version":"redaction-v1"' in args[1]["input"]
         assert args[1]["capture_output"] is True
         assert args[1]["text"] is True
 
@@ -252,6 +254,19 @@ class TestSideChannelManager:
                 thread.join()
 
         assert max_active == 1
+
+    def test_manager_applies_redaction_boundary_before_dispatch(self):
+        mgr = SideChannelManager()
+        mock_result = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            _ = mgr.run(
+                prompt="authorization: Bearer SECRET_TOKEN_123",
+                purpose="block_summary",
+                profile="ephemeral_default",
+            )
+        sent_prompt = str(mock_run.call_args.kwargs["input"])
+        assert "SECRET_TOKEN_123" not in sent_prompt
+        assert "[REDACTED]" in sent_prompt
 
 
 # ─── DataDispatcher tests ────────────────────────────────────────────

@@ -294,7 +294,7 @@ class HARRecordingSubscriber:
             if marker is not None:
                 entry["comment"] = (
                     f"cc-dump side-channel run={marker.run_id} purpose={marker.purpose} "
-                    f"prompt_version={marker.prompt_version}"
+                    f"prompt_version={marker.prompt_version} policy_version={marker.policy_version}"
                 )
                 # HAR allows custom fields using underscore prefix.
                 entry["_cc_dump"] = {
@@ -302,6 +302,7 @@ class HARRecordingSubscriber:
                     "run_id": marker.run_id,
                     "purpose": marker.purpose,
                     "prompt_version": marker.prompt_version,
+                    "policy_version": marker.policy_version,
                     "source_session_id": marker.source_session_id,
                 }
 
