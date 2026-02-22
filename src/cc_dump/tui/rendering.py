@@ -2161,6 +2161,7 @@ class _RenderContext:
     show_right: bool
     filters: dict
     overrides: object = None  # ViewOverrides | None — dual-read/write
+    last_rendered_indicator: str | None = None
 
 
 def _block_cache(ctx: _RenderContext) -> MutableMapping[tuple[object, ...], object] | None:
@@ -2201,14 +2202,43 @@ def _hide_empty_leaf_blocks(block: FormattedBlock, block_strips: list[Strip]) ->
 
 
 # // [LAW:single-enforcer] Render-stage block filtering lives in one transform chain.
-_BLOCK_TRANSFORMS: tuple[Callable[[FormattedBlock, list[Strip]], bool], ...] = (
+_BLOCK_EMIT_TRANSFORMS: tuple[Callable[[FormattedBlock, list[Strip]], bool], ...] = (
     _hide_empty_leaf_blocks,
 )
 
 
 def _should_render_block(block: FormattedBlock, block_strips: list[Strip]) -> bool:
     """Apply render-stage block transforms."""
-    return all(transform(block, block_strips) for transform in _BLOCK_TRANSFORMS)
+    return all(transform(block, block_strips) for transform in _BLOCK_EMIT_TRANSFORMS)
+
+
+def _coalesce_consecutive_same_category(
+    block: FormattedBlock, indicator_name: str | None, ctx: _RenderContext
+) -> bool:
+    """Mark block as a continuation when category matches previous rendered block.
+
+    // [LAW:one-type-per-behavior] Generic category-based grouping, no role/type special-casing.
+    """
+    _ = block
+    if not indicator_name:
+        return False
+    return ctx.last_rendered_indicator == indicator_name
+
+
+# // [LAW:single-enforcer] Coalescing policy is declared in one transform chain.
+_BLOCK_TRANSFORMS: tuple[
+    Callable[[FormattedBlock, str | None, _RenderContext], bool],
+    ...,
+] = (
+    _coalesce_consecutive_same_category,
+)
+
+
+def _is_coalesced_continuation(
+    block: FormattedBlock, indicator_name: str | None, ctx: _RenderContext
+) -> bool:
+    """Apply coalescing transforms for this block render step."""
+    return any(transform(block, indicator_name, ctx) for transform in _BLOCK_TRANSFORMS)
 
 
 def _collapse_children(
@@ -2483,6 +2513,8 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
             if is_expandable
             else ""
         )
+    if _is_coalesced_continuation(block, indicator_name, ctx):
+        arrow = ""
 
     if _should_render_block(block, block_strips_for_gutter):
         # Record using sequential key: block_strip_map[i] corresponds to flat_blocks[i]
@@ -2502,6 +2534,7 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
             show_right=ctx.show_right,
         )
         ctx.all_strips.extend(final_strips)
+        ctx.last_rendered_indicator = indicator_name
 
     # Recurse into children when container is visible and expanded
     if children and vis.visible and vis.expanded:
