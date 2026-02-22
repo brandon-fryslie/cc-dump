@@ -44,14 +44,19 @@ Implementation:
 Placeholder path:
 - summary generation with prompt registry integration; cache store deferred
 
-## 03 Compaction strategies (deferred for discovery)
+## 03 Compaction strategies
 
 Implementation direction:
 - explicit compaction artifacts with source range links
 - user acceptance + rollback path
 
-Status:
-- discovery/deferred until quality rubric finalized
+Discovery completed:
+- quality/rollback/feasibility decision recorded in
+  `docs/side-channel/COMPACTION_DISCOVERY_REPORT.md`
+
+Current recommendation:
+- implement intentional compaction first
+- defer rolling and deep multi-session variants until post-gate validation
 
 ## 04 Proxy interception
 

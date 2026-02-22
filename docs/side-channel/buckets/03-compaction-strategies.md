@@ -30,17 +30,17 @@ Goal:
 - Intentional one-shot: Medium.
 - Multi-session deep compaction: High.
 
+## Discovery output
+
+Discovery artifact:
+- `docs/side-channel/COMPACTION_DISCOVERY_REPORT.md`
+
+Discovery status:
+- quality rubric: defined
+- rollback requirements: defined
+- mode feasibility comparison: documented
+- implementation recommendation: intentional compaction first
+
 ## Ready to start?
 
-Not for full build; discovery first.
-
-Missing info:
-- quality bar for “safe” compaction
-- user acceptance flow and rollback semantics
-- artifact lifecycle policy
-
-Definition of discovery complete:
-- compaction quality rubric
-- rollback plan
-- token budget constraints per mode
-
+Yes, for intentional-compaction implementation planning and schema work.
