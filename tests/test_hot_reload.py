@@ -91,6 +91,35 @@ class TestHotReloadErrorResilience:
         assert reloaded == []
 
 
+class TestHotReloadWatcherLifecycle:
+    """Unit tests for file watcher stream lifecycle cleanup."""
+
+    def test_stop_file_watcher_disposes_stream(self):
+        import cc_dump.tui.hot_reload_controller as controller
+
+        class StreamStub:
+            def __init__(self):
+                self.disposed = False
+
+            def dispose(self):
+                self.disposed = True
+
+        stream = StreamStub()
+        controller._watcher_stream = stream
+
+        controller.stop_file_watcher()
+
+        assert stream.disposed is True
+        assert controller._watcher_stream is None
+
+    def test_stop_file_watcher_noop_without_stream(self):
+        import cc_dump.tui.hot_reload_controller as controller
+
+        controller._watcher_stream = None
+        controller.stop_file_watcher()
+        assert controller._watcher_stream is None
+
+
 # ============================================================================
 # UNIT TESTS — import validation, widget protocols, state, module structure
 # ============================================================================

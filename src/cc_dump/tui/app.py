@@ -500,6 +500,7 @@ class CcDumpApp(App):
         self._app_log("INFO", "cc-dump TUI shutting down")
         self._closing = True
         self._router.stop()
+        _hot_reload.stop_file_watcher()
 
     def _handle_exception(self, error: Exception) -> None:
         """// [LAW:single-enforcer] Top-level exception handler - keeps proxy running.

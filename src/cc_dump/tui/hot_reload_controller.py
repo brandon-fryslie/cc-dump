@@ -36,6 +36,17 @@ _DEBOUNCE_S = 2.0  # Quiet period before reload fires
 _watcher_stream: EventStream | None = None
 
 
+def stop_file_watcher() -> None:
+    """Dispose watcher stream subscribers and clear global reference."""
+    global _watcher_stream
+    if _watcher_stream is None:
+        return
+    try:
+        _watcher_stream.dispose()
+    finally:
+        _watcher_stream = None
+
+
 def _has_reloadable_changes(changes) -> bool:
     """True if any changed file is a reloadable module."""
     for _change_type, path in changes:
@@ -74,6 +85,8 @@ async def start_file_watcher(app) -> None:
     if not paths:
         return
 
+    # // [LAW:single-enforcer] Existing watcher stream is disposed here before rebind.
+    stop_file_watcher()
     stream: EventStream = EventStream()
     _watcher_stream = stream
 
