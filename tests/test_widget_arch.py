@@ -830,6 +830,23 @@ class TestIncrementalOffsets:
         assert conv._cache_keys_by_turn == {}
         assert conv._line_cache_index_write_count == 0
 
+    def test_line_cache_index_prune_bounds_metadata_under_large_churn(self):
+        """Pruning keeps index metadata bounded to live LRU keyset size."""
+        conv = ConversationView()
+
+        # Simulate high-cardinality key churn across many turns.
+        for i in range(5000):
+            key = ("k", i)
+            conv._line_cache[key] = Strip.blank(10)
+            conv._cache_keys_by_turn[i] = {key}
+
+        # After pruning, index should only reference keys still present in LRU.
+        conv._prune_line_cache_index()
+        indexed_key_count = sum(len(keys) for keys in conv._cache_keys_by_turn.values())
+
+        assert len(conv._line_cache) <= conv._line_cache.maxsize
+        assert indexed_key_count <= len(conv._line_cache)
+
     def test_incremental_from_zero_matches_full(self):
         """_recalculate_offsets_from(0) is identical to _recalculate_offsets()."""
         from textual.strip import Strip
