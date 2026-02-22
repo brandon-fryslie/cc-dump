@@ -1287,11 +1287,90 @@ def _render_confirm_content(block: ToolResultBlock) -> Text | None:
     return header
 
 
+def _render_bash_result_content(block: ToolResultBlock) -> ConsoleRenderable | None:
+    """Render Bash result with explicit success/error semantics and readable output body."""
+    tc = get_theme_colors()
+    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    header = _tool_result_header(block, color)
+
+    if not block.content:
+        return header
+
+    header.append("\n")
+    header.append(block.content, style=tc.error if block.is_error else tc.foreground)
+    return header
+
+
+def _grep_highlight_text(content: str, pattern: str, highlight_style: str) -> Text:
+    """Highlight grep matches with resilient regex fallback."""
+    if not pattern:
+        return Text(content)
+
+    try:
+        compiled = re.compile(pattern)
+    except re.error:
+        compiled = re.compile(re.escape(pattern))
+
+    result = Text()
+    pos = 0
+    for match in compiled.finditer(content):
+        start, end = match.span()
+        if start > pos:
+            result.append(content[pos:start])
+        result.append(content[start:end], style=highlight_style)
+        pos = end
+    if pos < len(content):
+        result.append(content[pos:])
+    return result
+
+
+def _render_grep_result_content(block: ToolResultBlock) -> ConsoleRenderable | None:
+    """Render Grep result with highlighted matched pattern."""
+    tc = get_theme_colors()
+    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    header = _tool_result_header(block, color)
+
+    if not block.content:
+        return header
+
+    pattern = str(block.tool_input.get("pattern", "") or "")
+    highlighted = _grep_highlight_text(block.content, pattern, f"bold {tc.accent}")
+    header.append("\n")
+    header.append_text(highlighted)
+    return header
+
+
+def _render_glob_result_content(block: ToolResultBlock) -> ConsoleRenderable | None:
+    """Render Glob result as path list with stable line formatting."""
+    tc = get_theme_colors()
+    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    header = _tool_result_header(block, color)
+
+    if not block.content:
+        return header
+
+    lines = [line for line in block.content.splitlines() if line.strip()]
+    if not lines:
+        return header
+
+    body = Text()
+    for i, line in enumerate(lines):
+        if i > 0:
+            body.append("\n")
+        body.append(line, style=tc.secondary)
+    header.append("\n")
+    header.append_text(body)
+    return header
+
+
 # [LAW:dataflow-not-control-flow] Tool-specific content renderers for ToolResultBlock
 _TOOL_RESULT_CONTENT_RENDERERS: dict[str, Callable] = {
     "Read": _render_read_content,
     "Write": _render_confirm_content,
     "Edit": _render_confirm_content,
+    "Bash": _render_bash_result_content,
+    "Grep": _render_grep_result_content,
+    "Glob": _render_glob_result_content,
 }
 
 

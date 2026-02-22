@@ -782,10 +782,10 @@ class TestToolResultFullWriteEdit:
 
 
 class TestToolResultFullBash:
-    """Tests for generic tool result rendering (Bash, Grep, Glob)."""
+    """Tests for specialized Bash/Grep/Glob tool result renderers."""
 
-    def test_bash_result_dim_content(self):
-        """Bash result renders header + dim content (generic fallback)."""
+    def test_bash_result_renders_content(self):
+        """Bash result renders header + output body."""
         block = ToolResultBlock(
             size=200,
             tool_name="Bash",
@@ -798,18 +798,45 @@ class TestToolResultFullBash:
         assert "Bash" in plain
         assert "On branch main" in plain
 
-    def test_grep_result_generic(self):
-        """Grep result uses generic fallback."""
+    def test_grep_result_highlights_pattern(self):
+        """Grep result highlights matched pattern."""
+        from cc_dump.tui.rendering import get_theme_colors
+
         block = ToolResultBlock(
             size=100,
             tool_name="Grep",
             msg_color_idx=0,
             content="file.py:10:match",
+            tool_input={"pattern": "match"},
         )
         result = _render_tool_result_full(block)
         assert result is not None
         assert "Grep" in result.plain
         assert "file.py:10:match" in result.plain
+
+        # Pattern match segment is styled with accent color.
+        tc = get_theme_colors()
+        plain = result.plain
+        start = plain.index("match")
+        end = start + len("match")
+        spans = [span for span in getattr(result, "spans", []) if span.start <= start and span.end >= end]
+        assert any(tc.accent in str(span.style) for span in spans)
+
+    def test_glob_result_formats_path_list(self):
+        """Glob result keeps each matched path on its own line."""
+        block = ToolResultBlock(
+            size=3,
+            tool_name="Glob",
+            msg_color_idx=0,
+            content="src/a.py\nsrc/b.py\nsrc/c.py",
+        )
+        result = _render_tool_result_full(block)
+        assert result is not None
+        plain = result.plain
+        assert "Glob" in plain
+        assert "src/a.py" in plain
+        assert "src/b.py" in plain
+        assert "src/c.py" in plain
 
 
 class TestToolResultSummaryRenderer:
