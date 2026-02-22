@@ -107,3 +107,9 @@ class TestFooterMarkupRendering:
 
         assert len(found_words) >= 2, \
             f"Footer should show full binding words, not just letters. Found: {found_words}\nContent:\n{content}"
+
+    def test_footer_shows_stream_idle_row(self, class_proc):
+        """Stream row is always visible to avoid layout jitter."""
+        proc = class_proc
+        content = _get_footer_content(proc)
+        assert "streams idle" in content.lower(), f"Expected 'streams idle' row. Content:\n{content}"

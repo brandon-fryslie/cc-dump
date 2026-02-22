@@ -27,6 +27,9 @@ class DomainStore:
         self._stream_delta_versions: dict[str, int] = {}  # incremented per appended delta
         self._stream_meta: dict[str, dict] = {}
         self._stream_order: list[str] = []
+        # Recently completed stream chips retained until a new stream begins.
+        # Item shape: (request_id, label, kind)
+        self._recent_stream_chips: list[tuple[str, str, str]] = []
         self._focused_stream_id: str | None = None
 
         # Callbacks — ConversationView registers these
@@ -57,6 +60,8 @@ class DomainStore:
                 self._stream_meta[request_id] = dict(meta)
             return
 
+        # [LAW:one-source-of-truth] Recent chip lifecycle is owned here.
+        self._recent_stream_chips = []
         self._stream_turns[request_id] = []
         self._stream_delta_buffers[request_id] = []
         self._stream_delta_text[request_id] = ""
@@ -180,6 +185,10 @@ class DomainStore:
 
     def _seal_stream(self, request_id: str, sealed_blocks: list, *, was_focused: bool) -> None:
         """Common stream shutdown path for both local and upstream assembly."""
+        meta = self._stream_meta.get(request_id, {})
+        recent_label = str(meta.get("agent_label") or request_id[:8])
+        recent_kind = str(meta.get("agent_kind") or "unknown")
+
         # ── Registry cleanup ──
         self._stream_turns.pop(request_id, None)
         self._stream_delta_buffers.pop(request_id, None)
@@ -192,6 +201,7 @@ class DomainStore:
 
         # Add to completed turns
         self._completed.append(sealed_blocks)
+        self._recent_stream_chips.append((request_id, f"{recent_label} \u2713", recent_kind))
 
         # Update focus
         if was_focused:
@@ -312,12 +322,18 @@ class DomainStore:
         Tuple item shape: (request_id, label, kind)
         """
         result: list[tuple[str, str, str]] = []
+        active_ids: set[str] = set()
         for request_id in self._stream_order:
             if request_id not in self._stream_turns:
                 continue
             meta = self._stream_meta.get(request_id, {})
             label = str(meta.get("agent_label") or request_id[:8])
             kind = str(meta.get("agent_kind") or "unknown")
+            result.append((request_id, label, kind))
+            active_ids.add(request_id)
+        for request_id, label, kind in self._recent_stream_chips:
+            if request_id in active_ids:
+                continue
             result.append((request_id, label, kind))
         return tuple(result)
 
@@ -351,6 +367,7 @@ class DomainStore:
             "completed": list(self._completed),
             "active_streams": active_streams,
             "stream_order": list(self._stream_order),
+            "recent_stream_chips": list(self._recent_stream_chips),
             "focused_stream_id": self._focused_stream_id,
         }
 
@@ -363,6 +380,7 @@ class DomainStore:
         self._stream_delta_versions.clear()
         self._stream_meta.clear()
         self._stream_order.clear()
+        self._recent_stream_chips.clear()
         self._focused_stream_id = None
 
         active_streams = state.get("active_streams", {})
@@ -386,6 +404,16 @@ class DomainStore:
                 ]
             if not self._stream_order:
                 self._stream_order = list(self._stream_turns.keys())
+
+        recent_stream_chips = state.get("recent_stream_chips", [])
+        if isinstance(recent_stream_chips, list):
+            parsed_recent: list[tuple[str, str, str]] = []
+            for item in recent_stream_chips:
+                if not isinstance(item, (list, tuple)) or len(item) != 3:
+                    continue
+                rid, label, kind = item
+                parsed_recent.append((str(rid), str(label), str(kind)))
+            self._recent_stream_chips = parsed_recent
 
         focused = state.get("focused_stream_id")
         if isinstance(focused, str) and focused in self._stream_turns:

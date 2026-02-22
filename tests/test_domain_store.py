@@ -27,3 +27,20 @@ def test_get_active_lane_counts_uses_stream_meta():
     assert counts["main"] == 1
     assert counts["subagent"] == 1
     assert counts["unknown"] == 1
+
+
+def test_recent_stream_chips_persist_until_next_stream_start():
+    ds = DomainStore()
+    ds.begin_stream("req-main", {"agent_kind": "main", "agent_label": "main"})
+
+    active = ds.get_active_stream_chips()
+    assert active == (("req-main", "main", "main"),)
+
+    ds.finalize_stream_with_blocks("req-main", [])
+    after_finalize = ds.get_active_stream_chips()
+    assert after_finalize == (("req-main", "main \u2713", "main"),)
+
+    # Starting a new stream clears prior completed chips.
+    ds.begin_stream("req-sub", {"agent_kind": "subagent", "agent_label": "subagent 1"})
+    after_new_stream = ds.get_active_stream_chips()
+    assert after_new_stream == (("req-sub", "subagent 1", "subagent"),)

@@ -36,7 +36,7 @@ class StatusFooter(Widget):
     }
 
     StatusFooter #footer-streams {
-        display: none;
+        display: block;
     }
 
     StatusFooter Chip {
@@ -257,13 +257,26 @@ class StatusFooter(Widget):
             streams = tuple(streams) if isinstance(streams, list) else ()
         focused_stream_id = state.get("focused_stream_id", "")
         stream_row = self.query_one("#footer-streams", Horizontal)
-        stream_row.display = bool(streams)
+        stream_row.display = True
 
         kind_styles = {
             "main": (Color.parse(tc.background), Color.parse(tc.foreground)),
             "subagent": (Color.parse(tc.surface), Color.parse(tc.accent)),
             "unknown": (Color.parse(tc.background), Color.parse(tc.warning)),
         }
+
+        if not streams:
+            idle_chip = self.query_one("#stream-0", Chip)
+            idle_chip.display = True
+            idle_chip.update(" streams idle ")
+            idle_chip._action = None
+            idle_chip.styles.background = bg_color
+            idle_chip.styles.color = fg_color
+            idle_chip.set_class(True, "-dim")
+            for i in range(1, self._MAX_STREAM_CHIPS):
+                chip = self.query_one(f"#stream-{i}", Chip)
+                chip.display = False
+            return
 
         for i in range(self._MAX_STREAM_CHIPS):
             chip = self.query_one(f"#stream-{i}", Chip)
