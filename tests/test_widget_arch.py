@@ -42,7 +42,7 @@ from cc_dump.formatting import (
     ALWAYS_VISIBLE,
 )
 from cc_dump.tui.rendering import BLOCK_RENDERERS, BLOCK_CATEGORY, render_turn_to_strips
-from cc_dump.tui.widget_factory import TurnData, ConversationView, FollowState
+from cc_dump.tui.widget_factory import TurnData, ConversationView, FollowState, _hash_strips
 
 
 class TestBlockCategoryCompleteness:
@@ -273,6 +273,29 @@ class TestTurnDataReRender:
 
         # Should now have strips for the individual tool block
         assert len(td.strips) > 0
+
+    def test_re_render_force_skips_when_strip_hash_unchanged(self):
+        """Forced rerender avoids replacing strips when rendered output is identical."""
+        blocks = [TextContentBlock(content="Hello", indent="")]
+        console = Console()
+        filters = {}
+        strips, block_strip_map, flat_blocks = render_turn_to_strips(
+            blocks, filters, console, width=80
+        )
+
+        td = TurnData(
+            turn_index=0,
+            blocks=blocks,
+            strips=strips,
+            block_strip_map=block_strip_map,
+            _flat_blocks=flat_blocks,
+        )
+        td._strip_hash = _hash_strips(strips)
+        td.compute_relevant_keys()
+
+        result = td.re_render(filters, console, 80, force=True)
+
+        assert result is False
 
 
 class TestConversationViewBinarySearch:

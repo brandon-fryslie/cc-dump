@@ -5,6 +5,7 @@ instances from the updated class definitions and swap them in.
 """
 
 import datetime
+import hashlib
 import json
 import sys
 import traceback
@@ -90,6 +91,19 @@ def _compute_widest(strips: list) -> int:
     return widest
 
 
+def _hash_strips(strips: list[Strip]) -> str:
+    """Compute stable content hash for rendered strips."""
+    digest = hashlib.blake2b(digest_size=16)
+    for strip in strips:
+        for seg in strip:
+            digest.update(seg.text.encode("utf-8", errors="replace"))
+            digest.update(b"\x1f")
+            digest.update(str(seg.style).encode("utf-8", errors="replace"))
+            digest.update(b"\x1e")
+        digest.update(b"\x00")
+    return digest.hexdigest()
+
+
 @dataclass
 class TurnData:
     """Pre-rendered turn data for Line API storage."""
@@ -113,6 +127,7 @@ class TurnData:
     _widest_strip: int = 0  # cached max(s.cell_length for s in strips)
     _stream_last_delta_version: int = -1  # last rendered delta version
     _stream_last_render_width: int = 0  # width used for last preview render
+    _strip_hash: str = ""  # hash of rendered strips for no-op rerender detection
     _pending_filter_snapshot: dict | None = (
         None  # deferred filters for lazy off-viewport re-render
     )
@@ -165,7 +180,7 @@ class TurnData:
             return False
         self._last_filter_snapshot = snapshot
         self._pending_filter_snapshot = None  # clear deferred state
-        self.strips, self.block_strip_map, self._flat_blocks = cc_dump.tui.rendering.render_turn_to_strips(
+        strips, block_strip_map, flat_blocks = cc_dump.tui.rendering.render_turn_to_strips(
             self.blocks,
             filters,
             console,
@@ -175,6 +190,14 @@ class TurnData:
             turn_index=self.turn_index,
             overrides=overrides,
         )
+        strip_hash = _hash_strips(strips)
+        if strip_hash == self._strip_hash:
+            return False
+
+        self.strips = strips
+        self.block_strip_map = block_strip_map
+        self._flat_blocks = flat_blocks
+        self._strip_hash = strip_hash
         self._widest_strip = _compute_widest(self.strips)
         return True
 
@@ -693,6 +716,7 @@ class ConversationView(ScrollView):
             block_strip_map=block_strip_map,
             _flat_blocks=flat_blocks,
         )
+        td._strip_hash = _hash_strips(strips)
         td._widest_strip = _compute_widest(strips)
         td.compute_relevant_keys()
 
@@ -801,6 +825,7 @@ class ConversationView(ScrollView):
             composed.append(Strip(row_segments).adjust_cell_length(composed_width))
 
         td.strips = composed
+        td._strip_hash = _hash_strips(composed)
         td._widest_strip = _compute_widest(composed)
         return td
 
@@ -890,6 +915,7 @@ class ConversationView(ScrollView):
         delta_text = self._domain_store.get_delta_preview_text(request_id)
         if not delta_text:
             td.strips = td.strips[: td._stable_strip_count]
+            td._strip_hash = _hash_strips(td.strips)
             td._widest_strip = _compute_widest(td.strips)
             td._stream_last_delta_version = delta_version
             td._stream_last_render_width = width
@@ -901,6 +927,7 @@ class ConversationView(ScrollView):
         )
 
         td.strips = td.strips[: td._stable_strip_count] + delta_strips
+        td._strip_hash = _hash_strips(td.strips)
         td._widest_strip = _compute_widest(td.strips)
         td._stream_last_delta_version = delta_version
         td._stream_last_render_width = width
@@ -1003,6 +1030,7 @@ class ConversationView(ScrollView):
         td.strips = strips
         td.block_strip_map = block_strip_map
         td._flat_blocks = flat_blocks
+        td._strip_hash = _hash_strips(strips)
         td._widest_strip = _compute_widest(td.strips)
         td.is_streaming = False
         td._text_delta_buffer.clear()
@@ -1224,6 +1252,7 @@ class ConversationView(ScrollView):
                     overrides=self._view_overrides,
                 )
             )
+            td._strip_hash = _hash_strips(td.strips)
             td._widest_strip = _compute_widest(td.strips)
         self._recalculate_offsets()
 
