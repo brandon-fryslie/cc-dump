@@ -129,8 +129,10 @@ Implementation:
 - scoped generation over selected ranges/checkpoints
 - output templates
 
-Placeholder:
-- prompt/purpose contract only
+Implemented now:
+- deterministic section templates with variant renderers
+- dispatcher scoped generation with source-linked entries
+- draft retrieval/render APIs for review/edit/export handoff
 
 ## 12 Incident/debug timeline
 

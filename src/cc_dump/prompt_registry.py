@@ -60,7 +60,12 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
     "release_notes": PromptSpec(
         purpose="release_notes",
         version="v1",
-        instruction="Draft release notes and a short changelog from the selected context.",
+        instruction=(
+            "Generate release notes and return strict JSON only with shape "
+            "{\"sections\":{\"user_highlights\":[{\"title\":\"\",\"detail\":\"\",\"source_links\":[{\"message_index\":0}]}],"
+            "\"technical_changes\":[],\"known_issues\":[],\"upgrade_notes\":[]}}. "
+            "Every section key is required; use empty arrays when unknown."
+        ),
     ),
     "incident_timeline": PromptSpec(
         purpose="incident_timeline",

@@ -50,3 +50,11 @@ def test_conversation_qa_prompt_declares_answer_with_sources():
     assert "strict JSON" in spec.instruction
     assert "\"answer\"" in spec.instruction
     assert "\"source_links\"" in spec.instruction
+
+
+def test_release_notes_prompt_declares_template_sections():
+    spec = get_prompt_spec("release_notes")
+    assert spec.purpose == "release_notes"
+    assert "strict JSON" in spec.instruction
+    assert "\"user_highlights\"" in spec.instruction
+    assert "\"technical_changes\"" in spec.instruction

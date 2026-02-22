@@ -24,11 +24,20 @@ Goal:
 - Low-Medium for targeted releases.
 - Medium if broad history scans are included.
 
-## Ready to start?
+## Implemented now
 
-Yes, provided source scoping is explicit.
+- Deterministic template contract:
+  - required sections (`user_highlights`, `technical_changes`, `known_issues`, `upgrade_notes`)
+  - prompt-versioned schema in prompt registry
+- Scoped generation flow:
+  - `DataDispatcher.generate_release_notes(...)`
+  - explicit source range (`source_start/source_end`) honored
+  - source-linked entries retained in artifact
+- Review/edit/export handoff:
+  - latest draft retrieval + snapshot APIs
+  - draft markdown rendering by variant (`user_facing`, `technical`)
 
-Definition of ready:
-- generation is scoped to chosen ranges
-- output format templates are reusable via prompt registry
+## Deferred follow-ups
 
+- Optional git-context enrichment for version tags/commit grouping.
+- UI draft editor integration.

@@ -808,3 +808,56 @@ class TestDataDispatcher:
         )
         assert result.source == "fallback"
         assert "Fallback answer based on selected scope" in result.markdown
+
+    def test_generate_release_notes_scoped_with_variant(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        mgr.run = MagicMock(
+            return_value=SideChannelResult(
+                text=(
+                    '{"sections":{"user_highlights":[{"title":"Shipped side-channel lane","detail":"Added isolated debug lane","source_links":[{"message_index":1}]}],'
+                    '"technical_changes":[{"title":"Dispatcher","detail":"Added release-note generation","source_links":[{"message_index":2}]}],'
+                    '"known_issues":[],"upgrade_notes":[]}}'
+                ),
+                error=None,
+                elapsed_ms=18,
+            )
+        )
+        result = dispatcher.generate_release_notes(
+            [{"role": "assistant", "content": "release context"}],
+            source_start=0,
+            source_end=0,
+            variant="technical",
+            source_session_id="sess-1",
+            request_id="req-rel-1",
+        )
+        assert result.source == "ai"
+        assert "## technical changes" in result.markdown
+        assert "## user highlights" not in result.markdown
+
+    def test_generate_release_notes_fallback_when_disabled(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=False)
+        mgr.run = MagicMock()
+        result = dispatcher.generate_release_notes(
+            [{"role": "assistant", "content": "release context"}],
+            source_start=0,
+            source_end=0,
+            request_id="req-rel-2",
+        )
+        assert result.source == "fallback"
+        assert "## user highlights" in result.markdown
+        mgr.run.assert_not_called()
+
+    def test_render_release_notes_draft_for_review_export(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=False)
+        mgr.run = MagicMock()
+        generated = dispatcher.generate_release_notes(
+            [{"role": "assistant", "content": "release context"}],
+            source_start=0,
+            source_end=0,
+            request_id="req-rel-3",
+        )
+        rendered = dispatcher.render_release_notes_draft(
+            artifact_id=generated.artifact.artifact_id,
+            variant="technical",
+        )
+        assert "## technical changes" in rendered

@@ -49,6 +49,13 @@ from cc_dump.incident_timeline import (
     parse_incident_timeline_artifact,
     render_incident_timeline_markdown,
 )
+from cc_dump.release_notes import (
+    ReleaseNotesArtifact,
+    ReleaseNotesStore,
+    fallback_release_notes_artifact,
+    parse_release_notes_artifact,
+    render_release_notes_markdown,
+)
 from cc_dump.prompt_registry import get_prompt_spec, PromptSpec
 from cc_dump.side_channel import SideChannelManager
 from cc_dump.side_channel_analytics import SideChannelAnalytics
@@ -122,6 +129,16 @@ class ConversationQAResult:
     error: str = ""
 
 
+@dataclass
+class ReleaseNotesResult:
+    artifact: ReleaseNotesArtifact
+    markdown: str
+    source: str  # "ai" | "fallback" | "error"
+    elapsed_ms: int
+    variant: str
+    error: str = ""
+
+
 class DataDispatcher:
     """Routes enrichment requests to AI or fallback.
 
@@ -139,6 +156,7 @@ class DataDispatcher:
         self._action_items = ActionItemStore()
         self._handoff_store = HandoffStore()
         self._incident_timeline_store = IncidentTimelineStore()
+        self._release_notes_store = ReleaseNotesStore()
 
     def summarize_messages(self, messages: list[dict], source_session_id: str = "") -> EnrichedResult:
         """Summarize a list of API messages.
@@ -687,6 +705,101 @@ class DataDispatcher:
             elapsed_ms=result.elapsed_ms,
             estimate=estimate,
         )
+
+    def generate_release_notes(
+        self,
+        messages: list[dict],
+        *,
+        source_start: int,
+        source_end: int,
+        variant: str = "user_facing",
+        source_session_id: str = "",
+        request_id: str = "",
+    ) -> ReleaseNotesResult:
+        """Generate scoped release-note/changelog draft for review/edit flow."""
+        spec = get_prompt_spec("release_notes")
+        normalized_start, normalized_end = _normalize_message_range(
+            total_messages=len(messages),
+            source_start=source_start,
+            source_end=source_end,
+        )
+        selected_messages = _slice_messages_for_range(messages, normalized_start, normalized_end)
+        fallback_artifact = fallback_release_notes_artifact(
+            purpose=spec.purpose,
+            prompt_version=spec.version,
+            source_session_id=source_session_id,
+            request_id=request_id,
+            source_start=normalized_start,
+            source_end=normalized_end,
+            summary_text=_fallback_summary(selected_messages),
+        )
+        profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
+        if not self._side_channel.enabled:
+            artifact = self._release_notes_store.add(fallback_artifact)
+            return ReleaseNotesResult(
+                artifact=artifact,
+                markdown=render_release_notes_markdown(artifact, variant=variant),
+                source="fallback",
+                elapsed_ms=0,
+                variant=variant,
+            )
+
+        context = _build_summary_context(selected_messages)
+        prompt = _build_summary_prompt(context, spec)
+        result = self._side_channel.run(
+            prompt=prompt,
+            purpose=spec.purpose,
+            prompt_version=spec.version,
+            timeout=None,
+            source_session_id=source_session_id,
+            profile=profile,
+        )
+        self._analytics.record(purpose=result.purpose)
+        if result.error is not None:
+            source = "error"
+            if result.error.startswith("Guardrail:"):
+                logger.info("release notes blocked: %s", result.error)
+                source = "fallback"
+            artifact = self._release_notes_store.add(fallback_artifact)
+            return ReleaseNotesResult(
+                artifact=artifact,
+                markdown=render_release_notes_markdown(artifact, variant=variant),
+                source=source,
+                elapsed_ms=result.elapsed_ms,
+                variant=variant,
+                error=result.error,
+            )
+        artifact = self._release_notes_store.add(
+            parse_release_notes_artifact(
+                result.text,
+                purpose=spec.purpose,
+                prompt_version=spec.version,
+                source_session_id=source_session_id,
+                request_id=request_id,
+                source_start=normalized_start,
+                source_end=normalized_end,
+            )
+        )
+        return ReleaseNotesResult(
+            artifact=artifact,
+            markdown=render_release_notes_markdown(artifact, variant=variant),
+            source="ai",
+            elapsed_ms=result.elapsed_ms,
+            variant=variant,
+        )
+
+    def latest_release_notes_draft(self, source_session_id: str = "") -> ReleaseNotesArtifact | None:
+        return self._release_notes_store.latest(source_session_id=source_session_id)
+
+    def release_notes_snapshot(self) -> list[ReleaseNotesArtifact]:
+        return self._release_notes_store.snapshot()
+
+    def render_release_notes_draft(self, *, artifact_id: str, variant: str = "user_facing") -> str:
+        """Render stored draft for review/edit/export flow."""
+        artifact = self._release_notes_store.get(artifact_id)
+        if artifact is None:
+            return "missing_release_notes_artifact:" + artifact_id
+        return render_release_notes_markdown(artifact, variant=variant)
 
 
 def _build_summary_context(messages: list[dict]) -> str:
