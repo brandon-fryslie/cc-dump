@@ -44,7 +44,6 @@ class TestCreate:
 
     def test_active_filters_computed_attached(self):
         store = cc_dump.view_store.create()
-        assert hasattr(store, "active_filters")
         filters = store.active_filters.get()
         assert isinstance(filters, dict)
         assert len(filters) == 6  # 6 categories

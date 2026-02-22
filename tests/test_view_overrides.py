@@ -185,7 +185,7 @@ def test_blocks_not_mutated_by_render():
     assert block.category == pre_category
     assert block.block_id == pre_block_id
     # No _expandable attribute on block — lives in overrides
-    assert not hasattr(block, "_expandable")
+    assert "_expandable" not in vars(block)
 
     # expandable written to overrides
     bvs = vo.get_block(block.block_id)

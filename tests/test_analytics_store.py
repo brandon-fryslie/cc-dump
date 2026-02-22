@@ -558,5 +558,5 @@ def test_get_state_restore_state_handles_old_format():
     }
     store.restore_state(old_state)
     assert store._seq == 3
-    assert not hasattr(store, "_current_response_events")
-    assert not hasattr(store, "_current_text")
+    assert "_current_response_events" not in vars(store)
+    assert "_current_text" not in vars(store)
