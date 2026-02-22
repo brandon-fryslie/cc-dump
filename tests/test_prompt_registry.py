@@ -42,3 +42,11 @@ def test_incident_timeline_prompt_declares_facts_and_hypotheses():
     assert "strict JSON" in spec.instruction
     assert "\"facts\"" in spec.instruction
     assert "\"hypotheses\"" in spec.instruction
+
+
+def test_conversation_qa_prompt_declares_answer_with_sources():
+    spec = get_prompt_spec("conversation_qa")
+    assert spec.purpose == "conversation_qa"
+    assert "strict JSON" in spec.instruction
+    assert "\"answer\"" in spec.instruction
+    assert "\"source_links\"" in spec.instruction

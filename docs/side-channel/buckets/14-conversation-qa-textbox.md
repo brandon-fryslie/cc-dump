@@ -8,10 +8,9 @@ Goal:
 ## How it could work
 
 - UI textbox with scope selector:
-- current lane only
-- selected messages
-- selected checkpoint window
-- whole session (explicit)
+- selected range (default)
+- selected message indices
+- whole session (explicit only)
 - Request includes purpose=`conversation_qa` and scope metadata.
 - Response links back to relevant source message ranges.
 
@@ -26,16 +25,20 @@ Goal:
 - Whole session queries: Medium-High.
 - Repeated broad queries can become very expensive.
 
-## Ready to start?
+## Implemented now
 
-Yes for constrained MVP.
+- Scoped request contract:
+  - `QAScope` model with explicit whole-session confirmation requirement
+  - default mode is selected-range scope (narrow by default)
+- Q&A execution path:
+  - `DataDispatcher.ask_conversation_question(...)`
+  - source-linked response parsing (`answer` + `source_links`)
+  - fallback-safe behavior on disable/guardrail/error
+- Budget estimate integration:
+  - pre-send estimate generated for each Q&A request (`QABudgetEstimate`)
+  - send flow carries estimate alongside answer result
 
-MVP constraints:
-- require explicit scope selection
-- default to selected messages only
-- enforce budget guardrails and fallback
+## Deferred follow-ups
 
-Definition of ready:
-- responses include source references
-- scope and estimated cost are visible pre-send
-
+- UI textbox + scope selector wiring.
+- Visual pre-send budget badge in the compose/send flow.

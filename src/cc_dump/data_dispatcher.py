@@ -23,6 +23,17 @@ from cc_dump.checkpoints import (
     create_checkpoint_artifact,
     render_checkpoint_diff,
 )
+from cc_dump.conversation_qa import (
+    QAArtifact,
+    QABudgetEstimate,
+    QAScope,
+    estimate_qa_budget,
+    fallback_qa_artifact,
+    normalize_scope,
+    parse_qa_artifact,
+    render_qa_markdown,
+    select_messages,
+)
 from cc_dump.decision_ledger import DecisionLedgerStore, parse_decision_entries, DecisionLedgerEntry
 from cc_dump.handoff_notes import (
     HandoffArtifact,
@@ -98,6 +109,16 @@ class IncidentTimelineResult:
     markdown: str
     source: str  # "ai" | "fallback" | "error"
     elapsed_ms: int
+    error: str = ""
+
+
+@dataclass
+class ConversationQAResult:
+    artifact: QAArtifact
+    markdown: str
+    source: str  # "ai" | "fallback" | "error"
+    elapsed_ms: int
+    estimate: QABudgetEstimate
     error: str = ""
 
 
@@ -572,6 +593,101 @@ class DataDispatcher:
     def incident_timeline_snapshot(self) -> list[IncidentTimelineArtifact]:
         return self._incident_timeline_store.snapshot()
 
+    def ask_conversation_question(
+        self,
+        messages: list[dict],
+        *,
+        question: str,
+        scope: QAScope | None = None,
+        source_session_id: str = "",
+        request_id: str = "",
+    ) -> ConversationQAResult:
+        """Run scoped Q&A over conversation history with source-linked response."""
+        spec = get_prompt_spec("conversation_qa")
+        normalized_scope = normalize_scope(scope, total_messages=len(messages))
+        selected_messages = select_messages(messages, normalized_scope)
+        estimate = estimate_qa_budget(
+            question=question,
+            selected_messages=selected_messages,
+            scope_mode=normalized_scope.scope.mode,
+        )
+        if normalized_scope.error:
+            fallback = fallback_qa_artifact(
+                purpose=spec.purpose,
+                prompt_version=spec.version,
+                question=question,
+                normalized_scope=normalized_scope,
+                fallback_answer=f"Scope error: {normalized_scope.error}",
+            )
+            return ConversationQAResult(
+                artifact=fallback,
+                markdown=render_qa_markdown(fallback),
+                source="fallback",
+                elapsed_ms=0,
+                estimate=estimate,
+                error=normalized_scope.error,
+            )
+
+        fallback_text = _fallback_summary(selected_messages)
+        fallback = fallback_qa_artifact(
+            purpose=spec.purpose,
+            prompt_version=spec.version,
+            question=question,
+            normalized_scope=normalized_scope,
+            fallback_answer=f"Fallback answer based on selected scope: {fallback_text}",
+        )
+        profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
+
+        if not self._side_channel.enabled:
+            return ConversationQAResult(
+                artifact=fallback,
+                markdown=render_qa_markdown(fallback),
+                source="fallback",
+                elapsed_ms=0,
+                estimate=estimate,
+                error="side-channel disabled",
+            )
+
+        context = _build_summary_context(selected_messages)
+        prompt = _build_conversation_qa_prompt(question=question, context=context, spec=spec)
+        result = self._side_channel.run(
+            prompt=prompt,
+            purpose=spec.purpose,
+            prompt_version=spec.version,
+            timeout=None,
+            source_session_id=source_session_id,
+            profile=profile,
+        )
+        self._analytics.record(purpose=result.purpose)
+        if result.error is not None:
+            source = "error"
+            if result.error.startswith("Guardrail:"):
+                logger.info("conversation qa blocked: %s", result.error)
+                source = "fallback"
+            return ConversationQAResult(
+                artifact=fallback,
+                markdown=render_qa_markdown(fallback),
+                source=source,
+                elapsed_ms=result.elapsed_ms,
+                estimate=estimate,
+                error=result.error,
+            )
+        artifact = parse_qa_artifact(
+            result.text,
+            purpose=spec.purpose,
+            prompt_version=spec.version,
+            question=question,
+            request_id=request_id,
+            normalized_scope=normalized_scope,
+        )
+        return ConversationQAResult(
+            artifact=artifact,
+            markdown=render_qa_markdown(artifact),
+            source="ai",
+            elapsed_ms=result.elapsed_ms,
+            estimate=estimate,
+        )
+
 
 def _build_summary_context(messages: list[dict]) -> str:
     """Build a stable context string for prompt and cache-key derivation."""
@@ -610,6 +726,12 @@ def _build_incident_timeline_prompt(*, context: str, spec: PromptSpec, include_h
     if not context:
         return f"{spec.instruction}\n\n{mode}"
     return f"{spec.instruction}\n\n{mode}\n\n{context}"
+
+
+def _build_conversation_qa_prompt(*, question: str, context: str, spec: PromptSpec) -> str:
+    if not context:
+        return f"{spec.instruction}\n\nQuestion:\n{question}"
+    return f"{spec.instruction}\n\nQuestion:\n{question}\n\nContext:\n{context}"
 
 
 def _fallback_summary(messages: list[dict]) -> str:

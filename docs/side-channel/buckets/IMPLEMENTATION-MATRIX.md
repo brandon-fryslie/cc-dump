@@ -158,8 +158,10 @@ Implementation:
 - textbox + explicit scope selection
 - response with source references
 
-Placeholder:
-- purpose contract ready; UI/input flow deferred
+Implemented now:
+- scoped request contract with explicit whole-session confirmation
+- dispatcher Q&A execution with source-linked responses + fallback
+- pre-send budget estimate object integrated into send flow API
 
 ## 15 Evaluation and quality gates
 

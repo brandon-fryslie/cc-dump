@@ -76,7 +76,9 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
         purpose="conversation_qa",
         version="v1",
         instruction=(
-            "Answer questions using only provided conversation context; cite message excerpts."
+            "Answer questions using only provided context and return strict JSON only with shape "
+            "{\"answer\":\"\",\"source_links\":[{\"message_index\":0,\"quote\":\"\"}]}. "
+            "Cite the most relevant source messages."
         ),
     ),
     "checkpoint_summary": PromptSpec(

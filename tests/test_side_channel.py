@@ -10,6 +10,7 @@ from unittest.mock import patch, MagicMock
 
 from cc_dump.side_channel import SideChannelManager, SideChannelResult
 from cc_dump.data_dispatcher import DataDispatcher
+from cc_dump.conversation_qa import QAScope, SCOPE_WHOLE_SESSION
 
 
 # ─── SideChannelManager tests ────────────────────────────────────────
@@ -755,3 +756,55 @@ class TestDataDispatcher:
         assert result.source == "fallback"
         assert "## facts" in result.markdown
         mgr.run.assert_not_called()
+
+    def test_ask_conversation_question_returns_sources_and_estimate(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        mgr.run = MagicMock(
+            return_value=SideChannelResult(
+                text=(
+                    '{"answer":"Use decision ledger extraction first.",'
+                    '"source_links":[{"message_index":1,"quote":"extract_decision_ledger(...)"}]}'
+                ),
+                error=None,
+                elapsed_ms=14,
+            )
+        )
+        result = dispatcher.ask_conversation_question(
+            [{"role": "assistant", "content": "extract_decision_ledger(...) handles this"}],
+            question="How should I track decisions?",
+            request_id="req-qa-1",
+        )
+        assert result.source == "ai"
+        assert "answer: Use decision ledger extraction first." in result.markdown
+        assert "req-qa-1:1" in result.markdown
+        assert result.estimate.estimated_total_tokens > 0
+
+    def test_ask_conversation_question_whole_session_requires_explicit_selection(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        mgr.run = MagicMock()
+        result = dispatcher.ask_conversation_question(
+            [{"role": "assistant", "content": "a"}, {"role": "assistant", "content": "b"}],
+            question="What happened?",
+            scope=QAScope(mode=SCOPE_WHOLE_SESSION, explicit_whole_session=False),
+            request_id="req-qa-2",
+        )
+        assert result.source == "fallback"
+        assert "Scope error" in result.markdown
+        mgr.run.assert_not_called()
+
+    def test_ask_conversation_question_fallback_on_guardrail(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        mgr.run = MagicMock(
+            return_value=SideChannelResult(
+                text="",
+                error="Guardrail: budget cap reached for conversation_qa: used=120 cap=100",
+                elapsed_ms=0,
+            )
+        )
+        result = dispatcher.ask_conversation_question(
+            [{"role": "assistant", "content": "a"}],
+            question="What happened?",
+            request_id="req-qa-3",
+        )
+        assert result.source == "fallback"
+        assert "Fallback answer based on selected scope" in result.markdown
