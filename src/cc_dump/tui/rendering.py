@@ -71,8 +71,8 @@ META_TOGGLE_BLOCK = "toggle_block"
 META_TOGGLE_REGION = "toggle_region"
 
 # Region kinds that support click-to-collapse/expand.
-# FUTURE: make code_fence and md regions collapsible for large content
-COLLAPSIBLE_REGION_KINDS = frozenset({"xml_block", "tool_def"})
+# FUTURE: consider md/other region kinds for collapse behavior
+COLLAPSIBLE_REGION_KINDS = frozenset({"xml_block", "tool_def", "code_fence"})
 
 
 # ─── Theme Colors ────────────────────────────────────────────────────────────
@@ -800,6 +800,24 @@ def _render_xml_collapsed(tag_name: str, inner_text: str) -> ConsoleRenderable:
     return _render_xml_tag(f"▷ <{tag_name}>{preview}</{tag_name}>")
 
 
+def _render_code_fence_collapsed(info: str | None, inner_text: str) -> Text:
+    """Render collapsed code fence as a compact one-line preview."""
+    lang = info or "text"
+    line_count = len(inner_text.splitlines()) if inner_text else 0
+    preview = inner_text.strip().replace("\n", " ")
+    if len(preview) > 60:
+        preview = preview[:60] + "\u2026"
+
+    t = Text("  ")
+    t.append(f"▷ ```{lang}```", style="bold dim")
+    if line_count:
+        t.append(f" ({line_count} lines)", style="dim")
+    if preview:
+        t.append(" ")
+        t.append(preview, style="dim")
+    return t
+
+
 def _render_region_parts(
     block, overrides=None,
 ) -> list[tuple[ConsoleRenderable, int | None]]:
@@ -847,13 +865,28 @@ def _render_region_parts(
 
         elif sb.kind == cc_dump.segmentation.SubBlockKind.CODE_FENCE:
             inner = text[sb.meta.inner_span.start : sb.meta.inner_span.end]
-            # FUTURE: collapsible code fences — add "code_fence" to COLLAPSIBLE_REGION_KINDS
-            parts.append(
-                (
-                    Syntax(inner, sb.meta.info or "", theme=tc.code_theme),
-                    region_idx,
+            # // [LAW:one-source-of-truth] Region expanded state from overrides only.
+            region_exp = None
+            if overrides is not None and region is not None:
+                rvs = overrides._regions.get((block.block_id, region.index))
+                if rvs is not None:
+                    region_exp = rvs.expanded
+            is_expanded = region_exp is not False
+
+            if is_expanded:
+                parts.append(
+                    (
+                        Syntax(inner, sb.meta.info or "", theme=tc.code_theme),
+                        region_idx,
+                    )
                 )
-            )
+            else:
+                parts.append(
+                    (
+                        _render_code_fence_collapsed(sb.meta.info, inner),
+                        region_idx,
+                    )
+                )
 
         elif sb.kind == cc_dump.segmentation.SubBlockKind.XML_BLOCK:
             # expanded=None or True means expanded; False means collapsed

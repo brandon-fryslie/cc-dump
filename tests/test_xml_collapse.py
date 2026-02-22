@@ -11,6 +11,7 @@ from cc_dump.tui.rendering import (
     render_turn_to_strips,
     set_theme,
     _render_xml_collapsed,
+    _render_code_fence_collapsed,
     _render_region_parts,
     COLLAPSIBLE_REGION_KINDS,
 )
@@ -76,6 +77,16 @@ def test_render_xml_collapsed_multiline_preview():
     plain = _render_to_text(result)
     assert "Line 1 Line 2 Line 3" in plain
     assert "\n" not in plain.split("▷")[1].split("</thinking>")[0]
+
+
+def test_render_code_fence_collapsed_renders_preview():
+    """Collapsed code-fence preview includes language, count, and snippet."""
+    _setup_theme()
+    result = _render_code_fence_collapsed("python", "print('a')\nprint('b')\n")
+    plain = _render_to_text(result)
+    assert "▷ ```python```" in plain
+    assert "2 lines" in plain
+    assert "print('a')" in plain
 
 
 # ─── Segmentation: XML form detection ─────────────────────────────────────
@@ -366,6 +377,26 @@ def test_region_parts_xml_collapsed():
     assert "<thinking>" in plain
     assert "</thinking>" in plain
     assert "Line 1" in plain
+
+
+def test_region_parts_code_fence_collapsed():
+    """Collapsed code_fence region renders compact preview text."""
+    _setup_theme()
+    text = "```python\nprint('a')\nprint('b')\n```"
+    block = TextContentBlock(content=text, category=Category.ASSISTANT)
+    populate_content_regions(block)
+
+    code_idx = next(i for i, r in enumerate(block.content_regions) if r.kind == "code_fence")
+    overrides = ViewOverrides()
+    overrides.get_region(block.block_id, code_idx).expanded = False
+    parts = _render_region_parts(block, overrides=overrides)
+
+    assert len(parts) == 1
+    renderable, idx = parts[0]
+    assert idx == code_idx
+    plain = _render_to_text(renderable)
+    assert "▷ ```python```" in plain
+    assert "2 lines" in plain
 
 
 def test_region_parts_form_a_collapsed():
@@ -675,7 +706,6 @@ def test_collapsibility_guard_md_not_collapsible():
     assert "md" not in COLLAPSIBLE_REGION_KINDS
 
 
-def test_collapsibility_guard_code_fence_not_collapsible():
-    """code_fence kind is NOT in COLLAPSIBLE_REGION_KINDS (yet)."""
-    assert "code_fence" not in COLLAPSIBLE_REGION_KINDS
-
+def test_collapsibility_guard_code_fence_is_collapsible():
+    """code_fence kind is in COLLAPSIBLE_REGION_KINDS."""
+    assert "code_fence" in COLLAPSIBLE_REGION_KINDS
