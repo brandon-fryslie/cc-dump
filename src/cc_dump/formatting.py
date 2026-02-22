@@ -176,7 +176,7 @@ def populate_content_regions(block: "FormattedBlock") -> None:
     if block.content_regions:
         return
 
-    text = getattr(block, "content", "") or ""
+    text = block.content or ""
     if not text:
         return
 
@@ -234,6 +234,10 @@ class FormattedBlock:
     # Per-region expand/collapse state. Empty = no sub-regions.
     # // [LAW:one-source-of-truth] All sub-region state lives here, not in shadow attrs.
     content_regions: list[ContentRegion] = field(default_factory=list)
+
+    # Optional text payload for generic render/search paths.
+    # // [LAW:one-type-per-behavior] Shared content behavior is represented once.
+    content: str = ""
 
     # Claude Code session ID (from user_id metadata). Stamped on all blocks.
     session_id: str = ""

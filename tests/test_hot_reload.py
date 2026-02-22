@@ -162,6 +162,18 @@ class TestImportValidation:
 class TestWidgetProtocolValidation:
     """Unit tests for widget protocol validation."""
 
+    def test_hot_swappable_widget_protocol_is_runtime_checkable(self):
+        from cc_dump.tui.protocols import HotSwappableWidget
+
+        class ValidWidget:
+            def get_state(self):
+                return {}
+
+            def restore_state(self, state):
+                return None
+
+        assert isinstance(ValidWidget(), HotSwappableWidget)
+
     def test_validate_all_widgets_implement_protocol(self):
         from cc_dump.tui.widget_factory import (
             ConversationView,

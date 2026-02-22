@@ -2463,10 +2463,7 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
 
     elif renderer:
         if block_has_matches and isinstance(renderer(block), Markdown):
-            plain_text = ""
-            if hasattr(block, "content"):
-                plain_text = block.content
-            text = Text(plain_text)
+            text = Text(block.content)
         else:
             text = renderer(block)
     else:

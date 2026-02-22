@@ -1956,6 +1956,9 @@ class StatsPanel(Static):
 
     def _refresh_display(self):
         """Rebuild the display text."""
+        # // [LAW:dataflow-not-control-flow] exception: Textual update() requires an attached app context.
+        if not self.is_attached:
+            return
         view_mode = self._VIEW_ORDER[self._view_index]
         text = cc_dump.tui.panel_renderers.render_analytics_panel(
             self._last_snapshot,

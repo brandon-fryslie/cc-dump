@@ -13,7 +13,7 @@ The HotSwappableWidget protocol enables the widget hot-swap pattern:
 This guarantees that code changes take effect immediately without proxy restart.
 """
 
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 
 _Leaf = str | int | float | bool | None
@@ -21,6 +21,7 @@ WidgetStateValue = _Leaf | list | dict | set
 WidgetState = dict[str, WidgetStateValue]
 
 
+@runtime_checkable
 class HotSwappableWidget(Protocol):
     """Protocol for widgets that can be hot-swapped at runtime.
 
@@ -90,11 +91,11 @@ class CyclingPanel(Protocol):
         ...
 
 
-def validate_widget_protocol(widget) -> None:
+def validate_widget_protocol(widget: object) -> None:
     """Validate that a widget implements the HotSwappableWidget protocol.
 
-    This function performs runtime validation using duck typing to ensure
-    a widget has the required methods for hot-swapping.
+    This function performs runtime validation using the protocol contract as
+    the primary check, then derives specific error context when invalid.
 
     Args:
         widget: Widget instance to validate
@@ -106,18 +107,36 @@ def validate_widget_protocol(widget) -> None:
         >>> widget = MyWidget()
         >>> validate_widget_protocol(widget)  # Raises if invalid
     """
-    required_methods = ["get_state", "restore_state"]
+    # // [LAW:single-enforcer] Protocol runtime check is the canonical gate.
+    if isinstance(widget, HotSwappableWidget):
+        return
+
+    required_methods = ("get_state", "restore_state")
+    sentinel = object()
+    missing: list[str] = []
+    non_callable: list[str] = []
 
     for method_name in required_methods:
-        if not hasattr(widget, method_name):
-            raise TypeError(
-                f"Widget {type(widget).__name__} does not implement HotSwappableWidget protocol: "
-                f"missing method '{method_name}()'"
-            )
+        candidate = getattr(widget, method_name, sentinel)
+        if candidate is sentinel:
+            missing.append(method_name)
+        elif not callable(candidate):
+            non_callable.append(method_name)
 
-        method = getattr(widget, method_name)
-        if not callable(method):
-            raise TypeError(
-                f"Widget {type(widget).__name__} does not implement HotSwappableWidget protocol: "
-                f"'{method_name}' exists but is not callable"
-            )
+    if missing:
+        method_name = missing[0]
+        raise TypeError(
+            f"Widget {type(widget).__name__} does not implement HotSwappableWidget protocol: "
+            f"missing method '{method_name}()'"
+        )
+
+    if non_callable:
+        method_name = non_callable[0]
+        raise TypeError(
+            f"Widget {type(widget).__name__} does not implement HotSwappableWidget protocol: "
+            f"'{method_name}' exists but is not callable"
+        )
+
+    raise TypeError(
+        f"Widget {type(widget).__name__} does not implement HotSwappableWidget protocol"
+    )
