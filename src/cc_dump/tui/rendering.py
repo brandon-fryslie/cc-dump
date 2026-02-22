@@ -310,10 +310,10 @@ TRUNCATION_LIMITS: dict[VisState, int | None] = {
     VisState(False, True, False): 0,
     VisState(False, True, True): 0,
     # Summary level (visible=True, full=False)
-    VisState(True, False, False): 4,  # summary collapsed
-    VisState(True, False, True): None,  # summary expanded
+    VisState(True, False, False): 3,  # summary collapsed
+    VisState(True, False, True): 8,  # summary expanded
     # Full level (visible=True, full=True)
-    VisState(True, True, False): 4,  # full collapsed
+    VisState(True, True, False): 5,  # full collapsed
     VisState(True, True, True): None,  # full expanded (unlimited)
 }
 
@@ -520,17 +520,66 @@ def _render_separator(block: SeparatorBlock) -> Text | None:
     return Text(char * 70, style="dim")
 
 
-def _render_header(block: HeaderBlock) -> Text | None:
+def _render_separator_summary_collapsed(block: SeparatorBlock) -> Text | None:
+    """Summary-collapsed separator renderer: minimal visual divider."""
+    char = "\u2500" if block.style == "heavy" else "\u2504"
+    return Text(char * 18, style="dim")
+
+
+def _render_separator_summary_expanded(block: SeparatorBlock) -> Text | None:
+    """Summary-expanded separator renderer: medium visual divider."""
+    char = "\u2500" if block.style == "heavy" else "\u2504"
+    return Text(char * 36, style="dim")
+
+
+def _render_separator_full_collapsed(block: SeparatorBlock) -> Text | None:
+    """Full-collapsed separator renderer: long divider, shorter than full-expanded."""
+    char = "\u2500" if block.style == "heavy" else "\u2504"
+    return Text(char * 54, style="dim")
+
+
+def _header_label_and_style(block: HeaderBlock) -> tuple[str, str]:
+    """Resolve header label/style from header type.
+
+    // [LAW:one-source-of-truth] Single header type mapping for all header renderers.
+    """
     tc = get_theme_colors()
-    # [LAW:dataflow-not-control-flow] Header type dispatch via dict
+    # [LAW:dataflow-not-control-flow] Header type dispatch via dict.
     specs = {
-        "request": (lambda b: b.label, f"bold {tc.info}"),
-        "response": (lambda b: "RESPONSE", f"bold {tc.success}"),
+        "request": (block.label, f"bold {tc.info}"),
+        "response": ("RESPONSE", f"bold {tc.success}"),
     }
-    label_fn, style = specs.get(block.header_type, (lambda b: "UNKNOWN", "bold"))
+    return specs.get(block.header_type, ("UNKNOWN", "bold"))
+
+
+def _render_header(block: HeaderBlock) -> Text | None:
+    label, style = _header_label_and_style(block)
     t = Text()
-    t.append(" {} ".format(label_fn(block)), style=style)
+    t.append(" {} ".format(label), style=style)
     t.append(" ({})".format(block.timestamp), style="dim")
+    return t
+
+
+def _render_header_summary_collapsed(block: HeaderBlock) -> Text | None:
+    """Summary-collapsed header renderer: compact label only."""
+    label, style = _header_label_and_style(block)
+    t = Text()
+    t.append(" {} ".format(label), style=style)
+    return t
+
+
+def _render_header_summary_expanded(block: HeaderBlock) -> Text | None:
+    """Summary-expanded header renderer: include timestamp context."""
+    return _render_header(block)
+
+
+def _render_header_full_expanded(block: HeaderBlock) -> Text | None:
+    """Full-expanded header renderer: header line plus transport metadata."""
+    t = _render_header(block)
+    t.append("\n    ", style="dim")
+    t.append(f"type: {block.header_type}", style="dim italic")
+    if block.request_num:
+        t.append(f" | request: {block.request_num}", style="dim italic")
     return t
 
 
@@ -600,6 +649,33 @@ def _render_http_headers_summary_expanded(block: HttpHeadersBlock) -> Text | Non
     return t
 
 
+def _render_http_headers_full_collapsed(block: HttpHeadersBlock) -> Text | None:
+    """Full-collapsed HttpHeaders renderer: compact header snippet."""
+    tc = get_theme_colors()
+    t = Text("  ")
+    n = len(block.headers)
+    labels = {
+        "response": ("HTTP {}".format(block.status_code), f"bold {tc.success}"),
+        "request": ("Request Headers", f"bold {tc.info}"),
+    }
+    label, style = labels.get(block.header_type, ("Headers", "bold"))
+    t.append(label, style=style)
+    t.append("  ({} header{})".format(n, "s" if n != 1 else ""), style="dim")
+
+    shown = 0
+    for key, value in block.headers.items():
+        if shown >= 3:
+            break
+        t.append("\n    {}: ".format(key), style=f"dim {tc.info}")
+        t.append(value, style="dim")
+        shown += 1
+
+    if n > shown:
+        t.append("\n    ")
+        t.append("··· {} more headers [snippet]".format(n - shown), style="dim italic")
+    return t
+
+
 def _render_metadata(block: MetadataBlock) -> Text | None:
     parts = [
         "model: ",
@@ -628,6 +704,62 @@ def _render_metadata(block: MetadataBlock) -> Text | None:
     return t
 
 
+def _render_metadata_summary_collapsed(block: MetadataBlock) -> Text | None:
+    """Summary-collapsed metadata renderer: key request identity only."""
+    t = Text("  ", style="dim")
+    t.append("model: ", style="dim")
+    t.append("{}".format(block.model), style="bold")
+    if block.tool_count:
+        t.append(" | tools: {}".format(block.tool_count), style="dim")
+    t.append(" | stream: {}".format(block.stream), style="dim")
+    return t
+
+
+def _render_metadata_summary_expanded(block: MetadataBlock) -> Text | None:
+    """Summary-expanded metadata renderer: compact details with optional identity line."""
+    t = Text("  ", style="dim")
+    t.append("model: ", style="dim")
+    t.append("{}".format(block.model), style="bold")
+    t.append(" | max_tokens: {}".format(block.max_tokens), style="dim")
+    t.append(" | stream: {}".format(block.stream), style="dim")
+    if block.tool_count:
+        t.append(" | tools: {}".format(block.tool_count), style="dim")
+
+    id_parts: list[str] = []
+    if block.user_hash:
+        id_parts.append("user: {}..".format(block.user_hash[:6]))
+    if block.account_id:
+        id_parts.append("account: {}".format(block.account_id[:8]))
+    if block.session_id:
+        id_parts.append("session: {}".format(block.session_id[:8]))
+    if id_parts:
+        t.append("\n    ", style="dim")
+        t.append(" | ".join(id_parts), style="dim")
+    return t
+
+
+def _render_metadata_full_expanded(block: MetadataBlock) -> Text | None:
+    """Full-expanded metadata renderer with full identity values."""
+    base = _render_metadata(block)
+    if base is None:
+        return None
+
+    id_parts: list[str] = []
+    if block.user_hash:
+        id_parts.append("user_hash={}".format(block.user_hash))
+    if block.account_id:
+        id_parts.append("account_id={}".format(block.account_id))
+    if block.session_id:
+        id_parts.append("session_id={}".format(block.session_id))
+    if not id_parts:
+        return base
+
+    detail = Text("    ")
+    detail.append("identity: ", style="dim")
+    detail.append(" | ".join(id_parts), style="dim")
+    return Group(base, detail)
+
+
 def _render_new_session(block: NewSessionBlock) -> Text | None:
     """Render a NewSessionBlock - prominent session boundary indicator."""
     tc = get_theme_colors()
@@ -638,6 +770,39 @@ def _render_new_session(block: NewSessionBlock) -> Text | None:
     t.append(block.session_id, style="bold")
     t.append("\n")
     t.append("═" * 40, style=f"bold {tc.info}")
+    return t
+
+
+def _render_new_session_summary_collapsed(block: NewSessionBlock) -> Text | None:
+    """Summary-collapsed new-session renderer: one-line marker."""
+    tc = get_theme_colors()
+    t = Text("  ")
+    t.append("NEW SESSION", style=f"bold {tc.info}")
+    return t
+
+
+def _render_new_session_summary_expanded(block: NewSessionBlock) -> Text | None:
+    """Summary-expanded new-session renderer: marker plus session identifier."""
+    tc = get_theme_colors()
+    t = Text("  ")
+    t.append("NEW SESSION", style=f"bold {tc.info}")
+    if block.session_id:
+        t.append(": ", style=f"bold {tc.info}")
+        t.append(block.session_id[:16], style="bold")
+    return t
+
+
+def _render_new_session_full_collapsed(block: NewSessionBlock) -> Text | None:
+    """Full-collapsed new-session renderer: compact boundary frame."""
+    tc = get_theme_colors()
+    t = Text()
+    t.append("═" * 24, style=f"bold {tc.info}")
+    t.append("\n")
+    t.append(" NEW SESSION ", style=f"bold {tc.info}")
+    if block.session_id:
+        t.append(block.session_id[:16], style="bold")
+    t.append("\n")
+    t.append("═" * 24, style=f"bold {tc.info}")
     return t
 
 
@@ -708,6 +873,20 @@ def _render_tracked_content_full(
     if not block.content:
         return None
     return _render_text_as_markdown(block.content)
+
+
+def _render_tracked_content_full_collapsed(
+    block: TrackedContentBlock,
+) -> ConsoleRenderable | None:
+    """Render TrackedContentBlock at FULL collapsed as title + bounded snippet.
+
+    // [LAW:one-source-of-truth] Snippet is derived from canonical block.content.
+    """
+    title = _render_tracked_content_title(block)
+    preview = _render_full_collapsed_snippet(block.content, max_lines=3)
+    if preview is None:
+        return title
+    return Group(title, preview)
 
 
 def _get_or_segment(block):
@@ -1059,21 +1238,37 @@ def _render_text_summary_expanded(block: TextContentBlock) -> ConsoleRenderable 
         return None
 
     lines = block.content.splitlines()
-    preview_limit = 18
-    if len(lines) <= preview_limit:
-        return _render_text_content(block)
+    total_lines = len(lines)
+    summary = Text("  ")
+    summary.append(_preview_line(block.content, max_chars=110))
+    if total_lines > 1:
+        summary.append(f"  ({total_lines} lines)", style="dim")
 
-    head = "\n".join(lines[:preview_limit])
-    hidden = len(lines) - preview_limit
+    # Cap at 8 rendered lines for summary-expanded:
+    # 1 summary line + up to 6 preview lines + optional remainder line.
+    preview_limit = 6
+    preview_lines = lines[1 : 1 + preview_limit]
+    hidden = max(total_lines - 1 - len(preview_lines), 0)
+    if not preview_lines and hidden == 0:
+        return summary
 
-    if block.category in _MARKDOWN_CATEGORIES:
-        preview = _render_text_as_markdown(head)
-    else:
-        preview = _indent_text(head, block.indent)
+    preview = Text()
+    for idx, line in enumerate(preview_lines):
+        if idx:
+            preview.append("\n")
+        preview.append("    ")
+        preview.append(_preview_line(line, max_chars=120), style="dim")
+    if hidden > 0:
+        if preview_lines:
+            preview.append("\n")
+        preview.append(f"    ··· {hidden} more lines", style="dim")
 
-    tail = Text()
-    tail.append(f"    ··· {hidden} more lines", style="dim")
-    return Group(preview, tail)
+    return Group(summary, preview)
+
+
+def _render_text_full_collapsed(block: TextContentBlock) -> ConsoleRenderable | None:
+    """Full-collapsed text renderer: bounded plain-text snippet."""
+    return _render_full_collapsed_snippet(block.content, max_lines=4)
 
 
 # ─── Language inference helper ─────────────────────────────────────────────────
@@ -1421,9 +1616,37 @@ def _render_tool_def_summary_expanded(block: FormattedBlock) -> ConsoleRenderabl
     return Group(header, preview)
 
 
+def _tool_def_param_stats(block: FormattedBlock) -> tuple[int, int]:
+    """Return total and required parameter counts for ToolDefBlock."""
+    input_schema = getattr(block, "input_schema", {})
+    if not isinstance(input_schema, dict):
+        return (0, 0)
+
+    raw_properties = input_schema.get("properties", {})
+    properties = raw_properties if isinstance(raw_properties, dict) else {}
+    raw_required = input_schema.get("required", [])
+    required = {
+        item for item in raw_required if isinstance(item, str)
+    } if isinstance(raw_required, list) else set()
+    return (len(properties), len(required))
+
+
 def _render_tool_def_full_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
-    """FULL collapsed: same compact header as summary collapsed."""
-    return _render_tool_def_summary_collapsed(block)
+    """FULL collapsed: header + compact schema footprint."""
+    header = _render_tool_def_summary_collapsed(block)
+    if header is None:
+        return None
+
+    total_params, required_params = _tool_def_param_stats(block)
+    if total_params == 0:
+        return header
+
+    stats = Text("    ")
+    stats.append(
+        "params: {} ({} required)".format(total_params, required_params),
+        style="dim",
+    )
+    return Group(header, stats)
 
 
 # ─── ToolResultBlock renderers ─────────────────────────────────────────────────
@@ -1611,17 +1834,90 @@ def _render_tool_result_full(block: ToolResultBlock) -> ConsoleRenderable | None
     return header
 
 
-def _render_tool_use_summary(block: ToolUseSummaryBlock) -> Text | None:
-    parts = ["{} {}x".format(name, count) for name, count in block.tool_counts.items()]
+def _sorted_tool_summary_counts(block: ToolUseSummaryBlock) -> list[tuple[str, int]]:
+    """Return stable sorted tool summary entries.
+
+    // [LAW:one-source-of-truth] Shared ordering used by all ToolUseSummary renderers.
+    """
+    # [LAW:dataflow-not-control-flow] Sorting is deterministic value transformation.
+    return sorted(
+        block.tool_counts.items(),
+        key=lambda item: (-item[1], item[0].lower(), item[0]),
+    )
+
+
+def _render_tool_use_summary_block_collapsed(block: ToolUseSummaryBlock) -> Text | None:
+    """Summary-collapsed ToolUseSummary renderer: total + top tool."""
+    entries = _sorted_tool_summary_counts(block)
+    t = Text("  ")
+    t.append(
+        "[used {} tool{}]".format(block.total, "" if block.total == 1 else "s"),
+        style="dim",
+    )
+    if entries:
+        name, count = entries[0]
+        t.append(" top: {} {}x".format(name, count), style="dim")
+    return t
+
+
+def _render_tool_use_summary_block_expanded(block: ToolUseSummaryBlock) -> Text | None:
+    """Summary-expanded ToolUseSummary renderer: total + top set."""
+    entries = _sorted_tool_summary_counts(block)
+    shown = entries[:3]
+    hidden = max(len(entries) - len(shown), 0)
+    parts = ["{} {}x".format(name, count) for name, count in shown]
+
     t = Text("  ")
     t.append(
         "[used {} tool{}: {}]".format(
             block.total,
             "" if block.total == 1 else "s",
-            ", ".join(parts),
+            ", ".join(parts) if parts else "none",
         ),
         style="dim",
     )
+    if hidden > 0:
+        t.append(" (+{} more)".format(hidden), style="dim")
+    return t
+
+
+def _render_tool_use_summary_block_full_collapsed(block: ToolUseSummaryBlock) -> Text | None:
+    """Full-collapsed ToolUseSummary renderer: short multi-line breakdown."""
+    entries = _sorted_tool_summary_counts(block)
+    t = Text("  ")
+    t.append(
+        "[used {} tool{}]".format(block.total, "" if block.total == 1 else "s"),
+        style="dim",
+    )
+    shown = entries[:4]
+    for name, count in shown:
+        t.append("\n    ")
+        t.append("- {}: {}x".format(name, count), style="dim")
+    hidden = max(len(entries) - len(shown), 0)
+    if hidden > 0:
+        t.append("\n    ")
+        t.append("··· {} more tools".format(hidden), style="dim")
+    return t
+
+
+def _render_tool_use_summary(block: ToolUseSummaryBlock) -> Text | None:
+    """Full-expanded ToolUseSummary renderer: full sorted breakdown with percentages."""
+    entries = _sorted_tool_summary_counts(block)
+    t = Text("  ")
+    t.append(
+        "[used {} tool{} across {} type{}]".format(
+            block.total,
+            "" if block.total == 1 else "s",
+            len(entries),
+            "" if len(entries) == 1 else "s",
+        ),
+        style="dim",
+    )
+    denom = block.total if block.total > 0 else 1
+    for name, count in entries:
+        pct = int(round((count / denom) * 100))
+        t.append("\n    ")
+        t.append("- {}: {}x ({}%)".format(name, count, pct), style="dim")
     return t
 
 
@@ -1629,8 +1925,45 @@ def _render_image(block: ImageBlock) -> Text | None:
     return Text("  [image: {}]".format(block.media_type), style="dim")
 
 
+def _render_image_summary_collapsed(block: ImageBlock) -> Text | None:
+    """Summary-collapsed image renderer: existence signal only."""
+    return Text("  [image]", style="dim")
+
+
+def _render_image_summary_expanded(block: ImageBlock) -> Text | None:
+    """Summary-expanded image renderer: media type with hidden-payload hint."""
+    t = Text("  [image: {}]".format(block.media_type or "unknown"), style="dim")
+    t.append("\n    binary payload hidden", style="dim italic")
+    return t
+
+
+def _render_image_full_collapsed(block: ImageBlock) -> Text | None:
+    """Full-collapsed image renderer: compact media marker."""
+    return Text("  [image]", style="dim")
+
+
 def _render_unknown_type(block: UnknownTypeBlock) -> Text | None:
     return Text("  [{}]".format(block.block_type), style="dim")
+
+
+def _render_unknown_type_summary_collapsed(block: UnknownTypeBlock) -> Text | None:
+    """Summary-collapsed unknown-type renderer: generic unsupported marker."""
+    _ = block
+    return Text("  [unknown block]", style="dim")
+
+
+def _render_unknown_type_summary_expanded(block: UnknownTypeBlock) -> Text | None:
+    """Summary-expanded unknown-type renderer: include unknown type label."""
+    t = Text("  [unknown: {}]".format(block.block_type or "unspecified"), style="dim")
+    t.append("\n    unsupported content type", style="dim italic")
+    return t
+
+
+def _render_unknown_type_full_expanded(block: UnknownTypeBlock) -> Text | None:
+    """Full-expanded unknown-type renderer: explicit missing-renderer detail."""
+    t = Text("  [unknown: {}]".format(block.block_type or "unspecified"), style="dim")
+    t.append("\n    no renderer registered", style="dim italic")
+    return t
 
 
 def _render_stream_info(block: StreamInfoBlock) -> Text | None:
@@ -1638,6 +1971,28 @@ def _render_stream_info(block: StreamInfoBlock) -> Text | None:
     t.append("model: ")
     t.append(block.model, style="bold")
     return t
+
+
+def _render_stream_info_summary_collapsed(block: StreamInfoBlock) -> Text | None:
+    """Summary-collapsed stream info renderer: model identity only."""
+    model = block.model or "unknown"
+    compact = model if len(model) <= 24 else model[:23] + "…"
+    t = Text("  ", style="dim")
+    t.append("model: ")
+    t.append(compact, style="bold")
+    return t
+
+
+def _render_stream_info_summary_expanded(block: StreamInfoBlock) -> Text | None:
+    """Summary-expanded stream info renderer: full model plus stream hint."""
+    t = _render_stream_info(block)
+    t.append("\n    stream metadata", style="dim italic")
+    return t
+
+
+def _render_stream_info_full_collapsed(block: StreamInfoBlock) -> Text | None:
+    """Full-collapsed stream info renderer: compact model snippet."""
+    return _render_stream_info_summary_collapsed(block)
 
 
 def _render_stream_tool_use(block: StreamToolUseBlock) -> Text | None:
@@ -1648,6 +2003,30 @@ def _render_stream_tool_use(block: StreamToolUseBlock) -> Text | None:
     return t
 
 
+def _render_stream_tool_use_summary_collapsed(block: StreamToolUseBlock) -> Text | None:
+    """Summary-collapsed stream tool-use renderer: compact tool label."""
+    tc = get_theme_colors()
+    t = Text("  ")
+    t.append("[tool_use]", style=f"bold {tc.info}")
+    t.append(" " + block.name)
+    return t
+
+
+def _render_stream_tool_use_summary_expanded(block: StreamToolUseBlock) -> Text | None:
+    """Summary-expanded stream tool-use renderer: compact label plus pipeline hint."""
+    t = _render_stream_tool_use_summary_collapsed(block)
+    t.append("\n    pending tool_result", style="dim italic")
+    return t
+
+
+def _render_stream_tool_use_full_collapsed(block: StreamToolUseBlock) -> Text | None:
+    """Full-collapsed stream tool-use renderer: tool-use marker only."""
+    tc = get_theme_colors()
+    t = Text("  ")
+    t.append("[tool_use]", style=f"bold {tc.info}")
+    return t
+
+
 def _render_text_delta(block: TextDeltaBlock) -> ConsoleRenderable | None:
     # TextDeltaBlock is always ASSISTANT category during streaming
     if block.category in _MARKDOWN_CATEGORIES:
@@ -1655,9 +2034,83 @@ def _render_text_delta(block: TextDeltaBlock) -> ConsoleRenderable | None:
     return Text(block.content)
 
 
+def _render_text_delta_summary_collapsed(block: TextDeltaBlock) -> Text | None:
+    """Summary-collapsed text-delta renderer: compact stream delta signal."""
+    content = block.content or ""
+    t = Text("  ")
+    t.append("[delta]", style="bold dim")
+    if not content:
+        return t
+    t.append(f" {len(content):,} chars", style="dim")
+    line_count = _line_count(content)
+    if line_count > 1:
+        t.append(f" / {line_count} lines", style="dim")
+    return t
+
+
+def _render_text_delta_summary_expanded(block: TextDeltaBlock) -> ConsoleRenderable | None:
+    """Summary-expanded text-delta renderer: compact signal plus bounded preview."""
+    header = _render_text_delta_summary_collapsed(block)
+    content = block.content or ""
+    if not content:
+        return header
+
+    lines = content.splitlines()
+    shown = lines[:2]
+    hidden = max(len(lines) - len(shown), 0)
+    preview = Text()
+    for idx, line in enumerate(shown):
+        if idx:
+            preview.append("\n")
+        preview.append("    ")
+        preview.append(_preview_line(line, max_chars=120), style="dim")
+    if hidden > 0:
+        preview.append("\n")
+        preview.append(f"    ··· {hidden} more lines", style="dim")
+    return Group(header, preview)
+
+
+def _render_text_delta_full_collapsed(block: TextDeltaBlock) -> ConsoleRenderable | None:
+    """Full-collapsed text-delta renderer: bounded content snippet."""
+    header = Text("  ")
+    header.append("[delta]", style="bold dim")
+    preview = _render_full_collapsed_snippet(block.content or "", max_lines=3)
+    if preview is None:
+        return header
+    return Group(header, preview)
+
+
 def _render_stop_reason(block: StopReasonBlock) -> Text | None:
     t = Text("\n  stop: " + block.reason, style="dim")
     return t
+
+
+# [LAW:one-source-of-truth] Single stop-reason explanation map for summary rendering.
+_STOP_REASON_HINTS: dict[str, str] = {
+    "end_turn": "assistant completed turn",
+    "max_tokens": "generation hit token limit",
+    "stop_sequence": "matched configured stop sequence",
+    "tool_use": "assistant requested tool execution",
+    "": "stream still in progress or reason unavailable",
+}
+
+
+def _render_stop_reason_summary_collapsed(block: StopReasonBlock) -> Text | None:
+    """Summary-collapsed stop-reason renderer: concise enum only."""
+    return Text("  stop: " + block.reason, style="dim")
+
+
+def _render_stop_reason_summary_expanded(block: StopReasonBlock) -> Text | None:
+    """Summary-expanded stop-reason renderer: enum plus interpretation."""
+    hint = _STOP_REASON_HINTS.get(block.reason, "reason not recognized")
+    t = Text("  stop: " + block.reason, style="dim")
+    t.append("\n    " + hint, style="dim italic")
+    return t
+
+
+def _render_stop_reason_full_collapsed(block: StopReasonBlock) -> Text | None:
+    """Full-collapsed stop-reason renderer: compact stop marker."""
+    return Text("  stop", style="dim")
 
 
 def _render_error(block: ErrorBlock) -> Text | None:
@@ -1668,6 +2121,28 @@ def _render_error(block: ErrorBlock) -> Text | None:
     )
 
 
+def _render_error_summary_collapsed(block: ErrorBlock) -> Text | None:
+    """Summary-collapsed HTTP error renderer: compact status code only."""
+    tc = get_theme_colors()
+    return Text("  [HTTP {}]".format(block.code), style=f"bold {tc.error}")
+
+
+def _render_error_summary_expanded(block: ErrorBlock) -> Text | None:
+    """Summary-expanded HTTP error renderer: status code with concise reason."""
+    tc = get_theme_colors()
+    t = Text("  [HTTP {} {}]".format(block.code, block.reason), style=f"bold {tc.error}")
+    t.append("\n    request failed", style="dim italic")
+    return t
+
+
+def _render_error_full_collapsed(block: ErrorBlock) -> Text | None:
+    """Full-collapsed HTTP error renderer: compact failure marker."""
+    tc = get_theme_colors()
+    t = Text("  [HTTP {} {}]".format(block.code, block.reason), style=f"bold {tc.error}")
+    t.append(" [failed]", style="dim")
+    return t
+
+
 def _render_proxy_error(block: ProxyErrorBlock) -> Text | None:
     tc = get_theme_colors()
     return Text(
@@ -1676,7 +2151,41 @@ def _render_proxy_error(block: ProxyErrorBlock) -> Text | None:
     )
 
 
+def _render_proxy_error_summary_collapsed(block: ProxyErrorBlock) -> Text | None:
+    """Summary-collapsed proxy-error renderer: concise transport failure marker."""
+    tc = get_theme_colors()
+    return Text("  [PROXY ERROR]", style=f"bold {tc.error}")
+
+
+def _render_proxy_error_summary_expanded(block: ProxyErrorBlock) -> Text | None:
+    """Summary-expanded proxy-error renderer: include short proxy error text."""
+    tc = get_theme_colors()
+    t = Text("  [PROXY ERROR: {}]".format(block.error), style=f"bold {tc.error}")
+    t.append("\n    upstream transport failed", style="dim italic")
+    return t
+
+
+def _render_proxy_error_full_collapsed(block: ProxyErrorBlock) -> Text | None:
+    """Full-collapsed proxy-error renderer: compact failure marker."""
+    tc = get_theme_colors()
+    t = Text("  [PROXY ERROR: {}]".format(block.error), style=f"bold {tc.error}")
+    t.append(" [failed]", style="dim")
+    return t
+
+
 def _render_newline(block: NewlineBlock) -> Text | None:
+    return Text("")
+
+
+def _render_newline_summary_collapsed(block: NewlineBlock) -> Text | None:
+    """Summary-collapsed newline renderer: suppress spacer noise."""
+    _ = block
+    return None
+
+
+def _render_newline_summary_expanded(block: NewlineBlock) -> Text | None:
+    """Summary-expanded newline renderer: preserve visual spacing."""
+    _ = block
     return Text("")
 
 
@@ -1808,6 +2317,90 @@ def _render_turn_budget_oneliner(block: TurnBudgetBlock) -> Text | None:
     return t
 
 
+def _render_turn_budget_full_collapsed(block: TurnBudgetBlock) -> Text | None:
+    """Full-collapsed budget renderer: one-line component footprint."""
+    tc = get_theme_colors()
+    b = block.budget
+    total = b.total_est
+    sys_tok = b.system_tokens_est + b.tool_defs_tokens_est
+    conv_tok = b.conversation_tokens_est
+    tool_tok = b.tool_use_tokens_est + b.tool_result_tokens_est
+
+    t = Text("  ")
+    t.append("Context: ", style="bold")
+    t.append("{} tokens".format(_fmt_tokens(total)))
+    t.append(
+        " | sys: {} ({})".format(_fmt_tokens(sys_tok), _pct(sys_tok, total)),
+        style=f"dim {tc.info}",
+    )
+    t.append(
+        " | tools: {} ({})".format(_fmt_tokens(tool_tok), _pct(tool_tok, total)),
+        style=f"dim {tc.warning}",
+    )
+    t.append(
+        " | conv: {} ({})".format(_fmt_tokens(conv_tok), _pct(conv_tok, total)),
+        style=f"dim {tc.success}",
+    )
+    return t
+
+
+def _render_turn_budget_summary_expanded(block: TurnBudgetBlock) -> Text | None:
+    """Summary-expanded budget renderer with compact component breakdown."""
+    tc = get_theme_colors()
+    b = block.budget
+    total = b.total_est
+    sys_tok = b.system_tokens_est + b.tool_defs_tokens_est
+    conv_tok = b.conversation_tokens_est
+    tool_tok = b.tool_use_tokens_est + b.tool_result_tokens_est
+
+    t = Text("  ")
+    t.append("Context: ", style="bold")
+    t.append("{} tokens".format(_fmt_tokens(total)))
+    t.append("\n    ")
+    t.append(
+        "sys: {} ({})".format(_fmt_tokens(sys_tok), _pct(sys_tok, total)),
+        style=f"dim {tc.info}",
+    )
+    t.append(" | ")
+    t.append(
+        "tools: {} ({})".format(_fmt_tokens(tool_tok), _pct(tool_tok, total)),
+        style=f"dim {tc.warning}",
+    )
+    t.append(" | ")
+    t.append(
+        "conv: {} ({})".format(_fmt_tokens(conv_tok), _pct(conv_tok, total)),
+        style=f"dim {tc.success}",
+    )
+
+    if b.actual_input_tokens > 0 or b.actual_cache_read_tokens > 0:
+        total_actual = b.actual_input_tokens + b.actual_cache_read_tokens
+        t.append("\n    ")
+        t.append("cache: ", style="bold dim")
+        t.append(
+            "{} read ({})".format(
+                _fmt_tokens(b.actual_cache_read_tokens),
+                _pct(b.actual_cache_read_tokens, total_actual),
+            ),
+            style=f"dim {tc.info}",
+        )
+        t.append(" | {} fresh".format(_fmt_tokens(b.actual_input_tokens)), style="dim")
+
+    if block.tool_result_by_name:
+        top_tools = sorted(
+            block.tool_result_by_name.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )[:3]
+        t.append("\n    ")
+        t.append("top tools: ", style="bold dim")
+        t.append(
+            ", ".join("{} {}".format(name, _fmt_tokens(tokens)) for name, tokens in top_tools),
+            style="dim",
+        )
+
+    return t
+
+
 # ─── Hierarchical block renderers (Phase 2 stubs) ─────────────────────────────
 # // [LAW:dataflow-not-control-flow] Stubs render placeholder content;
 # container expansion logic will be added in Phase 4.
@@ -1831,6 +2424,46 @@ def _render_thinking_summary(block: FormattedBlock) -> ConsoleRenderable | None:
     t.append("[thinking]", style="bold dim")
     t.append(f" ({line_count} lines)", style="dim")
     return t
+
+
+def _render_thinking_summary_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render thinking block summary-expanded — line count plus bounded preview."""
+    content = getattr(block, "content", "")
+    line_count = len(content.splitlines()) if content else 0
+    header = Text()
+    header.append("[thinking]", style="bold dim")
+    header.append(f" ({line_count} lines)", style="dim")
+    if not content:
+        return header
+
+    lines = content.splitlines()
+    preview_limit = 6
+    shown = lines[:preview_limit]
+    hidden = max(len(lines) - len(shown), 0)
+
+    preview = Text()
+    for idx, line in enumerate(shown):
+        if idx:
+            preview.append("\n")
+        preview.append("    ")
+        preview.append(_preview_line(line, max_chars=120), style="dim italic")
+    if hidden > 0:
+        preview.append("\n")
+        preview.append(f"    ··· {hidden} more lines", style="dim")
+    return Group(header, preview)
+
+
+def _render_thinking_full_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render thinking block full-collapsed with a bounded snippet."""
+    content = getattr(block, "content", "")
+    line_count = len(content.splitlines()) if content else 0
+    header = Text()
+    header.append("[thinking]", style="bold dim")
+    header.append(f" ({line_count} lines)", style="dim")
+    preview = _render_full_collapsed_snippet(content, max_lines=3)
+    if preview is None:
+        return header
+    return Group(header, preview)
 
 
 def _render_config_content(block: FormattedBlock) -> ConsoleRenderable | None:
@@ -1860,6 +2493,70 @@ def _render_config_content_summary(block: FormattedBlock) -> ConsoleRenderable |
     return t
 
 
+def _render_config_content_summary_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render config content summary-expanded with bounded multi-line preview."""
+    header = _render_config_content_summary(block)
+    content = getattr(block, "content", "")
+    if not content:
+        return header
+
+    lines = content.splitlines()
+    preview_limit = 6
+    shown = lines[:preview_limit]
+    hidden = max(len(lines) - len(shown), 0)
+
+    preview = Text()
+    for idx, line in enumerate(shown):
+        if idx:
+            preview.append("\n")
+        preview.append("    ")
+        preview.append(_preview_line(line, max_chars=120), style="dim")
+    if hidden > 0:
+        preview.append("\n")
+        preview.append(f"    ··· {hidden} more lines", style="dim")
+
+    return Group(header, preview)
+
+
+def _render_full_collapsed_snippet(content: str, max_lines: int = 4) -> Text | None:
+    """Render a bounded multi-line snippet for full-collapsed previews."""
+    if not content:
+        return None
+
+    lines = content.splitlines()
+    shown = lines[:max_lines]
+    hidden = max(len(lines) - len(shown), 0)
+
+    preview = Text()
+    for idx, line in enumerate(shown):
+        if idx:
+            preview.append("\n")
+        preview.append("    ")
+        preview.append(_preview_line(line, max_chars=120), style="dim")
+    if hidden > 0:
+        preview.append("\n")
+        preview.append(f"    ··· {hidden} more lines [snippet]", style="dim italic")
+    return preview
+
+
+def _render_config_content_full_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render config content full-collapsed with a bounded plain-text snippet."""
+    source = getattr(block, "source", "unknown")
+    content = getattr(block, "content", "")
+    line_count = len(content.splitlines()) if content else 0
+
+    header = Text()
+    header.append(f"[config: {source}]", style="bold dim")
+    _append_special_marker_badges(header, block)
+    if line_count:
+        header.append(f" ({line_count} lines)", style="dim")
+
+    preview = _render_full_collapsed_snippet(content, max_lines=3)
+    if preview is None:
+        return header
+    return Group(header, preview)
+
+
 def _render_hook_output(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render hook output block — full content with hook name."""
     hook_name = getattr(block, "hook_name", "")
@@ -1887,8 +2584,59 @@ def _render_hook_output_summary(block: FormattedBlock) -> ConsoleRenderable | No
     return t
 
 
-def _render_message_block(block: FormattedBlock) -> ConsoleRenderable | None:
-    """Render message container header (replaces RoleBlock rendering)."""
+def _render_hook_output_summary_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render hook output summary-expanded with bounded multi-line preview."""
+    header = _render_hook_output_summary(block)
+    content = getattr(block, "content", "")
+    if not content:
+        return header
+
+    lines = content.splitlines()
+    preview_limit = 6
+    shown = lines[:preview_limit]
+    hidden = max(len(lines) - len(shown), 0)
+
+    preview = Text()
+    for idx, line in enumerate(shown):
+        if idx:
+            preview.append("\n")
+        preview.append("    ")
+        preview.append(_preview_line(line, max_chars=120), style="dim")
+    if hidden > 0:
+        preview.append("\n")
+        preview.append(f"    ··· {hidden} more lines", style="dim")
+
+    return Group(header, preview)
+
+
+def _render_hook_output_full_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render hook output full-collapsed with a bounded plain-text snippet."""
+    hook_name = getattr(block, "hook_name", "")
+    content = getattr(block, "content", "")
+    line_count = len(content.splitlines()) if content else 0
+
+    header = Text()
+    header.append(f"[hook: {hook_name}]", style="bold dim")
+    _append_special_marker_badges(header, block)
+    if line_count:
+        header.append(f" ({line_count} lines)", style="dim")
+
+    preview = _render_full_collapsed_snippet(content, max_lines=3)
+    if preview is None:
+        return header
+    return Group(header, preview)
+
+
+def _render_message_header(
+    block: FormattedBlock,
+    *,
+    include_timestamp: bool,
+    include_agent: bool,
+) -> Text:
+    """Build MessageBlock header text with optional timestamp/agent details.
+
+    // [LAW:one-source-of-truth] Shared header builder for all MessageBlock state renderers.
+    """
     tc = get_theme_colors()
     role = getattr(block, "role", "")
     idx = getattr(block, "msg_index", 0)
@@ -1897,12 +2645,12 @@ def _render_message_block(block: FormattedBlock) -> ConsoleRenderable | None:
     style = ROLE_STYLES.get(role_lower, "bold magenta")
     label = role.upper().replace("_", " ")
     t = Text(f"{label} [{idx}]", style=style)
-    if timestamp:
+    if include_timestamp and timestamp:
         t.append(f"  {timestamp}", style="dim")
 
     agent_kind = getattr(block, "agent_kind", "") or "main"
     agent_label = getattr(block, "agent_label", "")
-    if agent_label:
+    if include_agent and agent_label:
         badge_styles = {
             "main": f"bold {tc.foreground} on {tc.background}",
             "subagent": f"bold {tc.background} on {tc.accent}",
@@ -1923,14 +2671,194 @@ def _render_message_block(block: FormattedBlock) -> ConsoleRenderable | None:
     return t
 
 
+def _render_message_block(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render MessageBlock full-expanded header."""
+    return _render_message_header(block, include_timestamp=True, include_agent=True)
+
+
+def _render_message_block_summary_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render MessageBlock summary-collapsed header."""
+    return _render_message_header(block, include_timestamp=False, include_agent=False)
+
+
+def _render_message_block_summary_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render MessageBlock summary-expanded header."""
+    return _render_message_header(block, include_timestamp=True, include_agent=True)
+
+
+def _render_message_block_full_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render MessageBlock full-collapsed header with child composition counts."""
+    header = _render_message_header(block, include_timestamp=True, include_agent=True)
+    children = getattr(block, "children", None) or []
+    total = len(children)
+    if total == 0:
+        return header
+
+    cat_counts: Counter[str] = Counter()
+    for child in children:
+        cat = get_category(child)
+        key = cat.value if cat is not None else "other"
+        cat_counts[key] += 1
+
+    content_total = (
+        cat_counts.get(Category.USER.value, 0)
+        + cat_counts.get(Category.ASSISTANT.value, 0)
+        + cat_counts.get(Category.SYSTEM.value, 0)
+    )
+
+    header.append(f"  | blocks: {total}", style="dim")
+    if content_total:
+        header.append(f" content:{content_total}", style="dim")
+    if cat_counts.get(Category.TOOLS.value, 0):
+        header.append(f" tools:{cat_counts[Category.TOOLS.value]}", style="dim")
+    if cat_counts.get(Category.THINKING.value, 0):
+        header.append(f" thinking:{cat_counts[Category.THINKING.value]}", style="dim")
+    if cat_counts.get("other", 0):
+        header.append(f" other:{cat_counts['other']}", style="dim")
+    return header
+
+
+def _render_section_with_counts(label: str, children: list[FormattedBlock]) -> Text:
+    """Build shared section header with optional child count/type preview.
+
+    // [LAW:one-source-of-truth] Shared section summary formatting for container headers.
+    """
+    t = Text(label, style="bold dim")
+    total = len(children)
+    if total == 0:
+        return t
+    t.append(f" ({total} block{'s' if total != 1 else ''})", style="dim")
+
+    type_counts: Counter[str] = Counter(type(child).__name__.replace("Block", "") for child in children)
+    top = sorted(type_counts.items(), key=lambda item: (-item[1], item[0]))[:3]
+    preview = ", ".join(
+        "{}{}".format(name, f" {count}x" if count > 1 else "")
+        for name, count in top
+    )
+    if preview:
+        t.append(f"  {preview}", style="dim")
+    hidden = max(len(type_counts) - len(top), 0)
+    if hidden > 0:
+        t.append(f" (+{hidden} more)", style="dim")
+    return t
+
+
+def _render_section_compact_count(label: str, children: list[FormattedBlock]) -> Text:
+    """Build compact section header with child count only."""
+    t = Text(label, style="bold dim")
+    total = len(children)
+    if total > 0:
+        t.append(f" ({total} block{'s' if total != 1 else ''})", style="dim")
+    return t
+
+
+def _render_section_with_all_types(label: str, children: list[FormattedBlock]) -> Text:
+    """Build section header with full child-type breakdown.
+
+    // [LAW:one-source-of-truth] Shared full-expanded section formatting for containers.
+    """
+    t = _render_section_compact_count(label, children)
+    if not children:
+        return t
+
+    type_counts: Counter[str] = Counter(
+        type(child).__name__.replace("Block", "") for child in children
+    )
+    parts = [
+        "{}{}".format(name, f" {count}x" if count > 1 else "")
+        for name, count in sorted(type_counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    if parts:
+        t.append("\n    ", style="dim")
+        t.append("types: " + ", ".join(parts), style="dim")
+    return t
+
+
 def _render_metadata_section(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render metadata section container header."""
     return Text("METADATA", style="bold dim")
 
 
+def _render_metadata_section_summary_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render metadata section summary-expanded with child composition."""
+    children = getattr(block, "children", None) or []
+    return _render_section_with_counts("METADATA", children)
+
+
+def _render_metadata_section_full_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render metadata section full-collapsed with compact count."""
+    children = getattr(block, "children", None) or []
+    return _render_section_compact_count("METADATA", children)
+
+
+def _render_metadata_section_full_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render metadata section full-expanded with complete type breakdown."""
+    children = getattr(block, "children", None) or []
+    return _render_section_with_all_types("METADATA", children)
+
+
 def _render_system_section(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render system section container header."""
     return Text("SYSTEM", style="bold dim")
+
+
+def _render_system_section_summary_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render system section summary-expanded with status composition."""
+    children = getattr(block, "children", None) or []
+    t = _render_section_with_counts("SYSTEM", children)
+
+    status_counts: Counter[str] = Counter()
+    for child in children:
+        status = getattr(child, "status", "")
+        if isinstance(status, str) and status:
+            status_counts[status] += 1
+    if status_counts:
+        ordered = ["new", "changed", "ref"]
+        parts = [
+            "{}:{}".format(status, status_counts[status])
+            for status in ordered
+            if status_counts.get(status, 0) > 0
+        ]
+        remaining = [
+            "{}:{}".format(status, count)
+            for status, count in sorted(status_counts.items())
+            if status not in ordered
+        ]
+        all_parts = parts + remaining
+        if all_parts:
+            t.append("\n    ", style="dim")
+            t.append("status " + " ".join(all_parts), style="dim")
+    return t
+
+
+def _render_system_section_full_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render system section full-collapsed with compact count."""
+    children = getattr(block, "children", None) or []
+    return _render_section_compact_count("SYSTEM", children)
+
+
+def _render_system_section_full_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render system section full-expanded with status and tag previews."""
+    children = getattr(block, "children", None) or []
+    base = _render_system_section_summary_expanded(block)
+    if not children:
+        return base
+
+    tag_ids = [
+        tag_id
+        for tag_id in (getattr(child, "tag_id", "") for child in children)
+        if isinstance(tag_id, str) and tag_id
+    ]
+    if not tag_ids:
+        return base
+
+    shown = tag_ids[:5]
+    hidden = max(len(tag_ids) - len(shown), 0)
+    detail = Text("    ")
+    detail.append("tags " + ", ".join(shown), style="dim italic")
+    if hidden > 0:
+        detail.append(f" (+{hidden} more)", style="dim italic")
+    return Group(base, detail)
 
 
 def _render_tool_defs_section(block: FormattedBlock) -> ConsoleRenderable | None:
@@ -1943,6 +2871,55 @@ def _render_tool_defs_section(block: FormattedBlock) -> ConsoleRenderable | None
     if tokens:
         t.append(f" / {_fmt_tokens(tokens)} tokens", style="dim")
     return t
+
+
+def _render_tool_defs_section_summary_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render tool defs section summary-collapsed (count only)."""
+    count = getattr(block, "tool_count", 0)
+    t = Text()
+    t.append(f"{count} tools", style="bold dim")
+    _append_special_marker_badges(t, block)
+    return t
+
+
+def _render_tool_defs_section_full_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render tool defs section full-collapsed with compact aggregate details."""
+    count = getattr(block, "tool_count", 0)
+    tokens = getattr(block, "total_tokens", 0)
+    header = _render_tool_defs_section(block)
+    if count <= 0 or tokens <= 0:
+        return header
+
+    detail = Text("    ")
+    detail.append(
+        "avg: {} tokens/tool".format(_fmt_tokens(tokens // count)),
+        style="dim",
+    )
+    return Group(header, detail)
+
+
+def _render_tool_defs_section_full_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Render tool defs section full-expanded with top tool names."""
+    header = _render_tool_defs_section(block)
+    children = getattr(block, "children", None) or []
+    if not children:
+        return header
+
+    names: list[str] = []
+    for child in children:
+        name = getattr(child, "name", "")
+        if isinstance(name, str) and name:
+            names.append(name)
+    if not names:
+        return header
+
+    shown = names[:6]
+    hidden = max(len(names) - len(shown), 0)
+    detail = Text("    ")
+    detail.append(", ".join(shown), style="dim")
+    if hidden > 0:
+        detail.append(f" (+{hidden} more)", style="dim")
+    return Group(header, detail)
 
 
 def _render_tool_def(block: FormattedBlock) -> ConsoleRenderable | None:
@@ -1994,21 +2971,151 @@ def _render_tool_def(block: FormattedBlock) -> ConsoleRenderable | None:
     return Group(*lines)
 
 
-def _render_named_def_child(block: FormattedBlock) -> ConsoleRenderable | None:
-    """Render a named definition child (skills, agents, and similar)."""
+def _named_def_child_attrs(block: FormattedBlock) -> tuple[str, str, list[str]]:
+    """Extract canonical display attributes for named-definition children.
+
+    // [LAW:one-source-of-truth] Shared field extraction for SkillDefChild/AgentDefChild.
+    """
     name = getattr(block, "name", "")
-    desc = getattr(block, "description", "")
+    description = getattr(block, "description", "")
+    details: list[str] = []
+
+    plugin_source = getattr(block, "plugin_source", "")
+    if isinstance(plugin_source, str) and plugin_source:
+        details.append("source: {}".format(plugin_source))
+
+    available_tools = getattr(block, "available_tools", "")
+    if isinstance(available_tools, str) and available_tools:
+        details.append("tools: {}".format(available_tools))
+
+    return (name, description, details)
+
+
+def _render_named_def_child_summary_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Summary-collapsed named child renderer: name only."""
+    name, _, _ = _named_def_child_attrs(block)
     t = Text()
     t.append(name, style="bold")
-    if desc:
-        preview = desc[:60] + "..." if len(desc) > 60 else desc
-        t.append(f' — "{preview}"', style="dim")
     return t
+
+
+def _render_named_def_child_summary_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Summary-expanded named child renderer: name + one-line description preview."""
+    header = _render_named_def_child_summary_collapsed(block)
+    if header is None:
+        return None
+
+    _, description, _ = _named_def_child_attrs(block)
+    if not description:
+        return header
+
+    preview = _preview_line(description, max_chars=90)
+    detail = Text("    ")
+    detail.append(preview, style="dim")
+    return Group(header, detail)
+
+
+def _render_named_def_child_full_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Full-collapsed named child renderer: summary-expanded + one key detail."""
+    base = _render_named_def_child_summary_expanded(block)
+    if base is None:
+        return None
+
+    _, _, details = _named_def_child_attrs(block)
+    if not details:
+        return base
+
+    extra = Text("    ")
+    extra.append(details[0], style="dim italic")
+    return Group(base, extra)
+
+
+def _render_named_def_child_full(block: FormattedBlock) -> ConsoleRenderable | None:
+    """Full named child renderer: name + full description + all metadata details."""
+    name, description, details = _named_def_child_attrs(block)
+    lines: list[ConsoleRenderable] = []
+
+    header = Text()
+    header.append(name, style="bold")
+    lines.append(header)
+
+    if description:
+        desc = Text("    ")
+        desc.append(description, style="dim")
+        lines.append(desc)
+
+    for item in details:
+        detail = Text("    ")
+        detail.append(item, style="dim italic")
+        lines.append(detail)
+
+    if len(lines) == 1:
+        return header
+    return Group(*lines)
 
 
 def _render_response_metadata_section(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render response metadata section container header."""
     return Text("RESPONSE METADATA", style="bold dim")
+
+
+def _render_response_metadata_section_summary_expanded(
+    block: FormattedBlock,
+) -> ConsoleRenderable | None:
+    """Render response metadata section summary-expanded with status context."""
+    children = getattr(block, "children", None) or []
+    t = _render_section_with_counts("RESPONSE METADATA", children)
+
+    status_codes = [
+        child.status_code
+        for child in children
+        if type(child).__name__ == "HttpHeadersBlock"
+        and getattr(child, "header_type", "") == "response"
+        and getattr(child, "status_code", 0)
+    ]
+    if status_codes:
+        t.append("  HTTP {}".format(status_codes[0]), style="dim")
+    return t
+
+
+def _render_response_metadata_section_full_collapsed(
+    block: FormattedBlock,
+) -> ConsoleRenderable | None:
+    """Render response-metadata section full-collapsed with compact count."""
+    children = getattr(block, "children", None) or []
+    return _render_section_compact_count("RESPONSE METADATA", children)
+
+
+def _render_response_metadata_section_full_expanded(
+    block: FormattedBlock,
+) -> ConsoleRenderable | None:
+    """Render response-metadata section full-expanded with richer context."""
+    children = getattr(block, "children", None) or []
+    base = _render_response_metadata_section_summary_expanded(block)
+    if not children:
+        return base
+
+    model_names = [
+        model
+        for model in (getattr(child, "model", "") for child in children)
+        if isinstance(model, str) and model
+    ]
+    header_counts = [
+        len(headers)
+        for headers in (getattr(child, "headers", None) for child in children)
+        if isinstance(headers, dict)
+    ]
+    details: list[str] = []
+    if model_names:
+        details.append("model: {}".format(model_names[0]))
+    if header_counts:
+        details.append("headers: {}".format(header_counts[0]))
+    if not details:
+        return base
+
+    detail_line = Text("    ")
+    detail_line.append(" | ".join(details), style="dim italic")
+    return Group(base, detail_line)
 
 
 
@@ -2046,8 +3153,8 @@ BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], ConsoleRenderable | None]]
     "ToolDefsSection": _render_tool_defs_section,
     "ToolDefBlock": _render_tool_def,
     # [LAW:one-type-per-behavior] SkillDefChild and AgentDefChild share one renderer.
-    "SkillDefChild": _render_named_def_child,
-    "AgentDefChild": _render_named_def_child,
+    "SkillDefChild": _render_named_def_child_full,
+    "AgentDefChild": _render_named_def_child_full,
     "ResponseMetadataSection": _render_response_metadata_section,
 }
 
@@ -2057,18 +3164,82 @@ BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], ConsoleRenderable | None]]
 BLOCK_STATE_RENDERERS: dict[
     tuple[str, bool, bool, bool], Callable[[FormattedBlock], ConsoleRenderable | None]
 ] = {
+    # HeaderBlock: compact summary-collapsed, timestamp at summary-expanded.
+    ("HeaderBlock", True, False, False): _render_header_summary_collapsed,
+    ("HeaderBlock", True, False, True): _render_header_summary_expanded,
+    ("HeaderBlock", True, True, True): _render_header_full_expanded,
+    # Stream metadata blocks: compact SC, richer SE.
+    ("StreamInfoBlock", True, False, False): _render_stream_info_summary_collapsed,
+    ("StreamInfoBlock", True, False, True): _render_stream_info_summary_expanded,
+    ("StreamInfoBlock", True, True, False): _render_stream_info_full_collapsed,
+    ("StreamToolUseBlock", True, False, False): _render_stream_tool_use_summary_collapsed,
+    ("StreamToolUseBlock", True, False, True): _render_stream_tool_use_summary_expanded,
+    ("StreamToolUseBlock", True, True, False): _render_stream_tool_use_full_collapsed,
+    ("StopReasonBlock", True, False, False): _render_stop_reason_summary_collapsed,
+    ("StopReasonBlock", True, False, True): _render_stop_reason_summary_expanded,
+    ("StopReasonBlock", True, True, False): _render_stop_reason_full_collapsed,
+    ("SeparatorBlock", True, False, False): _render_separator_summary_collapsed,
+    ("SeparatorBlock", True, False, True): _render_separator_summary_expanded,
+    ("SeparatorBlock", True, True, False): _render_separator_full_collapsed,
+    ("NewlineBlock", True, False, False): _render_newline_summary_collapsed,
+    ("NewlineBlock", True, False, True): _render_newline_summary_expanded,
+    ("NewSessionBlock", True, False, False): _render_new_session_summary_collapsed,
+    ("NewSessionBlock", True, False, True): _render_new_session_summary_expanded,
+    ("NewSessionBlock", True, True, False): _render_new_session_full_collapsed,
+    ("UnknownTypeBlock", True, False, False): _render_unknown_type_summary_collapsed,
+    ("UnknownTypeBlock", True, False, True): _render_unknown_type_summary_expanded,
+    ("UnknownTypeBlock", True, True, True): _render_unknown_type_full_expanded,
+    ("ErrorBlock", True, False, False): _render_error_summary_collapsed,
+    ("ErrorBlock", True, False, True): _render_error_summary_expanded,
+    ("ErrorBlock", True, True, False): _render_error_full_collapsed,
+    ("ProxyErrorBlock", True, False, False): _render_proxy_error_summary_collapsed,
+    ("ProxyErrorBlock", True, False, True): _render_proxy_error_summary_expanded,
+    ("ProxyErrorBlock", True, True, False): _render_proxy_error_full_collapsed,
+    ("ImageBlock", True, False, False): _render_image_summary_collapsed,
+    ("ImageBlock", True, False, True): _render_image_summary_expanded,
+    ("ImageBlock", True, True, False): _render_image_full_collapsed,
+    # MetadataBlock: compact summary-collapsed, richer summary-expanded.
+    ("MetadataBlock", True, False, False): _render_metadata_summary_collapsed,
+    ("MetadataBlock", True, False, True): _render_metadata_summary_expanded,
+    ("MetadataBlock", True, True, True): _render_metadata_full_expanded,
+    # MessageBlock: compact summary-collapsed, richer summary-expanded, counted full-collapsed.
+    ("MessageBlock", True, False, False): _render_message_block_summary_collapsed,
+    ("MessageBlock", True, False, True): _render_message_block_summary_expanded,
+    ("MessageBlock", True, True, False): _render_message_block_full_collapsed,
+    # Section containers: keep SC terse, enrich SE with composition hints.
+    ("MetadataSection", True, False, True): _render_metadata_section_summary_expanded,
+    ("SystemSection", True, False, True): _render_system_section_summary_expanded,
+    ("ToolDefsSection", True, False, False): _render_tool_defs_section_summary_collapsed,
+    ("ResponseMetadataSection", True, False, True): _render_response_metadata_section_summary_expanded,
+    # Section containers: compact FC, richer FE.
+    ("MetadataSection", True, True, False): _render_metadata_section_full_collapsed,
+    ("MetadataSection", True, True, True): _render_metadata_section_full_expanded,
+    ("SystemSection", True, True, False): _render_system_section_full_collapsed,
+    ("SystemSection", True, True, True): _render_system_section_full_expanded,
+    ("ToolDefsSection", True, True, False): _render_tool_defs_section_full_collapsed,
+    ("ToolDefsSection", True, True, True): _render_tool_defs_section_full_expanded,
+    ("ResponseMetadataSection", True, True, False): _render_response_metadata_section_full_collapsed,
+    ("ResponseMetadataSection", True, True, True): _render_response_metadata_section_full_expanded,
     # TrackedContentBlock: title-only at summary level collapsed, diff-aware at summary expanded
     ("TrackedContentBlock", True, False, False): _render_tracked_content_title,
     ("TrackedContentBlock", True, False, True): _render_tracked_content_summary,
+    ("TrackedContentBlock", True, True, False): _render_tracked_content_full_collapsed,
     # HttpHeadersBlock: one-liner at summary level collapsed
     ("HttpHeadersBlock", True, False, False): _render_http_headers_summary,
     ("HttpHeadersBlock", True, False, True): _render_http_headers_summary_expanded,
-    # TurnBudgetBlock: oneliner at summary level
+    ("HttpHeadersBlock", True, True, False): _render_http_headers_full_collapsed,
+    # TurnBudgetBlock: compact total at summary-collapsed, breakdown at summary-expanded
     ("TurnBudgetBlock", True, False, False): _render_turn_budget_oneliner,
-    ("TurnBudgetBlock", True, False, True): _render_turn_budget_oneliner,
+    ("TurnBudgetBlock", True, False, True): _render_turn_budget_summary_expanded,
+    ("TurnBudgetBlock", True, True, False): _render_turn_budget_full_collapsed,
+    # TextDeltaBlock: compact SC signal, bounded SE/FC previews.
+    ("TextDeltaBlock", True, False, False): _render_text_delta_summary_collapsed,
+    ("TextDeltaBlock", True, False, True): _render_text_delta_summary_expanded,
+    ("TextDeltaBlock", True, True, False): _render_text_delta_full_collapsed,
     # TextContentBlock: dedicated summary renderers (full states use default render path)
     ("TextContentBlock", True, False, False): _render_text_summary_collapsed,
     ("TextContentBlock", True, False, True): _render_text_summary_expanded,
+    ("TextContentBlock", True, True, False): _render_text_full_collapsed,
     # ToolResultBlock: summary states + header-only at full collapsed
     ("ToolResultBlock", True, False, False): _render_tool_result_summary_collapsed,
     ("ToolResultBlock", True, False, True): _render_tool_result_summary_expanded,
@@ -2077,19 +3248,33 @@ BLOCK_STATE_RENDERERS: dict[
     ("ToolUseBlock", True, False, False): _render_tool_use_summary_collapsed,
     ("ToolUseBlock", True, False, True): _render_tool_use_summary_expanded,
     ("ToolUseBlock", True, True, True): _render_tool_use_full_with_desc,
+    # ToolUseSummaryBlock: compact summary states + distinct full collapsed/expanded.
+    ("ToolUseSummaryBlock", True, False, False): _render_tool_use_summary_block_collapsed,
+    ("ToolUseSummaryBlock", True, False, True): _render_tool_use_summary_block_expanded,
+    ("ToolUseSummaryBlock", True, True, False): _render_tool_use_summary_block_full_collapsed,
     # ToolDefBlock: custom compact summary/collapsed output, full-expanded via default renderer
     ("ToolDefBlock", True, False, False): _render_tool_def_summary_collapsed,
     ("ToolDefBlock", True, False, True): _render_tool_def_summary_expanded,
     ("ToolDefBlock", True, True, False): _render_tool_def_full_collapsed,
-    # ThinkingBlock: summary at both summary levels
+    # Named definition children: compact summary states, richer full collapsed.
+    ("SkillDefChild", True, False, False): _render_named_def_child_summary_collapsed,
+    ("SkillDefChild", True, False, True): _render_named_def_child_summary_expanded,
+    ("SkillDefChild", True, True, False): _render_named_def_child_full_collapsed,
+    ("AgentDefChild", True, False, False): _render_named_def_child_summary_collapsed,
+    ("AgentDefChild", True, False, True): _render_named_def_child_summary_expanded,
+    ("AgentDefChild", True, True, False): _render_named_def_child_full_collapsed,
+    # ThinkingBlock: compact summary for SC, bounded preview for SE
     ("ThinkingBlock", True, False, False): _render_thinking_summary,
-    ("ThinkingBlock", True, False, True): _render_thinking_summary,
-    # ConfigContentBlock: summary at summary levels
+    ("ThinkingBlock", True, False, True): _render_thinking_summary_expanded,
+    ("ThinkingBlock", True, True, False): _render_thinking_full_collapsed,
+    # ConfigContentBlock: compact summary for SC, bounded preview for SE
     ("ConfigContentBlock", True, False, False): _render_config_content_summary,
-    ("ConfigContentBlock", True, False, True): _render_config_content_summary,
-    # HookOutputBlock: summary at summary levels
+    ("ConfigContentBlock", True, False, True): _render_config_content_summary_expanded,
+    ("ConfigContentBlock", True, True, False): _render_config_content_full_collapsed,
+    # HookOutputBlock: compact summary for SC, bounded preview for SE
     ("HookOutputBlock", True, False, False): _render_hook_output_summary,
-    ("HookOutputBlock", True, False, True): _render_hook_output_summary,
+    ("HookOutputBlock", True, False, True): _render_hook_output_summary_expanded,
+    ("HookOutputBlock", True, True, False): _render_hook_output_full_collapsed,
 }
 
 

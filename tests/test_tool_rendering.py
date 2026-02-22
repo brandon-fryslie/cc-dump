@@ -13,6 +13,7 @@ from cc_dump.tui.rendering import (
     _render_tool_use_bash_full, _render_tool_use_edit_full,
     _infer_lang_from_path,
     _collapse_children, render_turn_to_strips,
+    RENDERERS,
     set_theme,
 )
 from textual.theme import BUILTIN_THEMES
@@ -334,7 +335,7 @@ class TestRenderToolUseSummary:
     """Tests for _render_tool_use_summary() renderer."""
 
     def test_summary_format_plural(self):
-        """Multiple tools shows plural format."""
+        """Full-expanded summary shows total and per-tool rows."""
         block = ToolUseSummaryBlock(
             tool_counts={"Bash": 2, "Read": 1},
             total=3,
@@ -343,12 +344,12 @@ class TestRenderToolUseSummary:
 
         assert result is not None
         plain = result.plain
-        assert "used 3 tools" in plain
-        assert "Bash 2x" in plain
-        assert "Read 1x" in plain
+        assert "used 3 tools across 2 types" in plain
+        assert "- Bash: 2x" in plain
+        assert "- Read: 1x" in plain
 
     def test_summary_format_singular(self):
-        """Single tool shows singular format."""
+        """Single tool uses singular labels."""
         block = ToolUseSummaryBlock(
             tool_counts={"Bash": 1},
             total=1,
@@ -357,8 +358,8 @@ class TestRenderToolUseSummary:
 
         assert result is not None
         plain = result.plain
-        assert "used 1 tool:" in plain
-        assert "Bash 1x" in plain
+        assert "used 1 tool across 1 type" in plain
+        assert "- Bash: 1x" in plain
 
     def test_summary_styled_dim(self):
         """Summary text is styled dim."""
@@ -372,6 +373,35 @@ class TestRenderToolUseSummary:
         styles = [span.style for span in result.spans if span.style]
         has_dim = any("dim" in str(style) for style in styles)
         assert has_dim
+
+    def test_state_specific_renderers_are_distinct(self):
+        """SC/SE/FC/FE renderers for ToolUseSummaryBlock should be distinct."""
+        block = ToolUseSummaryBlock(
+            tool_counts={"Bash": 4, "Read": 2, "Grep": 1, "Glob": 1},
+            total=8,
+        )
+
+        sc = RENDERERS[("ToolUseSummaryBlock", True, False, False)](block)
+        se = RENDERERS[("ToolUseSummaryBlock", True, False, True)](block)
+        fc = RENDERERS[("ToolUseSummaryBlock", True, True, False)](block)
+        fe = RENDERERS[("ToolUseSummaryBlock", True, True, True)](block)
+
+        assert sc is not None
+        assert se is not None
+        assert fc is not None
+        assert fe is not None
+
+        sc_plain = sc.plain
+        se_plain = se.plain
+        fc_plain = fc.plain
+        fe_plain = fe.plain
+
+        assert "top: Bash 4x" in sc_plain
+        assert "(+1 more)" in se_plain
+        assert "- Bash: 4x" in fc_plain
+        assert "(50%)" in fe_plain
+        assert sc_plain != se_plain
+        assert fc_plain != fe_plain
 
 
 class TestRenderTurnToStripsToolSummary:
