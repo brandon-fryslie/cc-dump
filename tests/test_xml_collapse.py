@@ -5,6 +5,7 @@ from cc_dump.formatting import (
     ContentRegion,
     Category,
     ALWAYS_VISIBLE,
+    VisState,
     populate_content_regions,
 )
 from cc_dump.tui.rendering import (
@@ -753,6 +754,33 @@ def test_xml_expanded_survives_rerender():
 
     # Strip counts should be the same
     assert len(strips1) == len(strips2)
+
+
+def test_text_summary_state_with_regions_renders_without_crashing():
+    """Summary renderer for regioned TextContentBlock should always emit strips.
+
+    Regression for UnboundLocalError in _render_block_tree when:
+    - has_regions=True
+    - state_override=True (TextContentBlock SUMMARY renderer)
+    """
+    _setup_theme()
+    text = "Intro\n<thinking>\nLine 1\nLine 2\n</thinking>\nTail"
+    block = TextContentBlock(content=text, category=Category.ASSISTANT)
+    populate_content_regions(block)
+    assert len(block.content_regions) >= 2
+
+    console = Console()
+    # SUMMARY collapsed selects BLOCK_STATE_RENDERERS for TextContentBlock.
+    filters = {"assistant": VisState(visible=True, full=False, expanded=False)}
+
+    strips, _, _ = render_turn_to_strips(
+        blocks=[block],
+        filters=filters,
+        console=console,
+        width=80,
+    )
+
+    assert len(strips) > 0
 
 
 # ─── Gutter width with XML ────────────────────────────────────────────────

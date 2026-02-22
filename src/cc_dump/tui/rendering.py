@@ -2456,6 +2456,7 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
 
     # Detect blocks with content regions for per-part rendering
     has_regions = bool(block.content_regions)
+    block_strips: list[Strip] = []
 
     # Precedence: state-specific renderer > region rendering > default renderer
     if has_regions and not state_override:
@@ -2543,8 +2544,10 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
             text, ctx.search_ctx, ctx.turn_index, 0, block=block
         )
 
-    # Standard rendering path (non-region)
-    if not has_regions:
+    # Standard rendering path (non-region OR state-specific override on regioned block)
+    # // [LAW:dataflow-not-control-flow] Region path is skipped only when data selects
+    # state override; fallback rendering still runs in the same stage.
+    if not (has_regions and not state_override):
         cache_key = (
             block.block_id,
             ctx.render_width,
