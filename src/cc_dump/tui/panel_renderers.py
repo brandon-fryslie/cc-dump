@@ -40,6 +40,9 @@ def render_analytics_summary(snapshot: dict) -> str:
     cache_savings_usd = float(summary.get("cache_savings_usd", 0.0))
     active_model_count = int(summary.get("active_model_count", 0))
     latest_model_label = str(summary.get("latest_model_label", "Unknown"))
+    main_turns = int(summary.get("main_turns", 0))
+    subagent_turns = int(summary.get("subagent_turns", 0))
+    active_subagent_streams = int(summary.get("active_subagent_streams", 0))
     fresh_tokens = input_tokens
 
     lines = [
@@ -60,6 +63,11 @@ def render_analytics_summary(snapshot: dict) -> str:
         "  Models: {} active  |  Latest: {}".format(
             active_model_count,
             latest_model_label,
+        ),
+        "  Lanes: {} main turns | {} subagent turns | {} active subagent streams".format(
+            main_turns,
+            subagent_turns,
+            active_subagent_streams,
         ),
     ]
     return "\n".join(lines)

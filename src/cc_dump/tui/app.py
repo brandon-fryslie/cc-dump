@@ -14,14 +14,17 @@ import sys
 import threading
 import time
 import traceback
-from typing import Optional, TypedDict, cast
+from functools import lru_cache
+from typing import Callable, Optional, TypedDict, cast
 
 import textual
+import textual.filter as _textual_filter
 from textual.app import App, ComposeResult, SystemCommand
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Header
+from rich.style import Style
 
 
 # Module-level imports for hot-reload (never use `from` for these)
@@ -61,6 +64,27 @@ import cc_dump.domain_store
 import snarfx
 from snarfx import transaction
 from snarfx import textual as stx
+
+
+def _patch_textual_monochrome_style() -> None:
+    """Patch Textual monochrome filter to tolerate None segment styles.
+
+    // [LAW:single-enforcer] Third-party compatibility patch applied once at app boundary.
+    """
+    if getattr(_textual_filter, "_cc_dump_monochrome_patch", False):
+        return
+
+    original = cast(Callable[[Style], Style], _textual_filter.monochrome_style)
+
+    @lru_cache(1024)
+    def _safe_monochrome_style(style: Style | None) -> Style:
+        return original(style or Style.null())
+
+    setattr(_textual_filter, "monochrome_style", _safe_monochrome_style)
+    setattr(_textual_filter, "_cc_dump_monochrome_patch", True)
+
+
+_patch_textual_monochrome_style()
 
 
 def _resolve_factory(dotted_path: str):

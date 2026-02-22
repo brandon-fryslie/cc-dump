@@ -1820,7 +1820,7 @@ class StatsPanel(Static):
 
         # Request/model tracking is retained for compatibility with existing handlers/tests.
 
-    def refresh_from_store(self, store, current_turn: dict = None):
+    def refresh_from_store(self, store, current_turn: dict = None, domain_store=None):
         """Refresh dashboard data from analytics store.
 
         Args:
@@ -1834,7 +1834,26 @@ class StatsPanel(Static):
             self._refresh_display()
             return
 
-        self._last_snapshot = store.get_dashboard_snapshot(current_turn=current_turn)
+        snapshot = store.get_dashboard_snapshot(current_turn=current_turn)
+        summary = dict(snapshot.get("summary", {}))
+
+        # // [LAW:one-source-of-truth] Lane attribution comes from DomainStore stamped blocks/meta.
+        if domain_store is not None:
+            completed_lane_counts = domain_store.get_completed_lane_counts()
+            active_lane_counts = domain_store.get_active_lane_counts()
+        else:
+            completed_lane_counts = {"main": 0, "subagent": 0, "unknown": 0}
+            active_lane_counts = {"main": 0, "subagent": 0, "unknown": 0}
+
+        summary["main_turns"] = int(completed_lane_counts.get("main", 0))
+        summary["subagent_turns"] = int(completed_lane_counts.get("subagent", 0))
+        summary["unknown_turns"] = int(completed_lane_counts.get("unknown", 0))
+        summary["active_main_streams"] = int(active_lane_counts.get("main", 0))
+        summary["active_subagent_streams"] = int(active_lane_counts.get("subagent", 0))
+        summary["active_unknown_streams"] = int(active_lane_counts.get("unknown", 0))
+
+        snapshot["summary"] = summary
+        self._last_snapshot = snapshot
         self._refresh_display()
 
     def _refresh_display(self):
@@ -1844,7 +1863,8 @@ class StatsPanel(Static):
             self._last_snapshot,
             view_mode,
         )
-        self.update(text)
+        # [LAW:single-enforcer] Normalize dashboard text to a styled Text object at one boundary.
+        self.update(Text(text, style="default"))
 
     def cycle_mode(self):
         """Cycle dashboard view mode."""

@@ -240,6 +240,33 @@ class DomainStore:
             if request_id in self._stream_turns
         )
 
+    def get_completed_lane_counts(self) -> dict[str, int]:
+        """Return completed turn counts by agent_kind.
+
+        // [LAW:one-source-of-truth] Lane counts are derived from stamped block attribution.
+        """
+        counts = {"main": 0, "subagent": 0, "unknown": 0}
+        for turn in self._completed:
+            kind = "unknown"
+            for block in turn:
+                value = str(getattr(block, "agent_kind", "") or "")
+                if value:
+                    kind = value
+                    break
+            counts[kind] = counts.get(kind, 0) + 1
+        return counts
+
+    def get_active_lane_counts(self) -> dict[str, int]:
+        """Return active stream counts by agent_kind."""
+        counts = {"main": 0, "subagent": 0, "unknown": 0}
+        for request_id in self._stream_order:
+            if request_id not in self._stream_turns:
+                continue
+            meta = self._stream_meta.get(request_id, {})
+            kind = str(meta.get("agent_kind") or "unknown")
+            counts[kind] = counts.get(kind, 0) + 1
+        return counts
+
     def restamp_stream(
         self,
         request_id: str,

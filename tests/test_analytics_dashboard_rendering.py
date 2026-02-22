@@ -23,6 +23,9 @@ def _snapshot() -> dict:
             "cache_savings_usd": 0.0456,
             "active_model_count": 2,
             "latest_model_label": "Sonnet 4",
+            "main_turns": 2,
+            "subagent_turns": 1,
+            "active_subagent_streams": 1,
         },
         "timeline": [
             {
@@ -73,6 +76,8 @@ def test_render_analytics_summary():
     assert "Cache: 66%" in text
     assert "Savings: $0.0456" in text
     assert "Models: 2 active" in text
+    assert "2 main turns" in text
+    assert "1 subagent turns" in text
 
 
 def test_render_analytics_timeline():

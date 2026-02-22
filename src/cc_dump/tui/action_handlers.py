@@ -334,7 +334,11 @@ def refresh_panel(app, name: str) -> None:
         return
     panel = app._get_panel(name)
     if panel is not None:
-        panel.refresh_from_store(app._analytics_store)
+        # [LAW:dataflow-not-control-flow] Per-panel refresh kwargs via lookup table.
+        panel_kwargs = {
+            "stats": {"domain_store": getattr(app, "_domain_store", None)},
+        }
+        panel.refresh_from_store(app._analytics_store, **panel_kwargs.get(name, {}))
 
 
 def refresh_stats(app) -> None:

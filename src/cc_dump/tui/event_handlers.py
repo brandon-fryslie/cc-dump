@@ -172,6 +172,7 @@ def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool =
         stats.refresh_from_store(
             analytics_store,
             current_turn=_current_turn_from_focus(app_state, domain_store),
+            domain_store=domain_store,
         )
 
     if rerender_budget:
@@ -417,6 +418,7 @@ def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_s
             stats.refresh_from_store(
                 analytics_store,
                 current_turn=_current_turn_from_focus(app_state, domain_store),
+                domain_store=domain_store,
             )
         _sync_stream_footer(widgets)
     except Exception as e:

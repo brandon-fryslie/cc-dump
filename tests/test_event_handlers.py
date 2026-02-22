@@ -67,8 +67,8 @@ class _FakeStats:
         if model:
             self.models.append(model)
 
-    def refresh_from_store(self, store, current_turn=None):
-        _ = (store, current_turn)
+    def refresh_from_store(self, store, current_turn=None, **kwargs):
+        _ = (store, current_turn, kwargs)
 
 
 @dataclass
