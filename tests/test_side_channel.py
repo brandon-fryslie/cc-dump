@@ -456,3 +456,94 @@ class TestDataDispatcher:
         )
         assert result.source == "fallback"
         assert result.entries == []
+
+    def test_create_checkpoint_with_selected_range_uses_checkpoint_purpose(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        mgr.run = MagicMock(
+            return_value=SideChannelResult(
+                text="Checkpoint summary text",
+                error=None,
+                elapsed_ms=21,
+            )
+        )
+        messages = [
+            {"role": "user", "content": "m0"},
+            {"role": "assistant", "content": "m1"},
+            {"role": "user", "content": "m2"},
+        ]
+        result = dispatcher.create_checkpoint(
+            messages,
+            source_start=1,
+            source_end=2,
+            source_session_id="sess-a",
+            request_id="req-a",
+        )
+        assert result.source == "ai"
+        assert result.artifact.source_start == 1
+        assert result.artifact.source_end == 2
+        assert result.artifact.source_session_id == "sess-a"
+        assert result.artifact.request_id == "req-a"
+        assert result.artifact.summary_text == "Checkpoint summary text"
+        run_call = mgr.run.call_args
+        assert run_call.kwargs["purpose"] == "checkpoint_summary"
+        assert run_call.kwargs["prompt_version"] == "v1"
+        assert run_call.kwargs["profile"] == "cache_probe_resume"
+
+    def test_create_checkpoint_disabled_uses_fallback_and_skips_ai(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=False)
+        mgr.run = MagicMock()
+        result = dispatcher.create_checkpoint(
+            [{"role": "user", "content": "m0"}],
+            source_start=0,
+            source_end=0,
+            source_session_id="sess-a",
+            request_id="req-a",
+        )
+        assert result.source == "fallback"
+        assert "1 messages" in result.artifact.summary_text
+        mgr.run.assert_not_called()
+
+    def test_create_checkpoint_guardrail_falls_back(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        mgr.run = MagicMock(
+            return_value=SideChannelResult(
+                text="",
+                error="Guardrail: purpose disabled (checkpoint_summary)",
+                elapsed_ms=0,
+            )
+        )
+        result = dispatcher.create_checkpoint(
+            [{"role": "user", "content": "m0"}],
+            source_start=0,
+            source_end=0,
+            source_session_id="sess-a",
+            request_id="req-a",
+        )
+        assert result.source == "fallback"
+        assert "1 messages" in result.artifact.summary_text
+
+    def test_checkpoint_diff_links_ids_and_ranges(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=False)
+        mgr.run = MagicMock()
+
+        before = dispatcher.create_checkpoint(
+            [{"role": "user", "content": "m0"}],
+            source_start=0,
+            source_end=0,
+            source_session_id="sess-a",
+            request_id="req-before",
+        )
+        after = dispatcher.create_checkpoint(
+            [{"role": "assistant", "content": "m0"}, {"role": "assistant", "content": "m1"}],
+            source_start=0,
+            source_end=1,
+            source_session_id="sess-a",
+            request_id="req-after",
+        )
+        diff_text = dispatcher.checkpoint_diff(
+            before_checkpoint_id=before.artifact.checkpoint_id,
+            after_checkpoint_id=after.artifact.checkpoint_id,
+        )
+        assert before.artifact.checkpoint_id in diff_text
+        assert after.artifact.checkpoint_id in diff_text
+        assert "source_ranges:0-0|0-1" in diff_text

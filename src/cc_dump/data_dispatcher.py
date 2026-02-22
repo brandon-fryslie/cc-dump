@@ -14,6 +14,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 
+from cc_dump.checkpoints import (
+    CheckpointArtifact,
+    CheckpointStore,
+    create_checkpoint_artifact,
+    render_checkpoint_diff,
+)
 from cc_dump.decision_ledger import DecisionLedgerStore, parse_decision_entries, DecisionLedgerEntry
 from cc_dump.prompt_registry import get_prompt_spec, PromptSpec
 from cc_dump.side_channel import SideChannelManager
@@ -43,6 +49,14 @@ class DecisionLedgerResult:
     error: str = ""
 
 
+@dataclass
+class CheckpointCreateResult:
+    artifact: CheckpointArtifact
+    source: str  # "ai" | "fallback" | "error"
+    elapsed_ms: int
+    error: str = ""
+
+
 class DataDispatcher:
     """Routes enrichment requests to AI or fallback.
 
@@ -56,6 +70,7 @@ class DataDispatcher:
         self._analytics = SideChannelAnalytics()
         self._summary_cache = summary_cache if summary_cache is not None else SummaryCache()
         self._decision_ledger = DecisionLedgerStore()
+        self._checkpoint_store = CheckpointStore()
 
     def summarize_messages(self, messages: list[dict], source_session_id: str = "") -> EnrichedResult:
         """Summarize a list of API messages.
@@ -164,6 +179,96 @@ class DataDispatcher:
     def decision_ledger_snapshot(self) -> list[DecisionLedgerEntry]:
         return self._decision_ledger.snapshot()
 
+    def create_checkpoint(
+        self,
+        messages: list[dict],
+        *,
+        source_start: int,
+        source_end: int,
+        source_session_id: str = "",
+        request_id: str = "",
+    ) -> CheckpointCreateResult:
+        """Create checkpoint summary artifact for selected message range."""
+        spec = get_prompt_spec("checkpoint_summary")
+        normalized_start, normalized_end = _normalize_message_range(
+            total_messages=len(messages),
+            source_start=source_start,
+            source_end=source_end,
+        )
+        selected_messages = _slice_messages_for_range(messages, normalized_start, normalized_end)
+        fallback_text = _fallback_summary(selected_messages)
+        profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
+
+        if not self._side_channel.enabled:
+            artifact = self._checkpoint_store.add(
+                create_checkpoint_artifact(
+                    purpose=spec.purpose,
+                    prompt_version=spec.version,
+                    source_session_id=source_session_id,
+                    request_id=request_id,
+                    source_start=normalized_start,
+                    source_end=normalized_end,
+                    summary_text=fallback_text,
+                )
+            )
+            return CheckpointCreateResult(
+                artifact=artifact,
+                source="fallback",
+                elapsed_ms=0,
+            )
+
+        context = _build_summary_context(selected_messages)
+        prompt = _build_summary_prompt(context, spec)
+        result = self._side_channel.run(
+            prompt=prompt,
+            purpose=spec.purpose,
+            prompt_version=spec.version,
+            timeout=None,
+            source_session_id=source_session_id,
+            profile=profile,
+        )
+        self._analytics.record(purpose=result.purpose)
+        summary_text = result.text if result.error is None else fallback_text
+        source = "ai" if result.error is None else "error"
+        if result.error is not None and result.error.startswith("Guardrail:"):
+            logger.info("checkpoint blocked: %s", result.error)
+            source = "fallback"
+        artifact = self._checkpoint_store.add(
+            create_checkpoint_artifact(
+                purpose=spec.purpose,
+                prompt_version=spec.version,
+                source_session_id=source_session_id,
+                request_id=request_id,
+                source_start=normalized_start,
+                source_end=normalized_end,
+                summary_text=summary_text,
+            )
+        )
+        return CheckpointCreateResult(
+            artifact=artifact,
+            source=source,
+            elapsed_ms=result.elapsed_ms,
+            error=result.error or "",
+        )
+
+    def checkpoint_snapshot(self) -> list[CheckpointArtifact]:
+        return self._checkpoint_store.snapshot()
+
+    def checkpoint_diff(self, *, before_checkpoint_id: str, after_checkpoint_id: str) -> str:
+        before = self._checkpoint_store.get(before_checkpoint_id)
+        after = self._checkpoint_store.get(after_checkpoint_id)
+        if before is None or after is None:
+            missing_ids = [
+                checkpoint_id
+                for checkpoint_id, artifact in (
+                    (before_checkpoint_id, before),
+                    (after_checkpoint_id, after),
+                )
+                if artifact is None
+            ]
+            return "missing_checkpoints:" + ",".join(missing_ids)
+        return render_checkpoint_diff(before=before, after=after)
+
 
 def _build_summary_context(messages: list[dict]) -> str:
     """Build a stable context string for prompt and cache-key derivation."""
@@ -206,3 +311,19 @@ def _fallback_summary(messages: list[dict]) -> str:
         roles[role] = roles.get(role, 0) + 1
     parts = [f"{count} {role}" for role, count in sorted(roles.items())]
     return f"{len(messages)} messages ({', '.join(parts)})"
+
+
+def _normalize_message_range(*, total_messages: int, source_start: int, source_end: int) -> tuple[int, int]:
+    """Normalize inclusive range against available message count."""
+    if total_messages <= 0:
+        return 0, -1
+    lower = max(0, min(source_start, source_end))
+    upper = min(total_messages - 1, max(source_start, source_end))
+    return lower, upper
+
+
+def _slice_messages_for_range(messages: list[dict], source_start: int, source_end: int) -> list[dict]:
+    """Return selected message range as inclusive slice."""
+    if source_end < source_start:
+        return []
+    return messages[source_start:source_end + 1]

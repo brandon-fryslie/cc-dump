@@ -96,8 +96,10 @@ Implementation:
 - checkpoint artifacts with source ranges
 - diff support between checkpoints
 
-Placeholder:
-- prompt/purpose contract only
+Implemented now:
+- canonical artifact schema + serializer/deserializer
+- dispatcher checkpoint creation over selected ranges
+- deterministic checkpoint diff output linked by checkpoint IDs/ranges
 
 ## 09 Action/deferred extraction
 
@@ -169,4 +171,3 @@ Implementation:
 
 Placeholder:
 - policy defined, enforcement hook deferred
-
