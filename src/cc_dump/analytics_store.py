@@ -112,12 +112,16 @@ class AnalyticsStore:
     def __init__(self):
         self._turns: list[TurnRecord] = []
         self._seq = 0
-
         # Accumulator state for current turn
         self._current_request = None
         self._current_usage = {}
         self._current_stop = ""
         self._current_model = ""
+
+    @property
+    def turn_count(self) -> int:
+        """Number of completed turns tracked in analytics store."""
+        return len(self._turns)
 
     def on_event(self, event: PipelineEvent) -> None:
         """Handle an event from the router. Errors logged, never crash the proxy."""

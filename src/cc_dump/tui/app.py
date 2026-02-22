@@ -13,6 +13,7 @@ import queue
 import sys
 import threading
 import time
+import tracemalloc
 import traceback
 from functools import lru_cache
 from typing import Callable, Optional, TypedDict, cast
@@ -59,6 +60,7 @@ import cc_dump.tui.side_channel_panel
 import cc_dump.tui.view_store_bridge
 import cc_dump.har_replayer
 import cc_dump.sessions
+import cc_dump.memory_stats
 
 from cc_dump.stderr_tee import get_tee as _get_tee
 import cc_dump.domain_store
@@ -187,6 +189,12 @@ class CcDumpApp(App):
         self._closing = False
         self._quit_requested_at: float | None = None
         self._markdown_theme_pushed = False
+        self._memory_snapshot_enabled = (
+            str(os.environ.get("CC_DUMP_MEMORY_SNAPSHOT", "0")).strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        if self._memory_snapshot_enabled and not tracemalloc.is_tracing():
+            tracemalloc.start(25)
 
         self.sub_title = f"[{cc_dump.palette.PALETTE.info}]session: {session_name}[/]"
 
@@ -477,6 +485,7 @@ class CcDumpApp(App):
                     self._view_store.footer_state.get()
                 )
             )
+        self._log_memory_snapshot("startup")
 
         if self._replay_data:
             self._process_replay_data()
@@ -498,6 +507,7 @@ class CcDumpApp(App):
             tee.disconnect()
 
         self._app_log("INFO", "cc-dump TUI shutting down")
+        self._log_memory_snapshot("shutdown")
         self._closing = True
         self._router.stop()
         _hot_reload.stop_file_watcher()
@@ -569,6 +579,26 @@ class CcDumpApp(App):
             "textual_version": textual.__version__,
             "pid": os.getpid(),
         }
+
+    def _log_memory_snapshot(self, phase: str) -> None:
+        """Emit a structured memory snapshot to the logs panel when enabled."""
+        if not self._memory_snapshot_enabled:
+            return
+        snapshot = cc_dump.memory_stats.capture_snapshot(self)
+        ordered_keys = [
+            "domain_completed_turns",
+            "domain_active_streams",
+            "analytics_turns",
+            "rendered_turns",
+            "line_cache_entries",
+            "line_cache_index_keys",
+            "block_cache_entries",
+            "python_alloc_current_bytes",
+            "python_alloc_peak_bytes",
+            "python_alloc_tracing",
+        ]
+        pairs = [f"{key}={snapshot.get(key, 0)}" for key in ordered_keys]
+        self._app_log("INFO", f"[memory:{phase}] " + " ".join(pairs))
 
     def export_ui_state(self) -> dict:
         """Capture durable UI state for sidecar persistence.
