@@ -37,6 +37,21 @@ def _make_replay_entry(*, session_id: str, content: str, response_text: str):
     )
 
 
+def _make_side_channel_replay_entry(
+    *, session_id: str, purpose: str, source_session_id: str, content: str, response_text: str
+):
+    marker = (
+        "<<CC_DUMP_SIDE_CHANNEL:"
+        f'{{"run_id":"run-{session_id[:4]}","purpose":"{purpose}","source_session_id":"{source_session_id}"}}'
+        ">>\n"
+    )
+    return _make_replay_entry(
+        session_id=session_id,
+        content=marker + content,
+        response_text=response_text,
+    )
+
+
 async def test_replay_routes_turns_to_per_session_domain_stores():
     session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     session_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
@@ -104,3 +119,48 @@ async def test_tab_activation_updates_active_domain_store_alias():
         active_store = app._get_active_domain_store()
         assert active_store is app._get_domain_store(session_b)
         assert app._domain_store is active_store
+
+
+async def test_side_channel_replay_routes_to_separate_lane_without_primary_contamination():
+    session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    replay_data = [
+        _make_replay_entry(
+            session_id=session_a,
+            content="primary-request",
+            response_text="primary-response",
+        ),
+        _make_side_channel_replay_entry(
+            session_id=session_a,
+            purpose="block_summary",
+            source_session_id=session_a,
+            content="side-request",
+            response_text="side-response",
+        ),
+    ]
+
+    async with run_app(replay_data=replay_data) as (pilot, app):
+        _ = pilot
+        side_key = f"side-channel:block_summary:{session_a}"
+        primary_ds = app._get_domain_store(session_a)
+        side_ds = app._get_domain_store(side_key)
+
+        assert primary_ds.completed_count == 2
+        assert side_ds.completed_count == 2
+
+        primary_conv = app._get_conv(session_key=session_a)
+        side_conv = app._get_conv(session_key=side_key)
+        assert primary_conv is not None
+        assert side_conv is not None
+
+        primary_text = "".join(strips_to_text(td.strips) for td in primary_conv._turns)
+        side_text = "".join(strips_to_text(td.strips) for td in side_conv._turns)
+
+        assert "primary-request" in primary_text
+        assert "primary-response" in primary_text
+        assert "side-request" not in primary_text
+        assert "side-response" not in primary_text
+
+        assert "side-request" in side_text
+        assert "side-response" in side_text
+        assert "primary-request" not in side_text
+        assert "primary-response" not in side_text
