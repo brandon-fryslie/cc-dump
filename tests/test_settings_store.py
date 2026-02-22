@@ -27,6 +27,9 @@ class TestCreate:
         assert store.get("side_channel_enabled") is True
         assert store.get("side_channel_global_kill") is False
         assert store.get("side_channel_max_concurrent") == 1
+        assert store.get("side_channel_purpose_enabled") == {}
+        assert store.get("side_channel_timeout_by_purpose") == {}
+        assert store.get("side_channel_budget_caps") == {}
         assert store.get("theme") is None
 
     def test_seeds_from_disk(self, tmp_settings):
@@ -78,6 +81,9 @@ class TestSetupReactions:
         assert mgr.global_kill is True
         store.set("side_channel_max_concurrent", 3)
         mgr.set_max_concurrent.assert_called_with(3)
+        mgr.set_purpose_enabled_map.assert_called_with({})
+        mgr.set_timeout_overrides.assert_called_with({})
+        mgr.set_budget_caps.assert_called_with({})
 
     def test_tmux_auto_zoom_sync(self, tmp_settings):
         store = cc_dump.settings_store.create()

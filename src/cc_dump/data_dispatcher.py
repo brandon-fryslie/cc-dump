@@ -12,10 +12,13 @@ Import as: import cc_dump.data_dispatcher
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 
 from cc_dump.prompt_registry import get_prompt_spec, PromptSpec
 from cc_dump.side_channel import SideChannelManager
 from cc_dump.side_channel_analytics import SideChannelAnalytics
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -66,13 +69,20 @@ class DataDispatcher:
             prompt=prompt,
             purpose="block_summary",
             prompt_version=spec.version,
-            timeout=60,
+            timeout=None,
             source_session_id=source_session_id,
             profile=profile,
         )
         self._analytics.record(purpose=result.purpose)
 
         if result.error is not None:
+            if result.error.startswith("Guardrail:"):
+                logger.info("side-channel blocked: %s", result.error)
+                return EnrichedResult(
+                    text=f"{fallback.text}\n\n[side-channel blocked] {result.error}",
+                    source="fallback",
+                    elapsed_ms=result.elapsed_ms,
+                )
             return EnrichedResult(
                 text=f"AI error: {result.error}\n\n---\n\n{fallback.text}",
                 source="error",

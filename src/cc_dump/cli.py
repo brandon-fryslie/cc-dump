@@ -275,6 +275,9 @@ def main():
     side_channel_mgr = cc_dump.side_channel.SideChannelManager()
     side_channel_mgr.enabled = sc_enabled
     side_channel_mgr.set_base_url(f"http://{args.host}:{actual_port}")
+    side_channel_mgr.set_usage_provider(
+        lambda purpose: analytics_store.get_side_channel_purpose_summary().get(purpose, {})
+    )
     data_dispatcher = cc_dump.data_dispatcher.DataDispatcher(side_channel_mgr)
 
     # Request pipeline — transforms + interceptors run before forwarding

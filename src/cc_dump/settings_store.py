@@ -18,6 +18,9 @@ SCHEMA: dict[str, object] = {
     "side_channel_enabled": True,
     "side_channel_global_kill": False,
     "side_channel_max_concurrent": 1,
+    "side_channel_purpose_enabled": {},
+    "side_channel_timeout_by_purpose": {},
+    "side_channel_budget_caps": {},
     "theme": None,
 }
 
@@ -63,6 +66,27 @@ def setup_reactions(store, context=None):
             disposers.append(reaction(
                 lambda: int(store.get("side_channel_max_concurrent") or 1),
                 lambda val, m=mgr: m.set_max_concurrent(int(val)),
+                fire_immediately=True,
+            ))
+            disposers.append(reaction(
+                lambda: store.get("side_channel_purpose_enabled"),
+                lambda val, m=mgr: m.set_purpose_enabled_map(
+                    val if isinstance(val, dict) else {}
+                ),
+                fire_immediately=True,
+            ))
+            disposers.append(reaction(
+                lambda: store.get("side_channel_timeout_by_purpose"),
+                lambda val, m=mgr: m.set_timeout_overrides(
+                    val if isinstance(val, dict) else {}
+                ),
+                fire_immediately=True,
+            ))
+            disposers.append(reaction(
+                lambda: store.get("side_channel_budget_caps"),
+                lambda val, m=mgr: m.set_budget_caps(
+                    val if isinstance(val, dict) else {}
+                ),
                 fire_immediately=True,
             ))
 

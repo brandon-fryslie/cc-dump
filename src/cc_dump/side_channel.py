@@ -17,9 +17,24 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
+from collections.abc import Callable
 
 from cc_dump.side_channel_marker import SideChannelMarker, prepend_marker
-from cc_dump.side_channel_purpose import normalize_purpose
+from cc_dump.side_channel_purpose import normalize_purpose, SIDE_CHANNEL_PURPOSES
+
+
+DEFAULT_TIMEOUT_SECONDS = 60
+MAX_TIMEOUT_SECONDS = 120
+
+# [LAW:one-source-of-truth] Default timeouts are centralized in manager module.
+DEFAULT_TIMEOUT_BY_PURPOSE: dict[str, int] = {
+    purpose: DEFAULT_TIMEOUT_SECONDS for purpose in SIDE_CHANNEL_PURPOSES
+}
+DEFAULT_TIMEOUT_BY_PURPOSE.update({
+    "core_debug_lane": 30,
+    "conversation_qa": 90,
+    "compaction": 90,
+})
 
 
 @dataclass
@@ -52,6 +67,10 @@ class SideChannelManager:
         self._global_kill = False
         self._base_url: str = ""
         self._run_slots = threading.Semaphore(1)
+        self._purpose_enabled: dict[str, bool] = {}
+        self._timeout_overrides: dict[str, int] = {}
+        self._budget_caps: dict[str, int] = {}
+        self._usage_provider: Callable[[str], dict[str, int]] | None = None
 
     @property
     def enabled(self) -> bool:
@@ -73,6 +92,40 @@ class SideChannelManager:
         """Set max concurrent side-channel subprocesses (placeholder control)."""
         max_runs = max(1, int(value))
         self._run_slots = threading.Semaphore(max_runs)
+
+    def set_purpose_enabled_map(self, values: dict[str, object]) -> None:
+        """Set per-purpose enable controls (True/False per purpose)."""
+        self._purpose_enabled = {
+            normalize_purpose(str(key)): bool(val)
+            for key, val in values.items()
+        }
+
+    def set_timeout_overrides(self, values: dict[str, object]) -> None:
+        """Set per-purpose timeout overrides (seconds)."""
+        normalized: dict[str, int] = {}
+        for key, val in values.items():
+            try:
+                timeout = int(val)
+            except (TypeError, ValueError):
+                continue
+            normalized[normalize_purpose(str(key))] = max(1, min(MAX_TIMEOUT_SECONDS, timeout))
+        self._timeout_overrides = normalized
+
+    def set_budget_caps(self, values: dict[str, object]) -> None:
+        """Set per-purpose token caps; <=0 removes cap."""
+        normalized: dict[str, int] = {}
+        for key, val in values.items():
+            try:
+                cap = int(val)
+            except (TypeError, ValueError):
+                continue
+            if cap > 0:
+                normalized[normalize_purpose(str(key))] = cap
+        self._budget_caps = normalized
+
+    def set_usage_provider(self, provider: Callable[[str], dict[str, int]] | None) -> None:
+        """Inject analytics usage provider used for budget-cap checks."""
+        self._usage_provider = provider
 
     @property
     def global_kill(self) -> bool:
@@ -98,7 +151,7 @@ class SideChannelManager:
         *,
         prompt: str,
         purpose: str,
-        timeout: int = 60,
+        timeout: int | None = None,
         source_session_id: str = "",
         profile: str = "ephemeral_default",
         prompt_version: str = "v1",
@@ -113,10 +166,11 @@ class SideChannelManager:
         start = time.monotonic()
         run_id = uuid.uuid4().hex
         normalized_purpose = normalize_purpose(purpose)
+        effective_timeout = self._effective_timeout(normalized_purpose, timeout)
         if self._global_kill:
             return SideChannelResult(
                 text="",
-                error="Blocked by global side-channel kill switch",
+                error="Guardrail: blocked by global side-channel kill switch",
                 elapsed_ms=0,
                 run_id=run_id,
                 purpose=normalized_purpose,
@@ -126,7 +180,28 @@ class SideChannelManager:
         if not self._enabled:
             return SideChannelResult(
                 text="",
-                error="Side-channel disabled",
+                error="Guardrail: side-channel disabled",
+                elapsed_ms=0,
+                run_id=run_id,
+                purpose=normalized_purpose,
+                prompt_version=prompt_version,
+                profile=profile,
+            )
+        if not self._purpose_enabled.get(normalized_purpose, True):
+            return SideChannelResult(
+                text="",
+                error=f"Guardrail: purpose disabled ({normalized_purpose})",
+                elapsed_ms=0,
+                run_id=run_id,
+                purpose=normalized_purpose,
+                prompt_version=prompt_version,
+                profile=profile,
+            )
+        budget_err = self._budget_block_reason(normalized_purpose)
+        if budget_err:
+            return SideChannelResult(
+                text="",
+                error=f"Guardrail: {budget_err}",
                 elapsed_ms=0,
                 run_id=run_id,
                 purpose=normalized_purpose,
@@ -158,7 +233,7 @@ class SideChannelManager:
                 input=tagged_prompt,
                 capture_output=True,
                 text=True,
-                timeout=timeout,
+                timeout=effective_timeout,
                 env=env,
             )
             elapsed = int((time.monotonic() - start) * 1000)
@@ -186,7 +261,7 @@ class SideChannelManager:
             elapsed = int((time.monotonic() - start) * 1000)
             return SideChannelResult(
                 text="",
-                error=f"Timeout ({timeout}s)",
+                error=f"Timeout ({effective_timeout}s)",
                 elapsed_ms=elapsed,
                 run_id=run_id,
                 purpose=normalized_purpose,
@@ -210,6 +285,27 @@ class SideChannelManager:
             except ValueError:
                 # Release can fail only if acquisition didn't happen.
                 pass
+
+    def _effective_timeout(self, purpose: str, timeout_override: int | None) -> int:
+        if timeout_override is not None:
+            return max(1, min(MAX_TIMEOUT_SECONDS, int(timeout_override)))
+        default_timeout = DEFAULT_TIMEOUT_BY_PURPOSE.get(purpose, DEFAULT_TIMEOUT_SECONDS)
+        return self._timeout_overrides.get(purpose, default_timeout)
+
+    def _budget_block_reason(self, purpose: str) -> str | None:
+        cap = self._budget_caps.get(purpose, 0)
+        if cap <= 0 or self._usage_provider is None:
+            return None
+        usage = self._usage_provider(purpose) or {}
+        total = (
+            int(usage.get("input_tokens", 0))
+            + int(usage.get("cache_read_tokens", 0))
+            + int(usage.get("cache_creation_tokens", 0))
+            + int(usage.get("output_tokens", 0))
+        )
+        if total >= cap:
+            return f"budget cap reached for {purpose}: used={total} cap={cap}"
+        return None
 
 
 def _build_cmd(

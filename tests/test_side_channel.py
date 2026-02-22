@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import subprocess
+import threading
+import time
 from unittest.mock import patch, MagicMock
 
 from cc_dump.side_channel import SideChannelManager, SideChannelResult
@@ -150,6 +152,107 @@ class TestSideChannelManager:
             )
         assert result.purpose == "utility_custom"
 
+    def test_guardrail_blocks_disabled_purpose(self):
+        mgr = SideChannelManager()
+        mgr.set_purpose_enabled_map({"block_summary": False})
+        result = mgr.run(
+            prompt="test",
+            purpose="block_summary",
+            profile="ephemeral_default",
+        )
+        assert result.error is not None
+        assert "Guardrail" in result.error
+        assert "purpose disabled" in result.error
+
+    def test_guardrail_budget_cap_blocks_run(self):
+        mgr = SideChannelManager()
+        mgr.set_budget_caps({"block_summary": 10})
+        mgr.set_usage_provider(
+            lambda _purpose: {
+                "input_tokens": 6,
+                "cache_read_tokens": 2,
+                "cache_creation_tokens": 0,
+                "output_tokens": 3,
+            }
+        )
+        with patch("subprocess.run") as mock_run:
+            result = mgr.run(
+                prompt="test",
+                purpose="block_summary",
+                profile="ephemeral_default",
+            )
+        assert result.error is not None
+        assert "Guardrail:" in result.error
+        assert "budget cap reached" in result.error
+        mock_run.assert_not_called()
+
+    def test_run_uses_per_purpose_default_timeout_when_not_provided(self):
+        mgr = SideChannelManager()
+        mock_result = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            _ = mgr.run(
+                prompt="test",
+                purpose="core_debug_lane",
+                timeout=None,
+                profile="ephemeral_default",
+            )
+        assert mock_run.call_args.kwargs["timeout"] == 30
+
+    def test_run_uses_timeout_override_and_clamps_max(self):
+        mgr = SideChannelManager()
+        mgr.set_timeout_overrides({"block_summary": 7})
+        mock_result = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            _ = mgr.run(
+                prompt="test",
+                purpose="block_summary",
+                timeout=None,
+                profile="ephemeral_default",
+            )
+        assert mock_run.call_args.kwargs["timeout"] == 7
+
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            _ = mgr.run(
+                prompt="test",
+                purpose="block_summary",
+                timeout=9999,
+                profile="ephemeral_default",
+            )
+        assert mock_run.call_args.kwargs["timeout"] == 120
+
+    def test_max_concurrent_enforced(self):
+        mgr = SideChannelManager()
+        mgr.set_max_concurrent(1)
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+
+        def _slow_run(*_args, **_kwargs):
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.05)
+            with lock:
+                active -= 1
+            return MagicMock(returncode=0, stdout="ok", stderr="")
+
+        with patch("subprocess.run", side_effect=_slow_run):
+            threads = [
+                threading.Thread(
+                    target=lambda: mgr.run(
+                        prompt="x", purpose="block_summary", profile="ephemeral_default"
+                    )
+                )
+                for _ in range(3)
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+        assert max_active == 1
+
 
 # ─── DataDispatcher tests ────────────────────────────────────────────
 
@@ -209,6 +312,19 @@ class TestDataDispatcher:
         assert enriched.source == "error"
         assert "Timeout (60s)" in enriched.text
         assert "1 messages" in enriched.text  # fallback appended
+
+    def test_summarize_guardrail_error_returns_fallback_source(self):
+        result = SideChannelResult(
+            text="",
+            error="Guardrail: budget cap reached for block_summary: used=120 cap=100",
+            elapsed_ms=0,
+        )
+        dispatcher, _ = self._make_dispatcher(enabled=True, query_result=result)
+        messages = [{"role": "user", "content": "hello"}]
+        enriched = dispatcher.summarize_messages(messages)
+        assert enriched.source == "fallback"
+        assert "side-channel blocked" in enriched.text
+        assert "1 messages" in enriched.text
 
     def test_fallback_summary_empty(self):
         """Empty message list produces appropriate fallback."""

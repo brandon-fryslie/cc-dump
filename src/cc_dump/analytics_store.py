@@ -473,9 +473,9 @@ class AnalyticsStore:
             "models": model_rows,
         }
 
-    def get_side_channel_purpose_summary(self) -> dict[str, dict[str, int]]:
+    def get_side_channel_purpose_summary(self) -> dict[str, dict[str, object]]:
         """Aggregate side-channel token usage by purpose."""
-        summary: dict[str, dict[str, int]] = {}
+        summary: dict[str, dict[str, object]] = {}
         for turn in self._turns:
             if not turn.is_side_channel:
                 continue
