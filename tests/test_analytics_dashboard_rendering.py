@@ -26,6 +26,9 @@ def _snapshot() -> dict:
             "main_turns": 2,
             "subagent_turns": 1,
             "active_subagent_streams": 1,
+            "all_main_turns": 4,
+            "all_subagent_turns": 2,
+            "all_active_subagent_streams": 1,
         },
         "timeline": [
             {
@@ -78,6 +81,9 @@ def test_render_analytics_summary():
     assert "Models: 2 active" in text
     assert "2 main turns" in text
     assert "1 subagent turns" in text
+    assert "Lanes(active)" in text
+    assert "Lanes(all)" in text
+    assert "4 main turns" in text
     assert "Capacity: n/a" in text
 
 

@@ -158,6 +158,75 @@ class TestHotReloadMountSeam:
         app.mount.assert_awaited_once_with(new_conv, after=prev_widget)
 
 
+@pytest.mark.textual
+class TestHotReloadMultiSessionTabs:
+    async def test_replace_all_widgets_preserves_all_session_tabs(self):
+        from tests.harness import run_app
+        from cc_dump.tui import hot_reload_controller as hr
+
+        account_id = "11111111-2222-3333-4444-555555555555"
+        session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        session_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+        def _entry(session_id: str, user_text: str, assistant_text: str):
+            user_id = f"user_deadbeef_account_{account_id}_session_{session_id}"
+            req_body = {
+                "model": "claude-sonnet-4-5-20250929",
+                "max_tokens": 1024,
+                "metadata": {"user_id": user_id},
+                "messages": [{"role": "user", "content": user_text}],
+            }
+            complete = {
+                "id": f"msg-{session_id[:8]}",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet-4-5-20250929",
+                "content": [{"type": "text", "text": assistant_text}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            }
+            return (
+                {"content-type": "application/json"},
+                req_body,
+                200,
+                {"content-type": "application/json"},
+                complete,
+            )
+
+        replay_data = [
+            _entry(session_a, "session-a-request", "session-a-response"),
+            _entry(session_b, "session-b-request", "session-b-response"),
+        ]
+
+        async with run_app(replay_data=replay_data) as (pilot, app):
+            tabs = app._get_conv_tabs()
+            assert tabs is not None
+
+            tab_b = app._session_tab_ids[session_b]
+            tabs.active = tab_b
+            await pilot.pause()
+
+            old_conv_ids = {
+                session_a: id(app._get_conv(session_key=session_a)),
+                session_b: id(app._get_conv(session_key=session_b)),
+            }
+
+            await hr.replace_all_widgets(app)
+            await pilot.pause()
+
+            new_conv_a = app._get_conv(session_key=session_a)
+            new_conv_b = app._get_conv(session_key=session_b)
+            assert new_conv_a is not None
+            assert new_conv_b is not None
+            assert id(new_conv_a) != old_conv_ids[session_a]
+            assert id(new_conv_b) != old_conv_ids[session_b]
+
+            assert len(new_conv_a._turns) == 2
+            assert len(new_conv_b._turns) == 2
+            assert tabs.active == tab_b
+            assert app._domain_store is app._get_domain_store(session_b)
+
+
 # ============================================================================
 # UNIT TESTS — import validation, widget protocols, state, module structure
 # ============================================================================
@@ -370,6 +439,7 @@ class TestHotReloadPanelRehydrate:
         app = SimpleNamespace(
             _analytics_store=analytics_store,
             _domain_store=domain_store,
+            _iter_domain_stores=lambda: (domain_store,),
             _app_state={"last_message_time": "2026-02-22T12:00:00Z"},
             _session_id="session-123",
         )
@@ -382,7 +452,12 @@ class TestHotReloadPanelRehydrate:
 
         _rehydrate_panels_from_store(app, new_panels)
 
-        assert stats.calls == [(analytics_store, {"domain_store": domain_store})]
+        assert stats.calls == [
+            (
+                analytics_store,
+                {"domain_store": domain_store, "all_domain_stores": (domain_store,)},
+            )
+        ]
         assert economics.calls == [analytics_store]
         assert timeline.calls == [analytics_store]
         assert session.calls == [
@@ -406,13 +481,14 @@ class TestHotReloadPanelRehydrate:
         app = SimpleNamespace(
             _analytics_store=None,
             _domain_store=None,
+            _iter_domain_stores=lambda: (),
             _app_state={},
             _session_id=None,
         )
 
         _rehydrate_panels_from_store(app, {"stats": stats})
 
-        assert stats.calls == [(None, {"domain_store": None})]
+        assert stats.calls == [(None, {"domain_store": None, "all_domain_stores": ()})]
 
 
 class TestWidgetStatePreservation:

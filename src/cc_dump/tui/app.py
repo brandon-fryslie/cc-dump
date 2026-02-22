@@ -116,6 +116,7 @@ class AppState(TypedDict, total=False):
     pending_request_headers: dict[str, dict[str, str]]
     recent_messages: list[dict]
     last_message_time: float
+    last_message_time_by_session: dict[str, float]
     stream_registry: object
 
 
@@ -207,6 +208,7 @@ class CcDumpApp(App):
             "current_turn_usage": {},
             "current_turn_usage_by_request": {},
             "pending_request_headers": {},
+            "last_message_time_by_session": {},
         }
 
         self._search_state = cc_dump.tui.search.SearchState(self._view_store)
@@ -409,6 +411,30 @@ class CcDumpApp(App):
         ds = self._get_active_domain_store()
         self._view_store.set("streams:active", ds.get_active_stream_chips())
         self._view_store.set("streams:focused", ds.get_focused_stream_id() or "")
+
+    def _get_active_session_panel_state(self) -> tuple[str | None, float | None]:
+        """Return session panel identity + last activity for active tab context."""
+        active_key = self._active_session_key_from_tabs()
+        per_session = self._app_state.get("last_message_time_by_session", {})
+        last_message_time = None
+        if isinstance(per_session, dict):
+            raw_time = per_session.get(active_key)
+            if isinstance(raw_time, (int, float)):
+                last_message_time = float(raw_time)
+        if last_message_time is None:
+            raw_fallback = self._app_state.get("last_message_time")
+            if isinstance(raw_fallback, (int, float)):
+                last_message_time = float(raw_fallback)
+        if active_key != self._default_session_key:
+            return active_key, last_message_time
+        return self._session_id, last_message_time
+
+    def _active_resume_session_id(self) -> str:
+        """Resolve session_id used for launch auto-resume from active tab context."""
+        active_key = self._active_session_key_from_tabs()
+        if active_key and active_key != self._default_session_key:
+            return active_key
+        return str(self._session_id or "")
 
     def _get_conv(self, session_key: str | None = None):
         key = session_key if session_key is not None else self._active_session_key_from_tabs()
@@ -783,14 +809,26 @@ class CcDumpApp(App):
             view_state[f"full:{name}"] = self._view_store.get(f"full:{name}")
             view_state[f"exp:{name}"] = self._view_store.get(f"exp:{name}")
 
-        conv_state = {}
-        conv = self._get_conv()
-        if conv is not None:
-            conv_state = conv.get_state()
+        conversation_states: dict[str, dict] = {}
+        for session_key in self._session_conv_ids:
+            conv = self._get_conv(session_key=session_key)
+            if conv is None:
+                continue
+            conversation_states[session_key] = conv.get_state()
+        active_session_key = self._active_session_key_from_tabs()
+        conv_state = conversation_states.get(active_session_key, {})
+        if not conv_state:
+            conv = self._get_conv()
+            if conv is not None:
+                conv_state = conv.get_state()
 
         return {
             "view_store": view_state,
             "conv": conv_state,
+            "conversations": {
+                "states": conversation_states,
+                "active_session_key": active_session_key,
+            },
             "app": {
                 "show_logs": bool(self.show_logs),
                 "show_info": bool(self.show_info),
@@ -818,6 +856,34 @@ class CcDumpApp(App):
     def _apply_resume_ui_state_postload(self) -> None:
         """Apply conversation-view state after replay/live initial hydration."""
         state = self._resume_ui_state or {}
+        conversations = state.get("conversations", {})
+        if isinstance(conversations, dict):
+            states = conversations.get("states", {})
+            active_session_key = conversations.get("active_session_key", "")
+            restored_any = False
+            if isinstance(states, dict):
+                for session_key, conv_state in states.items():
+                    if not isinstance(session_key, str):
+                        continue
+                    if not isinstance(conv_state, dict) or not conv_state:
+                        continue
+                    self._ensure_session_surface(session_key)
+                    conv = self._get_conv(session_key=session_key)
+                    if conv is None:
+                        continue
+                    conv.restore_state(conv_state)
+                    conv.rerender(self.active_filters)
+                    restored_any = True
+            if isinstance(active_session_key, str) and active_session_key in self._session_tab_ids:
+                tabs = self._get_conv_tabs()
+                if tabs is not None:
+                    tabs.active = self._session_tab_ids[active_session_key]
+                self._active_session_key = active_session_key
+                self._domain_store = self._get_active_domain_store()
+            if restored_any:
+                self._sync_active_stream_footer()
+                return
+
         conv_state = state.get("conv", {})
         conv = self._get_conv()
         if conv is not None and isinstance(conv_state, dict) and conv_state:
@@ -924,6 +990,8 @@ class CcDumpApp(App):
             "filters": self.active_filters,
             "view_store": self._view_store if is_active_session else None,
             "domain_store": domain_store,
+            "stats_domain_store": self._get_active_domain_store(),
+            "all_domain_stores": self._iter_domain_stores(),
             "refresh_callbacks": {
                 "refresh_session": self._refresh_session,
             },
@@ -944,6 +1012,11 @@ class CcDumpApp(App):
         if request_id:
             resolved_key = self._session_key_for_request_id(request_id)
             self._ensure_session_surface(resolved_key)
+            per_session = self._app_state.get("last_message_time_by_session", {})
+            if not isinstance(per_session, dict):
+                per_session = {}
+            per_session[resolved_key] = time.monotonic()
+            self._app_state["last_message_time_by_session"] = per_session
 
         # // [LAW:one-source-of-truth] Session ID comes from formatting state,
         # not from blocks or app_state side-channels.
@@ -1053,7 +1126,7 @@ class CcDumpApp(App):
             self.notify("Tmux not available", severity="warning")
             return
         config = cc_dump.launch_config.get_active_config()
-        session_id = self._session_id if config.auto_resume else ""
+        session_id = self._active_resume_session_id() if config.auto_resume else ""
         command = cc_dump.launch_config.build_full_command(config, session_id)
         tmux.set_claude_command(config.claude_command)
         result = tmux.launch_claude(command=command)
@@ -1148,7 +1221,7 @@ class CcDumpApp(App):
             self.notify("Tmux not available", severity="warning")
             return
 
-        session_id = self._session_id if config.auto_resume else ""
+        session_id = self._active_resume_session_id() if config.auto_resume else ""
         command = cc_dump.launch_config.build_full_command(config, session_id)
         tmux.set_claude_command(config.claude_command)
         result = tmux.launch_claude(command=command)

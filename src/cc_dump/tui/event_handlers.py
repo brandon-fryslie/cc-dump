@@ -167,12 +167,15 @@ def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool =
     filters = widgets["filters"]
     refresh_callbacks = widgets.get("refresh_callbacks", {})
     analytics_store = widgets.get("analytics_store")
+    stats_domain_store = widgets.get("stats_domain_store", domain_store)
+    all_domain_stores = widgets.get("all_domain_stores")
 
     if analytics_store is not None:
         stats.refresh_from_store(
             analytics_store,
             current_turn=_current_turn_from_focus(app_state, domain_store),
-            domain_store=domain_store,
+            domain_store=stats_domain_store,
+            all_domain_stores=all_domain_stores if isinstance(all_domain_stores, tuple) else None,
         )
 
     if rerender_budget:
@@ -390,6 +393,8 @@ def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_s
 
         domain_store = widgets["domain_store"]
         stats = widgets["stats"]
+        stats_domain_store = widgets.get("stats_domain_store", domain_store)
+        all_domain_stores = widgets.get("all_domain_stores")
 
         domain_store.begin_stream(event.request_id, {
             "agent_kind": ctx.agent_kind,
@@ -417,7 +422,8 @@ def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_s
             stats.refresh_from_store(
                 analytics_store,
                 current_turn=_current_turn_from_focus(app_state, domain_store),
-                domain_store=domain_store,
+                domain_store=stats_domain_store,
+                all_domain_stores=all_domain_stores if isinstance(all_domain_stores, tuple) else None,
             )
         _sync_stream_footer(widgets)
     except Exception as e:

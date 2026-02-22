@@ -7,7 +7,9 @@
 Not hot-reloadable (mutates app widget tree).
 """
 
+from dataclasses import dataclass
 from textual.widgets import Header
+from typing import Protocol, cast
 
 import cc_dump.hot_reload
 import cc_dump.tui.rendering
@@ -34,6 +36,33 @@ from snarfx import EventStream
 _DEBOUNCE_S = 2.0  # Quiet period before reload fires
 
 _watcher_stream: EventStream | None = None
+
+
+class _ConversationWidget(Protocol):
+    id: str | None
+    parent: object
+
+    async def remove(self) -> object:
+        ...
+
+    def get_state(self) -> dict:
+        ...
+
+    def restore_state(self, state: dict) -> None:
+        ...
+
+    def rerender(self, filters: dict) -> None:
+        ...
+
+
+@dataclass(frozen=True)
+class _ConversationSwap:
+    session_key: str
+    conv_id: str
+    conv: _ConversationWidget
+    parent: object
+    state: dict
+    domain_store: object
 
 
 def stop_file_watcher() -> None:
@@ -239,16 +268,52 @@ async def _replace_all_widgets_inner(app) -> None:
     from cc_dump.tui.app import _resolve_factory
 
     # 1. Capture state from old widgets
-    old_conv = app._get_conv()
-    old_conv_parent = old_conv.parent if old_conv is not None else None
+    # // [LAW:one-source-of-truth] Conversation swap scope is owned by app._session_conv_ids.
+    session_conv_ids = getattr(app, "_session_conv_ids", {})
+    session_domain_stores = getattr(app, "_session_domain_stores", {})
+    old_conversations: list[_ConversationSwap] = []
+    if isinstance(session_conv_ids, dict) and session_conv_ids:
+        for session_key, conv_id in session_conv_ids.items():
+            old_conv = app._query_safe("#" + str(conv_id))
+            if old_conv is None:
+                continue
+            if isinstance(session_domain_stores, dict):
+                domain_store = session_domain_stores.get(session_key, getattr(app, "_domain_store", None))
+            else:
+                domain_store = getattr(app, "_domain_store", None)
+            conv_widget = cast(_ConversationWidget, old_conv)
+            old_conversations.append(
+                _ConversationSwap(
+                    session_key=str(session_key),
+                    conv_id=str(conv_id),
+                    conv=conv_widget,
+                    parent=conv_widget.parent,
+                    state=conv_widget.get_state(),
+                    domain_store=domain_store,
+                )
+            )
+    else:
+        old_conv = app._get_conv()
+        if old_conv is not None:
+            conv_widget = cast(_ConversationWidget, old_conv)
+            old_conversations.append(
+                _ConversationSwap(
+                    session_key="__default__",
+                    conv_id=str(getattr(app, "_conv_id", "conversation-view")),
+                    conv=conv_widget,
+                    parent=conv_widget.parent,
+                    state=conv_widget.get_state(),
+                    domain_store=getattr(app, "_domain_store", None),
+                )
+            )
+
     old_logs = app._get_logs()
     old_info = app._get_info()
     old_footer = app._get_footer()
 
-    if old_conv is None:
+    if not old_conversations:
         return  # Widgets already missing — nothing to replace
 
-    conv_state = old_conv.get_state()
     logs_state = old_logs.get_state() if old_logs else {}
     info_state = old_info.get_state() if old_info else {}
 
@@ -265,8 +330,20 @@ async def _replace_all_widgets_inner(app) -> None:
     info_visible = old_info.display if old_info else app.show_info
 
     # 2. Create ALL new widgets (without IDs yet — set after mounting).
-    new_conv = cc_dump.tui.widget_factory.create_conversation_view(view_store=app._view_store, domain_store=app._domain_store)
-    _validate_and_restore_widget_state(new_conv, conv_state, widget_name="ConversationView")
+    new_conversations: dict[str, _ConversationWidget] = {}
+    for payload in old_conversations:
+        session_key = payload.session_key
+        domain_store = payload.domain_store
+        new_conv = cc_dump.tui.widget_factory.create_conversation_view(
+            view_store=app._view_store,
+            domain_store=domain_store,
+        )
+        _validate_and_restore_widget_state(
+            new_conv,
+            payload.state,
+            widget_name=f"ConversationView:{session_key}",
+        )
+        new_conversations[session_key] = cast(_ConversationWidget, new_conv)
 
     # [LAW:one-source-of-truth] Create cycling panels from registry
     new_panels = {}
@@ -306,7 +383,8 @@ async def _replace_all_widgets_inner(app) -> None:
     app._view_store.set("panel:side_channel", False)
 
     # 3. Remove old widgets
-    await old_conv.remove()
+    for payload in old_conversations:
+        await payload.conv.remove()
     for spec in PANEL_REGISTRY:
         old_widget = old_panels[spec.name]
         if old_widget is not None:
@@ -319,9 +397,12 @@ async def _replace_all_widgets_inner(app) -> None:
         await old_footer.remove()
 
     # 4. Assign IDs, set visibility, and mount new widgets
-    new_conv.id = app._conv_id
     new_logs.id = app._logs_id
     new_info.id = app._info_id
+    for payload in old_conversations:
+        session_key = payload.session_key
+        conv_id = payload.conv_id
+        new_conversations[session_key].id = conv_id
 
     for spec in PANEL_REGISTRY:
         w = new_panels[spec.name]
@@ -338,13 +419,18 @@ async def _replace_all_widgets_inner(app) -> None:
         await app.mount(new_panels[spec.name], after=prev_widget)
         prev_widget = new_panels[spec.name]
 
-    await _mount_replacement_conversation(
-        app,
-        new_conv,
-        prev_widget=prev_widget,
-        old_conv_parent=old_conv_parent,
-    )
-    await app.mount(new_logs, after=new_conv)
+    for payload in old_conversations:
+        session_key = payload.session_key
+        await _mount_replacement_conversation(
+            app,
+            new_conversations[session_key],
+            prev_widget=prev_widget,
+            old_conv_parent=payload.parent,
+        )
+
+    conv_tabs = app._get_conv_tabs() if hasattr(app, "_get_conv_tabs") else None
+    mount_after = conv_tabs if conv_tabs is not None else prev_widget
+    await app.mount(new_logs, after=mount_after)
     await app.mount(new_info, after=new_logs)
 
     # StatusFooter is stateless — create fresh and hydrate from store
@@ -357,7 +443,13 @@ async def _replace_all_widgets_inner(app) -> None:
     )
 
     # 5. Re-render with current filters
-    new_conv.rerender(app.active_filters)
+    for new_conv in new_conversations.values():
+        new_conv.rerender(app.active_filters)
+    if hasattr(app, "_get_active_domain_store"):
+        # // [LAW:one-source-of-truth] Back-compat alias points at active session store.
+        app._domain_store = app._get_active_domain_store()
+    if hasattr(app, "_sync_active_stream_footer"):
+        app._sync_active_stream_footer()
     _rehydrate_panels_from_store(app, new_panels)
 
 
@@ -369,11 +461,19 @@ def _rehydrate_panels_from_store(app, new_panels: dict[str, object]) -> None:
     """
     analytics_store = getattr(app, "_analytics_store", None)
     domain_store = getattr(app, "_domain_store", None)
+    all_domain_stores = ()
+    iter_stores = getattr(app, "_iter_domain_stores", None)
+    if callable(iter_stores):
+        all_domain_stores = iter_stores()
     app_state = getattr(app, "_app_state", {})
 
     stats_panel = new_panels.get("stats")
     if stats_panel is not None:
-        stats_panel.refresh_from_store(analytics_store, domain_store=domain_store)
+        stats_panel.refresh_from_store(
+            analytics_store,
+            domain_store=domain_store,
+            all_domain_stores=all_domain_stores,
+        )
 
     economics_panel = new_panels.get("economics")
     if economics_panel is not None:

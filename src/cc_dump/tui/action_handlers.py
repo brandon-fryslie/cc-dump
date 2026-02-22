@@ -498,8 +498,12 @@ def refresh_panel(app, name: str) -> None:
     panel = app._get_panel(name)
     if panel is not None:
         # [LAW:dataflow-not-control-flow] Per-panel refresh kwargs via lookup table.
+        all_domain_stores = ()
+        iter_stores = getattr(app, "_iter_domain_stores", None)
+        if callable(iter_stores):
+            all_domain_stores = iter_stores()
         panel_kwargs = {
-            "stats": {"domain_store": _active_domain_store(app)},
+            "stats": {"domain_store": _active_domain_store(app), "all_domain_stores": all_domain_stores},
         }
         panel.refresh_from_store(app._analytics_store, **panel_kwargs.get(name, {}))
 
@@ -521,7 +525,12 @@ def refresh_session(app) -> None:
     panel = app._get_panel("session")
     if panel is None:
         return
+    if hasattr(app, "_get_active_session_panel_state"):
+        session_id, last_message_time = app._get_active_session_panel_state()
+    else:
+        session_id = app._session_id
+        last_message_time = app._app_state.get("last_message_time")
     panel.refresh_session_state(
-        session_id=app._session_id,
-        last_message_time=app._app_state.get("last_message_time"),
+        session_id=session_id,
+        last_message_time=last_message_time,
     )

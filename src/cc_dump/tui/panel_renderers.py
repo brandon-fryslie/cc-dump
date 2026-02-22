@@ -43,6 +43,11 @@ def render_analytics_summary(snapshot: dict) -> str:
     main_turns = int(summary.get("main_turns", 0))
     subagent_turns = int(summary.get("subagent_turns", 0))
     active_subagent_streams = int(summary.get("active_subagent_streams", 0))
+    all_main_turns = int(summary.get("all_main_turns", main_turns))
+    all_subagent_turns = int(summary.get("all_subagent_turns", subagent_turns))
+    all_active_subagent_streams = int(
+        summary.get("all_active_subagent_streams", active_subagent_streams)
+    )
     fresh_tokens = input_tokens
 
     lines = [
@@ -64,10 +69,15 @@ def render_analytics_summary(snapshot: dict) -> str:
             active_model_count,
             latest_model_label,
         ),
-        "  Lanes: {} main turns | {} subagent turns | {} active subagent streams".format(
+        "  Lanes(active): {} main turns | {} subagent turns | {} active subagent streams".format(
             main_turns,
             subagent_turns,
             active_subagent_streams,
+        ),
+        "  Lanes(all): {} main turns | {} subagent turns | {} active subagent streams".format(
+            all_main_turns,
+            all_subagent_turns,
+            all_active_subagent_streams,
         ),
     ]
 

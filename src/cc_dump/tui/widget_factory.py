@@ -1999,7 +1999,13 @@ class StatsPanel(Static):
 
         # Request/model tracking is retained for compatibility with existing handlers/tests.
 
-    def refresh_from_store(self, store, current_turn: dict = None, domain_store=None):
+    def refresh_from_store(
+        self,
+        store,
+        current_turn: dict = None,
+        domain_store=None,
+        all_domain_stores: tuple[object, ...] | None = None,
+    ):
         """Refresh dashboard data from analytics store.
 
         Args:
@@ -2024,12 +2030,31 @@ class StatsPanel(Static):
             completed_lane_counts = {"main": 0, "subagent": 0, "unknown": 0}
             active_lane_counts = {"main": 0, "subagent": 0, "unknown": 0}
 
+        # // [LAW:one-source-of-truth] Aggregate multi-session lane counts derive from all_domain_stores.
+        if all_domain_stores:
+            all_completed_lane_counts = {"main": 0, "subagent": 0, "unknown": 0}
+            all_active_lane_counts = {"main": 0, "subagent": 0, "unknown": 0}
+            for ds in all_domain_stores:
+                for lane, count in ds.get_completed_lane_counts().items():
+                    all_completed_lane_counts[lane] = all_completed_lane_counts.get(lane, 0) + int(count)
+                for lane, count in ds.get_active_lane_counts().items():
+                    all_active_lane_counts[lane] = all_active_lane_counts.get(lane, 0) + int(count)
+        else:
+            all_completed_lane_counts = dict(completed_lane_counts)
+            all_active_lane_counts = dict(active_lane_counts)
+
         summary["main_turns"] = int(completed_lane_counts.get("main", 0))
         summary["subagent_turns"] = int(completed_lane_counts.get("subagent", 0))
         summary["unknown_turns"] = int(completed_lane_counts.get("unknown", 0))
         summary["active_main_streams"] = int(active_lane_counts.get("main", 0))
         summary["active_subagent_streams"] = int(active_lane_counts.get("subagent", 0))
         summary["active_unknown_streams"] = int(active_lane_counts.get("unknown", 0))
+        summary["all_main_turns"] = int(all_completed_lane_counts.get("main", 0))
+        summary["all_subagent_turns"] = int(all_completed_lane_counts.get("subagent", 0))
+        summary["all_unknown_turns"] = int(all_completed_lane_counts.get("unknown", 0))
+        summary["all_active_main_streams"] = int(all_active_lane_counts.get("main", 0))
+        summary["all_active_subagent_streams"] = int(all_active_lane_counts.get("subagent", 0))
+        summary["all_active_unknown_streams"] = int(all_active_lane_counts.get("unknown", 0))
 
         # Optional local capacity baseline (not provided by API).
         capacity_raw = str(os.environ.get("CC_DUMP_TOKEN_CAPACITY", "") or "").strip()
