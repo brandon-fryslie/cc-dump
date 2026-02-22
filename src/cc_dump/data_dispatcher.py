@@ -56,10 +56,12 @@ from cc_dump.release_notes import (
     parse_release_notes_artifact,
     render_release_notes_markdown,
 )
+from cc_dump.side_channel_purpose import UTILITY_CUSTOM_PURPOSE
 from cc_dump.prompt_registry import get_prompt_spec, PromptSpec
 from cc_dump.side_channel import SideChannelManager
 from cc_dump.side_channel_analytics import SideChannelAnalytics
 from cc_dump.summary_cache import SummaryCache
+from cc_dump.utility_catalog import UtilityRegistry, UtilitySpec, fallback_utility_output, utility_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +141,15 @@ class ReleaseNotesResult:
     error: str = ""
 
 
+@dataclass
+class UtilityResult:
+    utility_id: str
+    text: str
+    source: str  # "ai" | "fallback" | "error"
+    elapsed_ms: int
+    error: str = ""
+
+
 class DataDispatcher:
     """Routes enrichment requests to AI or fallback.
 
@@ -157,6 +168,7 @@ class DataDispatcher:
         self._handoff_store = HandoffStore()
         self._incident_timeline_store = IncidentTimelineStore()
         self._release_notes_store = ReleaseNotesStore()
+        self._utility_registry = UtilityRegistry()
 
     def summarize_messages(self, messages: list[dict], source_session_id: str = "") -> EnrichedResult:
         """Summarize a list of API messages.
@@ -800,6 +812,67 @@ class DataDispatcher:
         if artifact is None:
             return "missing_release_notes_artifact:" + artifact_id
         return render_release_notes_markdown(artifact, variant=variant)
+
+    def list_utilities(self) -> list[UtilitySpec]:
+        return self._utility_registry.list()
+
+    def run_utility(
+        self,
+        messages: list[dict],
+        *,
+        utility_id: str,
+        source_session_id: str = "",
+    ) -> UtilityResult:
+        """Run registered lightweight utility with fallback behavior."""
+        spec = self._utility_registry.get(utility_id)
+        if spec is None:
+            return UtilityResult(
+                utility_id=utility_id,
+                text=f"Unknown utility: {utility_id}",
+                source="error",
+                elapsed_ms=0,
+                error="unknown utility",
+            )
+
+        fallback_text = fallback_utility_output(utility_id, messages)
+        if not self._side_channel.enabled:
+            return UtilityResult(
+                utility_id=utility_id,
+                text=fallback_text,
+                source="fallback",
+                elapsed_ms=0,
+            )
+
+        context = _build_summary_context(messages)
+        prompt = utility_prompt(spec, context)
+        profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
+        result = self._side_channel.run(
+            prompt=prompt,
+            purpose=UTILITY_CUSTOM_PURPOSE,
+            prompt_version=spec.version,
+            timeout=None,
+            source_session_id=source_session_id,
+            profile=profile,
+        )
+        self._analytics.record(purpose=result.purpose)
+        if result.error is not None:
+            source = "error"
+            if result.error.startswith("Guardrail:"):
+                logger.info("utility blocked: %s (%s)", utility_id, result.error)
+                source = "fallback"
+            return UtilityResult(
+                utility_id=utility_id,
+                text=fallback_text,
+                source=source,
+                elapsed_ms=result.elapsed_ms,
+                error=result.error,
+            )
+        return UtilityResult(
+            utility_id=utility_id,
+            text=result.text,
+            source="ai",
+            elapsed_ms=result.elapsed_ms,
+        )
 
 
 def _build_summary_context(messages: list[dict]) -> str:

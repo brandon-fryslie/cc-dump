@@ -861,3 +861,47 @@ class TestDataDispatcher:
             variant="technical",
         )
         assert "## technical changes" in rendered
+
+    def test_list_utilities_returns_registered_catalog(self):
+        dispatcher, _mgr, _cache = self._make_dispatcher(enabled=False)
+        utilities = dispatcher.list_utilities()
+        assert len(utilities) >= 3
+        assert any(spec.utility_id == "turn_title" for spec in utilities)
+
+    def test_run_utility_uses_ai_when_enabled(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        mgr.run = MagicMock(
+            return_value=SideChannelResult(
+                text="Debug lane rollout",
+                error=None,
+                elapsed_ms=11,
+                purpose="utility_custom",
+            )
+        )
+        result = dispatcher.run_utility(
+            [{"role": "assistant", "content": "implemented debug lane"}],
+            utility_id="turn_title",
+            source_session_id="sess-1",
+        )
+        assert result.source == "ai"
+        assert result.text == "Debug lane rollout"
+
+    def test_run_utility_falls_back_when_disabled(self):
+        dispatcher, mgr, _cache = self._make_dispatcher(enabled=False)
+        mgr.run = MagicMock()
+        result = dispatcher.run_utility(
+            [{"role": "assistant", "content": "implemented debug lane"}],
+            utility_id="turn_title",
+        )
+        assert result.source == "fallback"
+        assert result.text
+        mgr.run.assert_not_called()
+
+    def test_run_utility_unknown_id_returns_error(self):
+        dispatcher, _mgr, _cache = self._make_dispatcher(enabled=False)
+        result = dispatcher.run_utility(
+            [{"role": "assistant", "content": "implemented debug lane"}],
+            utility_id="not_real",
+        )
+        assert result.source == "error"
+        assert "Unknown utility" in result.text

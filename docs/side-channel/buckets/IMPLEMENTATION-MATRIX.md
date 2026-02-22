@@ -151,8 +151,10 @@ Implementation:
 - registered utility catalog (`utility_<name>`)
 - per-utility budget and purpose attribution
 
-Placeholder:
-- taxonomy ready; utility execution hooks deferred
+Implemented now:
+- canonical bounded utility registry with lifecycle metadata
+- first batch of 5 low-cost utilities
+- dispatcher utility execution path with deterministic fallbacks
 
 ## 14 Conversation Q&A textbox
 
