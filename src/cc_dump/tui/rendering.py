@@ -2748,6 +2748,8 @@ def _render_diff(diff_lines: list, indent: str) -> Text:
     specs = {
         "hunk": ("", "dim"),
         "add": ("+ ", tc.success),
+        "remove": ("- ", tc.error),
+        # // [LAW:locality-or-seam] Legacy support for pre-rename persisted tuples.
         "del": ("- ", tc.error),
     }
     t = Text()

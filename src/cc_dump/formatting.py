@@ -652,7 +652,7 @@ def track_content(content, position_key, state, indent="    "):
 def make_diff_lines(old_text, new_text):
     """Compute diff lines as (kind, text) tuples.
 
-    kind is one of: "hunk", "add", "del"
+    kind is one of: "hunk", "add", "remove"
     """
     old_lines = old_text.splitlines(keepends=True)
     new_lines = new_text.splitlines(keepends=True)
@@ -666,7 +666,7 @@ def make_diff_lines(old_text, new_text):
         elif line.startswith("+"):
             lines.append(("add", line[1:].rstrip()))
         elif line.startswith("-"):
-            lines.append(("del", line[1:].rstrip()))
+            lines.append(("remove", line[1:].rstrip()))
     return lines
 
 

@@ -718,7 +718,7 @@ def test_make_diff_lines_with_changes():
 
     # Check for hunk marker, deletions, and additions
     kinds = [kind for kind, _ in diff_lines]
-    assert "hunk" in kinds or "del" in kinds or "add" in kinds
+    assert "hunk" in kinds or "remove" in kinds or "add" in kinds
 
 
 def test_make_diff_lines_addition():
@@ -742,7 +742,7 @@ def test_make_diff_lines_deletion():
 
     # Should have deletion
     kinds = [kind for kind, _ in diff_lines]
-    assert "del" in kinds
+    assert "remove" in kinds
 
 
 def test_make_diff_lines_format():
@@ -757,7 +757,7 @@ def test_make_diff_lines_format():
         assert isinstance(item, tuple)
         assert len(item) == 2
         kind, text = item
-        assert kind in ("hunk", "add", "del")
+        assert kind in ("hunk", "add", "remove")
         assert isinstance(text, str)
 
 
