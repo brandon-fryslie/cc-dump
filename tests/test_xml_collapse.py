@@ -444,6 +444,49 @@ def test_region_parts_code_fence_default_threshold_from_env(monkeypatch):
     assert "▷ ```python```" in plain
 
 
+def test_region_parts_md_fence_long_defaults_collapsed():
+    """Long markdown fences default to collapsed."""
+    _setup_theme()
+    long_md = "\n".join(f"line_{i}" for i in range(20))
+    text = f"```\n{long_md}\n```"
+    block = TextContentBlock(content=text, category=Category.ASSISTANT)
+    populate_content_regions(block)
+
+    parts = _render_region_parts(block)
+    assert len(parts) == 1
+    plain = _render_to_text(parts[0][0])
+    assert "▷ ```md```" in plain
+    assert "20 lines" in plain
+
+
+def test_region_parts_md_fence_short_defaults_expanded():
+    """Short markdown fences remain expanded by default."""
+    _setup_theme()
+    text = "```\nline_1\nline_2\n```"
+    block = TextContentBlock(content=text, category=Category.ASSISTANT)
+    populate_content_regions(block)
+
+    parts = _render_region_parts(block)
+    assert len(parts) == 1
+    plain = _render_to_text(parts[0][0])
+    assert "▷ ```md```" not in plain
+    assert "line_1" in plain
+
+
+def test_region_parts_md_fence_default_threshold_from_env(monkeypatch):
+    """Markdown fence default expansion threshold can be tuned via env."""
+    _setup_theme()
+    monkeypatch.setenv("CC_DUMP_MD_FENCE_DEFAULT_EXPANDED_MAX_LINES", "1")
+    text = "```\nline_1\nline_2\n```"
+    block = TextContentBlock(content=text, category=Category.ASSISTANT)
+    populate_content_regions(block)
+
+    parts = _render_region_parts(block)
+    assert len(parts) == 1
+    plain = _render_to_text(parts[0][0])
+    assert "▷ ```md```" in plain
+
+
 def test_region_parts_xml_long_defaults_collapsed():
     """Long XML blocks default to collapsed without explicit override."""
     _setup_theme()
@@ -807,3 +850,8 @@ def test_collapsibility_guard_md_not_collapsible():
 def test_collapsibility_guard_code_fence_is_collapsible():
     """code_fence kind is in COLLAPSIBLE_REGION_KINDS."""
     assert "code_fence" in COLLAPSIBLE_REGION_KINDS
+
+
+def test_collapsibility_guard_md_fence_is_collapsible():
+    """md_fence kind is in COLLAPSIBLE_REGION_KINDS."""
+    assert "md_fence" in COLLAPSIBLE_REGION_KINDS

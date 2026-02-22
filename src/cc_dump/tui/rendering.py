@@ -72,7 +72,7 @@ META_TOGGLE_REGION = "toggle_region"
 
 # Region kinds that support click-to-collapse/expand.
 # FUTURE: consider md/other region kinds for collapse behavior
-COLLAPSIBLE_REGION_KINDS = frozenset({"xml_block", "tool_def", "code_fence"})
+COLLAPSIBLE_REGION_KINDS = frozenset({"xml_block", "tool_def", "code_fence", "md_fence"})
 
 
 # ─── Theme Colors ────────────────────────────────────────────────────────────
@@ -817,8 +817,26 @@ def _render_code_fence_collapsed(info: str | None, inner_text: str) -> Text:
     return t
 
 
+def _render_md_fence_collapsed(inner_text: str) -> Text:
+    """Render collapsed markdown fence as a compact one-line preview."""
+    line_count = len(inner_text.splitlines()) if inner_text else 0
+    preview = inner_text.strip().replace("\n", " ")
+    if len(preview) > 60:
+        preview = preview[:60] + "\u2026"
+
+    t = Text("  ")
+    t.append("▷ ```md```", style="bold dim")
+    if line_count:
+        t.append(f" ({line_count} lines)", style="dim")
+    if preview:
+        t.append(" ")
+        t.append(preview, style="dim")
+    return t
+
+
 _CODE_FENCE_DEFAULT_EXPANDED_MAX_LINES = 12
 _XML_BLOCK_DEFAULT_EXPANDED_MAX_LINES = 10
+_MD_FENCE_DEFAULT_EXPANDED_MAX_LINES = 14
 
 
 def _read_region_default_max_lines(env_key: str, default: int) -> int:
@@ -848,6 +866,15 @@ def _xml_block_default_expanded(inner_text: str) -> bool:
     max_lines = _read_region_default_max_lines(
         "CC_DUMP_XML_BLOCK_DEFAULT_EXPANDED_MAX_LINES",
         _XML_BLOCK_DEFAULT_EXPANDED_MAX_LINES,
+    )
+    return len(inner_text.splitlines()) <= max_lines
+
+
+def _md_fence_default_expanded(inner_text: str) -> bool:
+    """Default expansion policy for md_fence regions."""
+    max_lines = _read_region_default_max_lines(
+        "CC_DUMP_MD_FENCE_DEFAULT_EXPANDED_MAX_LINES",
+        _MD_FENCE_DEFAULT_EXPANDED_MAX_LINES,
     )
     return len(inner_text.splitlines()) <= max_lines
 
@@ -893,9 +920,22 @@ def _render_region_parts(
 
         elif sb.kind == cc_dump.segmentation.SubBlockKind.MD_FENCE:
             inner = text[sb.meta.inner_span.start : sb.meta.inner_span.end]
+            # // [LAW:one-source-of-truth] Region expanded state from overrides only.
+            region_exp = None
+            if overrides is not None and region is not None:
+                rvs = overrides._regions.get((block.block_id, region.index))
+                if rvs is not None:
+                    region_exp = rvs.expanded
+
+            default_expanded = _md_fence_default_expanded(inner)
+            is_expanded = default_expanded if region_exp is None else (region_exp is not False)
+
             wrapped = cc_dump.segmentation.wrap_tags_in_backticks(inner)
             if wrapped.strip():
-                parts.append((Markdown(wrapped, code_theme=tc.code_theme), region_idx))
+                if is_expanded:
+                    parts.append((Markdown(wrapped, code_theme=tc.code_theme), region_idx))
+                else:
+                    parts.append((_render_md_fence_collapsed(inner), region_idx))
 
         elif sb.kind == cc_dump.segmentation.SubBlockKind.CODE_FENCE:
             inner = text[sb.meta.inner_span.start : sb.meta.inner_span.end]
