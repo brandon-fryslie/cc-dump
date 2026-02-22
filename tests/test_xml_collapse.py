@@ -430,6 +430,38 @@ def test_region_parts_code_fence_short_defaults_expanded():
     assert "print('a')" in plain
 
 
+def test_region_parts_xml_long_defaults_collapsed():
+    """Long XML blocks default to collapsed without explicit override."""
+    _setup_theme()
+    inner = "\n".join(f"line_{i}" for i in range(14))
+    text = f"<thinking>\n{inner}\n</thinking>"
+    block = TextContentBlock(content=text, category=Category.ASSISTANT)
+    populate_content_regions(block)
+
+    parts = _render_region_parts(block)
+    assert len(parts) == 1
+    renderable, _ = parts[0]
+    plain = _render_to_text(renderable)
+    assert "▷" in plain
+    assert "<thinking>" in plain
+
+
+def test_region_parts_xml_short_defaults_expanded():
+    """Short XML blocks remain expanded by default."""
+    _setup_theme()
+    text = "<thinking>\nline_1\nline_2\n</thinking>"
+    block = TextContentBlock(content=text, category=Category.ASSISTANT)
+    populate_content_regions(block)
+
+    parts = _render_region_parts(block)
+    assert len(parts) == 1
+    renderable, _ = parts[0]
+    plain = _render_to_text(renderable)
+    assert "▷" not in plain
+    assert "▽ <thinking>" in plain
+    assert "line_1" in plain
+
+
 def test_region_parts_form_a_collapsed():
     """Form A collapsed: shows content preview from after open tag."""
     _setup_theme()
@@ -566,14 +598,20 @@ def test_xml_collapsed_fewer_strips():
     console = Console()
     filters = {"assistant": ALWAYS_VISIBLE}
 
-    # Expanded (default)
+    # Expanded (explicit override)
     block_expanded = TextContentBlock(content=text, category=Category.ASSISTANT)
     populate_content_regions(block_expanded)
+    xml_idx_expanded = next(
+        i for i, r in enumerate(block_expanded.content_regions) if r.kind == "xml_block"
+    )
+    expanded_overrides = ViewOverrides()
+    expanded_overrides.get_region(block_expanded.block_id, xml_idx_expanded).expanded = True
     strips_expanded, _, _ = render_turn_to_strips(
         blocks=[block_expanded],
         filters=filters,
         console=console,
         width=80,
+        overrides=expanded_overrides,
     )
 
     # Collapsed — populate regions then collapse XML via ViewOverrides
