@@ -10,18 +10,45 @@ The high level goals of this block rendering system are:
 - Progressive disclosure
 - Strong UX focus
 
-The specific goals for each VisState (of which 5 are currently defined, see next section):
+The goals for each VisState (of which 5 are currently defined, see next section):
 - Hidden: the block is completely hidden (no visibility)
   - This may change to displaying a single line to indicate a block exists, or that might become a 6th state
 - Summary Collapsed
   - Shows a short glanceable summary of the most critical information
+  - Potentially use side-channel Claude summary here
 - Summary Expanded
   - Shows a detailed summary of an expanded range of information
+  - Potentially use side-channel Claude summary here
 - Full Collapsed
   - Shows a snippet of the full content
 - Full Expanded
   - Shows the full content
   - These can be extremely long
+
+The top goal of this core feature is that we do NOT simply 'reuse the same renderers' for multiple levels.  That defeats the entire point of this system.
+The point of the system is to give users options that enables them to see the info they want at a variety of levels of detail, so they can get the gist or dig in as they need.
+
+Keeping that in mind, here are some general rules or guidelines:
+- Note: these mainly apply to content blocks that contain actual content, and aren't as strict for things like headers, new session block, role blocks, or other blocks which are structural
+  - If we CAN do something to improve usability, great. But we must balance consistency and not have wildly different headers at different levels. Differences should be much more subtle for blocks that serve as markers of ones location within the data
+- For everything that contains actual content 
+  - We should never, or almost never, be reusing the same renderer for both summary and full views at any level
+    - A summary is different by definition from the thing it summarizes.  a summary that is idential to the thing it's summarizing is not a summary
+  - We should strive for consistency between block types as well
+    - a collapsed summary should not be 90 lines on one block type and a single line on another
+    - We probably want something like 2-3 lines on a collapsed summary, 8 or less lines on a full summary, 5 or less lines on a collapsed full, and the expanded full is currently always the entire content
+- Rule: Expanded Full is always the full content
+  - Caveat: Blocks are heirarchical, and often contain blocks within other categories.  A block at 'full expanded' may contain blocks that are at 'collapsed summary'.  this is not a contradiction, this is by design.  When a user
+    wants to see 'all user blocks at full expanded' but has the 'tool' category hidden or at 'collapsed summary', they have intentionally gotten the tool blocks out of the way so they can use pure user blocks
+    Users might also collapse nested blocks within the same category intentionally.  Maybe they want all giant markdown files collapsed within user blocks, which are at full expanded.  Again, this is not a contradiction.  We provide the flexibility to show the data users choose and get irrelevant data out of thier way.  this is a good thing
+
+System, User, and Assistant blocks:
+- Each of these blocks should have their inner text content rendered identically
+- They contain a nested mix of XML, Markdown, and fenced code blocks (and potentially unfenced code blocks)
+- These are the most complicated blocks to render due to this (we must parse this out so we can collapse indiviudal sections)
+- these three should reuse the SAME renderer for "expanded full" and "probably collapsed full".  SUMMARIES should likely differ
+
+**Critical: the document below is WHAT EXISTS TODAY.  We will be updating it to reflect how we WANT the app to work on an ongoing basis.  This is NOT a reference document YET.**
 
 ## VisState
 

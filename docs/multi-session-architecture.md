@@ -74,6 +74,17 @@ This proposal defines how `cc-dump` moves from one active conversation stream to
   - optionally attach to existing matching session key.
 - Sidecar UI state becomes per-session (`<har>.ui.json` already compatible with this model).
 
+## Side-Channel Debug Lane (Integration)
+
+- Add `live:side-channel:<source-session-id>` session keys for side-channel runs.
+- Route side-channel-classified requests into that lane, never into the main `live:<session-id>` lane.
+- Reuse existing HAR/event pipeline; mark side-channel entries in HAR metadata (category + run/session flags).
+- Expose side-channel lane in session switcher for low-level inspection while preserving main-session cleanliness.
+
+`// [LAW:single-enforcer] Session classifier is the only place that assigns side-channel vs primary lanes.`
+`// [LAW:one-source-of-truth] Side-channel lane identity derives from session_key, not ad hoc widget state.`
+`// [LAW:one-way-deps] Conversation/debug widgets consume lane data; they do not decide routing.`
+
 ## Implementation Plan
 
 1. Session registry scaffold
@@ -102,6 +113,7 @@ This proposal defines how `cc-dump` moves from one active conversation stream to
 - Per-session filters/search/follow restore exactly after switching away and back.
 - Replay and live sessions can coexist simultaneously.
 - Existing single-session launch path works unchanged.
+- Side-channel requests appear only in side-channel lanes and never in primary lanes.
 
 ## Risks and Mitigations
 - Risk: session routing ambiguity for missing session ids.
@@ -117,4 +129,3 @@ This proposal defines how `cc-dump` moves from one active conversation stream to
   - Phase 2: visible session switcher.
   - Phase 3: multi-open replay/live.
 - No schema migration required for existing HAR files.
-
