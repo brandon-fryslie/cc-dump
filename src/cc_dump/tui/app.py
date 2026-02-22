@@ -24,7 +24,7 @@ from textual.app import App, ComposeResult, SystemCommand
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import Header
+from textual.widgets import Header, TabbedContent, TabPane
 from rich.style import Style
 
 
@@ -214,6 +214,8 @@ class CcDumpApp(App):
         self._error_log: list[str] = []
 
         self._conv_id = "conversation-view"
+        self._conv_tabs_id = "conversation-tabs"
+        self._conv_tab_main_id = "conversation-tab-main"
         self._search_bar_id = "search-bar"
         # [LAW:one-source-of-truth] Panel IDs derived from registry
         self._panel_ids = dict(PANEL_CSS_IDS)
@@ -396,9 +398,14 @@ class CcDumpApp(App):
             widget.id = self._panel_ids[spec.name]
             yield widget
 
-        conv = cc_dump.tui.widget_factory.create_conversation_view(view_store=self._view_store, domain_store=self._domain_store)
-        conv.id = self._conv_id
-        yield conv
+        with TabbedContent(id=self._conv_tabs_id):
+            with TabPane("Session", id=self._conv_tab_main_id):
+                conv = cc_dump.tui.widget_factory.create_conversation_view(
+                    view_store=self._view_store,
+                    domain_store=self._domain_store,
+                )
+                conv.id = self._conv_id
+                yield conv
 
         logs = cc_dump.tui.widget_factory.create_logs_panel()
         logs.id = self._logs_id
