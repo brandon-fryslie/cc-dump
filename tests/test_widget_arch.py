@@ -800,6 +800,36 @@ class TestIncrementalOffsets:
         assert key2 not in conv._line_cache
         assert key3 not in conv._line_cache
 
+    def test_prune_line_cache_index_removes_stale_keys(self):
+        """Stale turn-key index entries are pruned against live LRU keys."""
+        conv = ConversationView()
+        live_key = ("live", 0)
+        stale_key = ("stale", 0)
+
+        conv._line_cache[live_key] = Strip.blank(10)
+        conv._cache_keys_by_turn = {
+            0: {live_key, stale_key},
+            1: {stale_key},
+        }
+
+        conv._prune_line_cache_index()
+
+        assert conv._cache_keys_by_turn == {0: {live_key}}
+
+    def test_clear_line_cache_clears_index(self):
+        """Clearing line cache also clears turn-key index and write counter."""
+        conv = ConversationView()
+        key = ("line", 0)
+        conv._line_cache[key] = Strip.blank(10)
+        conv._cache_keys_by_turn = {0: {key}}
+        conv._line_cache_index_write_count = 17
+
+        conv._clear_line_cache()
+
+        assert len(conv._line_cache) == 0
+        assert conv._cache_keys_by_turn == {}
+        assert conv._line_cache_index_write_count == 0
+
     def test_incremental_from_zero_matches_full(self):
         """_recalculate_offsets_from(0) is identical to _recalculate_offsets()."""
         from textual.strip import Strip

@@ -251,6 +251,8 @@ class ConversationView(ScrollView):
         self._cache_keys_by_turn: dict[
             int, set[tuple]
         ] = {}  # Track cache keys per turn
+        self._line_cache_index_write_count: int = 0
+        self._line_cache_index_prune_interval: int = 256
         self._last_filters: dict = {}
         self._last_width: int = 78
         self._last_search_ctx = None  # Store search context for lazy rerenders
@@ -403,6 +405,10 @@ class ConversationView(ScrollView):
             if turn_idx not in self._cache_keys_by_turn:
                 self._cache_keys_by_turn[turn_idx] = set()
             self._cache_keys_by_turn[turn_idx].add(key)
+            self._line_cache_index_write_count += 1
+            if self._line_cache_index_write_count >= self._line_cache_index_prune_interval:
+                self._line_cache_index_write_count = 0
+                self._prune_line_cache_index()
 
             # Apply overlay AFTER cache (viewport-relative, must not be cached)
             strip = cc_dump.tui.error_indicator.composite_overlay(
@@ -493,7 +499,7 @@ class ConversationView(ScrollView):
 
     def selection_updated(self, selection: Selection | None) -> None:
         """Invalidate cache when selection changes."""
-        self._line_cache.clear()
+        self._clear_line_cache()
         self.refresh()
 
     def _find_turn_for_line(self, line_y: int) -> TurnData | None:
@@ -682,14 +688,31 @@ class ConversationView(ScrollView):
             if not self._is_following:
                 self._resolve_anchor()
 
+    def _clear_line_cache(self) -> None:
+        """Clear line cache and its turn-key index together."""
+        # // [LAW:single-enforcer] Cache + index invalidation is centralized here.
+        self._line_cache.clear()
+        self._cache_keys_by_turn.clear()
+        self._line_cache_index_write_count = 0
+
+    def _prune_line_cache_index(self) -> None:
+        """Drop stale index keys that no longer exist in LRU line cache."""
+        live_keys = set(self._line_cache.keys())
+        stale_turns: list[int] = []
+        for turn_idx, keys in self._cache_keys_by_turn.items():
+            keys.intersection_update(live_keys)
+            if not keys:
+                stale_turns.append(turn_idx)
+        for turn_idx in stale_turns:
+            self._cache_keys_by_turn.pop(turn_idx, None)
+
     def _invalidate_cache_for_turns(self, start_idx: int, end_idx: int | None = None) -> None:
         """Drop line-cache entries for turns in [start_idx, end_idx).
 
         // [LAW:single-enforcer] Range invalidation for line cache happens only here.
         """
         if start_idx <= 0:
-            self._line_cache.clear()
-            self._cache_keys_by_turn.clear()
+            self._clear_line_cache()
             return
 
         upper = len(self._turns) if end_idx is None else min(end_idx, len(self._turns))
@@ -1758,7 +1781,7 @@ class ConversationView(ScrollView):
         self._indicator.items = items
         if not items:
             self._indicator.expanded = False
-        self._line_cache.clear()
+        self._clear_line_cache()
         self.refresh()
 
     def on_mouse_move(self, event) -> None:
@@ -1772,7 +1795,7 @@ class ConversationView(ScrollView):
         )
         if hit != self._indicator.expanded:
             self._indicator.expanded = hit
-            self._line_cache.clear()
+            self._clear_line_cache()
             self.refresh()
 
     # ─── State management ────────────────────────────────────────────────────
