@@ -161,12 +161,16 @@ FOOTER_KEYS: dict[InputMode, list[tuple[str, str]]] = {
     ],
     InputMode.SEARCH_EDIT: [
         ("enter", "search"),
+        ("^A/^E", "home/end"),
+        ("^W", "del-word"),
         ("esc", "keep"),
         ("q", "cancel"),
         ("alt+c/w/r/i", "modes"),
     ],
     InputMode.SEARCH_NAV: [
         ("n/N", "next/prev"),
+        ("^N/^P", "next/prev"),
+        ("tab/S-tab", "next/prev"),
         ("/", "edit"),
         ("esc", "keep"),
         ("q", "cancel"),

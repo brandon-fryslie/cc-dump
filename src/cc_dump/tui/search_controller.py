@@ -13,6 +13,115 @@ import cc_dump.tui.location_navigation
 from cc_dump.tui.category_config import CATEGORY_CONFIG
 
 
+def _move_word_left(query: str, cursor_pos: int) -> int:
+    """Return cursor position after moving one word left."""
+    i = cursor_pos
+    while i > 0 and query[i - 1].isspace():
+        i -= 1
+    while i > 0 and not query[i - 1].isspace():
+        i -= 1
+    return i
+
+
+def _move_word_right(query: str, cursor_pos: int) -> int:
+    """Return cursor position after moving one word right."""
+    i = cursor_pos
+    n = len(query)
+    while i < n and query[i].isspace():
+        i += 1
+    while i < n and not query[i].isspace():
+        i += 1
+    return i
+
+
+def _delete_prev_word(query: str, cursor_pos: int) -> tuple[str, int]:
+    """Delete the word before cursor and return (query, cursor)."""
+    start = _move_word_left(query, cursor_pos)
+    return (query[:start] + query[cursor_pos:], start)
+
+
+def _apply_edit_action(state, action: str) -> tuple[bool, bool]:
+    """Apply an editing action.
+
+    Returns (text_changed, cursor_changed).
+    """
+    query = state.query
+    cursor = state.cursor_pos
+
+    # [LAW:dataflow-not-control-flow] Action dispatch by value, not nested branches.
+    if action == "backspace":
+        if cursor <= 0:
+            return (False, False)
+        state.query = query[: cursor - 1] + query[cursor:]
+        state.cursor_pos = cursor - 1
+        return (True, True)
+    if action == "delete":
+        if cursor >= len(query):
+            return (False, False)
+        state.query = query[:cursor] + query[cursor + 1 :]
+        return (True, False)
+    if action == "left":
+        if cursor <= 0:
+            return (False, False)
+        state.cursor_pos = cursor - 1
+        return (False, True)
+    if action == "right":
+        if cursor >= len(query):
+            return (False, False)
+        state.cursor_pos = cursor + 1
+        return (False, True)
+    if action == "home":
+        if cursor == 0:
+            return (False, False)
+        state.cursor_pos = 0
+        return (False, True)
+    if action == "end":
+        end = len(query)
+        if cursor == end:
+            return (False, False)
+        state.cursor_pos = end
+        return (False, True)
+    if action == "word_left":
+        next_cursor = _move_word_left(query, cursor)
+        if next_cursor == cursor:
+            return (False, False)
+        state.cursor_pos = next_cursor
+        return (False, True)
+    if action == "word_right":
+        next_cursor = _move_word_right(query, cursor)
+        if next_cursor == cursor:
+            return (False, False)
+        state.cursor_pos = next_cursor
+        return (False, True)
+    if action == "delete_prev_word":
+        if cursor <= 0:
+            return (False, False)
+        next_query, next_cursor = _delete_prev_word(query, cursor)
+        state.query = next_query
+        state.cursor_pos = next_cursor
+        return (True, True)
+    if action == "kill_to_start":
+        if cursor <= 0:
+            return (False, False)
+        state.query = query[cursor:]
+        state.cursor_pos = 0
+        return (True, True)
+    if action == "kill_to_end":
+        if cursor >= len(query):
+            return (False, False)
+        state.query = query[:cursor]
+        return (True, False)
+    return (False, False)
+
+
+def _post_search_edit(app, *, text_changed: bool, cursor_changed: bool) -> None:
+    """Run shared post-edit side effects for search query editing."""
+    if text_changed or cursor_changed:
+        update_search_bar(app)
+    if text_changed and app._search_state.modes & cc_dump.tui.search.SearchMode.INCREMENTAL:
+        schedule_incremental_search(app)
+
+
 def start_search(app) -> None:
     """Transition: INACTIVE → EDITING. Save filter state and scroll position."""
     SearchPhase = cc_dump.tui.search.SearchPhase
@@ -62,6 +171,31 @@ def handle_search_editing_key(app, event) -> None:
             schedule_incremental_search(app)
         return
 
+    # Editing actions and aliases.
+    _EDIT_ACTIONS = {
+        "backspace": "backspace",
+        "ctrl+h": "backspace",
+        "delete": "delete",
+        "ctrl+d": "delete",
+        "left": "left",
+        "right": "right",
+        "home": "home",
+        "ctrl+a": "home",
+        "end": "end",
+        "ctrl+e": "end",
+        "alt+b": "word_left",
+        "alt+f": "word_right",
+        "ctrl+w": "delete_prev_word",
+        "alt+backspace": "delete_prev_word",
+        "ctrl+u": "kill_to_start",
+        "ctrl+k": "kill_to_end",
+    }
+    action = _EDIT_ACTIONS.get(key)
+    if action is not None:
+        text_changed, cursor_changed = _apply_edit_action(state, action)
+        _post_search_edit(app, text_changed=text_changed, cursor_changed=cursor_changed)
+        return
+
     # Submit
     if key == "enter":
         commit_search(app)
@@ -75,52 +209,6 @@ def handle_search_editing_key(app, event) -> None:
     # Exit search - restore original position
     if key == "q":
         exit_search_restore_position(app)
-        return
-
-    # Backspace
-    if key == "backspace":
-        if state.cursor_pos > 0:
-            state.query = (
-                state.query[: state.cursor_pos - 1] + state.query[state.cursor_pos :]
-            )
-            state.cursor_pos -= 1
-            update_search_bar(app)
-            if state.modes & SearchMode.INCREMENTAL:
-                schedule_incremental_search(app)
-        return
-
-    # Delete
-    if key == "delete":
-        if state.cursor_pos < len(state.query):
-            state.query = (
-                state.query[: state.cursor_pos] + state.query[state.cursor_pos + 1 :]
-            )
-            update_search_bar(app)
-            if state.modes & SearchMode.INCREMENTAL:
-                schedule_incremental_search(app)
-        return
-
-    # Cursor movement
-    if key == "left":
-        if state.cursor_pos > 0:
-            state.cursor_pos -= 1
-            update_search_bar(app)
-        return
-
-    if key == "right":
-        if state.cursor_pos < len(state.query):
-            state.cursor_pos += 1
-            update_search_bar(app)
-        return
-
-    if key == "home":
-        state.cursor_pos = 0
-        update_search_bar(app)
-        return
-
-    if key == "end":
-        state.cursor_pos = len(state.query)
-        update_search_bar(app)
         return
 
     # Printable character
@@ -146,11 +234,11 @@ def handle_search_nav_special_keys(app, event) -> bool:
     key = event.key
 
     # Navigate next/prev
-    if key == "n" or key == "enter":
+    if key in {"n", "enter", "ctrl+n", "tab"}:
         navigate_next(app)
         return True
 
-    if key == "N":
+    if key in {"N", "ctrl+p", "shift+tab"}:
         navigate_prev(app)
         return True
 
