@@ -13,9 +13,9 @@ from snarfx import textual as stx
 
 
 class TestSchema:
-    def test_schema_has_40_keys(self):
-        # 6 categories × 3 axes + 5 panel/follow + 9 footer + 4 side-channel + 4 search
-        assert len(cc_dump.view_store.SCHEMA) == 40
+    def test_schema_has_41_keys(self):
+        # 6 categories × 3 axes + 5 panel/follow + 9 footer + 5 side-channel + 4 search
+        assert len(cc_dump.view_store.SCHEMA) == 41
 
     def test_schema_keys_from_category_config(self):
         for _, name, _, _ in CATEGORY_CONFIG:
@@ -280,6 +280,7 @@ class TestReconcileWithNewKeys:
         assert store.get("streams:focused") == ""
         assert store.get("streams:view") == "focused"
         assert store.get("sc:loading") is False
+        assert store.get("sc:purpose_usage") == {}
 
 
 class TestFooterStateComputed:
@@ -378,14 +379,17 @@ class TestScPanelStateComputed:
         assert state["result_text"] == ""
         assert state["result_source"] == ""
         assert state["result_elapsed_ms"] == 0
+        assert state["purpose_usage"] == {}
 
     def test_updates_from_store(self):
         store = cc_dump.view_store.create()
         store.set("sc:loading", True)
         store.set("sc:result_text", "summary")
+        store.set("sc:purpose_usage", {"block_summary": {"turns": 1}})
         state = store.sc_panel_state.get()
         assert state["loading"] is True
         assert state["result_text"] == "summary"
+        assert state["purpose_usage"] == {"block_summary": {"turns": 1}}
 
 
 class TestFooterReaction:

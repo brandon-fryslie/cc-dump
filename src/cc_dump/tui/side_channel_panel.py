@@ -25,6 +25,7 @@ class SideChannelPanelState:
     result_text: str
     result_source: str  # "ai" | "fallback" | "error" | ""
     result_elapsed_ms: int
+    purpose_usage: dict[str, dict[str, int]]
 
 
 class SideChannelPanel(Widget):
@@ -79,16 +80,22 @@ class SideChannelPanel(Widget):
         color: $text-muted;
         margin-top: 1;
     }
+
+    SideChannelPanel #sc-usage {
+        margin-top: 1;
+        color: $text-muted;
+    }
     """
 
     def compose(self) -> ComposeResult:
-        yield Static("AI Side Channeasdfasdfl", id="sc-title")
+        yield Static("AI Side Channel", id="sc-title")
         yield Static("Status: Enabled", id="sc-status")
         yield Chip(" Summarize Last 10 Messages ", action="app.sc_summarize", id="sc-summarize")
         yield Chip(" Toggle AI ", action="app.sc_toggle", id="sc-toggle")
         with VerticalScroll(id="sc-result-scroll"):
             yield Static("", id="sc-result")
         yield Static("", id="sc-meta")
+        yield Static("Purpose usage: (none)", id="sc-usage")
 
     def update_display(self, state: SideChannelPanelState) -> None:
         """Update child widgets from state."""
@@ -118,6 +125,9 @@ class SideChannelPanel(Widget):
             parts.append(f"{state.result_elapsed_ms}ms")
         meta.update("  ".join(parts))
 
+        usage = self.query_one("#sc-usage", Static)
+        usage.update(_render_purpose_usage(state.purpose_usage))
+
     def get_state(self) -> dict:
         return {}  # Stateless
 
@@ -128,3 +138,29 @@ class SideChannelPanel(Widget):
 def create_side_channel_panel() -> SideChannelPanel:
     """Create a new SideChannelPanel instance."""
     return SideChannelPanel()
+
+
+def _render_purpose_usage(usage: dict[str, dict[str, int]]) -> str:
+    if not usage:
+        return "Purpose usage: (none)"
+    rows: list[str] = ["Purpose usage:"]
+    ordered = sorted(
+        usage.items(),
+        key=lambda item: (
+            -int(item[1].get("turns", 0)),
+            -int(item[1].get("input_tokens", 0)),
+            item[0],
+        ),
+    )
+    for purpose, row in ordered:
+        rows.append(
+            "  {}  runs={}  in={}  cache_read={}  cache_create={}  out={}".format(
+                purpose,
+                int(row.get("turns", 0)),
+                int(row.get("input_tokens", 0)),
+                int(row.get("cache_read_tokens", 0)),
+                int(row.get("cache_creation_tokens", 0)),
+                int(row.get("output_tokens", 0)),
+            )
+        )
+    return "\n".join(rows)

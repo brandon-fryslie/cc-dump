@@ -137,6 +137,18 @@ class TestSideChannelManager:
         assert "--resume" in cmd
         assert "--fork-session" in cmd
 
+    def test_unknown_purpose_normalized_to_utility_custom(self):
+        mgr = SideChannelManager()
+        mock_result = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("subprocess.run", return_value=mock_result):
+            result = mgr.run(
+                prompt="test",
+                purpose="nonexistent_purpose",
+                source_session_id="",
+                profile="ephemeral_default",
+            )
+        assert result.purpose == "utility_custom"
+
 
 # ─── DataDispatcher tests ────────────────────────────────────────────
 

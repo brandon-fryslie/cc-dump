@@ -19,20 +19,7 @@ import uuid
 from dataclasses import dataclass
 
 from cc_dump.side_channel_marker import SideChannelMarker, prepend_marker
-
-
-SIDE_CHANNEL_PURPOSES: tuple[str, ...] = (
-    "core_debug_lane",
-    "block_summary",
-    "decision_ledger",
-    "action_extraction",
-    "handoff_note",
-    "release_notes",
-    "incident_timeline",
-    "conversation_qa",
-    "checkpoint_summary",
-    "compaction",
-)
+from cc_dump.side_channel_purpose import normalize_purpose
 
 
 @dataclass
@@ -122,7 +109,7 @@ class SideChannelManager:
         """
         start = time.monotonic()
         run_id = uuid.uuid4().hex
-        normalized_purpose = _normalize_purpose(purpose)
+        normalized_purpose = normalize_purpose(purpose)
         if self._global_kill:
             return SideChannelResult(
                 text="",
@@ -213,10 +200,6 @@ class SideChannelManager:
             except ValueError:
                 # Release can fail only if acquisition didn't happen.
                 pass
-
-
-def _normalize_purpose(purpose: str) -> str:
-    return purpose if purpose in SIDE_CHANNEL_PURPOSES else "utility_custom"
 
 
 def _build_cmd(

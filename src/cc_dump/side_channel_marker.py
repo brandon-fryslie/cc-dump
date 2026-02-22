@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from cc_dump.side_channel_purpose import normalize_purpose
+
 MARKER_PREFIX = "<<CC_DUMP_SIDE_CHANNEL:"
 MARKER_SUFFIX = ">>"
 
@@ -131,9 +133,10 @@ def _parse_marker_text(text: str) -> SideChannelMarker | None:
         return None
     if not isinstance(source_session_id, str):
         source_session_id = ""
+    normalized_purpose = normalize_purpose(purpose)
     return SideChannelMarker(
         run_id=run_id,
-        purpose=purpose,
+        purpose=normalized_purpose,
         source_session_id=source_session_id,
     )
 
@@ -149,4 +152,3 @@ def _strip_marker_text(text: str) -> str:
     if remainder.startswith("\n"):
         remainder = remainder[1:]
     return remainder
-

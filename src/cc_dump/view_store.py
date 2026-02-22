@@ -47,6 +47,7 @@ SCHEMA["sc:loading"] = False
 SCHEMA["sc:result_text"] = ""
 SCHEMA["sc:result_source"] = ""
 SCHEMA["sc:result_elapsed_ms"] = 0
+SCHEMA["sc:purpose_usage"] = {}
 
 # Search identity state — survives hot-reload via reconcile
 # // [LAW:one-source-of-truth] String, not SearchPhase enum — stable across reloads.
@@ -121,6 +122,7 @@ def create():
             "result_text": store.get("sc:result_text"),
             "result_source": store.get("sc:result_source"),
             "result_elapsed_ms": store.get("sc:result_elapsed_ms"),
+            "purpose_usage": store.get("sc:purpose_usage"),
         }
 
     store.sc_panel_state = sc_panel_state

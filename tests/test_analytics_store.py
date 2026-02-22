@@ -611,3 +611,26 @@ def test_side_channel_summary_excludes_primary_turns():
         )
     )
     assert store.get_side_channel_purpose_summary() == {}
+
+
+def test_side_channel_summary_normalizes_unknown_purpose():
+    store = AnalyticsStore()
+    marker = '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"r9","purpose":"weird_custom_label","source_session_id":"s1"}>>\n'
+    request = {
+        "model": "claude-haiku-4-5",
+        "messages": [{"role": "user", "content": marker + "Do work"}],
+    }
+    store.on_event(RequestBodyEvent(body=request, request_id="req-9"))
+    store.on_event(
+        ResponseCompleteEvent(
+            body={
+                "model": "claude-haiku-4-5",
+                "usage": {"input_tokens": 3, "output_tokens": 2},
+                "stop_reason": "end_turn",
+            },
+            request_id="req-9",
+        )
+    )
+    summary = store.get_side_channel_purpose_summary()
+    assert "utility_custom" in summary
+    assert summary["utility_custom"]["turns"] == 1

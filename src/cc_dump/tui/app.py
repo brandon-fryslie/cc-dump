@@ -1321,6 +1321,8 @@ class CcDumpApp(App):
             self._view_store.set("sc:result_text", "")
             self._view_store.set("sc:result_source", "")
             self._view_store.set("sc:result_elapsed_ms", 0)
+            self._view_store.set("sc:purpose_usage", {})
+        self._refresh_side_channel_usage()
         # Initial hydration — reaction may not fire if values unchanged from defaults
         panel.update_display(
             cc_dump.tui.side_channel_panel.SideChannelPanelState(
@@ -1367,6 +1369,19 @@ class CcDumpApp(App):
             self._view_store.set("sc:result_text", result.text)
             self._view_store.set("sc:result_source", result.source)
             self._view_store.set("sc:result_elapsed_ms", result.elapsed_ms)
+        self._refresh_side_channel_usage()
+
+    def _refresh_side_channel_usage(self) -> None:
+        """Project canonical side-channel purpose usage into the panel state.
+
+        // [LAW:one-source-of-truth] AnalyticsStore remains canonical source for usage totals.
+        """
+        usage = (
+            self._analytics_store.get_side_channel_purpose_summary()
+            if self._analytics_store is not None
+            else {}
+        )
+        self._view_store.set("sc:purpose_usage", usage)
 
     def _collect_recent_messages(self, count: int) -> list[dict]:
         """Extract last N messages from captured API traffic."""

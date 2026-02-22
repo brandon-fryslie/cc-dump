@@ -69,3 +69,16 @@ def test_encode_marker_has_expected_delimiters():
     assert encoded.startswith("<<CC_DUMP_SIDE_CHANNEL:")
     assert encoded.endswith(">>")
 
+
+def test_extract_marker_normalizes_unknown_purpose_to_utility_custom():
+    body = {
+        "messages": [
+            {
+                "role": "user",
+                "content": '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"abc","purpose":"unknown_x","source_session_id":"s1"}>>\nhello',
+            }
+        ]
+    }
+    parsed = extract_marker(body)
+    assert parsed is not None
+    assert parsed.purpose == "utility_custom"

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from cc_dump.side_channel_purpose import normalize_purpose
+
 
 @dataclass(frozen=True)
 class PromptSpec:
@@ -83,12 +85,12 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
 
 def get_prompt_spec(purpose: str) -> PromptSpec:
     """Return prompt spec for purpose with utility fallback."""
-    spec = PROMPT_REGISTRY.get(purpose)
+    canonical_purpose = normalize_purpose(purpose)
+    spec = PROMPT_REGISTRY.get(canonical_purpose)
     if spec is not None:
         return spec
     return PromptSpec(
-        purpose=purpose,
+        purpose=canonical_purpose,
         version="v1",
         instruction="Process the provided context according to the request.",
     )
-
