@@ -39,6 +39,7 @@ import cc_dump.tui.input_modes
 import cc_dump.tui.info_panel
 import cc_dump.tui.custom_footer
 import cc_dump.tui.session_panel
+import cc_dump.tui.workbench_results_view
 
 # Extracted controller modules (module-object imports — safe for hot-reload)
 from cc_dump.tui import action_handlers as _actions
@@ -222,6 +223,8 @@ class CcDumpApp(App):
         self._conv_id = "conversation-view"
         self._conv_tabs_id = "conversation-tabs"
         self._conv_tab_main_id = "conversation-tab-main"
+        self._workbench_tab_id = "conversation-tab-workbench"
+        self._workbench_view_id = "workbench-results-view"
         self._search_bar_id = "search-bar"
         self._default_session_key = "__default__"
         # // [LAW:one-source-of-truth] Request/session routing ownership lives in app state.
@@ -466,6 +469,15 @@ class CcDumpApp(App):
         conv_id = self._session_conv_ids.get(key, self._conv_id)
         return self._query_safe("#" + conv_id)
 
+    def _get_workbench_results_view(self):
+        return self._query_safe("#" + self._workbench_view_id)
+
+    def _show_workbench_results_tab(self) -> None:
+        tabs = self._get_conv_tabs()
+        if tabs is None:
+            return
+        tabs.active = self._workbench_tab_id
+
     def _get_panel(self, name: str):
         """// [LAW:one-source-of-truth] Generic panel accessor using registry IDs."""
         css_id = self._panel_ids.get(name)
@@ -606,6 +618,10 @@ class CcDumpApp(App):
                 )
                 conv.id = self._conv_id
                 yield conv
+            with TabPane("Workbench", id=self._workbench_tab_id):
+                results = cc_dump.tui.workbench_results_view.create_workbench_results_view()
+                results.id = self._workbench_view_id
+                yield results
 
         logs = cc_dump.tui.widget_factory.create_logs_panel()
         logs.id = self._logs_id
@@ -1319,14 +1335,15 @@ class CcDumpApp(App):
         self._view_store.set("panel:side_channel", True)
         panel = cc_dump.tui.side_channel_panel.create_side_channel_panel()
         self.screen.mount(panel)
-        # Reset sc state — reaction pushes to panel
-        with transaction():
-            self._view_store.set("sc:loading", False)
-            self._view_store.set("sc:active_action", "")
-            self._view_store.set("sc:result_text", "")
-            self._view_store.set("sc:result_source", "")
-            self._view_store.set("sc:result_elapsed_ms", 0)
-            self._view_store.set("sc:purpose_usage", {})
+        # Reset sc state — reaction pushes to panel and results tab.
+        self._set_side_channel_result(
+            text="",
+            source="",
+            elapsed_ms=0,
+            loading=False,
+            active_action="",
+        )
+        self._view_store.set("sc:purpose_usage", {})
         self._sc_action_batch_id = ""
         self._sc_action_items = []
         self._refresh_side_channel_usage()
@@ -1356,10 +1373,14 @@ class CcDumpApp(App):
 
         messages = self._collect_recent_messages(10)
         if not messages:
-            with transaction():
-                self._view_store.set("sc:active_action", "")
-                self._view_store.set("sc:result_text", "No messages to summarize.")
-                self._view_store.set("sc:result_source", "fallback")
+            self._set_side_channel_result(
+                text="No messages to summarize.",
+                source="fallback",
+                elapsed_ms=0,
+                loading=False,
+                active_action="",
+                focus_results=True,
+            )
             return
 
         with transaction():
@@ -1378,12 +1399,14 @@ class CcDumpApp(App):
 
     def _on_side_channel_result(self, result):
         """Callback from worker thread with AI result."""
-        with transaction():
-            self._view_store.set("sc:loading", False)
-            self._view_store.set("sc:active_action", "")
-            self._view_store.set("sc:result_text", result.text)
-            self._view_store.set("sc:result_source", result.source)
-            self._view_store.set("sc:result_elapsed_ms", result.elapsed_ms)
+        self._set_side_channel_result(
+            text=result.text,
+            source=result.source,
+            elapsed_ms=result.elapsed_ms,
+            loading=False,
+            active_action="",
+            focus_results=True,
+        )
         self._refresh_side_channel_usage()
 
     def _refresh_side_channel_usage(self) -> None:
@@ -1501,6 +1524,7 @@ class CcDumpApp(App):
         elapsed_ms: int,
         loading: bool = False,
         active_action: str = "",
+        focus_results: bool = False,
     ) -> None:
         with transaction():
             self._view_store.set("sc:loading", loading)
@@ -1508,6 +1532,16 @@ class CcDumpApp(App):
             self._view_store.set("sc:result_text", text)
             self._view_store.set("sc:result_source", source)
             self._view_store.set("sc:result_elapsed_ms", elapsed_ms)
+        workbench_results = self._get_workbench_results_view()
+        if workbench_results is not None:
+            workbench_results.update_result(
+                text=text,
+                source=source,
+                elapsed_ms=elapsed_ms,
+                action=active_action,
+            )
+        if focus_results:
+            self._show_workbench_results_tab()
 
     def _workbench_preview(self, feature: str, owner_ticket: str) -> None:
         """Publish deterministic placeholder output for non-integrated controls.
@@ -1519,12 +1553,14 @@ class CcDumpApp(App):
             f"Owner: {owner_ticket}\n"
             "No side effects were executed."
         )
-        with transaction():
-            self._view_store.set("sc:loading", False)
-            self._view_store.set("sc:active_action", "")
-            self._view_store.set("sc:result_text", preview)
-            self._view_store.set("sc:result_source", "preview")
-            self._view_store.set("sc:result_elapsed_ms", 0)
+        self._set_side_channel_result(
+            text=preview,
+            source="preview",
+            elapsed_ms=0,
+            loading=False,
+            active_action="",
+            focus_results=True,
+        )
 
     def action_sc_summarize_recent(self) -> None:
         """Action target for Workbench summarize control."""
@@ -1568,6 +1604,7 @@ class CcDumpApp(App):
             elapsed_ms=0,
             loading=False,
             active_action="",
+            focus_results=True,
         )
 
     def action_sc_qa_submit(self) -> None:
@@ -1610,6 +1647,7 @@ class CcDumpApp(App):
                 elapsed_ms=0,
                 loading=False,
                 active_action="",
+                focus_results=True,
             )
             return
 
@@ -1629,6 +1667,7 @@ class CcDumpApp(App):
                 elapsed_ms=0,
                 loading=False,
                 active_action="",
+                focus_results=True,
             )
             return
 
@@ -1676,6 +1715,7 @@ class CcDumpApp(App):
             elapsed_ms=result.elapsed_ms,
             loading=False,
             active_action="",
+            focus_results=True,
         )
         self._refresh_side_channel_usage()
 
@@ -1736,6 +1776,7 @@ class CcDumpApp(App):
                 elapsed_ms=0,
                 loading=False,
                 active_action="",
+                focus_results=True,
             )
             return
 
@@ -1747,6 +1788,7 @@ class CcDumpApp(App):
                 elapsed_ms=0,
                 loading=False,
                 active_action="",
+                focus_results=True,
             )
             return
 
@@ -1786,6 +1828,7 @@ class CcDumpApp(App):
             elapsed_ms=result.elapsed_ms,
             loading=False,
             active_action="",
+            focus_results=True,
         )
         self._refresh_side_channel_usage()
 
@@ -1800,6 +1843,7 @@ class CcDumpApp(App):
                 elapsed_ms=0,
                 loading=False,
                 active_action="",
+                focus_results=True,
             )
             return
         if not self._sc_action_batch_id:
@@ -1809,6 +1853,7 @@ class CcDumpApp(App):
                 elapsed_ms=0,
                 loading=False,
                 active_action="",
+                focus_results=True,
             )
             return
         draft = panel.read_action_review_draft()
@@ -1826,6 +1871,7 @@ class CcDumpApp(App):
                 elapsed_ms=0,
                 loading=False,
                 active_action="",
+                focus_results=True,
             )
             return
         if not accept_indices and not reject_indices:
@@ -1835,6 +1881,7 @@ class CcDumpApp(App):
                 elapsed_ms=0,
                 loading=False,
                 active_action="",
+                focus_results=True,
             )
             return
 
@@ -1852,6 +1899,7 @@ class CcDumpApp(App):
                 elapsed_ms=0,
                 loading=False,
                 active_action="",
+                focus_results=True,
             )
             return
         overlap = sorted(set(accept_indices) & set(reject_indices))
@@ -1862,6 +1910,7 @@ class CcDumpApp(App):
                 elapsed_ms=0,
                 loading=False,
                 active_action="",
+                focus_results=True,
             )
             return
 
@@ -1906,6 +1955,7 @@ class CcDumpApp(App):
             elapsed_ms=0,
             loading=False,
             active_action="",
+            focus_results=True,
         )
 
     def action_sc_utility_run(self) -> None:
@@ -1923,6 +1973,7 @@ class CcDumpApp(App):
                 elapsed_ms=0,
                 loading=False,
                 active_action="",
+                focus_results=True,
             )
             return
         if self._data_dispatcher is None:
@@ -1932,6 +1983,7 @@ class CcDumpApp(App):
                 elapsed_ms=0,
                 loading=False,
                 active_action="",
+                focus_results=True,
             )
             return
         messages = self._collect_recent_messages(50)
@@ -1970,6 +2022,7 @@ class CcDumpApp(App):
             elapsed_ms=result.elapsed_ms,
             loading=False,
             active_action="",
+            focus_results=True,
         )
         self._refresh_side_channel_usage()
 
