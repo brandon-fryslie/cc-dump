@@ -1324,10 +1324,13 @@ class CcDumpApp(App):
             self._view_store.set("sc:result_elapsed_ms", 0)
             self._view_store.set("sc:purpose_usage", {})
         self._refresh_side_channel_usage()
-        # Initial hydration — reaction may not fire if values unchanged from defaults
-        panel.update_display(
-            cc_dump.tui.side_channel_panel.SideChannelPanelState(
-                **self._view_store.sc_panel_state.get()
+        # Initial hydration — reaction may not fire if values unchanged from defaults.
+        # Run after refresh so panel children are mounted and queryable.
+        self.call_after_refresh(
+            lambda: panel.update_display(
+                cc_dump.tui.side_channel_panel.SideChannelPanelState(
+                    **self._view_store.sc_panel_state.get()
+                )
             )
         )
 
