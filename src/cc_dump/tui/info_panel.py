@@ -9,7 +9,7 @@ All field values are click-to-copy.
 from textual.widgets import Static
 
 # Use module-level imports for hot-reload
-import cc_dump.palette
+import cc_dump.core.palette
 import cc_dump.tui.panel_renderers
 
 

@@ -1,4 +1,4 @@
-from cc_dump.summary_cache import SummaryCache
+from cc_dump.ai.summary_cache import SummaryCache
 
 
 def test_cache_key_includes_purpose_and_prompt_version(tmp_path):

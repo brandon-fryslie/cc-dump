@@ -1,7 +1,7 @@
 import json
 
 from cc_dump.session_insights import build_session_insights
-from cc_dump.side_channel_marker import SideChannelMarker, prepend_marker
+from cc_dump.ai.side_channel_marker import SideChannelMarker, prepend_marker
 
 
 def _entry(

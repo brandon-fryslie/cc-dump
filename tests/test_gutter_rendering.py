@@ -1,6 +1,6 @@
 """Tests for full-height gutter indicators in rendering.py."""
 
-from cc_dump.formatting import (
+from cc_dump.core.formatting import (
     TextContentBlock,
     ToolResultBlock,
     Category,
@@ -116,7 +116,7 @@ def test_gutter_on_truncated_blocks():
 
 def test_blocks_without_category_neutral_gutter():
     """Blocks without category (e.g., NewlineBlock) should have dim neutral gutters."""
-    from cc_dump.formatting import NewlineBlock
+    from cc_dump.core.formatting import NewlineBlock
     theme = BUILTIN_THEMES["textual-dark"]
     set_theme(theme)
 
@@ -312,7 +312,7 @@ def test_summary_level_arrows():
 
     # Use a category that doesn't collapse at summary level (not tools)
     # HeaderBlock at summary level
-    from cc_dump.formatting import HttpHeadersBlock
+    from cc_dump.core.formatting import HttpHeadersBlock
     block = HttpHeadersBlock(
         header_type="request",
         headers={f"X-Header-{i}": f"value{i}" for i in range(10)},
@@ -362,7 +362,7 @@ def test_summary_level_arrows():
 
 def test_neutral_gutter_for_newline_and_error():
     """NewlineBlock and ErrorBlock should have dim neutral gutters (not category color)."""
-    from cc_dump.formatting import NewlineBlock, ErrorBlock
+    from cc_dump.core.formatting import NewlineBlock, ErrorBlock
     theme = BUILTIN_THEMES["textual-dark"]
     set_theme(theme)
 

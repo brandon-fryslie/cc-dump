@@ -9,7 +9,7 @@ Extracted from action_handlers.py so that tweaking these values
 effect immediately via hot-reload without restart.
 """
 
-import cc_dump.formatting
+import cc_dump.core.formatting
 
 # [LAW:one-source-of-truth] Ordered slot list for cycling (skips F3)
 FILTERSET_SLOTS = ["1", "2", "4", "5", "6", "7", "8", "9"]
@@ -29,11 +29,11 @@ FILTERSET_NAMES: dict[str, str] = {
 # [LAW:one-source-of-truth] Ordered visibility states for cycling filter chips.
 # Progression: hidden → summary collapsed → summary expanded → full collapsed → full expanded
 VIS_CYCLE = [
-    cc_dump.formatting.VisState(False, False, False),  # 1. Hidden
-    cc_dump.formatting.VisState(True, False, False),   # 2. Summary Collapsed
-    cc_dump.formatting.VisState(True, False, True),    # 3. Summary Expanded
-    cc_dump.formatting.VisState(True, True, False),    # 4. Full Collapsed
-    cc_dump.formatting.VisState(True, True, True),     # 5. Full Expanded
+    cc_dump.core.formatting.VisState(False, False, False),  # 1. Hidden
+    cc_dump.core.formatting.VisState(True, False, False),   # 2. Summary Collapsed
+    cc_dump.core.formatting.VisState(True, False, True),    # 3. Summary Expanded
+    cc_dump.core.formatting.VisState(True, True, False),    # 4. Full Collapsed
+    cc_dump.core.formatting.VisState(True, True, True),     # 5. Full Expanded
 ]
 
 # [LAW:dataflow-not-control-flow] Visibility toggle specs — data, not branches.

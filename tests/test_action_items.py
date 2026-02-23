@@ -1,4 +1,4 @@
-from cc_dump.action_items import ActionItemStore, parse_action_items
+from cc_dump.ai.action_items import ActionItemStore, parse_action_items
 
 
 def test_parse_action_items_from_json():

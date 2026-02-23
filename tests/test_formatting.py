@@ -2,7 +2,7 @@
 
 import pytest
 
-from cc_dump.formatting import (
+from cc_dump.core.formatting import (
     ConfigContentBlock,
     ContentRegion,
     ErrorBlock,
@@ -43,7 +43,7 @@ from cc_dump.formatting import (
     _tool_detail,
     _front_ellipse_path,
 )
-from cc_dump.event_types import parse_sse_event
+from cc_dump.pipeline.event_types import parse_sse_event
 
 
 def _find_blocks(blocks, block_type):

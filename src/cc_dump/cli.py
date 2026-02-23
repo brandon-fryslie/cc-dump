@@ -9,28 +9,28 @@ import sys
 import threading
 from datetime import datetime
 
-from cc_dump.proxy import ProxyHandler
-from cc_dump.router import EventRouter, QueueSubscriber, DirectSubscriber
-from cc_dump.analytics_store import AnalyticsStore
-import cc_dump.stderr_tee
-import cc_dump.palette
-import cc_dump.sessions
-from cc_dump.event_types import PipelineEvent
-import cc_dump.har_replayer
-import cc_dump.har_recorder
-import cc_dump.settings
-import cc_dump.tmux_controller
-import cc_dump.settings_store
-import cc_dump.launch_config
-import cc_dump.side_channel
-import cc_dump.data_dispatcher
-import cc_dump.sentinel
-import cc_dump.side_channel_marker
-import cc_dump.session_sidecar
-from cc_dump.proxy import RequestPipeline
-import cc_dump.view_store
-import cc_dump.hot_reload
-import cc_dump.domain_store
+from cc_dump.pipeline.proxy import ProxyHandler
+from cc_dump.pipeline.router import EventRouter, QueueSubscriber, DirectSubscriber
+from cc_dump.app.analytics_store import AnalyticsStore
+import cc_dump.io.stderr_tee
+import cc_dump.core.palette
+import cc_dump.io.sessions
+from cc_dump.pipeline.event_types import PipelineEvent
+import cc_dump.pipeline.har_replayer
+import cc_dump.pipeline.har_recorder
+import cc_dump.io.settings
+import cc_dump.app.tmux_controller
+import cc_dump.app.settings_store
+import cc_dump.app.launch_config
+import cc_dump.ai.side_channel
+import cc_dump.ai.data_dispatcher
+import cc_dump.pipeline.sentinel
+import cc_dump.ai.side_channel_marker
+import cc_dump.io.session_sidecar
+from cc_dump.pipeline.proxy import RequestPipeline
+import cc_dump.app.view_store
+import cc_dump.app.hot_reload
+import cc_dump.app.domain_store
 import cc_dump.tui.view_store_bridge
 from cc_dump.tui.app import CcDumpApp
 
@@ -112,25 +112,25 @@ def main():
     args = parser.parse_args()
 
     # Install stderr tee before anything else writes to stderr
-    cc_dump.stderr_tee.install()
+    cc_dump.io.stderr_tee.install()
 
     # Initialize color palette before anything else imports it
-    cc_dump.palette.init_palette(args.seed_hue)
+    cc_dump.core.palette.init_palette(args.seed_hue)
 
     if args.list_recordings:
-        recordings = cc_dump.sessions.list_recordings()
-        cc_dump.sessions.print_recordings_list(recordings)
+        recordings = cc_dump.io.sessions.list_recordings()
+        cc_dump.io.sessions.print_recordings_list(recordings)
         return
 
     if args.cleanup_recordings is not None:
-        result = cc_dump.sessions.cleanup_recordings(
+        result = cc_dump.io.sessions.cleanup_recordings(
             keep=args.cleanup_recordings,
             dry_run=bool(args.cleanup_dry_run),
         )
         mode = "Dry run" if result["dry_run"] else "Cleanup"
         print(
             f"{mode}: removed {result['removed']} recording(s), "
-            f"kept {result['kept']}, freed {cc_dump.sessions.format_size(result['bytes_freed'])}"
+            f"kept {result['kept']}, freed {cc_dump.io.sessions.format_size(result['bytes_freed'])}"
         )
         if result["removed_paths"]:
             for path in result["removed_paths"]:
@@ -140,7 +140,7 @@ def main():
     # Resolve --continue / --resume to load latest recording
     if args.resume is not None:
         if args.resume == "latest":
-            latest = cc_dump.sessions.get_latest_recording()
+            latest = cc_dump.io.sessions.get_latest_recording()
             if latest is None:
                 print("No recordings found to resume from.")
                 return
@@ -150,7 +150,7 @@ def main():
         print(f"🔄 Resuming from: {args.replay}")
 
     if args.continue_session:
-        latest = cc_dump.sessions.get_latest_recording()
+        latest = cc_dump.io.sessions.get_latest_recording()
         if latest is None:
             print("No recordings found to continue from.")
             return
@@ -169,14 +169,14 @@ def main():
         print(f"   Loading replay: {args.replay}")
 
         try:
-            replay_data = cc_dump.har_replayer.load_har(args.replay)
+            replay_data = cc_dump.pipeline.har_replayer.load_har(args.replay)
             print(f"   Found {len(replay_data)} request/response pairs")
-            sidecar_payload = cc_dump.session_sidecar.load_ui_state(args.replay)
+            sidecar_payload = cc_dump.io.session_sidecar.load_ui_state(args.replay)
             if isinstance(sidecar_payload, dict):
                 loaded_ui = sidecar_payload.get("ui_state", {})
                 if isinstance(loaded_ui, dict):
                     resume_ui_state = loaded_ui
-                    print(f"   Loaded UI sidecar: {cc_dump.session_sidecar.sidecar_path_for_har(args.replay)}")
+                    print(f"   Loaded UI sidecar: {cc_dump.io.session_sidecar.sidecar_path_for_har(args.replay)}")
 
         except Exception as e:
             print(f"   Error loading HAR file: {e}")
@@ -239,7 +239,7 @@ def main():
         record_path = args.record or os.path.join(
             session_dir, f"recording-{datetime.now().strftime('%Y%m%d-%H%M%S')}.har"
         )
-        har_recorder = cc_dump.har_recorder.HARRecordingSubscriber(record_path)
+        har_recorder = cc_dump.pipeline.har_recorder.HARRecordingSubscriber(record_path)
         router.add_subscriber(DirectSubscriber(har_recorder.on_event))
         print(f"   Recording: {record_path} (created on first API call)")
     else:
@@ -247,14 +247,14 @@ def main():
 
     # Tmux integration (optional — no-op when not in tmux or libtmux missing)
     # Create settings store (reactive, hot-reloadable)
-    settings_store = cc_dump.settings_store.create()
+    settings_store = cc_dump.app.settings_store.create()
 
     tmux_ctrl = None
-    TmuxState = cc_dump.tmux_controller.TmuxState
-    if cc_dump.tmux_controller.is_available():
-        active_config = cc_dump.launch_config.get_active_config()
+    TmuxState = cc_dump.app.tmux_controller.TmuxState
+    if cc_dump.app.tmux_controller.is_available():
+        active_config = cc_dump.app.launch_config.get_active_config()
         auto_zoom = bool(settings_store.get("auto_zoom_default"))
-        tmux_ctrl = cc_dump.tmux_controller.TmuxController(claude_command=active_config.claude_command, auto_zoom=auto_zoom)
+        tmux_ctrl = cc_dump.app.tmux_controller.TmuxController(claude_command=active_config.claude_command, auto_zoom=auto_zoom)
         tmux_ctrl.set_port(actual_port)
         # Subscribe for both READY and CLAUDE_RUNNING (adoption case)
         if tmux_ctrl.state in (TmuxState.READY, TmuxState.CLAUDE_RUNNING):
@@ -272,30 +272,30 @@ def main():
 
     # Side channel (AI enrichment via claude -p)
     sc_enabled = bool(settings_store.get("side_channel_enabled"))
-    side_channel_mgr = cc_dump.side_channel.SideChannelManager()
+    side_channel_mgr = cc_dump.ai.side_channel.SideChannelManager()
     side_channel_mgr.enabled = sc_enabled
     side_channel_mgr.set_base_url(f"http://{args.host}:{actual_port}")
     side_channel_mgr.set_usage_provider(
         lambda purpose: analytics_store.get_side_channel_purpose_summary().get(purpose, {})
     )
-    data_dispatcher = cc_dump.data_dispatcher.DataDispatcher(side_channel_mgr)
+    data_dispatcher = cc_dump.ai.data_dispatcher.DataDispatcher(side_channel_mgr)
 
     # Request pipeline — transforms + interceptors run before forwarding
     pipeline = RequestPipeline(
         transforms=[
-            lambda body, url: (cc_dump.side_channel_marker.strip_marker_from_body(body), url),
+            lambda body, url: (cc_dump.ai.side_channel_marker.strip_marker_from_body(body), url),
         ],
-        interceptors=[cc_dump.sentinel.make_interceptor(tmux_ctrl)],
+        interceptors=[cc_dump.pipeline.sentinel.make_interceptor(tmux_ctrl)],
     )
     ProxyHandler.request_pipeline = pipeline
 
     router.start()
 
     # Create view store (reactive, hot-reloadable)
-    view_store = cc_dump.view_store.create()
+    view_store = cc_dump.app.view_store.create()
 
     # Create domain store (owns FormattedBlock trees, persists across hot-reload)
-    domain_store = cc_dump.domain_store.DomainStore()
+    domain_store = cc_dump.app.domain_store.DomainStore()
 
     # Wire settings store reactions (after all consumers are created)
     store_context = {
@@ -303,13 +303,13 @@ def main():
         "tmux_controller": tmux_ctrl,
         "settings_store": settings_store,
     }
-    settings_store._reaction_disposers = cc_dump.settings_store.setup_reactions(
+    settings_store._reaction_disposers = cc_dump.app.settings_store.setup_reactions(
         settings_store, store_context
     )
 
     # Initialize hot-reload watcher
     package_dir = os.path.dirname(os.path.abspath(__file__))
-    cc_dump.hot_reload.init(package_dir)
+    cc_dump.app.hot_reload.init(package_dir)
 
     # Launch TUI with database context
     app = CcDumpApp(
@@ -383,7 +383,7 @@ def main():
         if sidecar_target:
             try:
                 ui_state = app.export_ui_state()
-                sidecar_path = cc_dump.session_sidecar.save_ui_state(sidecar_target, ui_state)
+                sidecar_path = cc_dump.io.session_sidecar.save_ui_state(sidecar_target, ui_state)
                 print(f"   UI state saved: {sidecar_path}", file=sys.stderr)
             except Exception as e:
                 print(f"   UI state save failed: {e}", file=sys.stderr)

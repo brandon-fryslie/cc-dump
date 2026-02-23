@@ -1,8 +1,8 @@
-"""Tests for cc_dump.event_types — constructor validation, parse round-trips, immutability."""
+"""Tests for cc_dump.pipeline.event_types — constructor validation, parse round-trips, immutability."""
 
 import pytest
 
-from cc_dump.event_types import (
+from cc_dump.pipeline.event_types import (
     # Enums
     PipelineEventKind,
     StopReason,
@@ -142,7 +142,7 @@ class TestPipelineEvents:
         assert evt.method == "POST"
 
     def test_response_non_streaming_kind(self):
-        from cc_dump.event_types import ResponseNonStreamingEvent
+        from cc_dump.pipeline.event_types import ResponseNonStreamingEvent
         evt = ResponseNonStreamingEvent(status_code=200, headers={}, body={"id": "msg_1"})
         assert evt.kind == PipelineEventKind.RESPONSE_NON_STREAMING
         assert evt.status_code == 200

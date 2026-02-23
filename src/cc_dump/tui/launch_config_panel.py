@@ -16,8 +16,8 @@ from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Input, Label, OptionList, Select, Static, Switch
 
-import cc_dump.palette
-from cc_dump.launch_config import SHELL_OPTIONS
+import cc_dump.core.palette
+from cc_dump.app.launch_config import SHELL_OPTIONS
 from cc_dump.tui.settings_panel import FieldDef
 
 
@@ -194,7 +194,7 @@ class LaunchConfigPanel(VerticalScroll):
         self._selected_idx = 0
 
     def compose(self) -> ComposeResult:
-        p = cc_dump.palette.PALETTE
+        p = cc_dump.core.palette.PALETTE
         yield Static("Launch Configs", classes="panel-title")
 
         # Config list
@@ -373,8 +373,8 @@ class LaunchConfigPanel(VerticalScroll):
             event.stop()
             event.prevent_default()
             self._apply_form_to_selected()
-            import cc_dump.launch_config
-            new_config = cc_dump.launch_config.LaunchConfig(
+            import cc_dump.app.launch_config
+            new_config = cc_dump.app.launch_config.LaunchConfig(
                 name="config-{}".format(len(configs) + 1)
             )
             configs.append(new_config)

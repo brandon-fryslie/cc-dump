@@ -1,7 +1,7 @@
 """Tests for special-content navigation actions."""
 
 import cc_dump.tui.action_handlers as actions
-from cc_dump.formatting import ConfigContentBlock, ToolUseBlock, TextContentBlock, populate_content_regions
+from cc_dump.core.formatting import ConfigContentBlock, ToolUseBlock, TextContentBlock, populate_content_regions
 
 
 class _Turn:

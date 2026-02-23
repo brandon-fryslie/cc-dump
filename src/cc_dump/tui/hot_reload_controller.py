@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from textual.widgets import Header
 from typing import Protocol, cast
 
-import cc_dump.hot_reload
+import cc_dump.app.hot_reload
 import cc_dump.tui.rendering
 import cc_dump.tui.search
 import cc_dump.tui.widget_factory
@@ -19,8 +19,8 @@ import cc_dump.tui.info_panel
 import cc_dump.tui.keys_panel
 import cc_dump.tui.settings_panel
 import cc_dump.tui.custom_footer
-import cc_dump.settings_store
-import cc_dump.view_store
+import cc_dump.app.settings_store
+import cc_dump.app.view_store
 import cc_dump.tui.launch_config_panel
 import cc_dump.tui.side_channel_panel
 import cc_dump.tui.search_controller
@@ -79,14 +79,14 @@ def stop_file_watcher() -> None:
 def _has_reloadable_changes(changes) -> bool:
     """True if any changed file is a reloadable module."""
     for _change_type, path in changes:
-        if cc_dump.hot_reload.is_reloadable(path):
+        if cc_dump.app.hot_reload.is_reloadable(path):
             return True
     return False
 
 
 def _update_staleness(app) -> None:
     """Sync excluded-file staleness state to view store."""
-    stale = cc_dump.hot_reload.get_stale_excluded()
+    stale = cc_dump.app.hot_reload.get_stale_excluded()
     store = app._view_store
     old_stale = list(store.stale_files)
     if stale != old_stale:
@@ -110,7 +110,7 @@ async def start_file_watcher(app) -> None:
         app._app_log("INFO", "watchfiles not installed — hot-reload disabled")
         return
 
-    paths = cc_dump.hot_reload.get_watch_paths()
+    paths = cc_dump.app.hot_reload.get_watch_paths()
     if not paths:
         return
 
@@ -137,7 +137,7 @@ async def start_file_watcher(app) -> None:
 async def _do_hot_reload(app) -> None:
     """Execute the actual reload after debounce settles."""
     try:
-        reloaded_modules = cc_dump.hot_reload.check_and_get_reloaded()
+        reloaded_modules = cc_dump.app.hot_reload.check_and_get_reloaded()
     except Exception as e:
         app.notify(f"[hot-reload] error reloading: {e}", severity="error")
         app._app_log("ERROR", f"Hot-reload error reloading: {e}")
@@ -177,8 +177,8 @@ async def _do_hot_reload(app) -> None:
     if settings_store is not None:
         try:
             settings_store.reconcile(
-                cc_dump.settings_store.SCHEMA,
-                lambda store: cc_dump.settings_store.setup_reactions(
+                cc_dump.app.settings_store.SCHEMA,
+                lambda store: cc_dump.app.settings_store.setup_reactions(
                     store, getattr(app, "_store_context", None)
                 ),
             )
@@ -194,8 +194,8 @@ async def _do_hot_reload(app) -> None:
             if ctx is not None:
                 ctx.update(cc_dump.tui.view_store_bridge.build_reaction_context(app))
             view_store.reconcile(
-                cc_dump.view_store.SCHEMA,
-                lambda store: cc_dump.view_store.setup_reactions(store, ctx),
+                cc_dump.app.view_store.SCHEMA,
+                lambda store: cc_dump.app.view_store.setup_reactions(store, ctx),
             )
         except Exception as e:
             app._app_log("ERROR", f"Hot-reload: view store reconcile failed: {e}")

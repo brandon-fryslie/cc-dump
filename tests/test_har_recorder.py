@@ -2,18 +2,18 @@
 
 import json
 
-from cc_dump.event_types import (
+from cc_dump.pipeline.event_types import (
     RequestHeadersEvent,
     RequestBodyEvent,
     ResponseHeadersEvent,
     ResponseCompleteEvent,
 )
-from cc_dump.har_recorder import (
+from cc_dump.pipeline.har_recorder import (
     HARRecordingSubscriber,
     build_har_request,
     build_har_response,
 )
-from cc_dump.response_assembler import reconstruct_message_from_events
+from cc_dump.pipeline.response_assembler import reconstruct_message_from_events
 
 
 # ─── HAR Request Builder Tests ────────────────────────────────────────────────

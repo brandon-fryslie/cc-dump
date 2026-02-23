@@ -7,7 +7,7 @@ from textual.widgets import Static
 
 import cc_dump.tui.rendering
 import cc_dump.tui.widget_factory
-from cc_dump.formatting import VisState, HIDDEN
+from cc_dump.core.formatting import VisState, HIDDEN
 from cc_dump.tui.chip import Chip
 
 

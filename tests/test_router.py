@@ -6,8 +6,8 @@ import time
 
 import pytest
 
-from cc_dump.router import DirectSubscriber, EventRouter, QueueSubscriber
-from cc_dump.event_types import (
+from cc_dump.pipeline.router import DirectSubscriber, EventRouter, QueueSubscriber
+from cc_dump.pipeline.event_types import (
     PipelineEvent,
     RequestBodyEvent,
     ResponseDoneEvent,

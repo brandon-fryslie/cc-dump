@@ -1,4 +1,4 @@
-from cc_dump.incident_timeline import (
+from cc_dump.ai.incident_timeline import (
     IncidentTimelineStore,
     parse_incident_timeline_artifact,
     render_incident_timeline_markdown,

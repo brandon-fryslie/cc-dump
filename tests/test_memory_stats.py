@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-import cc_dump.memory_stats
+import cc_dump.app.memory_stats
 
 
 def test_capture_snapshot_with_store_and_render_state(monkeypatch):
@@ -28,12 +28,12 @@ def test_capture_snapshot_with_store_and_render_state(monkeypatch):
         _get_conv=lambda: conv,
     )
 
-    monkeypatch.setattr(cc_dump.memory_stats.tracemalloc, "is_tracing", lambda: True)
+    monkeypatch.setattr(cc_dump.app.memory_stats.tracemalloc, "is_tracing", lambda: True)
     monkeypatch.setattr(
-        cc_dump.memory_stats.tracemalloc, "get_traced_memory", lambda: (1234, 5678)
+        cc_dump.app.memory_stats.tracemalloc, "get_traced_memory", lambda: (1234, 5678)
     )
 
-    snapshot = cc_dump.memory_stats.capture_snapshot(app)
+    snapshot = cc_dump.app.memory_stats.capture_snapshot(app)
 
     assert snapshot["domain_completed_turns"] == 7
     assert snapshot["domain_active_streams"] == 2
@@ -54,9 +54,9 @@ def test_capture_snapshot_without_optional_state(monkeypatch):
         _get_conv=lambda: None,
     )
 
-    monkeypatch.setattr(cc_dump.memory_stats.tracemalloc, "is_tracing", lambda: False)
+    monkeypatch.setattr(cc_dump.app.memory_stats.tracemalloc, "is_tracing", lambda: False)
 
-    snapshot = cc_dump.memory_stats.capture_snapshot(app)
+    snapshot = cc_dump.app.memory_stats.capture_snapshot(app)
 
     assert snapshot["domain_completed_turns"] == 0
     assert snapshot["domain_active_streams"] == 0

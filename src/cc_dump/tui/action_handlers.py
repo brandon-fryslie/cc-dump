@@ -9,9 +9,9 @@ Hot-reloadable — imported as module object in app.py, all functions take app a
 
 from dataclasses import dataclass
 
-import cc_dump.formatting
-import cc_dump.special_content
-import cc_dump.settings
+import cc_dump.core.formatting
+import cc_dump.core.special_content
+import cc_dump.io.settings
 import cc_dump.tui.action_config  # module-style for hot-reload
 import cc_dump.tui.location_navigation
 import cc_dump.tui.rendering
@@ -56,7 +56,7 @@ def clear_overrides(app, category_name: str) -> None:
     // [LAW:one-source-of-truth] Clears via ViewOverrides.clear_category() only.
     // [LAW:one-source-of-truth] Reads blocks from domain store.
     """
-    cat = cc_dump.formatting.Category(category_name)
+    cat = cc_dump.core.formatting.Category(category_name)
     conv = app._get_conv()
     if conv is None:
         return
@@ -89,7 +89,7 @@ def cycle_vis(app, category: str) -> None:
     """
     store = app._view_store
     # Get current state from store
-    current = cc_dump.formatting.VisState(
+    current = cc_dump.core.formatting.VisState(
         store.get(f"vis:{category}"),
         store.get(f"full:{category}"),
         store.get(f"exp:{category}"),
@@ -233,7 +233,7 @@ def prev_filterset(app) -> None:
 
 def apply_filterset(app, slot: str) -> None:
     """Apply a saved filterset slot to the current visibility state."""
-    filters = cc_dump.settings.get_filterset(slot)
+    filters = cc_dump.io.settings.get_filterset(slot)
     if filters is None:
         app.notify(f"Preset F{slot} is empty", severity="warning")
         return
@@ -355,7 +355,7 @@ def _navigate_special(app, marker_key: str, direction: int) -> None:
     if conv is None:
         return
 
-    locations = cc_dump.special_content.collect_special_locations(conv._turns, marker_key=marker_key)
+    locations = cc_dump.core.special_content.collect_special_locations(conv._turns, marker_key=marker_key)
     if not locations:
         app.notify("No matching special sections")
         return

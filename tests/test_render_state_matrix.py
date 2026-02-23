@@ -8,7 +8,7 @@ from io import StringIO
 from rich.console import Console
 from textual.theme import BUILTIN_THEMES
 
-from cc_dump.formatting import (
+from cc_dump.core.formatting import (
     Category,
     ConfigContentBlock,
     ErrorBlock,
@@ -43,7 +43,7 @@ from cc_dump.formatting import (
     AgentDefChild,
     VisState,
 )
-from cc_dump.analysis import TurnBudget
+from cc_dump.core.analysis import TurnBudget
 from cc_dump.tui.rendering import (
     BLOCK_RENDERERS,
     BLOCK_STATE_RENDERERS,

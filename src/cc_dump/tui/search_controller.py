@@ -7,7 +7,7 @@
 Not hot-reloadable (accesses app state and widgets).
 """
 
-import cc_dump.formatting
+import cc_dump.core.formatting
 import cc_dump.tui.search
 import cc_dump.tui.location_navigation
 from cc_dump.tui.category_config import CATEGORY_CONFIG
@@ -448,7 +448,7 @@ def navigate_to_current(app) -> None:
     # // [LAW:one-source-of-truth] force_vis in ViewOverrides only
     for i in force_indices:
         if conv is not None:
-            conv._view_overrides.get_block(td.blocks[i].block_id).force_vis = cc_dump.formatting.ALWAYS_VISIBLE
+            conv._view_overrides.get_block(td.blocks[i].block_id).force_vis = cc_dump.core.formatting.ALWAYS_VISIBLE
             conv._view_overrides._search_block_ids.add(td.blocks[i].block_id)
         state.expanded_blocks.append((match.turn_index, i, td.blocks[i].block_id))
 
@@ -457,7 +457,7 @@ def navigate_to_current(app) -> None:
     matched_block = match.block
     if matched_block is not None and matched_block is not td.blocks[match.block_index]:
         if conv is not None:
-            conv._view_overrides.get_block(matched_block.block_id).force_vis = cc_dump.formatting.ALWAYS_VISIBLE
+            conv._view_overrides.get_block(matched_block.block_id).force_vis = cc_dump.core.formatting.ALWAYS_VISIBLE
             conv._view_overrides._search_block_ids.add(matched_block.block_id)
         state.expanded_blocks.append((match.turn_index, match.block_index, matched_block.block_id))
 

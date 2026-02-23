@@ -5,9 +5,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from cc_dump.proxy import RequestPipeline, _build_synthetic_sse_bytes
-from cc_dump.side_channel_marker import extract_marker, strip_marker_from_body
-from cc_dump.sentinel import extract_sentinel_command, make_interceptor
+from cc_dump.pipeline.proxy import RequestPipeline, _build_synthetic_sse_bytes
+from cc_dump.ai.side_channel_marker import extract_marker, strip_marker_from_body
+from cc_dump.pipeline.sentinel import extract_sentinel_command, make_interceptor
 
 
 # ─── extract_sentinel_command ────────────────────────────────────────────────

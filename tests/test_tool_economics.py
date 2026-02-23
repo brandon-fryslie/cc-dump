@@ -2,7 +2,7 @@
 
 import pytest
 
-from cc_dump.analysis import ToolEconomicsRow
+from cc_dump.core.analysis import ToolEconomicsRow
 from cc_dump.tui.panel_renderers import render_economics_panel
 
 

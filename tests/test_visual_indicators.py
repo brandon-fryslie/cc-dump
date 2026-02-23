@@ -49,7 +49,7 @@ class TestRenderBlockFunction:
 
     def test_render_block_handles_all_block_types(self):
         from cc_dump.tui.rendering import render_block
-        from cc_dump.formatting import (
+        from cc_dump.core.formatting import (
             SeparatorBlock, HeaderBlock, MetadataBlock, MessageBlock,
             TextContentBlock, NewlineBlock
         )
@@ -70,7 +70,7 @@ class TestRenderBlockFunction:
 
     def test_render_block_with_full_content(self):
         from cc_dump.tui.rendering import render_block
-        from cc_dump.formatting import HeaderBlock
+        from cc_dump.core.formatting import HeaderBlock
 
         block = HeaderBlock(label="TEST", header_type="request")
         result = render_block(block)
@@ -92,7 +92,7 @@ class TestToolDefRendering:
 
     def test_tool_def_full_renderer_includes_schema_and_required_markers(self):
         from cc_dump.tui.rendering import render_block
-        from cc_dump.formatting import ToolDefBlock
+        from cc_dump.core.formatting import ToolDefBlock
 
         block = ToolDefBlock(
             name="Read",
@@ -118,7 +118,7 @@ class TestToolDefRendering:
 
     def test_tool_def_summary_renderer_shows_compact_header(self):
         from cc_dump.tui.rendering import RENDERERS
-        from cc_dump.formatting import ToolDefBlock
+        from cc_dump.core.formatting import ToolDefBlock
 
         block = ToolDefBlock(name="Bash", token_estimate=77)
         renderer = RENDERERS[("ToolDefBlock", True, False, False)]
@@ -141,7 +141,7 @@ class TestNamedDefinitionChildRendering:
 
     def test_skill_def_child_renderer(self):
         from cc_dump.tui.rendering import render_block
-        from cc_dump.formatting import SkillDefChild
+        from cc_dump.core.formatting import SkillDefChild
 
         block = SkillDefChild(name="review-pr", description="Review pull requests")
         text = self._render_plain(render_block(block))
@@ -150,7 +150,7 @@ class TestNamedDefinitionChildRendering:
 
     def test_agent_def_child_renderer(self):
         from cc_dump.tui.rendering import render_block
-        from cc_dump.formatting import AgentDefChild
+        from cc_dump.core.formatting import AgentDefChild
 
         block = AgentDefChild(name="researcher", description="Gather context")
         text = self._render_plain(render_block(block))

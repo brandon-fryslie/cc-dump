@@ -2,7 +2,7 @@
 
 import pytest
 
-from cc_dump.formatting import (
+from cc_dump.core.formatting import (
     ToolUseBlock, ToolResultBlock, ToolUseSummaryBlock, TextContentBlock,
     MessageBlock, NewlineBlock, VisState, HIDDEN, ALWAYS_VISIBLE,
 )
@@ -506,27 +506,27 @@ class TestDetailExtractors:
     """Tests for _TOOL_DETAIL_EXTRACTORS — new Write/Edit/Grep/Glob entries."""
 
     def test_write_extracts_file_path(self):
-        from cc_dump.formatting import _tool_detail
+        from cc_dump.core.formatting import _tool_detail
         result = _tool_detail("Write", {"file_path": "/foo/bar/baz.py"})
         assert "baz.py" in result
 
     def test_edit_extracts_file_path(self):
-        from cc_dump.formatting import _tool_detail
+        from cc_dump.core.formatting import _tool_detail
         result = _tool_detail("Edit", {"file_path": "/foo/bar/baz.ts"})
         assert "baz.ts" in result
 
     def test_grep_extracts_pattern(self):
-        from cc_dump.formatting import _tool_detail
+        from cc_dump.core.formatting import _tool_detail
         result = _tool_detail("Grep", {"pattern": "import.*re"})
         assert result == "import.*re"
 
     def test_glob_extracts_pattern(self):
-        from cc_dump.formatting import _tool_detail
+        from cc_dump.core.formatting import _tool_detail
         result = _tool_detail("Glob", {"pattern": "**/*.py"})
         assert result == "**/*.py"
 
     def test_unknown_tool_returns_empty(self):
-        from cc_dump.formatting import _tool_detail
+        from cc_dump.core.formatting import _tool_detail
         result = _tool_detail("UnknownTool", {"foo": "bar"})
         assert result == ""
 

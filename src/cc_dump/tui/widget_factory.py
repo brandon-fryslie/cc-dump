@@ -25,14 +25,14 @@ from rich.style import Style
 from rich.text import Text
 
 # Use module-level imports for hot-reload
-import cc_dump.formatting
-import cc_dump.palette
-import cc_dump.analysis
+import cc_dump.core.formatting
+import cc_dump.core.palette
+import cc_dump.core.analysis
 import cc_dump.tui.rendering
 import cc_dump.tui.panel_renderers
 import cc_dump.tui.error_indicator
 import cc_dump.tui.view_overrides
-import cc_dump.domain_store
+import cc_dump.app.domain_store
 
 
 # ─── Follow mode state machine ──────────────────────────────────────────────
@@ -175,7 +175,7 @@ class TurnData:
             overrides: Optional ViewOverrides for per-block view state.
         """
         # Create snapshot using ALWAYS_VISIBLE default to match filters dict structure
-        snapshot = {k: filters.get(k, cc_dump.formatting.ALWAYS_VISIBLE) for k in self.relevant_filter_keys}
+        snapshot = {k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE) for k in self.relevant_filter_keys}
         # Force re-render when search context changes
         if not force and search_ctx is None and snapshot == self._last_filter_snapshot:
             return False
@@ -240,7 +240,7 @@ class ConversationView(ScrollView):
         super().__init__()
         self._view_store = view_store
         # Auto-create domain store for tests that don't provide one
-        self._domain_store = domain_store if domain_store is not None else cc_dump.domain_store.DomainStore()
+        self._domain_store = domain_store if domain_store is not None else cc_dump.app.domain_store.DomainStore()
         self._turns: list[TurnData] = []
         self._total_lines: int = 0
         self._widest_line: int = 0
@@ -860,7 +860,7 @@ class ConversationView(ScrollView):
 
         # Use ALWAYS_VISIBLE default to match filters dict structure
         td._last_filter_snapshot = {
-            k: filters.get(k, cc_dump.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
+            k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
         }
         self._append_completed_turn(td)
 
@@ -930,9 +930,9 @@ class ConversationView(ScrollView):
 
         chips = dict((rid, (label, kind)) for rid, label, kind in self._domain_store.get_active_stream_chips())
         label_styles = {
-            "main": Style(color=cc_dump.palette.PALETTE.accent, bold=True),
-            "subagent": Style(color=cc_dump.palette.PALETTE.info, bold=True),
-            "unknown": Style(color=cc_dump.palette.PALETTE.warning, dim=True),
+            "main": Style(color=cc_dump.core.palette.PALETTE.accent, bold=True),
+            "subagent": Style(color=cc_dump.core.palette.PALETTE.info, bold=True),
+            "unknown": Style(color=cc_dump.core.palette.PALETTE.warning, dim=True),
         }
         separator = Segment("│", Style(dim=True))
 
@@ -1185,7 +1185,7 @@ class ConversationView(ScrollView):
         # Compute relevant filter keys
         td.compute_relevant_keys()
         td._last_filter_snapshot = {
-            k: self._last_filters.get(k, cc_dump.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
+            k: self._last_filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
         }
 
         # Remove from preview registry
@@ -1339,7 +1339,7 @@ class ConversationView(ScrollView):
                 # Off-viewport turn: defer re-render, mark pending
                 # Use ALWAYS_VISIBLE default to match filters dict structure
                 snapshot = {
-                    k: filters.get(k, cc_dump.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
+                    k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
                 }
                 if force or snapshot != td._last_filter_snapshot:
                     td._pending_filter_snapshot = snapshot
@@ -1812,7 +1812,7 @@ class ConversationView(ScrollView):
 
         # [LAW:dataflow-not-control-flow] Coalesce None to default, then toggle
         cat = cc_dump.tui.rendering.get_category(block)
-        vis = self._last_filters.get(cat.value, cc_dump.formatting.ALWAYS_VISIBLE) if cat else cc_dump.formatting.ALWAYS_VISIBLE
+        vis = self._last_filters.get(cat.value, cc_dump.core.formatting.ALWAYS_VISIBLE) if cat else cc_dump.core.formatting.ALWAYS_VISIBLE
 
         # Coalesce: treat None as default — read from overrides only
         # / [LAW:one-source-of-truth] Expanded state from ViewOverrides only
@@ -2197,7 +2197,7 @@ class TimelinePanel(Static):
             request_json = row["request_json"]
             request_body = json.loads(request_json) if request_json else {}
 
-            budget = cc_dump.analysis.compute_turn_budget(request_body)
+            budget = cc_dump.core.analysis.compute_turn_budget(request_body)
 
             # Fill in actual token counts from store
             budget.actual_input_tokens = row["input_tokens"]
@@ -2209,7 +2209,7 @@ class TimelinePanel(Static):
 
         self._refresh_display(budgets)
 
-    def _refresh_display(self, budgets: list[cc_dump.analysis.TurnBudget]):
+    def _refresh_display(self, budgets: list[cc_dump.core.analysis.TurnBudget]):
         """Rebuild the timeline table."""
         text = cc_dump.tui.panel_renderers.render_timeline_panel(budgets)
         self.update(text)
@@ -2234,7 +2234,7 @@ class LogsPanel(RichLog):
 
     # [LAW:dataflow-not-control-flow] Log level style dispatch
     def _get_log_level_styles(self):
-        p = cc_dump.palette.PALETTE
+        p = cc_dump.core.palette.PALETTE
         return {
             "ERROR": f"bold {p.error}",
             "WARNING": f"bold {p.warning}",

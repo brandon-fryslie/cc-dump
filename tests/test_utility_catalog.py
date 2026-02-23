@@ -1,4 +1,4 @@
-from cc_dump.utility_catalog import UtilityRegistry, fallback_utility_output
+from cc_dump.ai.utility_catalog import UtilityRegistry, fallback_utility_output
 
 
 def test_registry_is_bounded_and_ids_unique():

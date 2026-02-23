@@ -2,7 +2,7 @@
 
 import pytest
 
-from cc_dump.formatting import VisState, HIDDEN, ALWAYS_VISIBLE
+from cc_dump.core.formatting import VisState, HIDDEN, ALWAYS_VISIBLE
 from tests.harness import (
     run_app,
     press_and_settle,
@@ -198,7 +198,7 @@ async def test_next_filterset_applies_without_crash():
         assert app._view_store.get("filter:active") is not None
 
         # Visibility state should match the applied filterset defaults
-        from cc_dump.settings import DEFAULT_FILTERSETS
+        from cc_dump.io.settings import DEFAULT_FILTERSETS
         slot = app._view_store.get("filter:active")
         expected = DEFAULT_FILTERSETS[slot]
         actual = get_all_vis_states(app)

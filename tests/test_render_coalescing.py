@@ -2,7 +2,7 @@
 
 from rich.console import Console
 
-from cc_dump.formatting import Category, TextContentBlock, ToolUseBlock
+from cc_dump.core.formatting import Category, TextContentBlock, ToolUseBlock
 from cc_dump.tui.rendering import render_turn_to_strips
 
 

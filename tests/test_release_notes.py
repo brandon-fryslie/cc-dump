@@ -1,4 +1,4 @@
-from cc_dump.release_notes import (
+from cc_dump.ai.release_notes import (
     RELEASE_NOTE_SECTIONS,
     ReleaseNotesStore,
     parse_release_notes_artifact,

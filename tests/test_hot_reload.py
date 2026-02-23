@@ -26,7 +26,7 @@ class TestHotReloadErrorResilience:
 
     def _setup_and_trigger(self):
         """Init hot_reload, load all reloadable modules, return hr module."""
-        import cc_dump.hot_reload as hr
+        import cc_dump.app.hot_reload as hr
 
         # Ensure all reloadable modules are in sys.modules
         for mod_name in hr._RELOAD_ORDER:
@@ -41,14 +41,14 @@ class TestHotReloadErrorResilience:
         hr = self._setup_and_trigger()
 
         def failing_reload(mod):
-            if mod.__name__ == "cc_dump.palette":
+            if mod.__name__ == "cc_dump.core.palette":
                 raise SyntaxError("simulated syntax error")
             return mod  # Don't actually reload — avoids polluting sys.modules
 
         with patch.object(importlib, "reload", side_effect=failing_reload):
             reloaded = hr.check_and_get_reloaded()
 
-        assert "cc_dump.palette" not in reloaded, "Broken module should be skipped"
+        assert "cc_dump.core.palette" not in reloaded, "Broken module should be skipped"
         assert len(reloaded) > 0, "Other modules should still reload"
 
     def test_survives_import_error_in_module(self):
@@ -56,14 +56,14 @@ class TestHotReloadErrorResilience:
         hr = self._setup_and_trigger()
 
         def failing_reload(mod):
-            if mod.__name__ == "cc_dump.formatting":
+            if mod.__name__ == "cc_dump.core.formatting":
                 raise ModuleNotFoundError("No module named 'nonexistent'")
             return mod  # Don't actually reload — avoids polluting sys.modules
 
         with patch.object(importlib, "reload", side_effect=failing_reload):
             reloaded = hr.check_and_get_reloaded()
 
-        assert "cc_dump.formatting" not in reloaded
+        assert "cc_dump.core.formatting" not in reloaded
         assert len(reloaded) > 0
 
     def test_survives_runtime_error_in_module(self):
@@ -71,14 +71,14 @@ class TestHotReloadErrorResilience:
         hr = self._setup_and_trigger()
 
         def failing_reload(mod):
-            if mod.__name__ == "cc_dump.analysis":
+            if mod.__name__ == "cc_dump.core.analysis":
                 raise RuntimeError("simulated runtime error")
             return mod  # Don't actually reload — avoids polluting sys.modules
 
         with patch.object(importlib, "reload", side_effect=failing_reload):
             reloaded = hr.check_and_get_reloaded()
 
-        assert "cc_dump.analysis" not in reloaded
+        assert "cc_dump.core.analysis" not in reloaded
         assert len(reloaded) > 0
 
     def test_all_modules_failing_returns_empty(self):
@@ -237,7 +237,7 @@ class TestImportValidation:
 
     def test_import_validation(self):
         """Validate that stable modules use module-level imports, not direct imports."""
-        from cc_dump.hot_reload import _RELOAD_ORDER
+        from cc_dump.app.hot_reload import _RELOAD_ORDER
 
         test_dir = Path(__file__).parent
         project_root = test_dir.parent
@@ -525,7 +525,7 @@ class TestWidgetStatePreservation:
 
     def test_conversation_view_blocks_preserve_expansion(self):
         """Block expanded overrides survive roundtrip via ViewOverrides serialization."""
-        from cc_dump.formatting import TextContentBlock
+        from cc_dump.core.formatting import TextContentBlock
         from cc_dump.tui.widget_factory import ConversationView, TurnData
 
         block_a = TextContentBlock(content="hello")
@@ -549,7 +549,7 @@ class TestWidgetStatePreservation:
 
     def test_conversation_view_blocks_preserve_force_vis(self):
         """force_vis is transient (search state) — not serialized across hot-reload."""
-        from cc_dump.formatting import TextContentBlock, ALWAYS_VISIBLE
+        from cc_dump.core.formatting import TextContentBlock, ALWAYS_VISIBLE
         from cc_dump.tui.widget_factory import ConversationView, TurnData
 
         block = TextContentBlock(content="test")
@@ -622,8 +622,8 @@ class TestWidgetStatePreservation:
         // [LAW:one-source-of-truth] Block lists live in DomainStore.
         // ConversationView.get_state() returns only view state (follow, anchor, overrides).
         """
-        from cc_dump.formatting import TextContentBlock, ContentRegion
-        from cc_dump.domain_store import DomainStore
+        from cc_dump.core.formatting import TextContentBlock, ContentRegion
+        from cc_dump.app.domain_store import DomainStore
         from cc_dump.tui.widget_factory import ConversationView
 
         block = TextContentBlock(content="test")
@@ -663,14 +663,14 @@ class TestHotReloadModuleStructure:
     """Unit tests for hot-reload module configuration."""
 
     def test_reload_order_is_defined(self):
-        from cc_dump.hot_reload import _RELOAD_ORDER
+        from cc_dump.app.hot_reload import _RELOAD_ORDER
 
         assert isinstance(_RELOAD_ORDER, list)
         assert len(_RELOAD_ORDER) > 0
 
         expected_modules = [
-            "cc_dump.formatting",
-            "cc_dump.router",
+            "cc_dump.core.formatting",
+            "cc_dump.pipeline.router",
             "cc_dump.tui.rendering",
             "cc_dump.tui.widget_factory",
         ]
@@ -678,16 +678,16 @@ class TestHotReloadModuleStructure:
             assert mod in _RELOAD_ORDER, f"Expected module {mod} in reload order"
 
     def test_excluded_files_contain_stable_boundaries(self):
-        from cc_dump.hot_reload import _EXCLUDED_FILES
+        from cc_dump.app.hot_reload import _EXCLUDED_FILES
 
         assert isinstance(_EXCLUDED_FILES, set)
 
-        required_exclusions = ["proxy.py", "cli.py", "hot_reload.py"]
+        required_exclusions = ["pipeline/proxy.py", "cli.py", "hot_reload.py"]
         for exc in required_exclusions:
             assert exc in _EXCLUDED_FILES, f"Expected {exc} to be excluded"
 
     def test_excluded_modules_contain_live_instances(self):
-        from cc_dump.hot_reload import _EXCLUDED_MODULES
+        from cc_dump.app.hot_reload import _EXCLUDED_MODULES
 
         assert isinstance(_EXCLUDED_MODULES, set)
 
@@ -704,11 +704,11 @@ class TestHotReloadModuleStructure:
         )
 
     def test_reload_order_respects_dependencies(self):
-        from cc_dump.hot_reload import _RELOAD_ORDER
+        from cc_dump.app.hot_reload import _RELOAD_ORDER
 
-        palette_idx = _RELOAD_ORDER.index("cc_dump.palette")
-        analysis_idx = _RELOAD_ORDER.index("cc_dump.analysis")
-        formatting_idx = _RELOAD_ORDER.index("cc_dump.formatting")
+        palette_idx = _RELOAD_ORDER.index("cc_dump.core.palette")
+        analysis_idx = _RELOAD_ORDER.index("cc_dump.core.analysis")
+        formatting_idx = _RELOAD_ORDER.index("cc_dump.core.formatting")
         assert formatting_idx > palette_idx, "formatting should come after palette"
         assert formatting_idx > analysis_idx, "formatting should come after analysis"
 
@@ -723,7 +723,7 @@ class TestHotReloadFileDetection:
     """Unit tests for hot-reload file classification and watch paths."""
 
     def test_init_sets_watch_dirs(self):
-        import cc_dump.hot_reload as hr
+        import cc_dump.app.hot_reload as hr
 
         test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
         hr.init(str(test_dir))
@@ -732,7 +732,7 @@ class TestHotReloadFileDetection:
         assert str(test_dir) in hr._watch_dirs
 
     def test_get_watch_paths_returns_copy(self):
-        import cc_dump.hot_reload as hr
+        import cc_dump.app.hot_reload as hr
 
         test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
         hr.init(str(test_dir))
@@ -744,40 +744,40 @@ class TestHotReloadFileDetection:
         assert "/bogus" not in hr.get_watch_paths()
 
     def test_is_reloadable_for_known_modules(self):
-        import cc_dump.hot_reload as hr
+        import cc_dump.app.hot_reload as hr
 
         test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
         hr.init(str(test_dir))
 
         # Reloadable modules
-        assert hr.is_reloadable(str(test_dir / "palette.py")) is True
-        assert hr.is_reloadable(str(test_dir / "formatting.py")) is True
+        assert hr.is_reloadable(str(test_dir / "core" / "palette.py")) is True
+        assert hr.is_reloadable(str(test_dir / "core" / "formatting.py")) is True
         assert hr.is_reloadable(str(test_dir / "tui" / "rendering.py")) is True
 
     def test_is_reloadable_rejects_excluded(self):
-        import cc_dump.hot_reload as hr
+        import cc_dump.app.hot_reload as hr
 
         test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
         hr.init(str(test_dir))
 
         # Excluded files
-        assert hr.is_reloadable(str(test_dir / "proxy.py")) is False
+        assert hr.is_reloadable(str(test_dir / "pipeline" / "proxy.py")) is False
         assert hr.is_reloadable(str(test_dir / "cli.py")) is False
         assert hr.is_reloadable(str(test_dir / "tui" / "app.py")) is False
 
     def test_is_reloadable_with_relative_path(self):
-        import cc_dump.hot_reload as hr
+        import cc_dump.app.hot_reload as hr
 
         test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
         hr.init(str(test_dir))
 
-        assert hr.is_reloadable("palette.py") is True
+        assert hr.is_reloadable("core/palette.py") is True
         assert hr.is_reloadable("tui/rendering.py") is True
-        assert hr.is_reloadable("proxy.py") is False
+        assert hr.is_reloadable("pipeline/proxy.py") is False
 
     def test_check_and_get_reloaded_returns_list(self):
         """check_and_get_reloaded unconditionally reloads all modules."""
-        import cc_dump.hot_reload as hr
+        import cc_dump.app.hot_reload as hr
 
         # Ensure all reloadable modules are in sys.modules
         for mod_name in hr._RELOAD_ORDER:
@@ -803,10 +803,10 @@ class TestSearchStateHotReload:
 
     def test_search_identity_survives_via_store(self):
         """Identity fields survive creating a new SearchState on the same store."""
-        import cc_dump.view_store
+        import cc_dump.app.view_store
         from cc_dump.tui.search import SearchState, SearchPhase, SearchMode
 
-        store = cc_dump.view_store.create()
+        store = cc_dump.app.view_store.create()
         old_state = SearchState(store)
         old_state.phase = SearchPhase.NAVIGATING
         old_state.query = "test_pattern"
@@ -823,10 +823,10 @@ class TestSearchStateHotReload:
 
     def test_transient_fields_reset_on_new_state(self):
         """matches, expanded_blocks, debounce_timer reset to defaults on new SearchState."""
-        import cc_dump.view_store
+        import cc_dump.app.view_store
         from cc_dump.tui.search import SearchState, SearchPhase, SearchMatch
 
-        store = cc_dump.view_store.create()
+        store = cc_dump.app.view_store.create()
         old_state = SearchState(store)
         old_state.phase = SearchPhase.NAVIGATING
         old_state.query = "test"

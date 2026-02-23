@@ -3,8 +3,8 @@
 import queue
 from types import SimpleNamespace
 
-import cc_dump.domain_store
-import cc_dump.view_store
+import cc_dump.app.domain_store
+import cc_dump.app.view_store
 from cc_dump.tui.app import CcDumpApp
 
 
@@ -21,8 +21,8 @@ def _make_app():
         event_queue=queue.Queue(),
         state=state,
         router=SimpleNamespace(stop=lambda: None),
-        view_store=cc_dump.view_store.create(),
-        domain_store=cc_dump.domain_store.DomainStore(),
+        view_store=cc_dump.app.view_store.create(),
+        domain_store=cc_dump.app.domain_store.DomainStore(),
     )
 
 
@@ -149,7 +149,7 @@ def test_apply_resume_ui_state_postload_restores_multi_session_state(monkeypatch
         "__default__": "conversation-tab-main",
         "sess-a": "conversation-tab-main-1",
     }
-    app._session_domain_stores["sess-a"] = cc_dump.domain_store.DomainStore()
+    app._session_domain_stores["sess-a"] = cc_dump.app.domain_store.DomainStore()
     called_session_keys: list[str] = []
 
     monkeypatch.setattr(app, "_ensure_session_surface", lambda session_key: called_session_keys.append(session_key))

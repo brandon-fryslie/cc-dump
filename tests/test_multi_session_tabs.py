@@ -2,7 +2,7 @@
 
 import pytest
 
-from cc_dump.event_types import RequestBodyEvent, ResponseProgressEvent
+from cc_dump.pipeline.event_types import RequestBodyEvent, ResponseProgressEvent
 from tests.harness import run_app, strips_to_text
 
 

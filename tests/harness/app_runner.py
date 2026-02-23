@@ -10,8 +10,8 @@ from typing import AsyncIterator, Callable
 
 from textual.pilot import Pilot
 
-from cc_dump.analytics_store import AnalyticsStore
-from cc_dump.router import EventRouter, QueueSubscriber
+from cc_dump.app.analytics_store import AnalyticsStore
+from cc_dump.pipeline.router import EventRouter, QueueSubscriber
 from cc_dump.tui.app import CcDumpApp
 import cc_dump.tui.view_store_bridge
 
@@ -52,8 +52,8 @@ async def run_app(
     analytics_store = AnalyticsStore()
 
     # Create view store for visibility state
-    import cc_dump.view_store
-    view_store = cc_dump.view_store.create()
+    import cc_dump.app.view_store
+    view_store = cc_dump.app.view_store.create()
 
     app = CcDumpApp(
         event_queue=tui_sub.queue,
@@ -76,7 +76,7 @@ async def run_app(
         if not getattr(view_store, "_reaction_disposers", None):
             store_context = {"app": app}
             store_context.update(cc_dump.tui.view_store_bridge.build_reaction_context(app))
-            view_store._reaction_disposers = cc_dump.view_store.setup_reactions(
+            view_store._reaction_disposers = cc_dump.app.view_store.setup_reactions(
                 view_store, store_context
             )
 

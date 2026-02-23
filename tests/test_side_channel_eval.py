@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from cc_dump.side_channel_eval import main, run_evaluation
-from cc_dump.side_channel_eval_metrics import PURPOSE_MIN_PASS_RATE
+from cc_dump.experiments.side_channel_eval import main, run_evaluation
+from cc_dump.experiments.side_channel_eval_metrics import PURPOSE_MIN_PASS_RATE
 
 
 def test_run_evaluation_produces_all_purpose_rows():

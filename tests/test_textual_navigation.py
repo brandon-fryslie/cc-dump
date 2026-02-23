@@ -9,7 +9,7 @@ from tests.harness import (
     get_turn_count,
     make_replay_data,
 )
-from cc_dump.formatting import (
+from cc_dump.core.formatting import (
     HeaderBlock,
     TextContentBlock,
     Category,

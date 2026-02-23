@@ -7,7 +7,7 @@
 
 from dataclasses import dataclass
 
-import cc_dump.formatting
+import cc_dump.core.formatting
 
 
 LaneKind = str  # "main" | "subagent" | "unknown"
@@ -47,7 +47,7 @@ def _extract_session_id(body: dict | None) -> str:
     user_id = metadata.get("user_id", "")
     if not isinstance(user_id, str) or not user_id:
         return ""
-    parsed = cc_dump.formatting.parse_user_id(user_id)
+    parsed = cc_dump.core.formatting.parse_user_id(user_id)
     if not parsed:
         return ""
     session_id = parsed.get("session_id", "")

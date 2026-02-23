@@ -29,8 +29,8 @@ from rich.style import Style
 
 
 # Module-level imports for hot-reload (never use `from` for these)
-import cc_dump.formatting
-import cc_dump.settings
+import cc_dump.core.formatting
+import cc_dump.io.settings
 import cc_dump.tui.rendering
 import cc_dump.tui.widget_factory
 import cc_dump.tui.event_handlers
@@ -50,23 +50,23 @@ from cc_dump.tui import theme_controller as _theme
 from cc_dump.tui import hot_reload_controller as _hot_reload
 
 # Additional module-level imports
-import cc_dump.palette
-import cc_dump.launch_config
-import cc_dump.tmux_controller
+import cc_dump.core.palette
+import cc_dump.app.launch_config
+import cc_dump.app.tmux_controller
 import cc_dump.tui.error_indicator
 import cc_dump.tui.settings_panel
 import cc_dump.tui.launch_config_panel
 import cc_dump.tui.side_channel_panel
 import cc_dump.tui.view_store_bridge
-import cc_dump.har_replayer
-import cc_dump.sessions
-import cc_dump.memory_stats
-import cc_dump.event_types
-import cc_dump.view_store
-import cc_dump.side_channel_marker
+import cc_dump.pipeline.har_replayer
+import cc_dump.io.sessions
+import cc_dump.app.memory_stats
+import cc_dump.pipeline.event_types
+import cc_dump.app.view_store
+import cc_dump.ai.side_channel_marker
 
-from cc_dump.stderr_tee import get_tee as _get_tee
-import cc_dump.domain_store
+from cc_dump.io.stderr_tee import get_tee as _get_tee
+import cc_dump.app.domain_store
 import snarfx
 from snarfx import transaction
 from snarfx import textual as stx
@@ -188,7 +188,7 @@ class CcDumpApp(App):
         self._data_dispatcher = data_dispatcher
         self._settings_store = settings_store
         self._view_store = view_store
-        self._domain_store = domain_store if domain_store is not None else cc_dump.domain_store.DomainStore()
+        self._domain_store = domain_store if domain_store is not None else cc_dump.app.domain_store.DomainStore()
         self._store_context = store_context
         self._closing = False
         self._quit_requested_at: float | None = None
@@ -200,7 +200,7 @@ class CcDumpApp(App):
         if self._memory_snapshot_enabled and not tracemalloc.is_tracing():
             tracemalloc.start(25)
 
-        self.sub_title = f"[{cc_dump.palette.PALETTE.info}]session: {session_name}[/]"
+        self.sub_title = f"[{cc_dump.core.palette.PALETTE.info}]session: {session_name}[/]"
 
         self._replay_complete = threading.Event()
         if not replay_data:
@@ -225,7 +225,7 @@ class CcDumpApp(App):
         self._default_session_key = "__default__"
         # // [LAW:one-source-of-truth] Request/session routing ownership lives in app state.
         self._request_session_keys: dict[str, str] = {}
-        self._session_domain_stores: dict[str, cc_dump.domain_store.DomainStore] = {
+        self._session_domain_stores: dict[str, cc_dump.app.domain_store.DomainStore] = {
             self._default_session_key: self._domain_store
         }
         self._session_conv_ids: dict[str, str] = {
@@ -333,7 +333,7 @@ class CcDumpApp(App):
         tab_index = len(self._session_tab_ids)
         conv_id = f"{self._conv_id}-{tab_index}"
         tab_id = f"{self._conv_tab_main_id}-{tab_index}"
-        domain_store = cc_dump.domain_store.DomainStore()
+        domain_store = cc_dump.app.domain_store.DomainStore()
         conv = cc_dump.tui.widget_factory.create_conversation_view(
             view_store=self._view_store,
             domain_store=domain_store,
@@ -373,7 +373,7 @@ class CcDumpApp(App):
         user_id = metadata.get("user_id", "")
         if not isinstance(user_id, str) or not user_id:
             return ""
-        parsed = cc_dump.formatting.parse_user_id(user_id)
+        parsed = cc_dump.core.formatting.parse_user_id(user_id)
         if not parsed:
             return ""
         session_id = parsed.get("session_id", "")
@@ -405,10 +405,10 @@ class CcDumpApp(App):
         """
         request_id = str(getattr(event, "request_id", "") or "")
         key = self._default_session_key
-        if event.kind == cc_dump.event_types.PipelineEventKind.REQUEST:
+        if event.kind == cc_dump.pipeline.event_types.PipelineEventKind.REQUEST:
             body = getattr(event, "body", {})
             marker = (
-                cc_dump.side_channel_marker.extract_marker(body)
+                cc_dump.ai.side_channel_marker.extract_marker(body)
                 if isinstance(body, dict)
                 else None
             )
@@ -679,7 +679,7 @@ class CcDumpApp(App):
 
         # Seed external state into view store for reactive footer
         self._sync_tmux_to_store()
-        self._view_store.set("launch:active_name", cc_dump.launch_config.load_active_name())
+        self._view_store.set("launch:active_name", cc_dump.app.launch_config.load_active_name())
         if self._resume_ui_state is not None:
             self._apply_resume_ui_state_preload()
         # Footer hydration — reactions are now active
@@ -720,7 +720,7 @@ class CcDumpApp(App):
                     except Exception:
                         pass
 
-        self._view_store._reaction_disposers = cc_dump.view_store.setup_reactions(
+        self._view_store._reaction_disposers = cc_dump.app.view_store.setup_reactions(
             self._view_store, ctx
         )
 
@@ -786,7 +786,7 @@ class CcDumpApp(App):
     def _sync_tmux_to_store(self):
         """Mirror tmux controller state to view store for reactive footer updates."""
         tmux = self._tmux_controller
-        _TMUX_ACTIVE = {cc_dump.tmux_controller.TmuxState.READY, cc_dump.tmux_controller.TmuxState.CLAUDE_RUNNING}
+        _TMUX_ACTIVE = {cc_dump.app.tmux_controller.TmuxState.READY, cc_dump.app.tmux_controller.TmuxState.CLAUDE_RUNNING}
         self._view_store.update({
             "tmux:available": tmux is not None and tmux.state in _TMUX_ACTIVE,
             "tmux:auto_zoom": tmux.auto_zoom if tmux is not None else False,
@@ -805,7 +805,7 @@ class CcDumpApp(App):
             "session_name": self._session_name,
             "session_id": self._session_id,
             "recording_path": self._recording_path,
-            "recording_dir": cc_dump.sessions.get_recordings_dir(),
+            "recording_dir": cc_dump.io.sessions.get_recordings_dir(),
             "replay_file": self._replay_file,
             "python_version": sys.version.split()[0],
             "textual_version": textual.__version__,
@@ -816,7 +816,7 @@ class CcDumpApp(App):
         """Emit a structured memory snapshot to the logs panel when enabled."""
         if not self._memory_snapshot_enabled:
             return
-        snapshot = cc_dump.memory_stats.capture_snapshot(self)
+        snapshot = cc_dump.app.memory_stats.capture_snapshot(self)
         ordered_keys = [
             "domain_completed_turns",
             "domain_active_streams",
@@ -963,7 +963,7 @@ class CcDumpApp(App):
         ) in self._replay_data:
             try:
                 # // [LAW:one-source-of-truth] Replay uses the same event pipeline as live.
-                events = cc_dump.har_replayer.convert_to_events(
+                events = cc_dump.pipeline.har_replayer.convert_to_events(
                     req_headers, req_body, resp_status, resp_headers, complete_message
                 )
                 for event in events:
@@ -1174,9 +1174,9 @@ class CcDumpApp(App):
         if tmux is None:
             self.notify("Tmux not available", severity="warning")
             return
-        config = cc_dump.launch_config.get_active_config()
+        config = cc_dump.app.launch_config.get_active_config()
         session_id = self._active_resume_session_id() if config.auto_resume else ""
-        command = cc_dump.launch_config.build_full_command(config, session_id)
+        command = cc_dump.app.launch_config.build_full_command(config, session_id)
         tmux.set_claude_command(config.claude_command)
         result = tmux.launch_claude(command=command)
         self._app_log("INFO", "launch_claude: {}".format(result))
@@ -1245,8 +1245,8 @@ class CcDumpApp(App):
 
     def _open_launch_config(self):
         """Open launch config panel, populating state from saved configs."""
-        configs = cc_dump.launch_config.load_configs()
-        active_name = cc_dump.launch_config.load_active_name()
+        configs = cc_dump.app.launch_config.load_configs()
+        active_name = cc_dump.app.launch_config.load_active_name()
 
         self._view_store.set("panel:launch_config", True)
         panel = cc_dump.tui.launch_config_panel.create_launch_config_panel(
@@ -1271,7 +1271,7 @@ class CcDumpApp(App):
             return
 
         session_id = self._active_resume_session_id() if config.auto_resume else ""
-        command = cc_dump.launch_config.build_full_command(config, session_id)
+        command = cc_dump.app.launch_config.build_full_command(config, session_id)
         tmux.set_claude_command(config.claude_command)
         result = tmux.launch_claude(command=command)
         self._app_log("INFO", "launch_with_config: {}".format(result))
@@ -1283,8 +1283,8 @@ class CcDumpApp(App):
 
     def on_launch_config_panel_saved(self, msg) -> None:
         """Handle LaunchConfigPanel.Saved — persist configs."""
-        cc_dump.launch_config.save_configs(msg.configs)
-        cc_dump.launch_config.save_active_name(msg.active_name)
+        cc_dump.app.launch_config.save_configs(msg.configs)
+        cc_dump.app.launch_config.save_active_name(msg.active_name)
         self._close_launch_config()
         self.notify("Launch configs saved")
 
@@ -1294,15 +1294,15 @@ class CcDumpApp(App):
 
     def on_launch_config_panel_quick_launch(self, msg) -> None:
         """Handle LaunchConfigPanel.QuickLaunch — save, close, launch."""
-        cc_dump.launch_config.save_configs(msg.configs)
-        cc_dump.launch_config.save_active_name(msg.active_name)
+        cc_dump.app.launch_config.save_configs(msg.configs)
+        cc_dump.app.launch_config.save_active_name(msg.active_name)
         self._close_launch_config()
         self._launch_with_config(msg.config)
 
     def on_launch_config_panel_activated(self, msg) -> None:
         """Handle LaunchConfigPanel.Activated — save active name, notify."""
-        cc_dump.launch_config.save_configs(msg.configs)
-        cc_dump.launch_config.save_active_name(msg.name)
+        cc_dump.app.launch_config.save_configs(msg.configs)
+        cc_dump.app.launch_config.save_active_name(msg.name)
         self._view_store.set("launch:active_name", msg.name)
         self.notify("Active: {}".format(msg.name))
 
@@ -1311,13 +1311,14 @@ class CcDumpApp(App):
         _actions.toggle_side_channel(self)
 
     def _open_side_channel(self):
-        """Open side-channel AI panel."""
+        """Open AI Workbench sidebar."""
         self._view_store.set("panel:side_channel", True)
         panel = cc_dump.tui.side_channel_panel.create_side_channel_panel()
         self.screen.mount(panel)
         # Reset sc state — reaction pushes to panel
         with transaction():
             self._view_store.set("sc:loading", False)
+            self._view_store.set("sc:active_action", "")
             self._view_store.set("sc:result_text", "")
             self._view_store.set("sc:result_source", "")
             self._view_store.set("sc:result_elapsed_ms", 0)
@@ -1331,7 +1332,7 @@ class CcDumpApp(App):
         )
 
     def _close_side_channel(self):
-        """Close side-channel AI panel and restore focus to conversation."""
+        """Close AI Workbench sidebar and restore focus to conversation."""
         for panel in self.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel):
             panel.remove()
         self._view_store.set("panel:side_channel", False)
@@ -1346,11 +1347,15 @@ class CcDumpApp(App):
 
         messages = self._collect_recent_messages(10)
         if not messages:
-            self._view_store.set("sc:result_text", "No messages to summarize.")
-            self._view_store.set("sc:result_source", "fallback")
+            with transaction():
+                self._view_store.set("sc:active_action", "")
+                self._view_store.set("sc:result_text", "No messages to summarize.")
+                self._view_store.set("sc:result_source", "fallback")
             return
 
-        self._view_store.set("sc:loading", True)
+        with transaction():
+            self._view_store.set("sc:loading", True)
+            self._view_store.set("sc:active_action", "summarize_recent")
 
         dispatcher = self._data_dispatcher
 
@@ -1366,6 +1371,7 @@ class CcDumpApp(App):
         """Callback from worker thread with AI result."""
         with transaction():
             self._view_store.set("sc:loading", False)
+            self._view_store.set("sc:active_action", "")
             self._view_store.set("sc:result_text", result.text)
             self._view_store.set("sc:result_source", result.source)
             self._view_store.set("sc:result_elapsed_ms", result.elapsed_ms)
@@ -1388,21 +1394,45 @@ class CcDumpApp(App):
         recent_messages = cast(list[dict], self._app_state.get("recent_messages", []))
         return recent_messages[-count:]
 
-    def _side_channel_toggle_enabled(self):
-        """Toggle side-channel AI on/off via settings store."""
-        if self._settings_store is None:
-            return
-        current = self._settings_store.get("side_channel_enabled")
-        self._settings_store.set("side_channel_enabled", not current)
-        # sc_panel_state Computed reads settings_store → reaction fires automatically
+    def _workbench_preview(self, feature: str, owner_ticket: str) -> None:
+        """Publish deterministic placeholder output for non-integrated controls.
 
-    def action_sc_summarize(self) -> None:
-        """Action target for side-channel Summarize chip."""
+        // [LAW:single-enforcer] Placeholder behavior is centralized here.
+        """
+        preview = (
+            f"{feature} is planned but not wired in this panel yet.\n"
+            f"Owner: {owner_ticket}\n"
+            "No side effects were executed."
+        )
+        with transaction():
+            self._view_store.set("sc:loading", False)
+            self._view_store.set("sc:active_action", "")
+            self._view_store.set("sc:result_text", preview)
+            self._view_store.set("sc:result_source", "preview")
+            self._view_store.set("sc:result_elapsed_ms", 0)
+
+    def action_sc_summarize_recent(self) -> None:
+        """Action target for Workbench summarize control."""
         self._side_channel_summarize()
 
-    def action_sc_toggle(self) -> None:
-        """Action target for side-channel Toggle chip."""
-        self._side_channel_toggle_enabled()
+    def action_sc_summarize(self) -> None:
+        """Back-compatible alias for summarize action."""
+        self.action_sc_summarize_recent()
+
+    def action_sc_preview_qa(self) -> None:
+        self._workbench_preview("Q&A Composer", "cc-dump-p2c.1")
+
+    def action_sc_preview_action_review(self) -> None:
+        self._workbench_preview("Action Review", "cc-dump-mjb.3")
+
+    def action_sc_preview_handoff(self) -> None:
+        self._workbench_preview("Handoff Draft", "cc-dump-mjb.4")
+
+    def action_sc_preview_release_notes(self) -> None:
+        self._workbench_preview("Release Notes", "cc-dump-mjb.4")
+
+    def action_sc_preview_utilities(self) -> None:
+        self._workbench_preview("Utility Runner", "cc-dump-mjb.6")
 
     # Navigation
     def action_toggle_follow(self):

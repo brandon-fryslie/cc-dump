@@ -22,7 +22,7 @@ from textual.widgets import Input, Label, Select, Static
 
 from cc_dump.tui.chip import ToggleChip
 
-import cc_dump.palette
+import cc_dump.core.palette
 
 
 # ─── Field definitions ───────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ class FieldDef:
 # ─── Field registry ──────────────────────────────────────────────────────────
 # // [LAW:one-source-of-truth] Defaults from settings_store.SCHEMA.
 
-import cc_dump.settings_store
+import cc_dump.app.settings_store
 
 SETTINGS_FIELDS: list[FieldDef] = [
     FieldDef(
@@ -50,14 +50,14 @@ SETTINGS_FIELDS: list[FieldDef] = [
         label="Auto-Zoom Default",
         description="Start with tmux auto-zoom enabled",
         kind="bool",
-        default=cc_dump.settings_store.SCHEMA["auto_zoom_default"],
+        default=cc_dump.app.settings_store.SCHEMA["auto_zoom_default"],
     ),
     FieldDef(
         key="side_channel_enabled",
         label="AI Summaries",
         description="Enable AI-powered summaries via claude -p",
         kind="bool",
-        default=cc_dump.settings_store.SCHEMA["side_channel_enabled"],
+        default=cc_dump.app.settings_store.SCHEMA["side_channel_enabled"],
     ),
 ]
 
@@ -153,7 +153,7 @@ class SettingsPanel(VerticalScroll):
         self._initial_values = initial_values or {}
 
     def compose(self) -> ComposeResult:
-        p = cc_dump.palette.PALETTE
+        p = cc_dump.core.palette.PALETTE
         yield Static("Settings", classes="panel-title")
 
         for field in SETTINGS_FIELDS:

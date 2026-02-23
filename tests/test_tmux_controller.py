@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cc_dump.event_types import (
+from cc_dump.pipeline.event_types import (
     ErrorEvent,
     PipelineEventKind,
     ProxyErrorEvent,
@@ -17,7 +17,7 @@ from cc_dump.event_types import (
     ResponseDoneEvent,
     StopReason,
 )
-from cc_dump.tmux_controller import (
+from cc_dump.app.tmux_controller import (
     LaunchAction,
     LaunchResult,
     TmuxController,
@@ -550,7 +550,7 @@ class TestAutoResume:
 
     def test_resume_flag_in_launched_command(self, make_controller):
         """When auto_resume is True and session_id is known, --resume appears in the command."""
-        from cc_dump.launch_config import LaunchConfig, build_full_command
+        from cc_dump.app.launch_config import LaunchConfig, build_full_command
 
         our_pane = MagicMock()
         our_pane.pane_id = "%0"
@@ -579,7 +579,7 @@ class TestAutoResume:
 
     def test_no_resume_without_session_id(self, make_controller):
         """Without a session_id, --resume is not in the command."""
-        from cc_dump.launch_config import LaunchConfig, build_full_command
+        from cc_dump.app.launch_config import LaunchConfig, build_full_command
 
         our_pane = MagicMock()
         our_pane.pane_id = "%0"
@@ -605,7 +605,7 @@ class TestAutoResume:
 
     def test_no_resume_when_disabled(self, make_controller):
         """With auto_resume=False, --resume is not in the command even with session_id."""
-        from cc_dump.launch_config import LaunchConfig, build_full_command
+        from cc_dump.app.launch_config import LaunchConfig, build_full_command
 
         our_pane = MagicMock()
         our_pane.pane_id = "%0"
@@ -631,8 +631,8 @@ class TestAutoResume:
 
     def test_session_id_from_metadata_to_launch(self):
         """Full chain: metadata.user_id → format_request → state → build_full_command."""
-        from cc_dump.formatting import format_request
-        from cc_dump.launch_config import LaunchConfig, build_full_command
+        from cc_dump.core.formatting import format_request
+        from cc_dump.app.launch_config import LaunchConfig, build_full_command
 
         state = {
             "request_counter": 0,

@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from cc_dump.domain_store import DomainStore
+from cc_dump.app.domain_store import DomainStore
 
 
 def test_get_completed_lane_counts_uses_block_attribution():

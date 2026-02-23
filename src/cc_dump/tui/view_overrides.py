@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from collections.abc import Iterable
 
-from cc_dump.formatting import Category, VisState, FormattedBlock
+from cc_dump.core.formatting import Category, VisState, FormattedBlock
 
 
 @dataclass

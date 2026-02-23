@@ -21,8 +21,8 @@ from cc_dump.context_pruner import (
     select_session_snapshots,
 )
 from cc_dump.har_checkpoint_diff import diff_checkpoints, snapshot_from_har_entry
-from cc_dump.side_channel_marker import extract_marker
-from cc_dump.token_counter import count_tokens
+from cc_dump.ai.side_channel_marker import extract_marker
+from cc_dump.core.token_counter import count_tokens
 
 
 _CONSTRAINT_RE = re.compile(r"\b(do not|don't|must|never|only|without|cannot|can't)\b", re.IGNORECASE)

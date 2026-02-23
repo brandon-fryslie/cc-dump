@@ -1,7 +1,7 @@
 """Tests for token_counter module."""
 
 import pytest
-from cc_dump.token_counter import count_tokens
+from cc_dump.core.token_counter import count_tokens
 
 
 def test_count_tokens_empty_string():

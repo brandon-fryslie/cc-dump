@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock, patch
 
-from cc_dump.action_items import ActionSourceLink, ActionWorkItem
-from cc_dump.action_items_beads import create_beads_issue_for_item
+from cc_dump.ai.action_items import ActionSourceLink, ActionWorkItem
+from cc_dump.ai.action_items_beads import create_beads_issue_for_item
 
 
 def _sample_item() -> ActionWorkItem:

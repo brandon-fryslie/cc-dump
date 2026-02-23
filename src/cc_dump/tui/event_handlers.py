@@ -7,10 +7,10 @@ but the actual behavior can be hot-swapped.
 
 from collections.abc import Callable
 
-import cc_dump.analysis
-import cc_dump.formatting
+import cc_dump.core.analysis
+import cc_dump.core.formatting
 import cc_dump.tui.stream_registry
-from cc_dump.event_types import (
+from cc_dump.pipeline.event_types import (
     PipelineEventKind,
     RequestHeadersEvent,
     RequestBodyEvent,
@@ -179,7 +179,7 @@ def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool =
         )
 
     if rerender_budget:
-        budget_vis = filters.get("metadata", cc_dump.formatting.HIDDEN)
+        budget_vis = filters.get("metadata", cc_dump.core.formatting.HIDDEN)
         if budget_vis.visible:
             conv.rerender(filters)
 
@@ -213,9 +213,9 @@ def _handle_complete_response_payload(
     response_blocks: list = []
     if status_code > 0 or headers_dict:
         response_blocks.extend(
-            cc_dump.formatting.format_response_headers(status_code or 200, headers_dict)
+            cc_dump.core.formatting.format_response_headers(status_code or 200, headers_dict)
         )
-    response_blocks.extend(cc_dump.formatting.format_complete_response(complete_body))
+    response_blocks.extend(cc_dump.core.formatting.format_complete_response(complete_body))
 
     _stamp_blocks(response_blocks, ctx)
     _maybe_update_main_session(state, ctx)
@@ -278,7 +278,7 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
             pending_headers_all = {}
         pending_headers = pending_headers_all.pop(event.request_id, None)
         app_state["pending_request_headers"] = pending_headers_all
-        blocks = cc_dump.formatting.format_request(body, state, request_headers=pending_headers)
+        blocks = cc_dump.core.formatting.format_request(body, state, request_headers=pending_headers)
         _stamp_blocks(blocks, ctx)
 
         domain_store = widgets["domain_store"]
@@ -317,7 +317,7 @@ def handle_response_headers(event: ResponseHeadersEvent, state, widgets, app_sta
         )
         _fallback_session(ctx, state)
 
-        blocks = cc_dump.formatting.format_response_headers(status_code, headers_dict)
+        blocks = cc_dump.core.formatting.format_response_headers(status_code, headers_dict)
         _stamp_blocks(blocks, ctx)
         _maybe_update_main_session(state, ctx)
 
@@ -403,9 +403,9 @@ def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_s
         })
 
         if event.delta_text:
-            block = cc_dump.formatting.TextDeltaBlock(
+            block = cc_dump.core.formatting.TextDeltaBlock(
                 content=event.delta_text,
-                category=cc_dump.formatting.Category.ASSISTANT,
+                category=cc_dump.core.formatting.Category.ASSISTANT,
             )
             _stamp_block_tree(block, ctx)
             domain_store.append_stream_block(event.request_id, block)
@@ -491,7 +491,7 @@ def handle_error(event: ErrorEvent, state, widgets, app_state, log_fn):
 
     log_fn("ERROR", f"HTTP Error {code}: {reason}")
 
-    block = cc_dump.formatting.ErrorBlock(code=code, reason=reason)
+    block = cc_dump.core.formatting.ErrorBlock(code=code, reason=reason)
     block.session_id = state.get("current_session", "")
 
     domain_store = widgets["domain_store"]
@@ -508,7 +508,7 @@ def handle_proxy_error(event: ProxyErrorEvent, state, widgets, app_state, log_fn
 
     log_fn("ERROR", f"Proxy error: {err}")
 
-    block = cc_dump.formatting.ProxyErrorBlock(error=err)
+    block = cc_dump.core.formatting.ProxyErrorBlock(error=err)
     block.session_id = state.get("current_session", "")
 
     domain_store = widgets["domain_store"]

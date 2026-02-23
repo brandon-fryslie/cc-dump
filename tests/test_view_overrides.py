@@ -7,7 +7,7 @@ import copy
 
 from textual.theme import BUILTIN_THEMES
 
-from cc_dump.formatting import (
+from cc_dump.core.formatting import (
     FormattedBlock,
     TextContentBlock,
     ToolUseBlock,

@@ -1,10 +1,10 @@
-"""Tests for cc_dump.perf_metrics — collector behavior, stats shape, and thresholds."""
+"""Tests for cc_dump.experiments.perf_metrics — collector behavior, stats shape, and thresholds."""
 
 import time
 
 import pytest
 
-from cc_dump.perf_metrics import MetricsCollector, StageStats, _compute_stats
+from cc_dump.experiments.perf_metrics import MetricsCollector, StageStats, _compute_stats
 
 
 # ─── MetricsCollector basics ────────────────────────────────────────────────
@@ -200,7 +200,7 @@ class TestBenchmarkSmoke:
     def test_event_generation(self):
         """Verify synthetic event stream structure."""
         from benchmarks.bench_streaming import generate_sse_stream
-        from cc_dump.event_types import (
+        from cc_dump.pipeline.event_types import (
             ResponseSSEEvent,
             MessageStartEvent as MStart,
             TextBlockStartEvent as TBStart,

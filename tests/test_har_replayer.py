@@ -3,8 +3,8 @@
 import json
 import pytest
 
-from cc_dump.har_replayer import load_har, convert_to_events
-from cc_dump.event_types import (
+from cc_dump.pipeline.har_replayer import load_har, convert_to_events
+from cc_dump.pipeline.event_types import (
     RequestHeadersEvent,
     RequestBodyEvent,
     ResponseHeadersEvent,

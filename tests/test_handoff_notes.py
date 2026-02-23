@@ -1,4 +1,4 @@
-from cc_dump.handoff_notes import (
+from cc_dump.ai.handoff_notes import (
     HandoffStore,
     SECTION_ORDER,
     parse_handoff_artifact,

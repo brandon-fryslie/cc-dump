@@ -2,7 +2,7 @@
 
 import pytest
 
-from cc_dump.formatting import VisState
+from cc_dump.core.formatting import VisState
 from tests.harness import (
     run_app,
     press_and_settle,

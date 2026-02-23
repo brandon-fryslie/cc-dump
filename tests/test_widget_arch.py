@@ -17,7 +17,7 @@ from textual.geometry import Offset
 from textual.strip import Strip
 
 import cc_dump.tui.rendering
-from cc_dump.formatting import (
+from cc_dump.core.formatting import (
     SeparatorBlock,
     HeaderBlock,
     MetadataBlock,

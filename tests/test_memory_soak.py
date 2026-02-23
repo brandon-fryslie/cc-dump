@@ -1,10 +1,10 @@
 """Regression tests for memory soak harness."""
 
-import cc_dump.memory_soak
+import cc_dump.experiments.memory_soak
 
 
 def test_run_memory_soak_enforces_guardrails():
-    snapshots = cc_dump.memory_soak.run_memory_soak(
+    snapshots = cc_dump.experiments.memory_soak.run_memory_soak(
         turns=1200,
         snapshot_interval=300,
         har_max_pending=32,

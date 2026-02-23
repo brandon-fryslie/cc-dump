@@ -1,4 +1,4 @@
-from cc_dump.checkpoints import (
+from cc_dump.ai.checkpoints import (
     CheckpointArtifact,
     make_checkpoint_id,
     render_checkpoint_diff,

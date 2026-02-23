@@ -4,14 +4,14 @@ This module contains all the display formatting logic for panels. It's separated
 so it can be hot-reloaded without affecting the live widget instances.
 """
 
-import cc_dump.analysis
-import cc_dump.palette
+import cc_dump.core.analysis
+import cc_dump.core.palette
 import cc_dump.tui.input_modes
 from rich.text import Text
 from collections.abc import Callable
 
 # [LAW:one-source-of-truth] Shared compact token formatter lives in analysis.py.
-_fmt_tokens = cc_dump.analysis.fmt_tokens
+_fmt_tokens = cc_dump.core.analysis.fmt_tokens
 
 
 def _dashboard_tabs(active: str) -> str:
@@ -138,7 +138,7 @@ def render_analytics_timeline(snapshot: dict, max_rows: int = 12) -> str:
         lines.append(
             "  {:>4}  {:<11}  {:>7}  {:>7}  {:>6}  {:>7}".format(
                 int(row.get("sequence_num", 0)),
-                cc_dump.analysis.format_model_ultra_short(str(row.get("model", "")))[:11],
+                cc_dump.core.analysis.format_model_ultra_short(str(row.get("model", "")))[:11],
                 _fmt_tokens(int(row.get("input_total", 0))),
                 _fmt_tokens(int(row.get("output_tokens", 0))),
                 "{:.0f}%".format(float(row.get("cache_pct", 0.0))),
@@ -323,7 +323,7 @@ def render_economics_panel(rows: list) -> str:
         def row_fields(row):
             return (
                 row.name[:12],
-                cc_dump.analysis.format_model_short(row.model or "")[:11],
+                cc_dump.core.analysis.format_model_short(row.model or "")[:11],
                 row.calls,
                 _format_economics_row_input(row),
                 _format_economics_row_output(row),
@@ -352,7 +352,7 @@ def render_economics_panel(rows: list) -> str:
     return "\n".join(lines)
 
 
-def render_timeline_panel(budgets: list[cc_dump.analysis.TurnBudget]) -> str:
+def render_timeline_panel(budgets: list[cc_dump.core.analysis.TurnBudget]) -> str:
     """Render the timeline panel display text."""
     if not budgets:
         return "Timeline: (no turns yet)"
@@ -439,7 +439,7 @@ def render_session_panel(
     """
     import time
 
-    p = cc_dump.palette.PALETTE
+    p = cc_dump.core.palette.PALETTE
 
     # Indicator + age inline
     result = Text()
@@ -493,7 +493,7 @@ def render_info_panel(info: dict) -> Text:
     Returns:
         Rich Text object with labeled rows
     """
-    p = cc_dump.palette.PALETTE
+    p = cc_dump.core.palette.PALETTE
 
     # // [LAW:one-source-of-truth] Row definitions: (label, value)
     # Every row is rendered. None/empty → "--". All values are click-to-copy.
@@ -543,7 +543,7 @@ def render_keys_panel() -> Text:
     Returns:
         Rich Text object with grouped key shortcuts
     """
-    p = cc_dump.palette.PALETTE
+    p = cc_dump.core.palette.PALETTE
     key_groups = cc_dump.tui.input_modes.KEY_GROUPS
 
     text = Text()

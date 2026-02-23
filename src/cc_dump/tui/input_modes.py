@@ -214,7 +214,7 @@ KEY_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("C", "Run configs"),
         ("z/Z", "Zoom (tmux)"),
         ("S", "Settings"),
-        ("X", "AI panel"),
+        ("X", "AI Workbench"),
         ("^C ^C", "Quit"),
     ]),
 ]

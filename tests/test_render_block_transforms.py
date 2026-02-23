@@ -2,7 +2,7 @@
 
 from rich.console import Console
 
-from cc_dump.formatting import (
+from cc_dump.core.formatting import (
     Category,
     NewlineBlock,
     TextContentBlock,

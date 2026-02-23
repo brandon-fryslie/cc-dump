@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 
-from cc_dump.event_types import (
+from cc_dump.pipeline.event_types import (
     MessageDeltaEvent,
     MessageInfo,
     MessageRole,
@@ -18,7 +18,7 @@ from cc_dump.event_types import (
     ToolUseBlockStartEvent,
     Usage,
 )
-from cc_dump.domain_store import DomainStore
+from cc_dump.app.domain_store import DomainStore
 from cc_dump.tui import event_handlers
 
 

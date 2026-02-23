@@ -1,6 +1,6 @@
 """Tests for collapsible XML sub-blocks within TextContentBlock."""
 
-from cc_dump.formatting import (
+from cc_dump.core.formatting import (
     TextContentBlock,
     ContentRegion,
     Category,
@@ -17,7 +17,7 @@ from cc_dump.tui.rendering import (
     COLLAPSIBLE_REGION_KINDS,
 )
 from cc_dump.tui.view_overrides import ViewOverrides
-from cc_dump.segmentation import segment, SubBlockKind
+from cc_dump.core.segmentation import segment, SubBlockKind
 from rich.console import Console
 from textual.theme import BUILTIN_THEMES
 

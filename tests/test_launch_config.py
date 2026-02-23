@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from cc_dump.launch_config import (
+from cc_dump.app.launch_config import (
     LaunchConfig,
     build_full_command,
     get_active_config,
@@ -23,7 +23,7 @@ def settings_file(tmp_path, monkeypatch):
     def _get_config_path():
         return settings_path
 
-    monkeypatch.setattr("cc_dump.settings.get_config_path", _get_config_path)
+    monkeypatch.setattr("cc_dump.io.settings.get_config_path", _get_config_path)
     return settings_path
 
 

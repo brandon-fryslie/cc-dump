@@ -16,8 +16,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 from tests.harness import run_app, make_replay_entry
-import cc_dump.formatting as fmt
-from cc_dump.analysis import TurnBudget
+import cc_dump.core.formatting as fmt
+from cc_dump.core.analysis import TurnBudget
 
 
 pytestmark = pytest.mark.textual

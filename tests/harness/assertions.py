@@ -4,7 +4,7 @@ Pure functions that return values — tests compose with assert.
 No internal assertions.
 """
 
-from cc_dump.formatting import VisState
+from cc_dump.core.formatting import VisState
 from cc_dump.tui.app import CcDumpApp
 
 

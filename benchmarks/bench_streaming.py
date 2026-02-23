@@ -16,7 +16,7 @@ import sys
 import time
 import tracemalloc
 
-from cc_dump.event_types import (
+from cc_dump.pipeline.event_types import (
     MessageStartEvent,
     MessageInfo,
     MessageRole,
@@ -30,8 +30,8 @@ from cc_dump.event_types import (
     ResponseDoneEvent,
     TextBlockStartEvent,
 )
-from cc_dump.formatting import format_response_event
-from cc_dump.perf_metrics import MetricsCollector
+from cc_dump.core.formatting import format_response_event
+from cc_dump.experiments.perf_metrics import MetricsCollector
 
 
 def generate_sse_stream(n_deltas: int) -> list[ResponseSSEEvent]:

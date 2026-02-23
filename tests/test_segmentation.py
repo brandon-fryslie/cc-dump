@@ -1,8 +1,8 @@
-"""Tests for cc_dump.segmentation — SubBlock segmentation pipeline."""
+"""Tests for cc_dump.core.segmentation — SubBlock segmentation pipeline."""
 
 import pytest
 
-from cc_dump.segmentation import (
+from cc_dump.core.segmentation import (
     FenceMeta,
     ParseErrorKind,
     SegmentResult,

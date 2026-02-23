@@ -1,9 +1,9 @@
-from cc_dump.side_channel_boundary import (
+from cc_dump.ai.side_channel_boundary import (
     REDACTION_POLICY_VERSION,
     apply_boundary,
     get_boundary_policy,
 )
-from cc_dump.side_channel_purpose import SIDE_CHANNEL_PURPOSES
+from cc_dump.ai.side_channel_purpose import SIDE_CHANNEL_PURPOSES
 
 
 def test_policy_defined_for_all_purposes():

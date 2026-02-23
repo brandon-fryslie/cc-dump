@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cc_dump.sessions import (
+from cc_dump.io.sessions import (
     list_recordings,
     get_latest_recording,
     cleanup_recordings,

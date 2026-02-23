@@ -8,9 +8,9 @@ import time
 from dataclasses import dataclass
 from unittest.mock import patch, MagicMock
 
-from cc_dump.side_channel import SideChannelManager, SideChannelResult
-from cc_dump.data_dispatcher import DataDispatcher
-from cc_dump.conversation_qa import QAScope, SCOPE_WHOLE_SESSION
+from cc_dump.ai.side_channel import SideChannelManager, SideChannelResult
+from cc_dump.ai.data_dispatcher import DataDispatcher
+from cc_dump.ai.conversation_qa import QAScope, SCOPE_WHOLE_SESSION
 
 
 # ─── SideChannelManager tests ────────────────────────────────────────
@@ -372,8 +372,8 @@ class TestDataDispatcher:
 
     def test_prompt_construction_with_content_blocks(self):
         """Content blocks (list format) are correctly extracted."""
-        from cc_dump.data_dispatcher import _build_summary_context, _build_summary_prompt
-        from cc_dump.prompt_registry import get_prompt_spec
+        from cc_dump.ai.data_dispatcher import _build_summary_context, _build_summary_prompt
+        from cc_dump.ai.prompt_registry import get_prompt_spec
 
         messages = [
             {
@@ -392,8 +392,8 @@ class TestDataDispatcher:
 
     def test_prompt_truncates_long_messages(self):
         """Individual messages are truncated to 500 chars."""
-        from cc_dump.data_dispatcher import _build_summary_context, _build_summary_prompt
-        from cc_dump.prompt_registry import get_prompt_spec
+        from cc_dump.ai.data_dispatcher import _build_summary_context, _build_summary_prompt
+        from cc_dump.ai.prompt_registry import get_prompt_spec
 
         messages = [{"role": "assistant", "content": "x" * 1000}]
         context = _build_summary_context(messages)

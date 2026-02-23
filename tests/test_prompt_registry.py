@@ -1,4 +1,4 @@
-from cc_dump.prompt_registry import get_prompt_spec
+from cc_dump.ai.prompt_registry import get_prompt_spec
 
 
 def test_known_purpose_returns_registered_spec():

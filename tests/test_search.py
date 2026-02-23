@@ -14,7 +14,7 @@ from cc_dump.tui.search import (
     compile_search_pattern,
     find_all_matches,
 )
-from cc_dump.formatting import (
+from cc_dump.core.formatting import (
     HeaderBlock,
     HttpHeadersBlock,
     MetadataBlock,
@@ -44,7 +44,7 @@ from cc_dump.formatting import (
     ConfigContentBlock,
     ThinkingBlock,
 )
-from cc_dump.analysis import TurnBudget
+from cc_dump.core.analysis import TurnBudget
 
 
 # ─── Text extraction ─────────────────────────────────────────────────────────
@@ -158,7 +158,7 @@ SEARCHABLE_TEXT_CASES = [
     ),
     pytest.param(
         TurnBudgetBlock(budget=TurnBudget(total_est=50000)),
-        ["50000"],
+        ["Context: x tokens"],
         id="turn_budget",
     ),
     pytest.param(
@@ -418,8 +418,8 @@ class TestSearchContext:
 
 class TestSearchState:
     def test_defaults(self):
-        import cc_dump.view_store
-        store = cc_dump.view_store.create()
+        import cc_dump.app.view_store
+        store = cc_dump.app.view_store.create()
         state = SearchState(store)
         assert state.phase == SearchPhase.INACTIVE
         assert state.query == ""
@@ -433,8 +433,8 @@ class TestSearchState:
 
     def test_property_proxy_round_trip(self):
         """Identity fields round-trip through store."""
-        import cc_dump.view_store
-        store = cc_dump.view_store.create()
+        import cc_dump.app.view_store
+        store = cc_dump.app.view_store.create()
         state = SearchState(store)
 
         state.phase = SearchPhase.NAVIGATING

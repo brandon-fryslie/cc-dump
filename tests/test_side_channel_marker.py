@@ -1,4 +1,4 @@
-from cc_dump.side_channel_marker import (
+from cc_dump.ai.side_channel_marker import (
     SideChannelMarker,
     encode_marker,
     extract_marker,

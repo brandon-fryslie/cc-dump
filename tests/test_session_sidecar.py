@@ -1,6 +1,6 @@
 """Tests for UI state sidecar persistence helpers."""
 
-from cc_dump.session_sidecar import (
+from cc_dump.io.session_sidecar import (
     sidecar_path_for_har,
     save_ui_state,
     load_ui_state,

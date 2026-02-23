@@ -1,4 +1,4 @@
-from cc_dump.conversation_qa import (
+from cc_dump.ai.conversation_qa import (
     QAScope,
     SCOPE_SELECTED_RANGE,
     SCOPE_WHOLE_SESSION,

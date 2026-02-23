@@ -2,13 +2,13 @@
 
 import json
 
-from cc_dump.response_assembler import (
+from cc_dump.pipeline.response_assembler import (
     ResponseAssembler,
     reconstruct_message_from_events,
     sse_event_to_dict,
     ReconstructedMessage,
 )
-from cc_dump.event_types import (
+from cc_dump.pipeline.event_types import (
     parse_sse_event,
     MessageRole,
     StopReason,

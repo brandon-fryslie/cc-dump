@@ -1,6 +1,6 @@
 """Tests for special content classification and marker location collection."""
 
-from cc_dump.formatting import (
+from cc_dump.core.formatting import (
     Category,
     ConfigContentBlock,
     HookOutputBlock,
@@ -8,7 +8,7 @@ from cc_dump.formatting import (
     ToolDefsSection,
     ToolUseBlock,
 )
-from cc_dump.special_content import (
+from cc_dump.core.special_content import (
     MARKER_CLAUDE_MD,
     MARKER_HOOK,
     MARKER_SKILL_CONSIDERATION,

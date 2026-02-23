@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from cc_dump.subagent_enrichment import (
+from cc_dump.experiments.subagent_enrichment import (
     build_runtime_sessions,
     load_subagent_artifacts,
     enrich_runtime_sessions,

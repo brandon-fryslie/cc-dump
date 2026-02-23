@@ -3,7 +3,7 @@
 import pytest
 from textual.theme import BUILTIN_THEMES
 
-from cc_dump.formatting import ConfigContentBlock, HookOutputBlock
+from cc_dump.core.formatting import ConfigContentBlock, HookOutputBlock
 from cc_dump.tui.rendering import (
     _render_config_content_summary,
     _render_hook_output_summary,

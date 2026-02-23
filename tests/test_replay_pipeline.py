@@ -9,9 +9,9 @@ import json
 import pytest
 from unittest.mock import MagicMock
 
-from cc_dump.domain_store import DomainStore
+from cc_dump.app.domain_store import DomainStore
 
-from cc_dump.formatting import (
+from cc_dump.core.formatting import (
     FormattedBlock,
     HttpHeadersBlock,
     StreamInfoBlock,
@@ -23,7 +23,7 @@ from cc_dump.formatting import (
     format_request,
     format_response_headers,
 )
-from cc_dump.har_replayer import load_har, convert_to_events
+from cc_dump.pipeline.har_replayer import load_har, convert_to_events
 from cc_dump.tui.event_handlers import (
     handle_request_headers,
     handle_request,
@@ -33,8 +33,8 @@ from cc_dump.tui.event_handlers import (
     handle_response_complete,
     handle_response_non_streaming,
 )
-from cc_dump.response_assembler import ResponseAssembler
-from cc_dump.event_types import (
+from cc_dump.pipeline.response_assembler import ResponseAssembler
+from cc_dump.pipeline.event_types import (
     RequestHeadersEvent,
     RequestBodyEvent,
     ResponseHeadersEvent,

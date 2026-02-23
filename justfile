@@ -41,7 +41,7 @@ smoke-d6u:
 
 # Offline HAR + subagent log enrichment report (JSON)
 subagent-enrich har projects="~/.claude/projects":
-    uv run python -m cc_dump.subagent_enrichment {{har}} --claude-projects-root {{projects}}
+    uv run python -m cc_dump.experiments.subagent_enrichment {{har}} --claude-projects-root {{projects}}
 
 # Format code with ruff
 fmt:

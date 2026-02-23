@@ -5,8 +5,8 @@ import logging
 
 import pytest
 
-from cc_dump.formatting import VisState
-from cc_dump.settings import (
+from cc_dump.core.formatting import VisState
+from cc_dump.io.settings import (
     DEFAULT_FILTERSETS,
     _VALID_CATEGORY_KEYS,
     get_filterset,
@@ -44,7 +44,7 @@ def test_get_filterset_stale_data_logs_warning(tmp_path, monkeypatch, caplog):
     # Point get_config_path to our tmp settings
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
-    with caplog.at_level(logging.WARNING, logger="cc_dump.settings"):
+    with caplog.at_level(logging.WARNING, logger="cc_dump.io.settings"):
         result = get_filterset("1")
 
     # Should return defaults, not stale data
@@ -70,7 +70,7 @@ def test_get_filterset_matching_saved_data_no_warning(tmp_path, monkeypatch, cap
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
-    with caplog.at_level(logging.WARNING, logger="cc_dump.settings"):
+    with caplog.at_level(logging.WARNING, logger="cc_dump.io.settings"):
         result = get_filterset("1")
 
     # Should return defaults (we always return defaults now)
