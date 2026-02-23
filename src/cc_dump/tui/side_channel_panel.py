@@ -9,11 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.widget import Widget
-from textual.widgets import Static
+from textual.widgets import Checkbox, Input, Select, Static
 
 from cc_dump.core.analysis import fmt_tokens
+from cc_dump.ai.utility_catalog import UtilityRegistry
 from cc_dump.tui.chip import Chip
 
 
@@ -28,6 +29,34 @@ class SideChannelPanelState:
     result_source: str  # "ai" | "fallback" | "error" | "preview" | ""
     result_elapsed_ms: int
     purpose_usage: dict[str, dict[str, int]]
+
+
+@dataclass(frozen=True)
+class QAComposerDraft:
+    """Raw composer input collected from the panel widgets."""
+
+    question: str
+    scope_mode: str
+    source_start_text: str
+    source_end_text: str
+    indices_text: str
+    explicit_whole_session: bool
+
+
+@dataclass(frozen=True)
+class ActionReviewDraft:
+    """Raw action/deferred review selections from panel widgets."""
+
+    accept_indices_text: str
+    reject_indices_text: str
+    create_beads: bool
+
+
+@dataclass(frozen=True)
+class UtilityLaunchDraft:
+    """Selected utility from bounded launcher."""
+
+    utility_id: str
 
 
 @dataclass(frozen=True)
@@ -64,12 +93,20 @@ WORKBENCH_CONTROL_GROUPS: tuple[WorkbenchControlGroup, ...] = (
         title="Ask",
         controls=(
             WorkbenchControlSpec(
-                key="qa_composer",
+                key="qa_estimate",
                 intent="ask",
-                label="Q&A Composer",
-                action="app.sc_preview_qa",
-                availability="placeholder",
-                owner_ticket="cc-dump-p2c.1",
+                label="Estimate Q&A",
+                action="app.sc_qa_estimate",
+                availability="ready",
+                owner_ticket="cc-dump-mjb.1",
+            ),
+            WorkbenchControlSpec(
+                key="qa_submit",
+                intent="ask",
+                label="Ask Scoped Q&A",
+                action="app.sc_qa_submit",
+                availability="ready",
+                owner_ticket="cc-dump-mjb.1",
             ),
         ),
     ),
@@ -77,11 +114,19 @@ WORKBENCH_CONTROL_GROUPS: tuple[WorkbenchControlGroup, ...] = (
         title="Extract",
         controls=(
             WorkbenchControlSpec(
-                key="action_review",
+                key="action_extract",
                 intent="extract",
-                label="Action Review",
-                action="app.sc_preview_action_review",
-                availability="placeholder",
+                label="Extract Actions",
+                action="app.sc_action_extract",
+                availability="ready",
+                owner_ticket="cc-dump-mjb.3",
+            ),
+            WorkbenchControlSpec(
+                key="action_apply_review",
+                intent="extract",
+                label="Apply Review",
+                action="app.sc_action_apply_review",
+                availability="ready",
                 owner_ticket="cc-dump-mjb.3",
             ),
         ),
@@ -111,11 +156,11 @@ WORKBENCH_CONTROL_GROUPS: tuple[WorkbenchControlGroup, ...] = (
         title="Utilities",
         controls=(
             WorkbenchControlSpec(
-                key="utility_runner",
+                key="utility_run",
                 intent="utility",
-                label="Utility Runner",
-                action="app.sc_preview_utilities",
-                availability="placeholder",
+                label="Run Utility",
+                action="app.sc_utility_run",
+                availability="ready",
                 owner_ticket="cc-dump-mjb.6",
             ),
         ),
@@ -177,6 +222,45 @@ class SideChannelPanel(Widget):
         opacity: 0.7;
     }
 
+    SideChannelPanel #sc-qa-question {
+        margin-top: 1;
+    }
+
+    SideChannelPanel #sc-qa-scope {
+        margin-top: 1;
+    }
+
+    SideChannelPanel #sc-qa-range-row Input {
+        width: 1fr;
+    }
+
+    SideChannelPanel #sc-qa-indices {
+        margin-top: 1;
+    }
+
+    SideChannelPanel #sc-qa-whole {
+        margin-top: 1;
+        margin-bottom: 1;
+    }
+
+    SideChannelPanel #sc-action-accept {
+        margin-top: 1;
+    }
+
+    SideChannelPanel #sc-action-reject {
+        margin-top: 1;
+    }
+
+    SideChannelPanel #sc-action-beads {
+        margin-top: 1;
+        margin-bottom: 1;
+    }
+
+    SideChannelPanel #sc-utility-select {
+        margin-top: 1;
+        margin-bottom: 1;
+    }
+
     SideChannelPanel #sc-result-scroll {
         height: 1fr;
         margin-top: 1;
@@ -202,6 +286,34 @@ class SideChannelPanel(Widget):
             yield Static(group.title, classes="sc-group-title")
             for control in group.controls:
                 yield Chip("", action=control.action, id=f"sc-{control.key}")
+        yield Static("Q&A Scope", classes="sc-group-title")
+        yield Input(placeholder="Ask about this conversation history…", id="sc-qa-question")
+        yield Select(
+            [
+                ("Selected Range", "selected_range"),
+                ("Selected Indices", "selected_indices"),
+                ("Whole Session", "whole_session"),
+            ],
+            value="selected_range",
+            allow_blank=False,
+            id="sc-qa-scope",
+        )
+        with Horizontal(id="sc-qa-range-row"):
+            yield Input(placeholder="start idx", id="sc-qa-start")
+            yield Input(placeholder="end idx", id="sc-qa-end")
+        yield Input(placeholder="indices (e.g. 0,4,7)", id="sc-qa-indices")
+        yield Checkbox("Confirm whole-session scope", id="sc-qa-whole")
+        yield Static("Action Review", classes="sc-group-title")
+        yield Input(placeholder="accept indices (e.g. 0,2)", id="sc-action-accept")
+        yield Input(placeholder="reject indices (e.g. 1,3)", id="sc-action-reject")
+        yield Checkbox("Create beads for accepted items", id="sc-action-beads")
+        yield Static("Utility Launcher", classes="sc-group-title")
+        yield Select(
+            _utility_options(),
+            value=_utility_default_value(),
+            allow_blank=False,
+            id="sc-utility-select",
+        )
         with VerticalScroll(id="sc-result-scroll"):
             yield Static("", id="sc-result")
         yield Static("", id="sc-meta")
@@ -255,6 +367,33 @@ class SideChannelPanel(Widget):
     def restore_state(self, state: dict) -> None:
         pass
 
+    def read_qa_draft(self) -> QAComposerDraft:
+        """Read composer values for app-level scope normalization/dispatch."""
+        scope_widget = self.query_one("#sc-qa-scope", Select)
+        scope_value = scope_widget.value
+        return QAComposerDraft(
+            question=self.query_one("#sc-qa-question", Input).value.strip(),
+            scope_mode=scope_value if isinstance(scope_value, str) else "selected_range",
+            source_start_text=self.query_one("#sc-qa-start", Input).value.strip(),
+            source_end_text=self.query_one("#sc-qa-end", Input).value.strip(),
+            indices_text=self.query_one("#sc-qa-indices", Input).value.strip(),
+            explicit_whole_session=self.query_one("#sc-qa-whole", Checkbox).value,
+        )
+
+    def read_action_review_draft(self) -> ActionReviewDraft:
+        """Read action review accept/reject + beads confirmation inputs."""
+        return ActionReviewDraft(
+            accept_indices_text=self.query_one("#sc-action-accept", Input).value.strip(),
+            reject_indices_text=self.query_one("#sc-action-reject", Input).value.strip(),
+            create_beads=self.query_one("#sc-action-beads", Checkbox).value,
+        )
+
+    def read_utility_draft(self) -> UtilityLaunchDraft:
+        """Read selected utility from bounded launcher select."""
+        value = self.query_one("#sc-utility-select", Select).value
+        utility_id = value if isinstance(value, str) else _utility_default_value()
+        return UtilityLaunchDraft(utility_id=utility_id)
+
 
 def create_side_channel_panel() -> SideChannelPanel:
     """Create a new SideChannelPanel instance."""
@@ -291,6 +430,11 @@ def _render_status_line(*, enabled: bool, loading: bool, active_action: str) -> 
     if loading:
         action_name = {
             "summarize_recent": "Summarize Recent",
+            "qa_estimate": "Q&A Estimate",
+            "qa_submit": "Scoped Q&A",
+            "action_extract": "Action Extraction",
+            "action_apply_review": "Apply Review",
+            "utility_run": "Utility Runner",
         }.get(active_action, "Workbench run")
         return f"Status: Running {action_name}"
     return "Status: Ready"
@@ -367,3 +511,60 @@ def _render_purpose_usage(usage: dict[str, dict[str, int]]) -> str:
             )
         )
     return "\n".join(rows)
+
+
+def render_qa_estimate_line(
+    *,
+    scope_mode: str,
+    message_count: int,
+    estimated_input_tokens: int,
+    estimated_output_tokens: int,
+    estimated_total_tokens: int,
+) -> str:
+    """Render deterministic estimate text for pre-send and post-send display."""
+    return (
+        "estimate: scope={} messages={} in={} out={} total={}".format(
+            scope_mode,
+            message_count,
+            fmt_tokens(estimated_input_tokens),
+            fmt_tokens(estimated_output_tokens),
+            fmt_tokens(estimated_total_tokens),
+        )
+    )
+
+
+def render_qa_scope_line(*, scope_mode: str, selected_indices: tuple[int, ...]) -> str:
+    """Render selected scope summary for the panel result area."""
+    return f"scope:{scope_mode} indices={list(selected_indices)}"
+
+
+def parse_review_indices(text: str) -> tuple[tuple[int, ...], str]:
+    """Parse comma-delimited review indexes from panel input."""
+    stripped = text.strip()
+    if not stripped:
+        return ((), "")
+    parts = [part.strip() for part in stripped.split(",") if part.strip()]
+    try:
+        parsed = tuple(sorted({int(part) for part in parts}))
+    except ValueError:
+        return ((), "review indices must be integers")
+    negative = [idx for idx in parsed if idx < 0]
+    if negative:
+        return ((), "review indices must be non-negative")
+    return (parsed, "")
+
+
+def _utility_specs():
+    return UtilityRegistry().list()
+
+
+def _utility_options() -> list[tuple[str, str]]:
+    specs = _utility_specs()
+    if not specs:
+        return [("(none)", "")]
+    return [(spec.title, spec.utility_id) for spec in specs]
+
+
+def _utility_default_value() -> str:
+    specs = _utility_specs()
+    return specs[0].utility_id if specs else ""

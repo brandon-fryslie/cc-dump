@@ -1,4 +1,5 @@
 from cc_dump.ai.utility_catalog import UtilityRegistry, fallback_utility_output
+from cc_dump.tui.side_channel_panel import _utility_options
 
 
 def test_registry_is_bounded_and_ids_unique():
@@ -23,3 +24,9 @@ def test_fallback_outputs_are_non_empty_for_registered_utilities():
         text = fallback_utility_output(spec.utility_id, messages)
         assert isinstance(text, str)
         assert text.strip()
+
+
+def test_panel_launcher_options_follow_registry_order():
+    specs = UtilityRegistry().list()
+    option_values = [value for _label, value in _utility_options() if value]
+    assert option_values == [spec.utility_id for spec in specs]

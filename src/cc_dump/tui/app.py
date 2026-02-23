@@ -63,6 +63,7 @@ import cc_dump.io.sessions
 import cc_dump.app.memory_stats
 import cc_dump.pipeline.event_types
 import cc_dump.app.view_store
+import cc_dump.ai.conversation_qa
 import cc_dump.ai.side_channel_marker
 
 from cc_dump.io.stderr_tee import get_tee as _get_tee
@@ -235,6 +236,9 @@ class CcDumpApp(App):
             self._default_session_key: self._conv_tab_main_id
         }
         self._active_session_key = self._default_session_key
+        # [LAW:one-source-of-truth] Side-channel action review state is owned by app boundary.
+        self._sc_action_batch_id: str = ""
+        self._sc_action_items: list[object] = []
         # [LAW:one-source-of-truth] Panel IDs derived from registry
         self._panel_ids = dict(PANEL_CSS_IDS)
         self._logs_id = "logs-panel"
@@ -1323,6 +1327,8 @@ class CcDumpApp(App):
             self._view_store.set("sc:result_source", "")
             self._view_store.set("sc:result_elapsed_ms", 0)
             self._view_store.set("sc:purpose_usage", {})
+        self._sc_action_batch_id = ""
+        self._sc_action_items = []
         self._refresh_side_channel_usage()
         # Initial hydration — reaction may not fire if values unchanged from defaults.
         # Run after refresh so panel children are mounted and queryable.
@@ -1397,6 +1403,112 @@ class CcDumpApp(App):
         recent_messages = cast(list[dict], self._app_state.get("recent_messages", []))
         return recent_messages[-count:]
 
+    def _get_side_channel_panel_widget(self):
+        panel = self.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel)
+        return panel.first() if panel else None
+
+    def _parse_qa_scope(self, draft, *, total_messages: int) -> tuple[cc_dump.ai.conversation_qa.QAScope, str]:
+        """Build a QAScope from panel draft input.
+
+        // [LAW:single-enforcer] Scope parsing + validation lives in one app boundary.
+        """
+        mode = str(draft.scope_mode or cc_dump.ai.conversation_qa.SCOPE_SELECTED_RANGE)
+        if mode == cc_dump.ai.conversation_qa.SCOPE_WHOLE_SESSION:
+            return (
+                cc_dump.ai.conversation_qa.QAScope(
+                    mode=mode,
+                    explicit_whole_session=bool(draft.explicit_whole_session),
+                ),
+                "",
+            )
+
+        if mode == cc_dump.ai.conversation_qa.SCOPE_SELECTED_INDICES:
+            indices_text = draft.indices_text.strip()
+            if not indices_text:
+                return (
+                    cc_dump.ai.conversation_qa.QAScope(
+                        mode=mode,
+                        indices=(),
+                    ),
+                    "",
+                )
+            parts = [part.strip() for part in indices_text.split(",") if part.strip()]
+            try:
+                indices = tuple(sorted({int(part) for part in parts}))
+            except ValueError:
+                return (cc_dump.ai.conversation_qa.QAScope(mode=mode, indices=()), "indices must be integers")
+            return (cc_dump.ai.conversation_qa.QAScope(mode=mode, indices=indices), "")
+
+        default_start = max(0, total_messages - 10)
+        default_end = max(0, total_messages - 1)
+        start_text = draft.source_start_text.strip()
+        end_text = draft.source_end_text.strip()
+        try:
+            start = int(start_text) if start_text else default_start
+            end = int(end_text) if end_text else default_end
+        except ValueError:
+            return (
+                cc_dump.ai.conversation_qa.QAScope(mode=cc_dump.ai.conversation_qa.SCOPE_SELECTED_RANGE),
+                "range start/end must be integers",
+            )
+        return (
+            cc_dump.ai.conversation_qa.QAScope(
+                mode=cc_dump.ai.conversation_qa.SCOPE_SELECTED_RANGE,
+                source_start=start,
+                source_end=end,
+            ),
+            "",
+        )
+
+    def _render_qa_result_text(
+        self,
+        *,
+        question: str,
+        scope_mode: str,
+        selected_indices: tuple[int, ...],
+        estimate,
+        body: str,
+        prefix: str,
+        error: str = "",
+    ) -> str:
+        """Render deterministic QA output shown in the panel result area."""
+        lines = [
+            prefix,
+            cc_dump.tui.side_channel_panel.render_qa_scope_line(
+                scope_mode=scope_mode,
+                selected_indices=selected_indices,
+            ),
+            cc_dump.tui.side_channel_panel.render_qa_estimate_line(
+                scope_mode=estimate.scope_mode,
+                message_count=estimate.message_count,
+                estimated_input_tokens=estimate.estimated_input_tokens,
+                estimated_output_tokens=estimate.estimated_output_tokens,
+                estimated_total_tokens=estimate.estimated_total_tokens,
+            ),
+            f"question: {question}",
+        ]
+        if error:
+            lines.append(f"error: {error}")
+        if body:
+            lines.extend(["", body])
+        return "\n".join(lines)
+
+    def _set_side_channel_result(
+        self,
+        *,
+        text: str,
+        source: str,
+        elapsed_ms: int,
+        loading: bool = False,
+        active_action: str = "",
+    ) -> None:
+        with transaction():
+            self._view_store.set("sc:loading", loading)
+            self._view_store.set("sc:active_action", active_action)
+            self._view_store.set("sc:result_text", text)
+            self._view_store.set("sc:result_source", source)
+            self._view_store.set("sc:result_elapsed_ms", elapsed_ms)
+
     def _workbench_preview(self, feature: str, owner_ticket: str) -> None:
         """Publish deterministic placeholder output for non-integrated controls.
 
@@ -1422,11 +1534,450 @@ class CcDumpApp(App):
         """Back-compatible alias for summarize action."""
         self.action_sc_summarize_recent()
 
+    def action_sc_qa_estimate(self) -> None:
+        panel = self._get_side_channel_panel_widget()
+        if panel is None:
+            return
+        draft = panel.read_qa_draft()
+        messages = self._collect_recent_messages(50)
+        scope, parse_error = self._parse_qa_scope(draft, total_messages=len(messages))
+        normalized_scope = cc_dump.ai.conversation_qa.normalize_scope(scope, total_messages=len(messages))
+        selected_messages = cc_dump.ai.conversation_qa.select_messages(messages, normalized_scope)
+        estimate = cc_dump.ai.conversation_qa.estimate_qa_budget(
+            question=draft.question,
+            selected_messages=selected_messages,
+            scope_mode=normalized_scope.scope.mode,
+        )
+        error = parse_error or normalized_scope.error
+        question = draft.question.strip()
+        if not question:
+            error = "question is required"
+        body = "Ready to ask scoped Q&A." if not error else ""
+        text = self._render_qa_result_text(
+            question=question or "(empty)",
+            scope_mode=normalized_scope.scope.mode,
+            selected_indices=normalized_scope.selected_indices,
+            estimate=estimate,
+            body=body,
+            prefix="pre-send estimate",
+            error=error,
+        )
+        self._set_side_channel_result(
+            text=text,
+            source="preview",
+            elapsed_ms=0,
+            loading=False,
+            active_action="",
+        )
+
+    def action_sc_qa_submit(self) -> None:
+        if self._view_store.get("sc:loading"):
+            return
+        panel = self._get_side_channel_panel_widget()
+        if panel is None:
+            return
+        draft = panel.read_qa_draft()
+        messages = self._collect_recent_messages(50)
+        scope, parse_error = self._parse_qa_scope(draft, total_messages=len(messages))
+        normalized_scope = cc_dump.ai.conversation_qa.normalize_scope(scope, total_messages=len(messages))
+        selected_messages = cc_dump.ai.conversation_qa.select_messages(messages, normalized_scope)
+        estimate = cc_dump.ai.conversation_qa.estimate_qa_budget(
+            question=draft.question,
+            selected_messages=selected_messages,
+            scope_mode=normalized_scope.scope.mode,
+        )
+
+        question = draft.question.strip()
+        error = parse_error or normalized_scope.error
+        if not question:
+            error = "question is required"
+        if not messages:
+            error = "no captured messages available"
+
+        if error:
+            text = self._render_qa_result_text(
+                question=question or "(empty)",
+                scope_mode=normalized_scope.scope.mode,
+                selected_indices=normalized_scope.selected_indices,
+                estimate=estimate,
+                body="",
+                prefix="scoped Q&A blocked",
+                error=error,
+            )
+            self._set_side_channel_result(
+                text=text,
+                source="fallback",
+                elapsed_ms=0,
+                loading=False,
+                active_action="",
+            )
+            return
+
+        if self._data_dispatcher is None:
+            text = self._render_qa_result_text(
+                question=question,
+                scope_mode=normalized_scope.scope.mode,
+                selected_indices=normalized_scope.selected_indices,
+                estimate=estimate,
+                body="",
+                prefix="scoped Q&A blocked",
+                error="dispatcher unavailable",
+            )
+            self._set_side_channel_result(
+                text=text,
+                source="fallback",
+                elapsed_ms=0,
+                loading=False,
+                active_action="",
+            )
+            return
+
+        self._set_side_channel_result(
+            text="Running scoped Q&A…",
+            source="preview",
+            elapsed_ms=0,
+            loading=True,
+            active_action="qa_submit",
+        )
+
+        dispatcher = self._data_dispatcher
+        source_session_id = self._active_resume_session_id()
+        request_id = f"sc-qa-{int(time.time() * 1000)}"
+
+        def _do_qa() -> None:
+            result = dispatcher.ask_conversation_question(
+                messages,
+                question=question,
+                scope=scope,
+                source_session_id=source_session_id,
+                request_id=request_id,
+            )
+            self.call_from_thread(
+                self._on_side_channel_qa_result,
+                result,
+                question,
+            )
+
+        self.run_worker(_do_qa, thread=True, exclusive=False)
+
+    def _on_side_channel_qa_result(self, result, question: str) -> None:
+        text = self._render_qa_result_text(
+            question=question,
+            scope_mode=result.artifact.scope_mode,
+            selected_indices=tuple(result.artifact.selected_indices),
+            estimate=result.estimate,
+            body=result.markdown,
+            prefix="scoped Q&A result",
+            error=result.error,
+        )
+        self._set_side_channel_result(
+            text=text,
+            source=result.source,
+            elapsed_ms=result.elapsed_ms,
+            loading=False,
+            active_action="",
+        )
+        self._refresh_side_channel_usage()
+
+    def _render_action_candidates_text(self, *, batch_id: str, items: list[object], source: str, error: str = "") -> str:
+        lines = [
+            "action extraction review",
+            f"batch: {batch_id}",
+            f"source: {source}",
+            f"candidate_count: {len(items)}",
+        ]
+        if error:
+            lines.append(f"error: {error}")
+        if not items:
+            lines.append("No action/deferred candidates found.")
+            return "\n".join(lines)
+
+        lines.append("")
+        lines.append("candidates:")
+        for index, item in enumerate(items):
+            kind = str(getattr(item, "kind", "action"))
+            text = str(getattr(item, "text", "")).strip()
+            confidence = float(getattr(item, "confidence", 0.0))
+            source_links = getattr(item, "source_links", []) or []
+            link_parts = [
+                "{}:{}".format(
+                    str(getattr(link, "request_id", "")),
+                    int(getattr(link, "message_index", -1)),
+                )
+                for link in source_links
+            ]
+            source_text = ", ".join(link_parts) if link_parts else "(none)"
+            lines.append(
+                "{}. [{}] {} (confidence={:.2f}) sources={}".format(
+                    index,
+                    kind,
+                    text,
+                    confidence,
+                    source_text,
+                )
+            )
+        lines.extend(
+            [
+                "",
+                "review inputs:",
+                "- set accept indices and reject indices in Action Review controls",
+                "- click Apply Review to confirm explicit accept/reject",
+            ]
+        )
+        return "\n".join(lines)
+
+    def action_sc_action_extract(self) -> None:
+        if self._view_store.get("sc:loading"):
+            return
+        if self._data_dispatcher is None:
+            self._set_side_channel_result(
+                text="action extraction blocked\nerror: dispatcher unavailable",
+                source="fallback",
+                elapsed_ms=0,
+                loading=False,
+                active_action="",
+            )
+            return
+
+        messages = self._collect_recent_messages(50)
+        if not messages:
+            self._set_side_channel_result(
+                text="action extraction blocked\nerror: no captured messages available",
+                source="fallback",
+                elapsed_ms=0,
+                loading=False,
+                active_action="",
+            )
+            return
+
+        self._set_side_channel_result(
+            text="Running action extraction…",
+            source="preview",
+            elapsed_ms=0,
+            loading=True,
+            active_action="action_extract",
+        )
+        dispatcher = self._data_dispatcher
+        source_session_id = self._active_resume_session_id()
+        request_id = f"sc-action-{int(time.time() * 1000)}"
+
+        def _do_action_extract() -> None:
+            result = dispatcher.extract_action_items(
+                messages,
+                source_session_id=source_session_id,
+                request_id=request_id,
+            )
+            self.call_from_thread(self._on_side_channel_action_extract_result, result)
+
+        self.run_worker(_do_action_extract, thread=True, exclusive=False)
+
+    def _on_side_channel_action_extract_result(self, result) -> None:
+        self._sc_action_batch_id = str(result.batch_id or "")
+        self._sc_action_items = list(result.items or [])
+        text = self._render_action_candidates_text(
+            batch_id=self._sc_action_batch_id,
+            items=self._sc_action_items,
+            source=result.source,
+            error=result.error,
+        )
+        self._set_side_channel_result(
+            text=text,
+            source=result.source,
+            elapsed_ms=result.elapsed_ms,
+            loading=False,
+            active_action="",
+        )
+        self._refresh_side_channel_usage()
+
+    def action_sc_action_apply_review(self) -> None:
+        panel = self._get_side_channel_panel_widget()
+        if panel is None:
+            return
+        if self._data_dispatcher is None:
+            self._set_side_channel_result(
+                text="apply review blocked\nerror: dispatcher unavailable",
+                source="fallback",
+                elapsed_ms=0,
+                loading=False,
+                active_action="",
+            )
+            return
+        if not self._sc_action_batch_id:
+            self._set_side_channel_result(
+                text="apply review blocked\nerror: run Extract Actions first",
+                source="fallback",
+                elapsed_ms=0,
+                loading=False,
+                active_action="",
+            )
+            return
+        draft = panel.read_action_review_draft()
+        accept_indices, accept_error = cc_dump.tui.side_channel_panel.parse_review_indices(
+            draft.accept_indices_text
+        )
+        reject_indices, reject_error = cc_dump.tui.side_channel_panel.parse_review_indices(
+            draft.reject_indices_text
+        )
+        parse_error = accept_error or reject_error
+        if parse_error:
+            self._set_side_channel_result(
+                text=f"apply review blocked\nerror: {parse_error}",
+                source="fallback",
+                elapsed_ms=0,
+                loading=False,
+                active_action="",
+            )
+            return
+        if not accept_indices and not reject_indices:
+            self._set_side_channel_result(
+                text="apply review blocked\nerror: provide explicit accept and/or reject indices",
+                source="fallback",
+                elapsed_ms=0,
+                loading=False,
+                active_action="",
+            )
+            return
+
+        items = list(self._sc_action_items)
+        max_index = len(items) - 1
+        all_requested = tuple(sorted(set(accept_indices) | set(reject_indices)))
+        out_of_range = [idx for idx in all_requested if idx < 0 or idx > max_index]
+        if out_of_range:
+            self._set_side_channel_result(
+                text=(
+                    "apply review blocked\n"
+                    f"error: indices out of range for candidate_count={len(items)}: {out_of_range}"
+                ),
+                source="fallback",
+                elapsed_ms=0,
+                loading=False,
+                active_action="",
+            )
+            return
+        overlap = sorted(set(accept_indices) & set(reject_indices))
+        if overlap:
+            self._set_side_channel_result(
+                text=f"apply review blocked\nerror: indices overlap between accept/reject: {overlap}",
+                source="fallback",
+                elapsed_ms=0,
+                loading=False,
+                active_action="",
+            )
+            return
+
+        accepted_item_ids = [str(getattr(items[idx], "item_id", "")) for idx in accept_indices]
+        accepted = self._data_dispatcher.accept_action_items(
+            batch_id=self._sc_action_batch_id,
+            item_ids=accepted_item_ids,
+            create_beads=draft.create_beads and bool(accepted_item_ids),
+        )
+        rejected_items = [items[idx] for idx in reject_indices]
+        resolved_indices = set(accept_indices) | set(reject_indices)
+        self._sc_action_items = [item for idx, item in enumerate(items) if idx not in resolved_indices]
+
+        lines = [
+            "action review applied",
+            f"batch: {self._sc_action_batch_id}",
+            f"accepted_count: {len(accepted)}",
+            f"rejected_count: {len(rejected_items)}",
+            f"beads_enabled: {draft.create_beads and bool(accepted_item_ids)}",
+            "",
+            "accepted:",
+        ]
+        if not accepted:
+            lines.append("- (none)")
+        for item in accepted:
+            beads_id = str(getattr(item, "beads_issue_id", "") or "")
+            beads_suffix = f" beads={beads_id}" if beads_id else ""
+            lines.append(f"- [{item.kind}] {item.text}{beads_suffix}")
+
+        lines.append("")
+        lines.append("rejected:")
+        if not rejected_items:
+            lines.append("- (none)")
+        for item in rejected_items:
+            lines.append(f"- [{getattr(item, 'kind', 'action')}] {getattr(item, 'text', '')}")
+        lines.append("")
+        lines.append(f"remaining_candidates: {len(self._sc_action_items)}")
+
+        self._set_side_channel_result(
+            text="\n".join(lines),
+            source="preview",
+            elapsed_ms=0,
+            loading=False,
+            active_action="",
+        )
+
+    def action_sc_utility_run(self) -> None:
+        if self._view_store.get("sc:loading"):
+            return
+        panel = self._get_side_channel_panel_widget()
+        if panel is None:
+            return
+        draft = panel.read_utility_draft()
+        utility_id = draft.utility_id.strip()
+        if not utility_id:
+            self._set_side_channel_result(
+                text="utility run blocked\nerror: no utility selected",
+                source="fallback",
+                elapsed_ms=0,
+                loading=False,
+                active_action="",
+            )
+            return
+        if self._data_dispatcher is None:
+            self._set_side_channel_result(
+                text=f"utility run blocked\nutility_id: {utility_id}\nerror: dispatcher unavailable",
+                source="fallback",
+                elapsed_ms=0,
+                loading=False,
+                active_action="",
+            )
+            return
+        messages = self._collect_recent_messages(50)
+        self._set_side_channel_result(
+            text=f"Running utility {utility_id}…",
+            source="preview",
+            elapsed_ms=0,
+            loading=True,
+            active_action="utility_run",
+        )
+        dispatcher = self._data_dispatcher
+        source_session_id = self._active_resume_session_id()
+
+        def _do_utility_run() -> None:
+            result = dispatcher.run_utility(
+                messages,
+                utility_id=utility_id,
+                source_session_id=source_session_id,
+            )
+            self.call_from_thread(self._on_side_channel_utility_result, result)
+
+        self.run_worker(_do_utility_run, thread=True, exclusive=False)
+
+    def _on_side_channel_utility_result(self, result) -> None:
+        lines = [
+            "utility result",
+            f"utility_id: {result.utility_id}",
+            f"source: {result.source}",
+        ]
+        if result.error:
+            lines.append(f"error: {result.error}")
+        lines.extend(["", result.text])
+        self._set_side_channel_result(
+            text="\n".join(lines),
+            source=result.source,
+            elapsed_ms=result.elapsed_ms,
+            loading=False,
+            active_action="",
+        )
+        self._refresh_side_channel_usage()
+
     def action_sc_preview_qa(self) -> None:
-        self._workbench_preview("Q&A Composer", "cc-dump-p2c.1")
+        self.action_sc_qa_submit()
 
     def action_sc_preview_action_review(self) -> None:
-        self._workbench_preview("Action Review", "cc-dump-mjb.3")
+        self.action_sc_action_extract()
 
     def action_sc_preview_handoff(self) -> None:
         self._workbench_preview("Handoff Draft", "cc-dump-mjb.4")
@@ -1435,7 +1986,7 @@ class CcDumpApp(App):
         self._workbench_preview("Release Notes", "cc-dump-mjb.4")
 
     def action_sc_preview_utilities(self) -> None:
-        self._workbench_preview("Utility Runner", "cc-dump-mjb.6")
+        self.action_sc_utility_run()
 
     # Navigation
     def action_toggle_follow(self):

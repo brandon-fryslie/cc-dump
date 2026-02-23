@@ -105,8 +105,8 @@ async def test_on_mount_seeds_footer_state():
         assert footer is not None
 
 
-async def test_ai_workbench_panel_opens_and_placeholder_action_dispatches():
-    """Workbench panel should open and dispatch safe placeholder actions."""
+async def test_ai_workbench_panel_opens_and_qa_action_dispatches():
+    """Workbench panel should open and dispatch scoped QA action."""
     import cc_dump.tui.side_channel_panel
 
     async with run_app() as (pilot, app):
@@ -119,5 +119,6 @@ async def test_ai_workbench_panel_opens_and_placeholder_action_dispatches():
         await pilot.pause()
         assert app._view_store.get("sc:loading") is False
         assert app._view_store.get("sc:active_action") == ""
-        assert app._view_store.get("sc:result_source") == "preview"
-        assert "cc-dump-p2c.1" in app._view_store.get("sc:result_text")
+        assert app._view_store.get("sc:result_source") == "fallback"
+        assert "scoped Q&A blocked" in app._view_store.get("sc:result_text")
+        assert "error:" in app._view_store.get("sc:result_text")

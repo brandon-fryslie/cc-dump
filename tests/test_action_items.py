@@ -63,3 +63,23 @@ def test_accept_with_beads_hook_records_issue_id():
         beads_hook=lambda _item: "cc-dump-123",
     )
     assert accepted[0].beads_issue_id == "cc-dump-123"
+
+
+def test_accept_subset_leaves_unselected_items_unpersisted():
+    store = ActionItemStore()
+    items = parse_action_items(
+        (
+            '{"items":['
+            '{"kind":"action","text":"Ship checkpoint UI","source_links":[{"message_index":1}]},'
+            '{"kind":"deferred","text":"Revisit perf audit","source_links":[{"message_index":2}]}'
+            ']}'
+        ),
+        request_id="req-3",
+    )
+    batch_id = store.stage(items)
+    accepted = store.accept(batch_id=batch_id, item_ids=[items[0].item_id])
+    assert len(accepted) == 1
+    snapshot = store.accepted_snapshot()
+    assert len(snapshot) == 1
+    assert snapshot[0].item_id == items[0].item_id
+    assert all(item.item_id != items[1].item_id for item in snapshot)

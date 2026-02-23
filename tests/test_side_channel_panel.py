@@ -1,12 +1,16 @@
 from cc_dump.tui.side_channel_panel import (
     WORKBENCH_CONTROL_GROUPS,
     SideChannelPanelState,
+    _utility_options,
     _render_control_label,
     _render_purpose_usage,
     _render_result_preview,
     _render_status_line,
     _render_usage_summary,
     _resolve_action,
+    parse_review_indices,
+    render_qa_estimate_line,
+    render_qa_scope_line,
 )
 
 
@@ -107,8 +111,9 @@ def test_ready_control_disabled_when_ai_disabled():
     assert "[disabled]" in label
 
 
-def test_placeholder_control_remains_safe_and_clickable_when_idle():
-    placeholder = WORKBENCH_CONTROL_GROUPS[1].controls[0]
+def test_qa_controls_disabled_when_ai_disabled():
+    estimate_control = WORKBENCH_CONTROL_GROUPS[1].controls[0]
+    submit_control = WORKBENCH_CONTROL_GROUPS[1].controls[1]
     state = SideChannelPanelState(
         enabled=False,
         loading=False,
@@ -118,12 +123,62 @@ def test_placeholder_control_remains_safe_and_clickable_when_idle():
         result_elapsed_ms=0,
         purpose_usage={},
     )
-    action = _resolve_action(control=placeholder, state=state, is_active=False)
-    label = _render_control_label(
-        control=placeholder,
+    estimate_action = _resolve_action(control=estimate_control, state=state, is_active=False)
+    submit_action = _resolve_action(control=submit_control, state=state, is_active=False)
+    estimate_label = _render_control_label(
+        control=estimate_control,
         state=state,
         is_active=False,
-        actionable=action is not None,
+        actionable=estimate_action is not None,
     )
-    assert action == placeholder.action
-    assert placeholder.owner_ticket in label
+    submit_label = _render_control_label(
+        control=submit_control,
+        state=state,
+        is_active=False,
+        actionable=submit_action is not None,
+    )
+    assert estimate_action is None
+    assert submit_action is None
+    assert "[disabled]" in estimate_label
+    assert "[disabled]" in submit_label
+
+
+def test_render_qa_estimate_line_masks_tokens_for_ui_display():
+    line = render_qa_estimate_line(
+        scope_mode="selected_range",
+        message_count=4,
+        estimated_input_tokens=1234,
+        estimated_output_tokens=320,
+        estimated_total_tokens=1554,
+    )
+    assert line == "estimate: scope=selected_range messages=4 in=x out=x total=x"
+
+
+def test_render_qa_scope_line_shows_selected_indices():
+    assert render_qa_scope_line(scope_mode="selected_indices", selected_indices=(1, 3, 5)) == (
+        "scope:selected_indices indices=[1, 3, 5]"
+    )
+
+
+def test_parse_review_indices_valid_and_deduplicated():
+    parsed, error = parse_review_indices("3, 1,3,0")
+    assert parsed == (0, 1, 3)
+    assert error == ""
+
+
+def test_parse_review_indices_rejects_invalid_values():
+    parsed, error = parse_review_indices("a,2")
+    assert parsed == ()
+    assert "integers" in error
+
+    parsed, error = parse_review_indices("-1,2")
+    assert parsed == ()
+    assert "non-negative" in error
+
+
+def test_utility_launcher_options_are_bounded():
+    options = _utility_options()
+    values = [value for _label, value in options]
+    assert values
+    assert len(values) <= 5
+    assert len(values) == len(set(values))

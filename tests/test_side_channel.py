@@ -885,6 +885,9 @@ class TestDataDispatcher:
         )
         assert result.source == "ai"
         assert result.text == "Debug lane rollout"
+        call = mgr.run.call_args
+        assert call.kwargs["purpose"] == "utility_custom"
+        assert call.kwargs["prompt_version"] == "v1"
 
     def test_run_utility_falls_back_when_disabled(self):
         dispatcher, mgr, _cache = self._make_dispatcher(enabled=False)
