@@ -177,19 +177,25 @@ class SideChannelPanel(Widget):
         width: 40%;
         min-width: 30;
         max-width: 60;
-        border-left: solid $accent;
+        border-left: solid $secondary-muted;
         padding: 1;
         height: 1fr;
         layout: vertical;
+        background: $panel;
+        color: $text;
     }
 
     SideChannelPanel #sc-title {
         text-style: bold;
         margin-bottom: 1;
+        color: $text-primary;
     }
 
     SideChannelPanel #sc-status {
         margin-bottom: 1;
+        color: $text-secondary;
+        background: $panel-darken-1;
+        padding: 0 1;
     }
 
     SideChannelPanel #sc-usage-summary {
@@ -199,8 +205,10 @@ class SideChannelPanel(Widget):
 
     SideChannelPanel .sc-group-title {
         text-style: bold;
-        color: $text-muted;
+        color: $text-secondary;
         margin-top: 1;
+        border-top: solid $border-blurred;
+        padding-top: 1;
     }
 
     SideChannelPanel Chip {
@@ -210,8 +218,8 @@ class SideChannelPanel(Widget):
     }
 
     SideChannelPanel Chip.-dim {
-        background: $surface-lighten-1;
-        color: $text-muted;
+        background: $surface;
+        color: $text-disabled;
     }
 
     SideChannelPanel #sc-qa-question {
@@ -256,17 +264,39 @@ class SideChannelPanel(Widget):
     SideChannelPanel #sc-result-scroll {
         height: 1fr;
         margin-top: 1;
+        border: round $border;
+        background: $surface-darken-1;
+        padding: 0 1;
     }
 
     SideChannelPanel #sc-meta {
         text-style: italic;
         color: $text-muted;
         margin-top: 1;
+        background: $panel-darken-1;
+        padding: 0 1;
     }
 
     SideChannelPanel #sc-usage {
         margin-top: 1;
         color: $text-muted;
+    }
+
+    SideChannelPanel Input,
+    SideChannelPanel Select {
+        background: $surface;
+        color: $text;
+        border: round $border;
+    }
+
+    SideChannelPanel Input:focus,
+    SideChannelPanel Select:focus {
+        border: round $primary;
+        background: $surface-lighten-1;
+    }
+
+    SideChannelPanel Checkbox {
+        color: $text-secondary;
     }
     """
 

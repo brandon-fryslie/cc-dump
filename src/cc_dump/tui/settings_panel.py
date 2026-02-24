@@ -23,6 +23,7 @@ from textual.widgets import Input, Label, Select, Static
 from cc_dump.tui.chip import ToggleChip
 
 import cc_dump.core.palette
+import cc_dump.tui.rendering
 
 
 # ─── Field definitions ───────────────────────────────────────────────────────
@@ -93,13 +94,16 @@ class SettingsPanel(VerticalScroll):
         width: 35%;
         min-width: 30;
         max-width: 50;
-        border-left: solid $accent;
+        border-left: solid $primary-muted;
         padding: 0 1;
         height: 1fr;
+        background: $panel;
+        color: $text;
     }
     SettingsPanel .panel-title {
         text-style: bold;
         margin-bottom: 0;
+        color: $text-primary;
     }
     SettingsPanel .field-row {
         height: auto;
@@ -110,6 +114,7 @@ class SettingsPanel(VerticalScroll):
         width: 1fr;
         text-style: bold;
         content-align-vertical: middle;
+        color: $text-secondary;
     }
     SettingsPanel .field-desc {
         color: $text-muted;
@@ -120,6 +125,8 @@ class SettingsPanel(VerticalScroll):
     SettingsPanel .panel-footer {
         margin-top: 1;
         color: $text-muted;
+        background: $panel-darken-1;
+        padding: 0 1;
     }
     SettingsPanel ToggleChip {
         margin-top: 1;
@@ -127,14 +134,23 @@ class SettingsPanel(VerticalScroll):
     SettingsPanel Input {
         width: 1fr;
         height: 1;
-        border: none;
+        border: round $border;
         padding: 0;
+        background: $surface;
+        color: $text;
     }
     SettingsPanel Input:focus {
-        border: none;
+        border: round $primary;
+        background: $surface-lighten-1;
     }
     SettingsPanel Select {
         width: 1fr;
+        background: $surface;
+        color: $text;
+        border: round $border;
+    }
+    SettingsPanel Select:focus {
+        border: round $primary;
     }
     """
 
@@ -153,7 +169,10 @@ class SettingsPanel(VerticalScroll):
         self._initial_values = initial_values or {}
 
     def compose(self) -> ComposeResult:
-        p = cc_dump.core.palette.PALETTE
+        try:
+            info_color = cc_dump.tui.rendering.get_theme_colors().info
+        except RuntimeError:
+            info_color = cc_dump.core.palette.PALETTE.info
         yield Static("Settings", classes="panel-title")
 
         for field in SETTINGS_FIELDS:
@@ -171,7 +190,7 @@ class SettingsPanel(VerticalScroll):
 
         yield Static(
             "[bold {info}]Tab[/] next  [bold {info}]Enter[/] save  [bold {info}]Esc[/] cancel".format(
-                info=p.info
+                info=info_color
             ),
             classes="panel-footer",
         )
