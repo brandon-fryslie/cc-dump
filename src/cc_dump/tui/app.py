@@ -27,6 +27,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Header, TabbedContent, TabPane
 from rich.style import Style
+from rich.text import Text
 
 
 # Module-level imports for hot-reload (never use `from` for these)
@@ -95,26 +96,49 @@ def _patch_textual_monochrome_style() -> None:
 
 
 def _patch_textual_underline_endcaps() -> None:
-    """Patch Textual tab underline rendering to avoid half-bar corner glyphs.
+    """Patch Textual tab underline rendering with explicit corner endcaps.
 
     // [LAW:single-enforcer] Third-party compatibility patch applied once at app boundary.
     """
     if getattr(_textual_tabs, "_cc_dump_underline_caps_patch", False):
         return
 
-    from textual.renderables.bar import Bar
-
-    class _FlatEndBar(Bar):
-        HALF_BAR_LEFT = Bar.BAR
-        HALF_BAR_RIGHT = Bar.BAR
-
     def _flat_render(self):
+        # [LAW:dataflow-not-control-flow] Always render the same stages:
+        # base bar -> highlighted segment with cornered endcaps.
         bar_style = self.get_component_rich_style("underline--bar")
-        return _FlatEndBar(
-            highlight_range=self._highlight_range,
-            highlight_style=Style.from_color(bar_style.color),
-            background_style=Style.from_color(bar_style.bgcolor),
-        )
+        highlight_style = Style.from_color(bar_style.color)
+        background_style = Style.from_color(bar_style.bgcolor)
+        width = max(0, int(self.size.width))
+        if width <= 0:
+            return Text("", end="")
+
+        start_f, end_f = self._highlight_range
+        start = max(0, min(width, int(round(start_f))))
+        end = max(start, min(width, int(round(end_f))))
+
+        if end <= start:
+            return Text("━" * width, style=background_style, end="")
+
+        segment = end - start
+        highlighted = Text("", end="")
+        if segment == 1:
+            highlighted.append("━", style=highlight_style)
+        elif segment == 2:
+            highlighted.append("┏", style=highlight_style)
+            highlighted.append("┓", style=highlight_style)
+        else:
+            highlighted.append("┏", style=highlight_style)
+            highlighted.append("━" * (segment - 2), style=highlight_style)
+            highlighted.append("┓", style=highlight_style)
+
+        output = Text("", end="")
+        if start > 0:
+            output.append("━" * start, style=background_style)
+        output.append(highlighted)
+        if end < width:
+            output.append("━" * (width - end), style=background_style)
+        return output
 
     setattr(_textual_tabs.Underline, "render", _flat_render)
     setattr(_textual_tabs, "_cc_dump_underline_caps_patch", True)
