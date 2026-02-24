@@ -122,6 +122,44 @@ async def test_tab_activation_updates_active_domain_store_alias():
         assert app._domain_store is active_store
 
 
+async def test_workbench_results_capture_active_session_context():
+    session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    session_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    replay_data = [
+        _make_replay_entry(
+            session_id=session_a,
+            content="session-a-request",
+            response_text="session-a-response",
+        ),
+        _make_replay_entry(
+            session_id=session_b,
+            content="session-b-request",
+            response_text="session-b-response",
+        ),
+    ]
+
+    async with run_app(replay_data=replay_data) as (pilot, app):
+        tabs = app._get_conv_tabs()
+        assert tabs is not None
+        tabs.active = app._session_tab_ids[session_b]
+        await pilot.pause()
+
+        app._set_side_channel_result(
+            text="workbench context probe",
+            source="preview",
+            elapsed_ms=0,
+            loading=False,
+            active_action="qa_estimate",
+            focus_results=False,
+        )
+
+        workbench_results = app._get_workbench_results_view()
+        assert workbench_results is not None
+        state = workbench_results.get_state()
+        assert state["context_session_id"] == session_b
+        assert "context=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" in str(state["meta"])
+
+
 async def test_side_channel_replay_routes_to_separate_lane_without_primary_contamination():
     session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     replay_data = [

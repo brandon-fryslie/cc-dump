@@ -122,3 +122,11 @@ async def test_ai_workbench_panel_opens_and_qa_action_dispatches():
         assert app._view_store.get("sc:result_source") == "fallback"
         assert "scoped Q&A blocked" in app._view_store.get("sc:result_text")
         assert "error:" in app._view_store.get("sc:result_text")
+        tabs = app._get_conv_tabs()
+        assert tabs is not None
+        assert tabs.active == app._workbench_tab_id
+        workbench_results = app._get_workbench_results_view()
+        assert workbench_results is not None
+        state = workbench_results.get_state()
+        assert state["context_session_id"] == "__default__"
+        assert "context=__default__" in str(state["meta"])
