@@ -64,3 +64,24 @@ SessionPanel {
        adjust layout data (offset) to remove the extra spacer row. */
     margin-top: -1;
 }
+
+#conversation-tabs CustomContentTabs Tab.-active {
+    background: $accent-lighten-3;
+    color: $text;
+    text-style: bold;
+}
+
+#conversation-tabs CustomContentTabs:focus Tab.-active {
+    background: $accent-lighten-3;
+    color: $text;
+    text-style: bold;
+}
+
+#conversation-tabs CustomUnderline {
+    layer: overlay;
+}
+
+#conversation-tabs CustomUnderline > .underline--bar {
+    color: $accent;
+    background: $accent;
+}
