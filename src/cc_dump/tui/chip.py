@@ -10,8 +10,8 @@ from textual.widgets import Static
 class Chip(Static):
     """Clickable chip that dispatches an app action on click.
 
-    Like Button's action= parameter but renders as plain text with subtle
-    outline chrome. Gets proper :hover CSS support as a real widget.
+    Like Button's action= parameter but renders as compact text with strong
+    background/hover affordance. Gets proper :hover CSS support as a real widget.
     """
 
     ALLOW_SELECT = False
@@ -22,46 +22,35 @@ class Chip(Static):
         text-style: bold;
         background: $panel-lighten-2;
         color: $text;
-        outline: solid $panel-lighten-1;
     }
 
     Chip:hover {
-        background: $surface;
-        color: $text;
-        outline: solid $primary;
+        background: $surface-darken-1;
     }
 
     Chip:focus {
         text-style: bold underline;
-        background: $surface;
-        color: $text;
-        outline: solid $primary;
+        background: $surface-darken-1;
     }
 
     Chip.-dim {
         text-style: bold;
         background: $surface-lighten-1;
         color: $text-muted;
-        outline: solid $surface-lighten-2;
     }
 
     Chip.-dim:hover {
-        background: $surface;
-        color: $text;
-        outline: solid $panel-lighten-1;
+        background: $surface-darken-1;
     }
 
     Chip.-hidden {
         text-style: bold;
         background: $surface;
         color: $text-muted;
-        outline: solid $surface-lighten-1;
     }
 
     Chip.-hidden:hover {
-        background: $surface;
-        color: $text;
-        outline: solid $panel-lighten-1;
+        background: $surface-darken-1;
     }
     """
 
@@ -91,40 +80,30 @@ class ToggleChip(Static):
         text-style: bold;
         background: $accent;
         color: $text;
-        outline: solid $primary;
     }
 
     ToggleChip:hover {
-        background: $surface;
-        color: $text;
-        outline: solid $text;
+        background: $surface-darken-1;
     }
 
     ToggleChip:focus {
         text-style: bold underline;
-        background: $surface;
-        color: $text;
-        outline: solid $text;
+        background: $surface-darken-1;
     }
 
     ToggleChip.-off {
         text-style: bold;
         background: $surface-lighten-1;
         color: $text-muted;
-        outline: solid $surface-lighten-2;
     }
 
     ToggleChip.-off:hover {
-        background: $surface;
-        color: $text;
-        outline: solid $panel-lighten-1;
+        background: $surface-darken-1;
     }
 
     ToggleChip.-off:focus {
         text-style: bold underline;
-        background: $surface;
-        color: $text;
-        outline: solid $panel-lighten-1;
+        background: $surface-darken-1;
     }
     """
 

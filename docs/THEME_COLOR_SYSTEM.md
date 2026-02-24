@@ -2,6 +2,8 @@
 
 How cc-dump generates per-category indicator colors (gutter bars and footer chips) that adapt to any Textual theme while guaranteeing accessibility contrast.
 
+For a practical `$...` token reference used in CSS, see `docs/THEME_VARIABLE_REFERENCE.md`.
+
 ## The Problem
 
 Filter indicators identify which category (user, assistant, tools, headers, etc.) each block belongs to. They appear in two places:
