@@ -444,7 +444,7 @@ def render_session_panel(
     # Indicator + age inline
     result = Text()
     indicator = "\u25cf" if connected else "\u25cb"
-    indicator_style = f"bold {tc.info}" if connected else tc.text_muted_style
+    indicator_style = f"bold {tc.info}" if connected else tc.secondary
     label = "Connected" if connected else "Disconnected"
     result.append(indicator, style=indicator_style)
     result.append(" ")
@@ -456,14 +456,14 @@ def render_session_panel(
         age_s = time.monotonic() - last_message_time
         age_str = _format_age(age_s)
     result.append(" (")
-    result.append(age_str, style=tc.text_subtle_style if last_message_time is not None else tc.text_muted_style)
+    result.append(age_str, style=tc.text_subtle_style)
     result.append(")")
 
     # Session ID — full, with span tracking for click-to-copy
     result.append(" | Session: ")
     session_display = session_id or "--"
     span_start = len(result)
-    result.append(session_display, style=f"{tc.info}" if session_id else tc.text_muted_style)
+    result.append(session_display, style=f"{tc.info}" if session_id else tc.text_subtle_style)
     span_end = len(result)
 
     session_id_span = (span_start, span_end) if session_id else None

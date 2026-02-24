@@ -56,6 +56,5 @@ SessionPanel {
     dock: top;
     padding: 0 1;
     background: $panel-darken-1;
-    color: $text-muted;
-    border-bottom: solid $border-blurred;
+    color: $text-secondary;
 }
