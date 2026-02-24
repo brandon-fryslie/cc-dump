@@ -297,6 +297,23 @@ class CcDumpApp(App):
     def _is_side_channel_session_key(self, session_key: str) -> bool:
         return session_key.startswith("side-channel:")
 
+    def _context_session_key(self, session_key: str) -> str:
+        """Resolve canonical conversation context for derived session tabs.
+
+        // [LAW:one-source-of-truth] Context/session linkage is normalized here.
+        """
+        key = self._normalize_session_key(session_key)
+        if self._is_side_channel_session_key(key):
+            parts = key.split(":", 2)
+            if len(parts) == 3 and parts[2]:
+                return self._normalize_session_key(parts[2])
+            return self._default_session_key
+        return key
+
+    def _active_context_session_key(self) -> str:
+        """Return the active conversation context key, even on derived tabs."""
+        return self._context_session_key(self._active_session_key_from_tabs())
+
     def _active_session_key_from_tabs(self) -> str:
         tabs = self._get_conv_tabs()
         if tabs is None:
@@ -459,7 +476,7 @@ class CcDumpApp(App):
 
     def _active_resume_session_id(self) -> str:
         """Resolve session_id used for launch auto-resume from active tab context."""
-        active_key = self._active_session_key_from_tabs()
+        active_key = self._active_context_session_key()
         if active_key and active_key != self._default_session_key:
             return active_key
         return str(self._session_id or "")
@@ -1371,6 +1388,7 @@ class CcDumpApp(App):
         if self._view_store.get("sc:loading") or self._data_dispatcher is None:
             return
 
+        context_session_key = self._active_context_session_key()
         messages = self._collect_recent_messages(10)
         if not messages:
             self._set_side_channel_result(
@@ -1380,6 +1398,7 @@ class CcDumpApp(App):
                 loading=False,
                 active_action="",
                 focus_results=True,
+                context_session_key=context_session_key,
             )
             return
 
@@ -1393,11 +1412,11 @@ class CcDumpApp(App):
 
         def _do_summarize():
             result = dispatcher.summarize_messages(messages, source_session_id=source_session_id)
-            self.call_from_thread(self._on_side_channel_result, result)
+            self.call_from_thread(self._on_side_channel_result, result, context_session_key)
 
         self.run_worker(_do_summarize, thread=True, exclusive=False)
 
-    def _on_side_channel_result(self, result):
+    def _on_side_channel_result(self, result, context_session_key: str):
         """Callback from worker thread with AI result."""
         self._set_side_channel_result(
             text=result.text,
@@ -1406,6 +1425,7 @@ class CcDumpApp(App):
             loading=False,
             active_action="",
             focus_results=True,
+            context_session_key=context_session_key,
         )
         self._refresh_side_channel_usage()
 
@@ -1525,7 +1545,13 @@ class CcDumpApp(App):
         loading: bool = False,
         active_action: str = "",
         focus_results: bool = False,
+        context_session_key: str | None = None,
     ) -> None:
+        context_key = self._context_session_key(
+            context_session_key
+            if isinstance(context_session_key, str)
+            else self._active_context_session_key()
+        )
         with transaction():
             self._view_store.set("sc:loading", loading)
             self._view_store.set("sc:active_action", active_action)
@@ -1539,6 +1565,7 @@ class CcDumpApp(App):
                 source=source,
                 elapsed_ms=elapsed_ms,
                 action=active_action,
+                context_session_id=context_key,
             )
         if focus_results:
             self._show_workbench_results_tab()
@@ -1613,6 +1640,7 @@ class CcDumpApp(App):
         panel = self._get_side_channel_panel_widget()
         if panel is None:
             return
+        context_session_key = self._active_context_session_key()
         draft = panel.read_qa_draft()
         messages = self._collect_recent_messages(50)
         scope, parse_error = self._parse_qa_scope(draft, total_messages=len(messages))
@@ -1648,6 +1676,7 @@ class CcDumpApp(App):
                 loading=False,
                 active_action="",
                 focus_results=True,
+                context_session_key=context_session_key,
             )
             return
 
@@ -1668,6 +1697,7 @@ class CcDumpApp(App):
                 loading=False,
                 active_action="",
                 focus_results=True,
+                context_session_key=context_session_key,
             )
             return
 
@@ -1677,6 +1707,7 @@ class CcDumpApp(App):
             elapsed_ms=0,
             loading=True,
             active_action="qa_submit",
+            context_session_key=context_session_key,
         )
 
         dispatcher = self._data_dispatcher
@@ -1695,11 +1726,12 @@ class CcDumpApp(App):
                 self._on_side_channel_qa_result,
                 result,
                 question,
+                context_session_key,
             )
 
         self.run_worker(_do_qa, thread=True, exclusive=False)
 
-    def _on_side_channel_qa_result(self, result, question: str) -> None:
+    def _on_side_channel_qa_result(self, result, question: str, context_session_key: str) -> None:
         text = self._render_qa_result_text(
             question=question,
             scope_mode=result.artifact.scope_mode,
@@ -1716,6 +1748,7 @@ class CcDumpApp(App):
             loading=False,
             active_action="",
             focus_results=True,
+            context_session_key=context_session_key,
         )
         self._refresh_side_channel_usage()
 
@@ -1769,6 +1802,7 @@ class CcDumpApp(App):
     def action_sc_action_extract(self) -> None:
         if self._view_store.get("sc:loading"):
             return
+        context_session_key = self._active_context_session_key()
         if self._data_dispatcher is None:
             self._set_side_channel_result(
                 text="action extraction blocked\nerror: dispatcher unavailable",
@@ -1777,6 +1811,7 @@ class CcDumpApp(App):
                 loading=False,
                 active_action="",
                 focus_results=True,
+                context_session_key=context_session_key,
             )
             return
 
@@ -1789,6 +1824,7 @@ class CcDumpApp(App):
                 loading=False,
                 active_action="",
                 focus_results=True,
+                context_session_key=context_session_key,
             )
             return
 
@@ -1798,6 +1834,7 @@ class CcDumpApp(App):
             elapsed_ms=0,
             loading=True,
             active_action="action_extract",
+            context_session_key=context_session_key,
         )
         dispatcher = self._data_dispatcher
         source_session_id = self._active_resume_session_id()
@@ -1809,11 +1846,15 @@ class CcDumpApp(App):
                 source_session_id=source_session_id,
                 request_id=request_id,
             )
-            self.call_from_thread(self._on_side_channel_action_extract_result, result)
+            self.call_from_thread(
+                self._on_side_channel_action_extract_result,
+                result,
+                context_session_key,
+            )
 
         self.run_worker(_do_action_extract, thread=True, exclusive=False)
 
-    def _on_side_channel_action_extract_result(self, result) -> None:
+    def _on_side_channel_action_extract_result(self, result, context_session_key: str) -> None:
         self._sc_action_batch_id = str(result.batch_id or "")
         self._sc_action_items = list(result.items or [])
         text = self._render_action_candidates_text(
@@ -1829,6 +1870,7 @@ class CcDumpApp(App):
             loading=False,
             active_action="",
             focus_results=True,
+            context_session_key=context_session_key,
         )
         self._refresh_side_channel_usage()
 
@@ -1964,6 +2006,7 @@ class CcDumpApp(App):
         panel = self._get_side_channel_panel_widget()
         if panel is None:
             return
+        context_session_key = self._active_context_session_key()
         draft = panel.read_utility_draft()
         utility_id = draft.utility_id.strip()
         if not utility_id:
@@ -1974,6 +2017,7 @@ class CcDumpApp(App):
                 loading=False,
                 active_action="",
                 focus_results=True,
+                context_session_key=context_session_key,
             )
             return
         if self._data_dispatcher is None:
@@ -1984,6 +2028,7 @@ class CcDumpApp(App):
                 loading=False,
                 active_action="",
                 focus_results=True,
+                context_session_key=context_session_key,
             )
             return
         messages = self._collect_recent_messages(50)
@@ -1993,6 +2038,7 @@ class CcDumpApp(App):
             elapsed_ms=0,
             loading=True,
             active_action="utility_run",
+            context_session_key=context_session_key,
         )
         dispatcher = self._data_dispatcher
         source_session_id = self._active_resume_session_id()
@@ -2003,11 +2049,11 @@ class CcDumpApp(App):
                 utility_id=utility_id,
                 source_session_id=source_session_id,
             )
-            self.call_from_thread(self._on_side_channel_utility_result, result)
+            self.call_from_thread(self._on_side_channel_utility_result, result, context_session_key)
 
         self.run_worker(_do_utility_run, thread=True, exclusive=False)
 
-    def _on_side_channel_utility_result(self, result) -> None:
+    def _on_side_channel_utility_result(self, result, context_session_key: str) -> None:
         lines = [
             "utility result",
             f"utility_id: {result.utility_id}",
@@ -2023,6 +2069,7 @@ class CcDumpApp(App):
             loading=False,
             active_action="",
             focus_results=True,
+            context_session_key=context_session_key,
         )
         self._refresh_side_channel_usage()
 
