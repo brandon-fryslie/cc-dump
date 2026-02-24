@@ -25,7 +25,7 @@ class CustomUnderline(Underline):
         height: 1;
         & > .underline--bar {
             /* Solid colors (no alpha) for stable border appearance. */
-            color: $primary;
+            color: $primary-lighten-3;
             background: $border;
         }
     }
