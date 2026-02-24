@@ -50,6 +50,7 @@ _RELOAD_ORDER = [
     "cc_dump.tui.launch_config_panel",  # depends on: palette, settings_panel
     "cc_dump.tui.session_panel",  # depends on: panel_renderers
     "cc_dump.tui.workbench_results_view",  # depends on: textual widgets only
+    "cc_dump.tui.custom_tabs",  # depends on: textual widgets only
     "cc_dump.tui.widget_factory",  # depends on: analysis, rendering, panel_renderers, error_indicator
     "cc_dump.tui.dump_export",  # depends on: dump_formatting
     "cc_dump.tui.search_controller",  # depends on: search, location_navigation, category_config
@@ -90,6 +91,7 @@ _excluded_hashes: dict[str, str] = {}
 
 # Set of reloadable relative paths (derived from _RELOAD_ORDER module names)
 _reloadable_rel_paths: set[str] = set()
+_refreshable_asset_rel_paths: set[str] = {"tui/styles.css"}
 
 
 def init(package_dir: str) -> None:
@@ -143,6 +145,25 @@ def is_reloadable(path: str) -> bool:
         rel = str(p).replace(os.sep, "/")
 
     return rel in _reloadable_rel_paths
+
+
+def is_refreshable_asset(path: str) -> bool:
+    """True if path maps to a refreshable non-module asset (e.g. CSS)."""
+    if not _watch_dirs:
+        return False
+
+    root = Path(_watch_dirs[0])
+    p = Path(path)
+
+    if p.is_absolute():
+        try:
+            rel = str(p.relative_to(root)).replace(os.sep, "/")
+        except ValueError:
+            return False
+    else:
+        rel = str(p).replace(os.sep, "/")
+
+    return rel in _refreshable_asset_rel_paths
 
 
 def check_and_get_reloaded() -> list[str]:

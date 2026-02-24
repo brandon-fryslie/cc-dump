@@ -672,6 +672,7 @@ class TestHotReloadModuleStructure:
             "cc_dump.core.formatting",
             "cc_dump.pipeline.router",
             "cc_dump.tui.rendering",
+            "cc_dump.tui.custom_tabs",
             "cc_dump.tui.widget_factory",
         ]
         for mod in expected_modules:
@@ -774,6 +775,21 @@ class TestHotReloadFileDetection:
         assert hr.is_reloadable("core/palette.py") is True
         assert hr.is_reloadable("tui/rendering.py") is True
         assert hr.is_reloadable("pipeline/proxy.py") is False
+
+    def test_is_refreshable_asset_for_styles_css(self):
+        import cc_dump.app.hot_reload as hr
+
+        test_dir = Path(__file__).parent.parent / "src" / "cc_dump"
+        hr.init(str(test_dir))
+
+        assert hr.is_refreshable_asset(str(test_dir / "tui" / "styles.css")) is True
+        assert hr.is_refreshable_asset("tui/styles.css") is True
+        assert hr.is_refreshable_asset("tui/rendering.py") is False
+
+    def test_controller_treats_styles_css_as_reload_trigger(self):
+        from cc_dump.tui.hot_reload_controller import _has_reloadable_changes
+
+        assert _has_reloadable_changes({("modified", "tui/styles.css")}) is True
 
     def test_check_and_get_reloaded_returns_list(self):
         """check_and_get_reloaded unconditionally reloads all modules."""

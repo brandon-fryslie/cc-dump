@@ -29,6 +29,7 @@ import cc_dump.tui.view_store_bridge
 import cc_dump.tui.protocols
 import cc_dump.tui.category_config
 import cc_dump.tui.panel_registry
+import cc_dump.tui.custom_tabs
 import cc_dump.app.session_store
 
 from snarfx import EventStream
@@ -77,9 +78,23 @@ def stop_file_watcher() -> None:
 
 
 def _has_reloadable_changes(changes) -> bool:
-    """True if any changed file is a reloadable module."""
+    """True if any changed file is a reloadable module or refreshable asset."""
+    for _change_type, path in changes:
+        if cc_dump.app.hot_reload.is_reloadable(path) or cc_dump.app.hot_reload.is_refreshable_asset(path):
+            return True
+    return False
+
+
+def _has_module_changes(changes) -> bool:
     for _change_type, path in changes:
         if cc_dump.app.hot_reload.is_reloadable(path):
+            return True
+    return False
+
+
+def _has_asset_changes(changes) -> bool:
+    for _change_type, path in changes:
+        if cc_dump.app.hot_reload.is_refreshable_asset(path):
             return True
     return False
 
@@ -122,7 +137,7 @@ async def start_file_watcher(app) -> None:
     # Wire: reloadable file events → debounce → reload + replace widgets
     stream.filter(_has_reloadable_changes) \
           .debounce(_DEBOUNCE_S) \
-          .subscribe(lambda _: app.call_later(_do_hot_reload, app))
+          .subscribe(lambda changes: app.call_later(_do_hot_reload, app, changes))
 
     # Wire: all events → update staleness state (immediate, no debounce)
     stream.subscribe(lambda _: app.call_from_thread(_update_staleness, app))
@@ -134,19 +149,70 @@ async def start_file_watcher(app) -> None:
         stream.emit(changes)
 
 
-async def _do_hot_reload(app) -> None:
-    """Execute the actual reload after debounce settles."""
+def _refresh_custom_tabs_runtime(app) -> None:
+    """Apply reloaded custom-tabs classes to mounted tab widgets."""
     try:
-        reloaded_modules = cc_dump.app.hot_reload.check_and_get_reloaded()
-    except Exception as e:
-        app.notify(f"[hot-reload] error reloading: {e}", severity="error")
-        app._app_log("ERROR", f"Hot-reload error reloading: {e}")
+        tabs = app._get_conv_tabs()
+    except Exception:
+        tabs = None
+    if tabs is None:
         return
 
-    if not reloaded_modules:
+    # [LAW:single-enforcer] Hot-reload class rebinding for custom tabs is centralized here.
+    custom_tabbed_cls = cc_dump.tui.custom_tabs.CustomTabbedContent
+    custom_tabs_cls = cc_dump.tui.custom_tabs.CustomContentTabs
+    custom_underline_cls = cc_dump.tui.custom_tabs.CustomUnderline
+
+    try:
+        tabs.__class__ = custom_tabbed_cls
+    except TypeError:
+        pass
+
+    for node_name, cls in (
+        ("CustomContentTabs", custom_tabs_cls),
+        ("CustomUnderline", custom_underline_cls),
+    ):
+        try:
+            node = tabs.query_one(node_name)
+        except Exception:
+            continue
+        try:
+            node.__class__ = cls
+        except TypeError:
+            pass
+
+
+async def _do_hot_reload(app, changes=None) -> None:
+    """Execute the actual reload after debounce settles."""
+    changes = tuple(changes or ())
+    module_changes = _has_module_changes(changes)
+    asset_changes = _has_asset_changes(changes)
+
+    if not module_changes and not asset_changes:
         return
 
-    app._app_log("INFO", f"Hot-reload: {', '.join(reloaded_modules)}")
+    reloaded_modules: list[str] = []
+    if module_changes:
+        try:
+            reloaded_modules = cc_dump.app.hot_reload.check_and_get_reloaded()
+        except Exception as e:
+            app.notify(f"[hot-reload] error reloading: {e}", severity="error")
+            app._app_log("ERROR", f"Hot-reload error reloading: {e}")
+            return
+
+        if reloaded_modules:
+            app._app_log("INFO", f"Hot-reload: {', '.join(reloaded_modules)}")
+        else:
+            module_changes = False
+
+    if not module_changes and asset_changes:
+        try:
+            app.refresh_css(animate=False)
+            app.notify("[hot-reload] CSS updated", severity="information")
+        except Exception as e:
+            app.notify(f"[hot-reload] error applying CSS: {e}", severity="error")
+            app._app_log("ERROR", f"Hot-reload CSS apply failed: {e}")
+        return
 
     # // [LAW:one-source-of-truth] Identity fields (phase, query, modes, cursor_pos)
     # live in the view store — they survive reconcile() automatically.
@@ -218,11 +284,13 @@ async def _do_hot_reload(app) -> None:
     # // [LAW:dataflow-not-control-flow] Unconditional — all reloads take same path
     try:
         await replace_all_widgets(app)
+        _refresh_custom_tabs_runtime(app)
+        app.refresh_css(animate=False)
         # Single consolidated notification
-        app.notify(
-            f"[hot-reload] {len(reloaded_modules)} modules updated",
-            severity="information",
-        )
+        message = f"[hot-reload] {len(reloaded_modules)} modules updated"
+        if asset_changes:
+            message = message + " + CSS refreshed"
+        app.notify(message, severity="information")
     except Exception as e:
         app.notify(f"[hot-reload] error applying: {e}", severity="error")
         app._app_log("ERROR", f"Hot-reload error applying: {e}")

@@ -81,12 +81,12 @@ class CustomContentTabs(ContentTabs):
     }
     CustomContentTabs Tab.-active {
         /* Active tab fill should be a clear variant lighten swatch. */
-        background: $accent-lighten-3;
+        background: $primary-lighten-3;
         color: $text;
         text-style: bold;
     }
     CustomContentTabs:focus Tab.-active {
-        background: $accent-lighten-3;
+        background: $primary-lighten-3;
         color: $text;
         text-style: bold;
     }
