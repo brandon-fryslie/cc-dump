@@ -130,3 +130,13 @@ async def test_ai_workbench_panel_opens_and_qa_action_dispatches():
         state = workbench_results.get_state()
         assert state["context_session_id"] == "__default__"
         assert "context=__default__" in str(state["meta"])
+
+
+async def test_conversation_tabs_overlap_content_by_one_row():
+    """Conversation tabs should not reserve a blank spacer row under headers."""
+    async with run_app() as (pilot, app):
+        _ = pilot
+        tabbed = app._get_conv_tabs()
+        tabs = tabbed.query_one("ContentTabs")
+        switcher = tabbed.query_one("ContentSwitcher")
+        assert switcher.region.y - tabs.region.y == 1

@@ -58,3 +58,9 @@ SessionPanel {
     background: $panel-darken-1;
     color: $text-secondary;
 }
+
+#conversation-tabs > ContentSwitcher {
+    /* [LAW:dataflow-not-control-flow] Preserve native Tabs behavior and only
+       adjust layout data (offset) to remove the extra spacer row. */
+    margin-top: -1;
+}
