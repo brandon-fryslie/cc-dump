@@ -96,7 +96,7 @@ def _patch_textual_monochrome_style() -> None:
 
 
 def _patch_textual_underline_endcaps() -> None:
-    """Patch Textual tab underline rendering with explicit corner endcaps.
+    """Patch Textual tab underline rendering with terminal-edge elbow endcap.
 
     // [LAW:single-enforcer] Third-party compatibility patch applied once at app boundary.
     """
@@ -104,7 +104,6 @@ def _patch_textual_underline_endcaps() -> None:
         return
 
     _LINE = "─"
-    _START_CAP = "┌"
     _END_CAP = "┐"
 
     def _flat_render(self):
@@ -128,7 +127,6 @@ def _patch_textual_underline_endcaps() -> None:
 
         segment = end - start
         highlight_chars = [_LINE] * segment
-        highlight_chars[0] = _START_CAP
         highlight_chars[-1] = _END_CAP if end >= width else _LINE
 
         output = Text("", end="")
