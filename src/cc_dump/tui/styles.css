@@ -64,3 +64,9 @@ SessionPanel {
        adjust layout data (offset) to remove the extra spacer row. */
     margin-top: -1;
 }
+
+#conversation-tabs CustomContentTabs Tab.-cc-active {
+    background: $primary-lighten-3;
+    color: $text;
+    text-style: bold;
+}
