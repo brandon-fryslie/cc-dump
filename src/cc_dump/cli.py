@@ -358,10 +358,13 @@ def main():
             # Try graceful shutdown with 3 second timeout
             shutdown_thread = threading.Thread(target=server.shutdown, daemon=True)
             shutdown_thread.start()
-            shutdown_thread.join(timeout=3.0)
+            try:
+                shutdown_thread.join(timeout=3.0)
+            except KeyboardInterrupt:
+                pass  # User forced quit during shutdown
 
             if shutdown_thread.is_alive():
-                # Timeout - force close
+                # Timeout or interrupted - force close
                 print("   ⏱️  Timeout - forcing shutdown", file=sys.stderr)
             else:
                 # Graceful shutdown succeeded

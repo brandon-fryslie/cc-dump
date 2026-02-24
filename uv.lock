@@ -214,6 +214,7 @@ dependencies = [
     { name = "textual" },
     { name = "textual-serve" },
     { name = "tiktoken" },
+    { name = "watchfiles" },
 ]
 
 [package.dev-dependencies]
@@ -224,7 +225,6 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "pytest-xdist" },
     { name = "requests" },
-    { name = "watchfiles" },
 ]
 
 [package.metadata]
@@ -234,6 +234,7 @@ requires-dist = [
     { name = "textual", specifier = ">=0.80.0" },
     { name = "textual-serve", specifier = ">=1.0.0" },
     { name = "tiktoken", specifier = ">=0.5.0" },
+    { name = "watchfiles", specifier = ">=1.0.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -244,7 +245,6 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=0.24.0" },
     { name = "pytest-xdist", specifier = ">=3.5.0" },
     { name = "requests", specifier = ">=2.31.0" },
-    { name = "watchfiles", specifier = ">=1.0.0" },
 ]
 
 [[package]]
