@@ -330,7 +330,8 @@ class SearchBar(Static):
         color: $text;
         display: none;
         padding: 0 1;
-        border-top: solid $accent;
+        border-top: solid $primary-muted;
+        background: $surface-darken-1;
     }
     """
 
@@ -359,11 +360,14 @@ class SearchBar(Static):
             cursor = state.cursor_pos
             if cursor < len(query):
                 search_line.append(query[:cursor], style="bold")
-                search_line.append(query[cursor], style="bold reverse")  # Inverted cursor
+                search_line.append(
+                    query[cursor],
+                    style=f"bold {tc.background} on {tc.foreground}",
+                )
                 search_line.append(query[cursor + 1 :], style="bold")
             else:
                 search_line.append(query, style="bold")
-                search_line.append("█", style="")  # Block cursor at end
+                search_line.append("█", style=f"bold {tc.accent}")
         else:
             # Navigating: show query without cursor
             search_line.append(state.query, style="bold")
@@ -380,83 +384,83 @@ class SearchBar(Static):
             if pattern is None and state.query:
                 search_line.append("  [invalid pattern]", style=tc.search_error_style)
             else:
-                search_line.append("  [no matches]", style="dim")
+                search_line.append("  [no matches]", style=tc.text_muted_style)
 
         lines.append(search_line)
 
         # Line 2: Mode indicators
         mode_line = Text()
-        mode_line.append("Modes: ", style="dim")
+        mode_line.append("Modes: ", style=tc.text_muted_style)
 
         # Case insensitive
         if state.modes & SearchMode.CASE_INSENSITIVE:
             mode_line.append("i ", style=tc.search_active_style)
         else:
-            mode_line.append("i ", style="dim")
+            mode_line.append("i ", style=tc.text_muted_style)
 
         # Word boundary
         if state.modes & SearchMode.WORD_BOUNDARY:
             mode_line.append("w ", style=tc.search_active_style)
         else:
-            mode_line.append("w ", style="dim")
+            mode_line.append("w ", style=tc.text_muted_style)
 
         # Regex
         if state.modes & SearchMode.REGEX:
             mode_line.append(".* ", style=tc.search_active_style)
         else:
-            mode_line.append(".* ", style="dim")
+            mode_line.append(".* ", style=tc.text_muted_style)
 
         # Incremental
         if state.modes & SearchMode.INCREMENTAL:
             mode_line.append("inc", style=tc.search_active_style)
         else:
-            mode_line.append("inc", style="dim")
+            mode_line.append("inc", style=tc.text_muted_style)
 
         lines.append(mode_line)
 
         # Line 3: Mode toggle help
         help_line = Text()
-        help_line.append("Toggle: ", style="dim")
+        help_line.append("Toggle: ", style=tc.text_muted_style)
         help_line.append("Alt+c", style=tc.search_keys_style)
-        help_line.append("=case ", style="dim")
+        help_line.append("=case ", style=tc.text_muted_style)
         help_line.append("Alt+w", style=tc.search_keys_style)
-        help_line.append("=word ", style="dim")
+        help_line.append("=word ", style=tc.text_muted_style)
         help_line.append("Alt+r", style=tc.search_keys_style)
-        help_line.append("=regex ", style="dim")
+        help_line.append("=regex ", style=tc.text_muted_style)
         help_line.append("Alt+i", style=tc.search_keys_style)
-        help_line.append("=incr", style="dim")
+        help_line.append("=incr", style=tc.text_muted_style)
         lines.append(help_line)
 
         # Line 4: Navigation help
         nav_line = Text()
         if state.phase == SearchPhase.EDITING:
-            nav_line.append("Keys: ", style="dim")
+            nav_line.append("Keys: ", style=tc.text_muted_style)
             nav_line.append("Enter", style=tc.search_keys_style)
-            nav_line.append("=search ", style="dim")
+            nav_line.append("=search ", style=tc.text_muted_style)
             nav_line.append("^A/^E", style=tc.search_keys_style)
-            nav_line.append("=home/end ", style="dim")
+            nav_line.append("=home/end ", style=tc.text_muted_style)
             nav_line.append("^W", style=tc.search_keys_style)
-            nav_line.append("=del-word ", style="dim")
+            nav_line.append("=del-word ", style=tc.text_muted_style)
             nav_line.append("Esc", style=tc.search_keys_style)
-            nav_line.append("=exit(stay) ", style="dim")
+            nav_line.append("=exit(stay) ", style=tc.text_muted_style)
             nav_line.append("q", style=tc.search_keys_style)
-            nav_line.append("=exit(restore)", style="dim")
+            nav_line.append("=exit(restore)", style=tc.text_muted_style)
         else:
-            nav_line.append("Keys: ", style="dim")
+            nav_line.append("Keys: ", style=tc.text_muted_style)
             nav_line.append("n", style=tc.search_keys_style)
-            nav_line.append("=next ", style="dim")
+            nav_line.append("=next ", style=tc.text_muted_style)
             nav_line.append("N", style=tc.search_keys_style)
-            nav_line.append("=prev ", style="dim")
+            nav_line.append("=prev ", style=tc.text_muted_style)
             nav_line.append("^N/^P", style=tc.search_keys_style)
-            nav_line.append("=next/prev ", style="dim")
+            nav_line.append("=next/prev ", style=tc.text_muted_style)
             nav_line.append("Tab/S-Tab", style=tc.search_keys_style)
-            nav_line.append("=next/prev ", style="dim")
+            nav_line.append("=next/prev ", style=tc.text_muted_style)
             nav_line.append("/", style=tc.search_keys_style)
-            nav_line.append("=edit ", style="dim")
+            nav_line.append("=edit ", style=tc.text_muted_style)
             nav_line.append("Esc", style=tc.search_keys_style)
-            nav_line.append("=exit(stay) ", style="dim")
+            nav_line.append("=exit(stay) ", style=tc.text_muted_style)
             nav_line.append("q", style=tc.search_keys_style)
-            nav_line.append("=exit(restore)", style="dim")
+            nav_line.append("=exit(restore)", style=tc.text_muted_style)
         lines.append(nav_line)
 
         # Join lines with newlines

@@ -14,7 +14,10 @@ from collections import namedtuple
 
 from rich.segment import Segment
 from rich.style import Style
+from textual.color import Color
 from textual.strip import Strip
+
+import cc_dump.tui.rendering
 
 
 ErrorItem = namedtuple("ErrorItem", ["id", "icon", "summary"])
@@ -24,8 +27,38 @@ _COLLAPSED_ICON = " \u274c "  # " ❌ "
 _COLLAPSED_WIDTH = 4  # cell width of collapsed indicator
 _PADDING = 1  # right-side padding cell
 
-_BG_STYLE = Style(color="black", bgcolor="white")
-_BG_STYLE_BOLD = Style(color="black", bgcolor="white", bold=True)
+def _contrast_text(bg_hex: str, light_hex: str, dark_hex: str) -> str:
+    """Pick light/dark foreground based on background luminance."""
+    try:
+        color = Color.parse(bg_hex)
+        r, g, b = color.rgb
+        # Standard relative luminance approximation.
+        luminance = (0.2126 * (r / 255.0)) + (0.7152 * (g / 255.0)) + (0.0722 * (b / 255.0))
+        return dark_hex if luminance >= 0.53 else light_hex
+    except Exception:
+        return light_hex
+
+
+def _indicator_styles() -> tuple[Style, Style]:
+    """Build (header_style, body_style) from current active theme.
+
+    // [LAW:one-source-of-truth] Indicator colors derive from rendering theme state.
+    """
+    try:
+        tc = cc_dump.tui.rendering.get_theme_colors()
+        header_bg = tc.error
+        header_fg = _contrast_text(header_bg, tc.background, tc.foreground)
+        body_bg = tc.surface
+        body_fg = tc.error
+        header_style = Style(color=header_fg, bgcolor=header_bg, bold=True)
+        body_style = Style(color=body_fg, bgcolor=body_bg)
+        return (header_style, body_style)
+    except Exception:
+        # Theme may not be initialized in isolated tests; keep deterministic fallback.
+        return (
+            Style(color="#FFFFFF", bgcolor="#BA3C5B", bold=True),
+            Style(color="#BA3C5B", bgcolor="#2B2B2B"),
+        )
 
 
 class IndicatorState:
@@ -61,9 +94,11 @@ class IndicatorState:
         if not self.items:
             return []
 
+        header_style, body_style = _indicator_styles()
+
         if not self.expanded:
             text = _COLLAPSED_ICON
-            segments = [Segment(text, _BG_STYLE_BOLD), Segment(" ")]
+            segments = [Segment(text, header_style), Segment(" ")]
             return [Strip(segments)]
 
         # Expanded: header + detail lines
@@ -73,13 +108,13 @@ class IndicatorState:
         # Header line: icon + summary of first item
         header_text = _render_header(self.items[0])
         padded = header_text.ljust(w - _PADDING)
-        strips.append(Strip([Segment(padded, _BG_STYLE_BOLD), Segment(" ")]))
+        strips.append(Strip([Segment(padded, header_style), Segment(" ")]))
 
         # Detail lines
         for item in self.items:
             detail = f"    {item.summary} "
             padded = detail.ljust(w - _PADDING)
-            strips.append(Strip([Segment(padded, _BG_STYLE), Segment(" ")]))
+            strips.append(Strip([Segment(padded, body_style), Segment(" ")]))
 
         return strips
 

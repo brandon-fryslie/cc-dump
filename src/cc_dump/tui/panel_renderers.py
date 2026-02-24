@@ -5,8 +5,8 @@ so it can be hot-reloaded without affecting the live widget instances.
 """
 
 import cc_dump.core.analysis
-import cc_dump.core.palette
 import cc_dump.tui.input_modes
+import cc_dump.tui.rendering
 from rich.text import Text
 from collections.abc import Callable
 
@@ -439,12 +439,12 @@ def render_session_panel(
     """
     import time
 
-    p = cc_dump.core.palette.PALETTE
+    tc = cc_dump.tui.rendering.get_theme_colors()
 
     # Indicator + age inline
     result = Text()
     indicator = "\u25cf" if connected else "\u25cb"
-    indicator_style = f"bold {p.info}" if connected else "dim"
+    indicator_style = f"bold {tc.info}" if connected else tc.text_muted_style
     label = "Connected" if connected else "Disconnected"
     result.append(indicator, style=indicator_style)
     result.append(" ")
@@ -456,14 +456,14 @@ def render_session_panel(
         age_s = time.monotonic() - last_message_time
         age_str = _format_age(age_s)
     result.append(" (")
-    result.append(age_str, style="" if last_message_time is not None else "dim")
+    result.append(age_str, style=tc.text_subtle_style if last_message_time is not None else tc.text_muted_style)
     result.append(")")
 
     # Session ID — full, with span tracking for click-to-copy
     result.append(" | Session: ")
     session_display = session_id or "--"
     span_start = len(result)
-    result.append(session_display, style=f"{p.info}" if session_id else "dim")
+    result.append(session_display, style=f"{tc.info}" if session_id else tc.text_muted_style)
     span_end = len(result)
 
     session_id_span = (span_start, span_end) if session_id else None
@@ -493,7 +493,7 @@ def render_info_panel(info: dict) -> Text:
     Returns:
         Rich Text object with labeled rows
     """
-    p = cc_dump.core.palette.PALETTE
+    tc = cc_dump.tui.rendering.get_theme_colors()
 
     # // [LAW:one-source-of-truth] Row definitions: (label, value)
     # Every row is rendered. None/empty → "--". All values are click-to-copy.
@@ -513,24 +513,27 @@ def render_info_panel(info: dict) -> Text:
     ]
 
     text = Text()
-    text.append("Server Info", style=f"bold {p.info}")
+    text.append("Server Info", style=f"bold {tc.info}")
     text.append("\n")
 
     label_width = max(len(label) for label, _ in rows)
 
     for label, value in rows:
         text.append("  ")
-        text.append("{:<{}}".format(label + ":", label_width + 1), style="bold")
+        text.append(
+            "{:<{}}".format(label + ":", label_width + 1),
+            style=f"bold {tc.text_subtle_style}",
+        )
         text.append(" ")
-        text.append(value, style=f"{p.info}")
+        text.append(value, style=f"{tc.foreground}")
         text.append("\n")
 
     # Usage hint at bottom
     text.append("\n  ")
-    text.append("Usage: ", style="bold")
-    text.append("ANTHROPIC_BASE_URL=", style="dim")
-    text.append(proxy_url, style=f"bold {p.info}")
-    text.append(" claude", style="dim")
+    text.append("Usage: ", style=f"bold {tc.text_subtle_style}")
+    text.append("ANTHROPIC_BASE_URL=", style=tc.text_muted_style)
+    text.append(proxy_url, style=f"bold {tc.info}")
+    text.append(" claude", style=tc.text_muted_style)
 
     return text
 
@@ -543,22 +546,22 @@ def render_keys_panel() -> Text:
     Returns:
         Rich Text object with grouped key shortcuts
     """
-    p = cc_dump.core.palette.PALETTE
+    tc = cc_dump.tui.rendering.get_theme_colors()
     key_groups = cc_dump.tui.input_modes.KEY_GROUPS
 
     text = Text()
-    text.append("Keys", style=f"bold {p.info}")
+    text.append("Keys", style=f"bold {tc.info}")
     text.append("\n")
 
     for group_title, keys in key_groups:
         text.append(" ")
-        text.append(group_title, style="bold underline")
+        text.append(group_title, style=f"bold underline {tc.text_subtle_style}")
         text.append("\n")
         for key_display, description in keys:
             text.append("  ")
-            text.append("{:>6}".format(key_display), style=f"bold {p.info}")
+            text.append("{:>6}".format(key_display), style=f"bold {tc.info}")
             text.append("  ")
-            text.append(description, style="dim")
+            text.append(description, style=tc.text_muted_style)
             text.append("\n")
 
     return text

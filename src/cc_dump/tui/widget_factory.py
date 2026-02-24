@@ -229,9 +229,11 @@ class ConversationView(ScrollView):
         color: $foreground;
         overflow-y: scroll;
         overflow-x: hidden;
-        border: solid $accent;
+        border: solid $primary;
+        background: $background;
         &:focus {
-            background-tint: $foreground 5%;
+            background-tint: $primary 8%;
+            border: solid $accent;
         }
     }
     """
@@ -929,12 +931,13 @@ class ConversationView(ScrollView):
         composed_width = lane_width * lane_count + separator_width
 
         chips = dict((rid, (label, kind)) for rid, label, kind in self._domain_store.get_active_stream_chips())
+        tc = cc_dump.tui.rendering.get_theme_colors()
         label_styles = {
-            "main": Style(color=cc_dump.core.palette.PALETTE.accent, bold=True),
-            "subagent": Style(color=cc_dump.core.palette.PALETTE.info, bold=True),
-            "unknown": Style(color=cc_dump.core.palette.PALETTE.warning, dim=True),
+            "main": Style(color=tc.accent, bold=True),
+            "subagent": Style(color=tc.secondary, bold=True),
+            "unknown": Style(color=tc.warning),
         }
-        separator = Segment("│", Style(dim=True))
+        separator = Segment("│", Style(color=tc.subtle))
 
         lane_rows: list[list[Strip]] = []
         for request_id in active:
@@ -2234,12 +2237,12 @@ class LogsPanel(RichLog):
 
     # [LAW:dataflow-not-control-flow] Log level style dispatch
     def _get_log_level_styles(self):
-        p = cc_dump.core.palette.PALETTE
+        tc = cc_dump.tui.rendering.get_theme_colors()
         return {
-            "ERROR": f"bold {p.error}",
-            "WARNING": f"bold {p.warning}",
-            "INFO": f"bold {p.info}",
-            "DEBUG": "dim",
+            "ERROR": f"bold {tc.error}",
+            "WARNING": f"bold {tc.warning}",
+            "INFO": f"bold {tc.info}",
+            "DEBUG": tc.text_muted_style,
         }
 
     def app_log(self, level: str, message: str):
@@ -2252,11 +2255,14 @@ class LogsPanel(RichLog):
         timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
         log_text = Text()
-        log_text.append(f"[{timestamp}] ", style="dim")
+        log_text.append(
+            f"[{timestamp}] ",
+            style=cc_dump.tui.rendering.get_theme_colors().text_muted_style,
+        )
 
         # Color-code by level using palette
         styles = self._get_log_level_styles()
-        style = styles.get(level, "dim")
+        style = styles.get(level, cc_dump.tui.rendering.get_theme_colors().text_muted_style)
         log_text.append(f"{level:7s} ", style=style)
 
         log_text.append(message)
