@@ -26,14 +26,14 @@ class Chip(Static):
     }
 
     Chip:hover {
-        background: $panel-lighten-1;
+        background: $surface;
         color: $text;
         border: solid $primary;
     }
 
     Chip:focus {
         text-style: bold underline;
-        background: $panel-lighten-1;
+        background: $surface;
         color: $text;
         border: solid $primary;
     }
@@ -46,7 +46,7 @@ class Chip(Static):
     }
 
     Chip.-dim:hover {
-        background: $surface-lighten-2;
+        background: $surface;
         color: $text;
         border: solid $panel-lighten-1;
     }
@@ -59,7 +59,7 @@ class Chip(Static):
     }
 
     Chip.-hidden:hover {
-        background: $surface-lighten-1;
+        background: $surface;
         color: $text;
         border: solid $panel-lighten-1;
     }
@@ -95,14 +95,14 @@ class ToggleChip(Static):
     }
 
     ToggleChip:hover {
-        background: $primary;
+        background: $surface;
         color: $text;
         border: solid $text;
     }
 
     ToggleChip:focus {
         text-style: bold underline;
-        background: $primary;
+        background: $surface;
         color: $text;
         border: solid $text;
     }
@@ -115,14 +115,14 @@ class ToggleChip(Static):
     }
 
     ToggleChip.-off:hover {
-        background: $surface-lighten-2;
+        background: $surface;
         color: $text;
         border: solid $panel-lighten-1;
     }
 
     ToggleChip.-off:focus {
         text-style: bold underline;
-        background: $surface-lighten-2;
+        background: $surface;
         color: $text;
         border: solid $panel-lighten-1;
     }
