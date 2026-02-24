@@ -8,6 +8,7 @@
 """
 
 import importlib
+import faulthandler
 import os
 import queue
 import sys
@@ -68,6 +69,7 @@ import cc_dump.app.view_store
 import cc_dump.app.session_store
 import cc_dump.ai.conversation_qa
 import cc_dump.ai.side_channel_marker
+import cc_dump.experiments.perf_metrics
 
 from cc_dump.io.stderr_tee import get_tee as _get_tee
 import cc_dump.app.domain_store
@@ -95,6 +97,20 @@ def _patch_textual_monochrome_style() -> None:
 
 
 _patch_textual_monochrome_style()
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = str(os.environ.get(name, "1" if default else "0") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, default: float, *, minimum: float = 0.0) -> float:
+    raw = str(os.environ.get(name, str(default)) or "").strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        value = default
+    return max(minimum, value)
 
 
 def _resolve_factory(dotted_path: str):
@@ -206,6 +222,29 @@ class CcDumpApp(App):
         self._memory_snapshot_enabled = (
             str(os.environ.get("CC_DUMP_MEMORY_SNAPSHOT", "0")).strip().lower()
             in {"1", "true", "yes", "on"}
+        )
+        # [LAW:single-enforcer] UI responsiveness policy is configured once at app boundary.
+        self._ui_watchdog_enabled = _env_bool("CC_DUMP_UI_WATCHDOG", True)
+        self._ui_watchdog_poll_s = _env_float("CC_DUMP_UI_WATCHDOG_POLL_S", 0.25, minimum=0.05)
+        self._ui_heartbeat_interval_s = _env_float(
+            "CC_DUMP_UI_HEARTBEAT_INTERVAL_S", 0.1, minimum=0.05
+        )
+        self._ui_stall_warn_ms = _env_float("CC_DUMP_UI_STALL_WARN_MS", 600.0, minimum=50.0)
+        self._ui_stall_dump_ms = _env_float("CC_DUMP_UI_STALL_DUMP_MS", 3000.0, minimum=250.0)
+        self._ui_stall_dump_cooldown_s = _env_float(
+            "CC_DUMP_UI_STALL_DUMP_COOLDOWN_S", 20.0, minimum=0.0
+        )
+        self._ui_last_heartbeat_ns = time.monotonic_ns()
+        self._ui_last_dump_ns = 0
+
+        self._slow_event_warn_ms = _env_float("CC_DUMP_SLOW_EVENT_WARN_MS", 80.0, minimum=1.0)
+        self._slow_event_log_cooldown_s = _env_float(
+            "CC_DUMP_SLOW_EVENT_LOG_COOLDOWN_S", 0.5, minimum=0.0
+        )
+        self._last_slow_event_log_ns = 0
+
+        cc_dump.experiments.perf_metrics.metrics.enabled = _env_bool(
+            "CC_DUMP_PERF_METRICS", False
         )
         if self._memory_snapshot_enabled and not tracemalloc.is_tracing():
             tracemalloc.start(25)
@@ -737,6 +776,13 @@ class CcDumpApp(App):
 
     def on_mount(self):
         self._bind_view_store_reactions()
+        self._touch_ui_heartbeat()
+        # [LAW:single-enforcer] UI-thread heartbeat updates are centralized here.
+        self.set_interval(
+            self._ui_heartbeat_interval_s,
+            self._touch_ui_heartbeat,
+            pause=False,
+        )
 
         # [LAW:one-source-of-truth] Restore persisted theme choice
         saved = self._settings_store.get("theme") if self._settings_store else None
@@ -772,6 +818,8 @@ class CcDumpApp(App):
             )
 
         self.run_worker(self._drain_events, thread=True, exclusive=False)
+        if self._ui_watchdog_enabled:
+            self.run_worker(self._watch_ui_responsiveness, thread=True, exclusive=False)
 
         # Hot-reload file watcher (requires watchfiles dev dep)
         self.run_worker(self._start_file_watcher)
@@ -862,6 +910,70 @@ class CcDumpApp(App):
         self._closing = True
         self._router.stop()
         _hot_reload.stop_file_watcher()
+
+    def _touch_ui_heartbeat(self) -> None:
+        """Update UI-thread heartbeat timestamp for responsiveness watchdog."""
+        self._ui_last_heartbeat_ns = time.monotonic_ns()
+
+    def _watchdog_log(self, level: str, message: str) -> None:
+        """Log watchdog diagnostics from any thread."""
+        try:
+            if self.is_running:
+                self.call_from_thread(self._app_log, level, message)
+                return
+        except Exception:
+            pass
+        sys.__stderr__.write(f"[{level}] {message}\n")
+        sys.__stderr__.flush()
+
+    def _watch_ui_responsiveness(self) -> None:
+        """Background watchdog for UI-thread stalls.
+
+        // [LAW:single-enforcer] Stall detection happens at this one boundary.
+        """
+        warned_heartbeat_ns = -1
+        dumped_heartbeat_ns = -1
+        while not self._closing:
+            time.sleep(self._ui_watchdog_poll_s)
+            heartbeat_ns = self._ui_last_heartbeat_ns
+            lag_ns = time.monotonic_ns() - heartbeat_ns
+            lag_ms = lag_ns / 1_000_000.0
+
+            if lag_ms < self._ui_stall_warn_ms:
+                warned_heartbeat_ns = -1
+                dumped_heartbeat_ns = -1
+                continue
+
+            if heartbeat_ns != warned_heartbeat_ns:
+                warned_heartbeat_ns = heartbeat_ns
+                self._watchdog_log(
+                    "WARNING",
+                    "[perf] ui stall detected "
+                    f"lag_ms={lag_ms:.1f} threshold_ms={self._ui_stall_warn_ms:.1f}",
+                )
+                cc_dump.experiments.perf_metrics.metrics.record(
+                    "ui.watchdog.stall", elapsed_ns=lag_ns
+                )
+
+            should_dump = (
+                lag_ms >= self._ui_stall_dump_ms
+                and heartbeat_ns != dumped_heartbeat_ns
+            )
+            if not should_dump:
+                continue
+            now_ns = time.monotonic_ns()
+            cooldown_ns = int(self._ui_stall_dump_cooldown_s * 1_000_000_000.0)
+            if cooldown_ns > 0 and (now_ns - self._ui_last_dump_ns) < cooldown_ns:
+                continue
+
+            dumped_heartbeat_ns = heartbeat_ns
+            self._ui_last_dump_ns = now_ns
+            self._watchdog_log(
+                "ERROR",
+                "[perf] ui stall traceback dump "
+                f"lag_ms={lag_ms:.1f} threshold_ms={self._ui_stall_dump_ms:.1f}",
+            )
+            faulthandler.dump_traceback(file=sys.__stderr__, all_threads=True)
 
     def _handle_exception(self, error: Exception) -> None:
         """// [LAW:single-enforcer] Top-level exception handler - keeps proxy running.
@@ -1121,6 +1233,10 @@ class CcDumpApp(App):
         self._handle_event(message.event)
 
     def _handle_event(self, event):
+        started_ns = time.monotonic_ns()
+        request_id = str(getattr(event, "request_id", "") or "")
+        kind = getattr(event, "kind", "")
+        kind_label = str(getattr(kind, "value", kind) or "unknown")
         try:
             self._handle_event_inner(event)
         except Exception as e:
@@ -1131,6 +1247,23 @@ class CcDumpApp(App):
             for line in tb.split("\n"):
                 if line:
                     self._app_log("ERROR", f"  {line}")
+        finally:
+            elapsed_ns = time.monotonic_ns() - started_ns
+            cc_dump.experiments.perf_metrics.metrics.record(
+                "ui.event.total", elapsed_ns=elapsed_ns
+            )
+            elapsed_ms = elapsed_ns / 1_000_000.0
+            if elapsed_ms >= self._slow_event_warn_ms:
+                now_ns = time.monotonic_ns()
+                cooldown_ns = int(self._slow_event_log_cooldown_s * 1_000_000_000.0)
+                if cooldown_ns <= 0 or (now_ns - self._last_slow_event_log_ns) >= cooldown_ns:
+                    self._last_slow_event_log_ns = now_ns
+                    rid = request_id[:8] if request_id else "-"
+                    self._app_log(
+                        "WARNING",
+                        "[perf] slow event "
+                        f"kind={kind_label} request_id={rid} elapsed_ms={elapsed_ms:.1f}",
+                    )
 
     def _handle_event_inner(self, event):
 

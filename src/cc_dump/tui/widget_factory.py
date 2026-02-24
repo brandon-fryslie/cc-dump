@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 import traceback
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -33,6 +34,7 @@ import cc_dump.tui.panel_renderers
 import cc_dump.tui.error_indicator
 import cc_dump.tui.view_overrides
 import cc_dump.app.domain_store
+import cc_dump.experiments.perf_metrics
 
 
 # ─── Follow mode state machine ──────────────────────────────────────────────
@@ -77,6 +79,31 @@ _FOLLOW_DEACTIVATE: dict[FollowState, FollowState] = {
     FollowState.ENGAGED: FollowState.ENGAGED,
     FollowState.ACTIVE: FollowState.ENGAGED,
 }
+
+
+def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
+    """Parse integer env var with clamp fallback."""
+    raw = str(os.environ.get(name, str(default)) or "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = default
+    return max(minimum, value)
+
+
+def _bounded_stream_preview_text(text: str, max_chars: int) -> tuple[str, int]:
+    """Return preview-safe text and omitted-char count for streaming render.
+
+    // [LAW:dataflow-not-control-flow] Always run the same transform; behavior
+    depends only on input text length and max_chars data.
+    """
+    if max_chars <= 0:
+        return text, 0
+    overflow = len(text) - max_chars
+    if overflow <= 0:
+        return text, 0
+    marker = f"_Live preview truncated: {overflow} chars omitted._\n\n"
+    return marker + text[-max_chars:], overflow
 
 
 def _compute_widest(strips: list) -> int:
@@ -276,6 +303,18 @@ class ConversationView(ScrollView):
         self._stream_delta_flush_scheduled: bool = False
         self._background_rerender_scheduled: bool = False
         self._background_rerender_chunk_size: int = 8
+        # [LAW:single-enforcer] Preview truncation policy is centralized in this widget.
+        self._stream_preview_char_budget: int = _env_int(
+            "CC_DUMP_STREAM_PREVIEW_MAX_CHARS", 24_000, minimum=1_024
+        )
+        self._stream_preview_truncated_notified: set[str] = set()
+        self._slow_invalidate_warn_ms: int = _env_int(
+            "CC_DUMP_SLOW_INVALIDATE_WARN_MS", 120, minimum=1
+        )
+        self._slow_invalidate_log_cooldown_ms: int = _env_int(
+            "CC_DUMP_SLOW_INVALIDATE_LOG_COOLDOWN_MS", 750, minimum=0
+        )
+        self._last_slow_invalidate_log_ns: int = 0
 
         # Wire domain store callbacks
         self._wire_domain_store(self._domain_store)
@@ -692,12 +731,43 @@ class ConversationView(ScrollView):
         // [LAW:single-enforcer] All render triggers go through here.
         Dispatches to reason-specific render method, then runs uniform post-render.
         """
+        started_ns = time.monotonic_ns()
         method_name = self._INVALIDATION_DISPATCH.get(reason)
         if method_name is None:
             return
         method = getattr(self, method_name)
         method(**kwargs)
         self._post_render(reason)
+        elapsed_ns = time.monotonic_ns() - started_ns
+        cc_dump.experiments.perf_metrics.metrics.record(
+            "ui.invalidate.total", elapsed_ns=elapsed_ns
+        )
+        elapsed_ms = elapsed_ns / 1_000_000.0
+        if elapsed_ms >= float(self._slow_invalidate_warn_ms):
+            now_ns = time.monotonic_ns()
+            cooldown_ns = self._slow_invalidate_log_cooldown_ms * 1_000_000
+            if (
+                cooldown_ns <= 0
+                or (now_ns - self._last_slow_invalidate_log_ns) >= cooldown_ns
+            ):
+                self._last_slow_invalidate_log_ns = now_ns
+                self._log_perf(
+                    "WARNING",
+                    "[perf] slow invalidate "
+                    f"reason={reason} elapsed_ms={elapsed_ms:.1f} turns={len(self._turns)}",
+                )
+
+    def _log_perf(self, level: str, message: str) -> None:
+        """Log performance diagnostics via app logger when attached."""
+        try:
+            app = self.app
+        except NoScreen:
+            app = None
+        if app is not None and hasattr(app, "_app_log"):
+            app._app_log(level, message)
+            return
+        sys.__stderr__.write(f"[{level}] {message}\n")
+        sys.__stderr__.flush()
 
     # // [LAW:dataflow-not-control-flow] Post-render behavior varies by data (reason), not control flow.
     _FOLLOW_REASONS = frozenset({
@@ -1064,9 +1134,23 @@ class ConversationView(ScrollView):
             td._stream_last_render_width = width
             return True
 
+        preview_text, omitted = _bounded_stream_preview_text(
+            delta_text, self._stream_preview_char_budget
+        )
+        if omitted > 0 and request_id not in self._stream_preview_truncated_notified:
+            self._stream_preview_truncated_notified.add(request_id)
+            self._log_perf(
+                "WARNING",
+                "[perf] streaming preview truncated "
+                f"request_id={request_id[:8]} omitted_chars={omitted} "
+                f"budget={self._stream_preview_char_budget}",
+            )
+        if omitted == 0:
+            self._stream_preview_truncated_notified.discard(request_id)
+
         console = self.app.console
         delta_strips = cc_dump.tui.rendering.render_streaming_preview(
-            delta_text, console, width
+            preview_text, console, width
         )
 
         td.strips = td.strips[: td._stable_strip_count] + delta_strips
@@ -1193,6 +1277,7 @@ class ConversationView(ScrollView):
 
         # Remove from preview registry
         self._stream_preview_turns.pop(request_id, None)
+        self._stream_preview_truncated_notified.discard(request_id)
         if not self._domain_store.get_active_stream_ids():
             self._stream_preview_turns.pop(self._multi_stream_preview_id, None)
         self._pending_stream_delta_request_ids.discard(request_id)
