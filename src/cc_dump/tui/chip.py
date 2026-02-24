@@ -15,6 +15,48 @@ class Chip(Static):
     """
 
     ALLOW_SELECT = False
+    DEFAULT_CSS = """
+    Chip {
+        width: auto;
+        height: 1;
+        text-style: bold;
+        background: $panel-lighten-2;
+        color: $text;
+    }
+
+    Chip:hover {
+        background: $panel-lighten-1;
+        color: $text;
+    }
+
+    Chip:focus {
+        text-style: bold underline;
+        background: $panel-lighten-1;
+        color: $text;
+    }
+
+    Chip.-dim {
+        text-style: bold;
+        background: $surface-lighten-1;
+        color: $text-muted;
+    }
+
+    Chip.-dim:hover {
+        background: $surface-lighten-2;
+        color: $text;
+    }
+
+    Chip.-hidden {
+        text-style: bold;
+        background: $surface;
+        color: $text-muted;
+    }
+
+    Chip.-hidden:hover {
+        background: $surface-lighten-1;
+        color: $text;
+    }
+    """
 
     def __init__(self, label: str, *, action: str | None = None, **kwargs):
         super().__init__(label, **kwargs)
@@ -45,25 +87,31 @@ class ToggleChip(Static):
     }
 
     ToggleChip:hover {
-        opacity: 0.8;
+        background: $primary;
+        color: $text;
     }
 
     ToggleChip:focus {
         text-style: bold underline;
+        background: $primary;
+        color: $text;
     }
 
     ToggleChip.-off {
-        text-style: initial;
-        opacity: 0.5;
-        background: $panel-lighten-2;
+        text-style: bold;
+        background: $surface-lighten-1;
+        color: $text-muted;
     }
 
     ToggleChip.-off:hover {
-        opacity: 0.7;
+        background: $surface-lighten-2;
+        color: $text;
     }
 
     ToggleChip.-off:focus {
-        text-style: underline;
+        text-style: bold underline;
+        background: $surface-lighten-2;
+        color: $text;
     }
     """
 

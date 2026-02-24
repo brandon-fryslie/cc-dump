@@ -206,20 +206,12 @@ class SideChannelPanel(Widget):
     SideChannelPanel Chip {
         width: auto;
         height: 1;
-        text-style: bold;
         margin-bottom: 1;
     }
 
-    SideChannelPanel Chip:hover {
-        opacity: 0.8;
-    }
-
     SideChannelPanel Chip.-dim {
-        opacity: 0.5;
-    }
-
-    SideChannelPanel Chip.-dim:hover {
-        opacity: 0.7;
+        background: $surface-lighten-1;
+        color: $text-muted;
     }
 
     SideChannelPanel #sc-qa-question {
