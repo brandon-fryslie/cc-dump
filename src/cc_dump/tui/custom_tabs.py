@@ -19,6 +19,18 @@ ExpectType = TypeVar("ExpectType", bound=Widget)
 class CustomUnderline(Underline):
     """Underline renderer with app-specific endcap rules."""
 
+    DEFAULT_CSS = """
+    CustomUnderline {
+        width: 1fr;
+        height: 1;
+        & > .underline--bar {
+            /* Solid colors (no alpha) for stable border appearance. */
+            color: $primary;
+            background: $border;
+        }
+    }
+    """
+
     _LINE = "─"
     _START_CAP = "┌"
     _END_CAP = "┐"
@@ -60,6 +72,24 @@ class CustomUnderline(Underline):
 
 class CustomContentTabs(ContentTabs):
     """ContentTabs variant that uses CustomUnderline."""
+
+    DEFAULT_CSS = """
+    CustomContentTabs {
+        width: 100%;
+        height: 2;
+    }
+    CustomContentTabs Tab.-active {
+        /* Active tab fill should be a clear variant lighten swatch. */
+        background: $primary-lighten-3;
+        color: $text;
+        text-style: bold;
+    }
+    CustomContentTabs:focus Tab.-active {
+        background: $primary-lighten-3;
+        color: $text;
+        text-style: bold;
+    }
+    """
 
     def compose(self) -> ComposeResult:
         with Container(id="tabs-scroll"):
