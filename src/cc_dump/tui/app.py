@@ -103,9 +103,13 @@ def _patch_textual_underline_endcaps() -> None:
     if getattr(_textual_tabs, "_cc_dump_underline_caps_patch", False):
         return
 
+    _LINE = "─"
+    _START_CAP = "╶"
+    _END_CAP = "╴"
+
     def _flat_render(self):
         # [LAW:dataflow-not-control-flow] Always render the same stages:
-        # base bar -> highlighted segment with cornered endcaps.
+        # base bar -> highlighted segment with endcap policy by span position.
         bar_style = self.get_component_rich_style("underline--bar")
         highlight_style = Style.from_color(bar_style.color)
         background_style = Style.from_color(bar_style.bgcolor)
@@ -115,29 +119,24 @@ def _patch_textual_underline_endcaps() -> None:
 
         start_f, end_f = self._highlight_range
         start = max(0, min(width, int(round(start_f))))
-        end = max(start, min(width, int(round(end_f))))
+        # [LAW:dataflow-not-control-flow] Span widening is encoded in values;
+        # render path is unchanged.
+        end = max(start, min(width, int(round(end_f)) + 1))
 
         if end <= start:
-            return Text("━" * width, style=background_style, end="")
+            return Text(_LINE * width, style=background_style, end="")
 
         segment = end - start
-        highlighted = Text("", end="")
-        if segment == 1:
-            highlighted.append("━", style=highlight_style)
-        elif segment == 2:
-            highlighted.append("┏", style=highlight_style)
-            highlighted.append("┓", style=highlight_style)
-        else:
-            highlighted.append("┏", style=highlight_style)
-            highlighted.append("━" * (segment - 2), style=highlight_style)
-            highlighted.append("┓", style=highlight_style)
+        highlight_chars = [_LINE] * segment
+        highlight_chars[0] = _START_CAP
+        highlight_chars[-1] = _END_CAP if end >= width else _LINE
 
         output = Text("", end="")
         if start > 0:
-            output.append("━" * start, style=background_style)
-        output.append(highlighted)
+            output.append(_LINE * start, style=background_style)
+        output.append("".join(highlight_chars), style=highlight_style)
         if end < width:
-            output.append("━" * (width - end), style=background_style)
+            output.append(_LINE * (width - end), style=background_style)
         return output
 
     setattr(_textual_tabs.Underline, "render", _flat_render)
