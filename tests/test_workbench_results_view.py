@@ -68,6 +68,30 @@ async def test_workbench_results_tab_receives_full_output_and_metadata():
         assert "elapsed=42ms" in workbench._last_meta
 
 
+async def test_workbench_results_tab_is_rightmost_after_session_tabs():
+    session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    session_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    replay_data = [
+        _make_replay_entry(
+            session_id=session_a,
+            content="session-a-request",
+            response_text="session-a-response",
+        ),
+        _make_replay_entry(
+            session_id=session_b,
+            content="session-b-request",
+            response_text="session-b-response",
+        ),
+    ]
+    async with run_app(replay_data=replay_data) as (pilot, app):
+        _ = pilot
+        tabs = app._get_conv_tabs()
+        assert tabs is not None
+        tab_widgets = list(tabs.query("Tab"))
+        tab_ids = [str(getattr(tab, "id", "") or "") for tab in tab_widgets]
+        assert tab_ids[-1].endswith(app._workbench_tab_id)
+
+
 async def test_switching_to_workbench_tab_does_not_lose_active_session_context():
     session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     session_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"

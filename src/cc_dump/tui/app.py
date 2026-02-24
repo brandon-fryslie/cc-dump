@@ -225,6 +225,7 @@ class CcDumpApp(App):
         self._conv_tab_main_id = "conversation-tab-main"
         self._workbench_tab_id = "conversation-tab-workbench"
         self._workbench_view_id = "workbench-results-view"
+        self._workbench_session_key = "workbench-session"
         self._search_bar_id = "search-bar"
         self._default_session_key = "__default__"
         # // [LAW:one-source-of-truth] Request/session routing ownership lives in app state.
@@ -239,6 +240,7 @@ class CcDumpApp(App):
             self._default_session_key: self._conv_tab_main_id
         }
         self._active_session_key = self._default_session_key
+        self._last_primary_session_key = self._default_session_key
         # [LAW:one-source-of-truth] Side-channel action review state is owned by app boundary.
         self._sc_action_batch_id: str = ""
         self._sc_action_items: list[object] = []
@@ -295,7 +297,7 @@ class CcDumpApp(App):
         return session_id if session_id else self._default_session_key
 
     def _is_side_channel_session_key(self, session_key: str) -> bool:
-        return session_key.startswith("side-channel:")
+        return session_key == self._workbench_session_key or session_key.startswith("side-channel:")
 
     def _context_session_key(self, session_key: str) -> str:
         """Resolve canonical conversation context for derived session tabs.
@@ -303,6 +305,8 @@ class CcDumpApp(App):
         // [LAW:one-source-of-truth] Context/session linkage is normalized here.
         """
         key = self._normalize_session_key(session_key)
+        if key == self._workbench_session_key:
+            return self._normalize_session_key(self._last_primary_session_key)
         if self._is_side_channel_session_key(key):
             parts = key.split(":", 2)
             if len(parts) == 3 and parts[2]:
@@ -322,6 +326,8 @@ class CcDumpApp(App):
         for session_key, tab_id in self._session_tab_ids.items():
             if tab_id == active_tab_id:
                 self._active_session_key = session_key
+                if not self._is_side_channel_session_key(session_key):
+                    self._last_primary_session_key = session_key
                 break
         return self._active_session_key
 
@@ -338,6 +344,8 @@ class CcDumpApp(App):
     def _session_tab_title(self, session_key: str) -> str:
         if session_key == self._default_session_key:
             return "Session"
+        if session_key == self._workbench_session_key:
+            return "Workbench Session"
         if self._is_side_channel_session_key(session_key):
             parts = session_key.split(":", 2)
             suffix = parts[2] if len(parts) > 2 else session_key
@@ -373,7 +381,9 @@ class CcDumpApp(App):
             return
 
         pane = TabPane(self._session_tab_title(key), conv, id=tab_id)
-        tabs.add_pane(pane)
+        # [LAW:single-enforcer] Session-pane insertion order is centralized here:
+        # every dynamic session is inserted before Workbench results so results stay rightmost.
+        tabs.add_pane(pane, before=self._workbench_tab_id)
 
         # // [LAW:dataflow-not-control-flow] Default tab always exists; first real
         # session auto-focuses only when default has no data.
@@ -437,10 +447,8 @@ class CcDumpApp(App):
                 else None
             )
             if marker is not None:
-                source_session = marker.source_session_id or self._extract_session_id_from_body(body)
-                key = self._normalize_session_key(
-                    f"side-channel:{marker.purpose}:{source_session or marker.run_id[:8]}"
-                )
+                # [LAW:one-type-per-behavior] Workbench AI traffic is one inspectable lane.
+                key = self._workbench_session_key
             else:
                 key = self._normalize_session_key(self._extract_session_id_from_body(body))
             self._bind_request_session(request_id, key)

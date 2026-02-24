@@ -179,7 +179,7 @@ async def test_side_channel_replay_routes_to_separate_lane_without_primary_conta
 
     async with run_app(replay_data=replay_data) as (pilot, app):
         _ = pilot
-        side_key = f"side-channel:block_summary:{session_a}"
+        side_key = app._workbench_session_key
         primary_ds = app._get_domain_store(session_a)
         side_ds = app._get_domain_store(side_key)
 
@@ -203,6 +203,42 @@ async def test_side_channel_replay_routes_to_separate_lane_without_primary_conta
         assert "side-response" in side_text
         assert "primary-request" not in side_text
         assert "primary-response" not in side_text
+
+
+async def test_side_channel_replay_uses_single_workbench_session_tab():
+    session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    replay_data = [
+        _make_replay_entry(
+            session_id=session_a,
+            content="primary-request",
+            response_text="primary-response",
+        ),
+        _make_side_channel_replay_entry(
+            session_id=session_a,
+            purpose="block_summary",
+            source_session_id=session_a,
+            content="side-request-one",
+            response_text="side-response-one",
+        ),
+        _make_side_channel_replay_entry(
+            session_id=session_a,
+            purpose="conversation_qa",
+            source_session_id=session_a,
+            content="side-request-two",
+            response_text="side-response-two",
+        ),
+    ]
+    async with run_app(replay_data=replay_data) as (pilot, app):
+        _ = pilot
+        workbench_key = app._workbench_session_key
+        matching_keys = [
+            key for key in app._session_tab_ids.keys() if key == workbench_key
+        ]
+        assert matching_keys == [workbench_key]
+        tab_id = app._session_tab_ids[workbench_key]
+        tab = app._get_conv_tabs().get_tab(tab_id)
+        assert tab is not None
+        assert str(tab.label) == "Workbench Session"
 
 
 async def test_side_channel_stream_progress_routes_to_side_lane_without_primary_leakage():
@@ -261,7 +297,7 @@ async def test_side_channel_stream_progress_routes_to_side_lane_without_primary_
         )
         await pilot.pause()
 
-        side_key = f"side-channel:block_summary:{session_a}"
+        side_key = app._workbench_session_key
         primary_ds = app._get_domain_store(session_a)
         side_ds = app._get_domain_store(side_key)
 
