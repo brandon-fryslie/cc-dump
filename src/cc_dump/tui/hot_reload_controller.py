@@ -193,6 +193,9 @@ async def _do_hot_reload(app) -> None:
                 cc_dump.app.session_store.SCHEMA,
                 lambda store: cc_dump.app.session_store.setup_reactions(store, getattr(app, "_store_context", None)),
             )
+            cc_dump.app.session_store.ensure_routing_state(
+                session_store, cc_dump.app.session_store.DEFAULT_SESSION_KEY
+            )
         except Exception as e:
             app._app_log("ERROR", f"Hot-reload: session store reconcile failed: {e}")
 

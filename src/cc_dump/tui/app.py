@@ -234,12 +234,11 @@ class CcDumpApp(App):
         self._workbench_view_id = "workbench-results-view"
         self._workbench_session_key = "workbench-session"
         self._search_bar_id = "search-bar"
-        self._default_session_key = "__default__"
-        # // [LAW:one-source-of-truth] Session identity defaults are owned by session_store.
-        self._session_store.set("session:active_key", self._default_session_key)
-        self._session_store.set("session:last_primary_key", self._default_session_key)
-        if not isinstance(self._session_store.get("session:request_keys"), dict):
-            self._session_store.set("session:request_keys", {})
+        # // [LAW:one-source-of-truth] Default session key and routing shape are owned by session_store.
+        self._default_session_key = cc_dump.app.session_store.DEFAULT_SESSION_KEY
+        cc_dump.app.session_store.ensure_routing_state(
+            self._session_store, self._default_session_key
+        )
         self._session_domain_stores: dict[str, cc_dump.app.domain_store.DomainStore] = {
             self._default_session_key: self._domain_store
         }
@@ -268,19 +267,27 @@ class CcDumpApp(App):
     # Back-compat aliases for tests and legacy callsites.
     @property
     def _active_session_key(self) -> str:
-        return self._session_active_key()
+        return cc_dump.app.session_store.get_active_key(
+            self._session_store, self._default_session_key
+        )
 
     @_active_session_key.setter
     def _active_session_key(self, session_key: str) -> None:
-        self._set_session_active_key(session_key)
+        cc_dump.app.session_store.set_active_key(
+            self._session_store, session_key, self._default_session_key
+        )
 
     @property
     def _last_primary_session_key(self) -> str:
-        return self._session_last_primary_key()
+        return cc_dump.app.session_store.get_last_primary_key(
+            self._session_store, self._default_session_key
+        )
 
     @_last_primary_session_key.setter
     def _last_primary_session_key(self, session_key: str) -> None:
-        self._set_session_last_primary_key(session_key)
+        cc_dump.app.session_store.set_last_primary_key(
+            self._session_store, session_key, self._default_session_key
+        )
 
     @property
     def _input_mode(self):
@@ -315,33 +322,6 @@ class CcDumpApp(App):
     def _get_conv_tabs(self):
         return self._query_safe("#" + self._conv_tabs_id)
 
-    def _request_session_keys(self) -> dict[str, str]:
-        keys = self._session_store.get("session:request_keys")
-        return dict(keys) if isinstance(keys, dict) else {}
-
-    def _set_request_session_key(self, request_id: str, session_key: str) -> None:
-        keys = self._request_session_keys()
-        keys[request_id] = self._normalize_session_key(session_key)
-        self._session_store.set("session:request_keys", keys)
-
-    def _session_active_key(self) -> str:
-        key = self._session_store.get("session:active_key")
-        return self._normalize_session_key(str(key or ""))
-
-    def _set_session_active_key(self, session_key: str) -> None:
-        self._session_store.set(
-            "session:active_key", self._normalize_session_key(session_key)
-        )
-
-    def _session_last_primary_key(self) -> str:
-        key = self._session_store.get("session:last_primary_key")
-        return self._normalize_session_key(str(key or ""))
-
-    def _set_session_last_primary_key(self, session_key: str) -> None:
-        self._session_store.set(
-            "session:last_primary_key", self._normalize_session_key(session_key)
-        )
-
     def _get_sc_action_batch_id(self) -> str:
         value = self._view_store.get("sc:action_batch_id")
         return str(value or "")
@@ -365,7 +345,9 @@ class CcDumpApp(App):
         self._set_sc_action_items([])
 
     def _normalize_session_key(self, session_id: str) -> str:
-        return session_id if session_id else self._default_session_key
+        return cc_dump.app.session_store.normalize_session_key(
+            session_id, self._default_session_key
+        )
 
     def _is_side_channel_session_key(self, session_key: str) -> bool:
         return session_key == self._workbench_session_key or session_key.startswith("side-channel:")
@@ -377,7 +359,7 @@ class CcDumpApp(App):
         """
         key = self._normalize_session_key(session_key)
         if key == self._workbench_session_key:
-            return self._normalize_session_key(self._session_last_primary_key())
+            return self._normalize_session_key(self._last_primary_session_key)
         if self._is_side_channel_session_key(key):
             parts = key.split(":", 2)
             if len(parts) == 3 and parts[2]:
@@ -392,15 +374,15 @@ class CcDumpApp(App):
     def _active_session_key_from_tabs(self) -> str:
         tabs = self._get_conv_tabs()
         if tabs is None:
-            return self._session_active_key()
+            return self._active_session_key
         active_tab_id = str(getattr(tabs, "active", "") or "")
         for session_key, tab_id in self._session_tab_ids.items():
             if tab_id == active_tab_id:
-                self._set_session_active_key(session_key)
+                self._active_session_key = session_key
                 if not self._is_side_channel_session_key(session_key):
-                    self._set_session_last_primary_key(session_key)
+                    self._last_primary_session_key = session_key
                 break
-        return self._session_active_key()
+        return self._active_session_key
 
     def _get_domain_store(self, session_key: str | None = None):
         key = session_key if session_key is not None else self._active_session_key_from_tabs()
@@ -460,7 +442,7 @@ class CcDumpApp(App):
         # session auto-focuses only when default has no data.
         default_store = self._session_domain_stores[self._default_session_key]
         if (
-            self._session_active_key() == self._default_session_key
+            self._active_session_key == self._default_session_key
             and key != self._default_session_key
             and not self._is_side_channel_session_key(key)
             and default_store.completed_count == 0
@@ -487,10 +469,15 @@ class CcDumpApp(App):
     def _bind_request_session(self, request_id: str, session_key: str) -> None:
         if not request_id:
             return
-        self._set_request_session_key(request_id, session_key)
+        cc_dump.app.session_store.set_request_key(
+            self._session_store,
+            request_id,
+            session_key,
+            self._default_session_key,
+        )
 
     def _session_key_for_request_id(self, request_id: str) -> str:
-        key = self._request_session_keys().get(request_id)
+        key = cc_dump.app.session_store.get_request_keys(self._session_store).get(request_id)
         if key:
             return key
         stream_registry = self._app_state.get("stream_registry")
@@ -1044,7 +1031,7 @@ class CcDumpApp(App):
                 tabs = self._get_conv_tabs()
                 if tabs is not None:
                     tabs.active = self._session_tab_ids[active_session_key]
-                self._set_session_active_key(active_session_key)
+                self._active_session_key = active_session_key
                 self._domain_store = self._get_active_domain_store()
             if restored_any:
                 self._sync_active_stream_footer()
@@ -1206,7 +1193,7 @@ class CcDumpApp(App):
         pane_id = str(getattr(event.pane, "id", "") or "")
         for session_key, tab_id in self._session_tab_ids.items():
             if tab_id == pane_id:
-                self._set_session_active_key(session_key)
+                self._active_session_key = session_key
                 break
         # // [LAW:one-source-of-truth] Back-compat alias points to active session store.
         self._domain_store = self._get_active_domain_store()
