@@ -20,14 +20,12 @@ from typing import Callable, Optional, TypedDict, cast
 
 import textual
 import textual.filter as _textual_filter
-import textual.widgets._tabs as _textual_tabs
 from textual.app import App, ComposeResult, SystemCommand
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Header, TabbedContent, TabPane
 from rich.style import Style
-from rich.text import Text
 
 
 # Module-level imports for hot-reload (never use `from` for these)
@@ -40,6 +38,7 @@ import cc_dump.tui.search
 import cc_dump.tui.input_modes
 import cc_dump.tui.info_panel
 import cc_dump.tui.custom_footer
+import cc_dump.tui.custom_tabs
 import cc_dump.tui.session_panel
 import cc_dump.tui.workbench_results_view
 
@@ -95,54 +94,7 @@ def _patch_textual_monochrome_style() -> None:
     setattr(_textual_filter, "_cc_dump_monochrome_patch", True)
 
 
-def _patch_textual_underline_endcaps() -> None:
-    """Patch Textual tab underline rendering with terminal-edge elbow endcap.
-
-    // [LAW:single-enforcer] Third-party compatibility patch applied once at app boundary.
-    """
-    if getattr(_textual_tabs, "_cc_dump_underline_caps_patch", False):
-        return
-
-    _LINE = "─"
-    _END_CAP = "┐"
-
-    def _flat_render(self):
-        # [LAW:dataflow-not-control-flow] Always render the same stages:
-        # base bar -> highlighted segment with endcap policy by span position.
-        bar_style = self.get_component_rich_style("underline--bar")
-        highlight_style = Style.from_color(bar_style.color)
-        background_style = Style.from_color(bar_style.bgcolor)
-        width = max(0, int(self.size.width))
-        if width <= 0:
-            return Text("", end="")
-
-        start_f, end_f = self._highlight_range
-        start = max(0, min(width, int(round(start_f)) - 1))
-        # [LAW:dataflow-not-control-flow] Span widening is encoded in values;
-        # render path is unchanged.
-        end = max(start, min(width, int(round(end_f)) + 1))
-
-        if end <= start:
-            return Text(_LINE * width, style=background_style, end="")
-
-        segment = end - start
-        highlight_chars = [_LINE] * segment
-        highlight_chars[-1] = _END_CAP if end >= width else _LINE
-
-        output = Text("", end="")
-        if start > 0:
-            output.append(_LINE * start, style=background_style)
-        output.append("".join(highlight_chars), style=highlight_style)
-        if end < width:
-            output.append(_LINE * (width - end), style=background_style)
-        return output
-
-    setattr(_textual_tabs.Underline, "render", _flat_render)
-    setattr(_textual_tabs, "_cc_dump_underline_caps_patch", True)
-
-
 _patch_textual_monochrome_style()
-_patch_textual_underline_endcaps()
 
 
 def _resolve_factory(dotted_path: str):
@@ -742,7 +694,7 @@ class CcDumpApp(App):
             widget.id = self._panel_ids[spec.name]
             yield widget
 
-        with TabbedContent(id=self._conv_tabs_id):
+        with cc_dump.tui.custom_tabs.CustomTabbedContent(id=self._conv_tabs_id):
             with TabPane("Session", id=self._conv_tab_main_id):
                 conv = cc_dump.tui.widget_factory.create_conversation_view(
                     view_store=self._view_store,
