@@ -49,6 +49,8 @@ SCHEMA["sc:result_text"] = ""
 SCHEMA["sc:result_source"] = ""
 SCHEMA["sc:result_elapsed_ms"] = 0
 SCHEMA["sc:purpose_usage"] = {}
+SCHEMA["sc:action_batch_id"] = ""
+SCHEMA["sc:action_items"] = ()
 
 # Search identity state — survives hot-reload via reconcile
 # // [LAW:one-source-of-truth] String, not SearchPhase enum — stable across reloads.

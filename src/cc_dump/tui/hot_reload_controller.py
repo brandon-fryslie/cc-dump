@@ -27,9 +27,9 @@ import cc_dump.tui.search_controller
 import cc_dump.tui.theme_controller
 import cc_dump.tui.view_store_bridge
 import cc_dump.tui.protocols
-from cc_dump.tui.category_config import CATEGORY_CONFIG
-
-from cc_dump.tui.panel_registry import PANEL_REGISTRY
+import cc_dump.tui.category_config
+import cc_dump.tui.panel_registry
+import cc_dump.app.session_store
 
 from snarfx import EventStream
 
@@ -185,6 +185,17 @@ async def _do_hot_reload(app) -> None:
         except Exception as e:
             app._app_log("ERROR", f"Hot-reload: settings store reconcile failed: {e}")
 
+    # Reconcile session store (values survive, schema updates apply)
+    session_store = getattr(app, "_session_store", None)
+    if session_store is not None:
+        try:
+            session_store.reconcile(
+                cc_dump.app.session_store.SCHEMA,
+                lambda store: cc_dump.app.session_store.setup_reactions(store, getattr(app, "_store_context", None)),
+            )
+        except Exception as e:
+            app._app_log("ERROR", f"Hot-reload: session store reconcile failed: {e}")
+
     # Reconcile view store (values survive, autorun re-registers)
     view_store = getattr(app, "_view_store", None)
     if view_store is not None:
@@ -228,7 +239,7 @@ async def _do_hot_reload(app) -> None:
                 store.get(f"full:{name}"),
                 store.get(f"exp:{name}"),
             )
-            for _, name, _, _ in CATEGORY_CONFIG
+            for _, name, _, _ in cc_dump.tui.category_config.CATEGORY_CONFIG
         }
         conv = app._get_conv()
         state.saved_scroll_y = conv.scroll_offset.y if conv is not None else None
@@ -320,7 +331,7 @@ async def _replace_all_widgets_inner(app) -> None:
     # [LAW:one-source-of-truth] Capture cycling panel state from registry
     old_panels = {}
     panel_states = {}
-    for spec in PANEL_REGISTRY:
+    for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
         old_widget = app._get_panel(spec.name)
         old_panels[spec.name] = old_widget
         panel_states[spec.name] = old_widget.get_state() if old_widget else {}
@@ -347,7 +358,7 @@ async def _replace_all_widgets_inner(app) -> None:
 
     # [LAW:one-source-of-truth] Create cycling panels from registry
     new_panels = {}
-    for spec in PANEL_REGISTRY:
+    for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
         factory = _resolve_factory(spec.factory)
         widget = factory()
         _validate_and_restore_widget_state(
@@ -385,7 +396,7 @@ async def _replace_all_widgets_inner(app) -> None:
     # 3. Remove old widgets
     for payload in old_conversations:
         await payload.conv.remove()
-    for spec in PANEL_REGISTRY:
+    for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
         old_widget = old_panels[spec.name]
         if old_widget is not None:
             await old_widget.remove()
@@ -404,7 +415,7 @@ async def _replace_all_widgets_inner(app) -> None:
         conv_id = payload.conv_id
         new_conversations[session_key].id = conv_id
 
-    for spec in PANEL_REGISTRY:
+    for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
         w = new_panels[spec.name]
         w.id = app._panel_ids[spec.name]
         w.display = (spec.name == active_panel)
@@ -415,7 +426,7 @@ async def _replace_all_widgets_inner(app) -> None:
     header = app.query_one(Header)
     # Mount cycling panels in registry order
     prev_widget = header
-    for spec in PANEL_REGISTRY:
+    for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
         await app.mount(new_panels[spec.name], after=prev_widget)
         prev_widget = new_panels[spec.name]
 

@@ -43,8 +43,8 @@ import cc_dump.tui.workbench_results_view
 
 # Extracted controller modules (module-object imports — safe for hot-reload)
 from cc_dump.tui import action_handlers as _actions
-from cc_dump.tui.category_config import CATEGORY_CONFIG
-from cc_dump.tui.panel_registry import PANEL_REGISTRY, PANEL_ORDER, PANEL_CSS_IDS
+import cc_dump.tui.category_config
+import cc_dump.tui.panel_registry
 from cc_dump.tui import search_controller as _search
 from cc_dump.tui import dump_export as _dump
 from cc_dump.tui import theme_controller as _theme
@@ -64,6 +64,7 @@ import cc_dump.io.sessions
 import cc_dump.app.memory_stats
 import cc_dump.pipeline.event_types
 import cc_dump.app.view_store
+import cc_dump.app.session_store
 import cc_dump.ai.conversation_qa
 import cc_dump.ai.side_channel_marker
 
@@ -167,6 +168,7 @@ class CcDumpApp(App):
         side_channel_manager=None,
         data_dispatcher=None,
         settings_store=None,
+        session_store=None,
         view_store=None,
         domain_store=None,
         store_context=None,
@@ -189,6 +191,11 @@ class CcDumpApp(App):
         self._side_channel_manager = side_channel_manager
         self._data_dispatcher = data_dispatcher
         self._settings_store = settings_store
+        self._session_store = (
+            session_store
+            if session_store is not None
+            else cc_dump.app.session_store.create()
+        )
         self._view_store = view_store
         self._domain_store = domain_store if domain_store is not None else cc_dump.app.domain_store.DomainStore()
         self._store_context = store_context
@@ -228,8 +235,11 @@ class CcDumpApp(App):
         self._workbench_session_key = "workbench-session"
         self._search_bar_id = "search-bar"
         self._default_session_key = "__default__"
-        # // [LAW:one-source-of-truth] Request/session routing ownership lives in app state.
-        self._request_session_keys: dict[str, str] = {}
+        # // [LAW:one-source-of-truth] Session identity defaults are owned by session_store.
+        self._session_store.set("session:active_key", self._default_session_key)
+        self._session_store.set("session:last_primary_key", self._default_session_key)
+        if not isinstance(self._session_store.get("session:request_keys"), dict):
+            self._session_store.set("session:request_keys", {})
         self._session_domain_stores: dict[str, cc_dump.app.domain_store.DomainStore] = {
             self._default_session_key: self._domain_store
         }
@@ -239,13 +249,8 @@ class CcDumpApp(App):
         self._session_tab_ids: dict[str, str] = {
             self._default_session_key: self._conv_tab_main_id
         }
-        self._active_session_key = self._default_session_key
-        self._last_primary_session_key = self._default_session_key
-        # [LAW:one-source-of-truth] Side-channel action review state is owned by app boundary.
-        self._sc_action_batch_id: str = ""
-        self._sc_action_items: list[object] = []
         # [LAW:one-source-of-truth] Panel IDs derived from registry
-        self._panel_ids = dict(PANEL_CSS_IDS)
+        self._panel_ids = dict(cc_dump.tui.panel_registry.PANEL_CSS_IDS)
         self._logs_id = "logs-panel"
         self._info_id = "info-panel"
 
@@ -259,6 +264,23 @@ class CcDumpApp(App):
     @active_panel.setter
     def active_panel(self, value):
         self._view_store.set("panel:active", value)
+
+    # Back-compat aliases for tests and legacy callsites.
+    @property
+    def _active_session_key(self) -> str:
+        return self._session_active_key()
+
+    @_active_session_key.setter
+    def _active_session_key(self, session_key: str) -> None:
+        self._set_session_active_key(session_key)
+
+    @property
+    def _last_primary_session_key(self) -> str:
+        return self._session_last_primary_key()
+
+    @_last_primary_session_key.setter
+    def _last_primary_session_key(self, session_key: str) -> None:
+        self._set_session_last_primary_key(session_key)
 
     @property
     def _input_mode(self):
@@ -293,6 +315,55 @@ class CcDumpApp(App):
     def _get_conv_tabs(self):
         return self._query_safe("#" + self._conv_tabs_id)
 
+    def _request_session_keys(self) -> dict[str, str]:
+        keys = self._session_store.get("session:request_keys")
+        return dict(keys) if isinstance(keys, dict) else {}
+
+    def _set_request_session_key(self, request_id: str, session_key: str) -> None:
+        keys = self._request_session_keys()
+        keys[request_id] = self._normalize_session_key(session_key)
+        self._session_store.set("session:request_keys", keys)
+
+    def _session_active_key(self) -> str:
+        key = self._session_store.get("session:active_key")
+        return self._normalize_session_key(str(key or ""))
+
+    def _set_session_active_key(self, session_key: str) -> None:
+        self._session_store.set(
+            "session:active_key", self._normalize_session_key(session_key)
+        )
+
+    def _session_last_primary_key(self) -> str:
+        key = self._session_store.get("session:last_primary_key")
+        return self._normalize_session_key(str(key or ""))
+
+    def _set_session_last_primary_key(self, session_key: str) -> None:
+        self._session_store.set(
+            "session:last_primary_key", self._normalize_session_key(session_key)
+        )
+
+    def _get_sc_action_batch_id(self) -> str:
+        value = self._view_store.get("sc:action_batch_id")
+        return str(value or "")
+
+    def _set_sc_action_batch_id(self, batch_id: str) -> None:
+        self._view_store.set("sc:action_batch_id", str(batch_id or ""))
+
+    def _get_sc_action_items(self) -> list[object]:
+        items = self._view_store.get("sc:action_items")
+        if isinstance(items, list):
+            return list(items)
+        if isinstance(items, tuple):
+            return list(items)
+        return []
+
+    def _set_sc_action_items(self, items: list[object]) -> None:
+        self._view_store.set("sc:action_items", list(items))
+
+    def _reset_sc_action_review_state(self) -> None:
+        self._set_sc_action_batch_id("")
+        self._set_sc_action_items([])
+
     def _normalize_session_key(self, session_id: str) -> str:
         return session_id if session_id else self._default_session_key
 
@@ -306,7 +377,7 @@ class CcDumpApp(App):
         """
         key = self._normalize_session_key(session_key)
         if key == self._workbench_session_key:
-            return self._normalize_session_key(self._last_primary_session_key)
+            return self._normalize_session_key(self._session_last_primary_key())
         if self._is_side_channel_session_key(key):
             parts = key.split(":", 2)
             if len(parts) == 3 and parts[2]:
@@ -321,15 +392,15 @@ class CcDumpApp(App):
     def _active_session_key_from_tabs(self) -> str:
         tabs = self._get_conv_tabs()
         if tabs is None:
-            return self._active_session_key
+            return self._session_active_key()
         active_tab_id = str(getattr(tabs, "active", "") or "")
         for session_key, tab_id in self._session_tab_ids.items():
             if tab_id == active_tab_id:
-                self._active_session_key = session_key
+                self._set_session_active_key(session_key)
                 if not self._is_side_channel_session_key(session_key):
-                    self._last_primary_session_key = session_key
+                    self._set_session_last_primary_key(session_key)
                 break
-        return self._active_session_key
+        return self._session_active_key()
 
     def _get_domain_store(self, session_key: str | None = None):
         key = session_key if session_key is not None else self._active_session_key_from_tabs()
@@ -389,7 +460,7 @@ class CcDumpApp(App):
         # session auto-focuses only when default has no data.
         default_store = self._session_domain_stores[self._default_session_key]
         if (
-            self._active_session_key == self._default_session_key
+            self._session_active_key() == self._default_session_key
             and key != self._default_session_key
             and not self._is_side_channel_session_key(key)
             and default_store.completed_count == 0
@@ -416,10 +487,10 @@ class CcDumpApp(App):
     def _bind_request_session(self, request_id: str, session_key: str) -> None:
         if not request_id:
             return
-        self._request_session_keys[request_id] = self._normalize_session_key(session_key)
+        self._set_request_session_key(request_id, session_key)
 
     def _session_key_for_request_id(self, request_id: str) -> str:
-        key = self._request_session_keys.get(request_id)
+        key = self._request_session_keys().get(request_id)
         if key:
             return key
         stream_registry = self._app_state.get("stream_registry")
@@ -630,7 +701,7 @@ class CcDumpApp(App):
         yield Header()
 
         # [LAW:one-source-of-truth] Cycling panels from registry
-        for spec in PANEL_REGISTRY:
+        for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
             widget = _resolve_factory(spec.factory)()
             widget.id = self._panel_ids[spec.name]
             yield widget
@@ -670,6 +741,7 @@ class CcDumpApp(App):
         if saved and saved in self.available_themes:
             self.theme = saved
         cc_dump.tui.rendering.set_theme(self.current_theme)
+        self._sync_theme_subtitle()
         self._apply_markdown_theme()
 
         # Connect stderr tee to LogsPanel (flushes buffered pre-TUI messages)
@@ -898,7 +970,7 @@ class CcDumpApp(App):
         ):
             view_state[key] = self._view_store.get(key)
 
-        for _, name, _, _ in CATEGORY_CONFIG:
+        for _, name, _, _ in cc_dump.tui.category_config.CATEGORY_CONFIG:
             view_state[f"vis:{name}"] = self._view_store.get(f"vis:{name}")
             view_state[f"full:{name}"] = self._view_store.get(f"full:{name}")
             view_state[f"exp:{name}"] = self._view_store.get(f"exp:{name}")
@@ -972,7 +1044,7 @@ class CcDumpApp(App):
                 tabs = self._get_conv_tabs()
                 if tabs is not None:
                     tabs.active = self._session_tab_ids[active_session_key]
-                self._active_session_key = active_session_key
+                self._set_session_active_key(active_session_key)
                 self._domain_store = self._get_active_domain_store()
             if restored_any:
                 self._sync_active_stream_footer()
@@ -1134,7 +1206,7 @@ class CcDumpApp(App):
         pane_id = str(getattr(event.pane, "id", "") or "")
         for session_key, tab_id in self._session_tab_ids.items():
             if tab_id == pane_id:
-                self._active_session_key = session_key
+                self._set_session_active_key(session_key)
                 break
         # // [LAW:one-source-of-truth] Back-compat alias points to active session store.
         self._domain_store = self._get_active_domain_store()
@@ -1150,6 +1222,14 @@ class CcDumpApp(App):
     # Theme
     def _apply_markdown_theme(self):
         _theme.apply_markdown_theme(self)
+
+    def _sync_theme_subtitle(self) -> None:
+        """Refresh title chrome color from current active theme."""
+        try:
+            info_color = cc_dump.tui.rendering.get_theme_colors().info
+        except RuntimeError:
+            info_color = cc_dump.core.palette.PALETTE.info
+        self.sub_title = f"[{info_color}]session: {self._session_name}[/]"
 
     def action_next_theme(self):
         _theme.cycle_theme(self, 1)
@@ -1369,8 +1449,7 @@ class CcDumpApp(App):
             active_action="",
         )
         self._view_store.set("sc:purpose_usage", {})
-        self._sc_action_batch_id = ""
-        self._sc_action_items = []
+        self._reset_sc_action_review_state()
         self._refresh_side_channel_usage()
         # Initial hydration — reaction may not fire if values unchanged from defaults.
         # Run after refresh so panel children are mounted and queryable.
@@ -1863,11 +1942,11 @@ class CcDumpApp(App):
         self.run_worker(_do_action_extract, thread=True, exclusive=False)
 
     def _on_side_channel_action_extract_result(self, result, context_session_key: str) -> None:
-        self._sc_action_batch_id = str(result.batch_id or "")
-        self._sc_action_items = list(result.items or [])
+        self._set_sc_action_batch_id(str(result.batch_id or ""))
+        self._set_sc_action_items(list(result.items or []))
         text = self._render_action_candidates_text(
-            batch_id=self._sc_action_batch_id,
-            items=self._sc_action_items,
+            batch_id=self._get_sc_action_batch_id(),
+            items=self._get_sc_action_items(),
             source=result.source,
             error=result.error,
         )
@@ -1896,7 +1975,7 @@ class CcDumpApp(App):
                 focus_results=True,
             )
             return
-        if not self._sc_action_batch_id:
+        if not self._get_sc_action_batch_id():
             self._set_side_channel_result(
                 text="apply review blocked\nerror: run Extract Actions first",
                 source="fallback",
@@ -1935,7 +2014,7 @@ class CcDumpApp(App):
             )
             return
 
-        items = list(self._sc_action_items)
+        items = self._get_sc_action_items()
         max_index = len(items) - 1
         all_requested = tuple(sorted(set(accept_indices) | set(reject_indices)))
         out_of_range = [idx for idx in all_requested if idx < 0 or idx > max_index]
@@ -1966,17 +2045,17 @@ class CcDumpApp(App):
 
         accepted_item_ids = [str(getattr(items[idx], "item_id", "")) for idx in accept_indices]
         accepted = self._data_dispatcher.accept_action_items(
-            batch_id=self._sc_action_batch_id,
+            batch_id=self._get_sc_action_batch_id(),
             item_ids=accepted_item_ids,
             create_beads=draft.create_beads and bool(accepted_item_ids),
         )
         rejected_items = [items[idx] for idx in reject_indices]
         resolved_indices = set(accept_indices) | set(reject_indices)
-        self._sc_action_items = [item for idx, item in enumerate(items) if idx not in resolved_indices]
+        self._set_sc_action_items([item for idx, item in enumerate(items) if idx not in resolved_indices])
 
         lines = [
             "action review applied",
-            f"batch: {self._sc_action_batch_id}",
+            f"batch: {self._get_sc_action_batch_id()}",
             f"accepted_count: {len(accepted)}",
             f"rejected_count: {len(rejected_items)}",
             f"beads_enabled: {draft.create_beads and bool(accepted_item_ids)}",
@@ -1997,7 +2076,7 @@ class CcDumpApp(App):
         for item in rejected_items:
             lines.append(f"- [{getattr(item, 'kind', 'action')}] {getattr(item, 'text', '')}")
         lines.append("")
-        lines.append(f"remaining_candidates: {len(self._sc_action_items)}")
+        lines.append(f"remaining_candidates: {len(self._get_sc_action_items())}")
 
         self._set_side_channel_result(
             text="\n".join(lines),
@@ -2174,7 +2253,7 @@ class CcDumpApp(App):
 
     def _sync_panel_display(self, active: str):
         """// [LAW:one-source-of-truth] Panel visibility driven by PANEL_ORDER from registry."""
-        for name in PANEL_ORDER:
+        for name in cc_dump.tui.panel_registry.PANEL_ORDER:
             widget = self._get_panel(name)
             if widget is not None:
                 widget.display = (name == active)
@@ -2189,6 +2268,7 @@ class CcDumpApp(App):
         if not stx.is_safe(self):
             return
         cc_dump.tui.rendering.set_theme(self.current_theme)
+        self._sync_theme_subtitle()
         self._apply_markdown_theme()
         gen = self._view_store.get("theme:generation")
         self._view_store.set("theme:generation", gen + 1)

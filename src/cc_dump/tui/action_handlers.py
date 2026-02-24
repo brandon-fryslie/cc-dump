@@ -17,7 +17,7 @@ import cc_dump.tui.location_navigation
 import cc_dump.tui.rendering
 
 # [LAW:one-source-of-truth] Panel order derived from registry
-from cc_dump.tui.panel_registry import PANEL_ORDER
+import cc_dump.tui.panel_registry
 from snarfx import transaction
 import cc_dump.tui.keys_panel
 import cc_dump.tui.settings_panel
@@ -122,9 +122,10 @@ def cycle_vis(app, category: str) -> None:
 def cycle_panel(app) -> None:
     """Cycle active_panel through PANEL_ORDER."""
     current = app.active_panel
-    idx = PANEL_ORDER.index(current) if current in PANEL_ORDER else -1
-    next_idx = (idx + 1) % len(PANEL_ORDER)
-    app.active_panel = PANEL_ORDER[next_idx]
+    panel_order = cc_dump.tui.panel_registry.PANEL_ORDER
+    idx = panel_order.index(current) if current in panel_order else -1
+    next_idx = (idx + 1) % len(panel_order)
+    app.active_panel = panel_order[next_idx]
 
 
 def cycle_panel_mode(app) -> None:

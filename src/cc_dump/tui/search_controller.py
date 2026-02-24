@@ -4,13 +4,13 @@
 // [LAW:locality-or-seam] All search logic here — app.py keeps thin delegates.
 // [LAW:single-enforcer] _force_vis is the sole runtime visibility override for search.
 
-Not hot-reloadable (accesses app state and widgets).
+Hot-reloadable — imported as module object in app.py and reloaded in place.
 """
 
 import cc_dump.core.formatting
 import cc_dump.tui.search
 import cc_dump.tui.location_navigation
-from cc_dump.tui.category_config import CATEGORY_CONFIG
+import cc_dump.tui.category_config
 
 
 def _move_word_left(query: str, cursor_pos: int) -> int:
@@ -140,7 +140,7 @@ def start_search(app) -> None:
             store.get(f"full:{name}"),
             store.get(f"exp:{name}"),
         )
-        for _, name, _, _ in CATEGORY_CONFIG
+        for _, name, _, _ in cc_dump.tui.category_config.CATEGORY_CONFIG
     }
     # Save current scroll position
     conv = app._get_conv()
