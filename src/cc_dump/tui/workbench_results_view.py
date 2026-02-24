@@ -21,22 +21,28 @@ class WorkbenchResultsView(Widget):
         width: 1fr;
         layout: vertical;
         padding: 0 1;
+        background: $surface;
+        color: $text;
     }
 
     WorkbenchResultsView #workbench-results-title {
         text-style: bold;
         margin-bottom: 1;
+        color: $text-primary;
     }
 
     WorkbenchResultsView #workbench-results-meta {
         color: $text-muted;
         margin-bottom: 1;
+        background: $panel-darken-1;
+        padding: 0 1;
     }
 
     WorkbenchResultsView #workbench-results-scroll {
         height: 1fr;
-        border: round $panel-lighten-1;
+        border: round $border;
         padding: 0 1;
+        background: $panel;
     }
     """
 
