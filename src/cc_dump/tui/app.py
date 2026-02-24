@@ -229,7 +229,7 @@ class CcDumpApp(App):
         self._ui_heartbeat_interval_s = _env_float(
             "CC_DUMP_UI_HEARTBEAT_INTERVAL_S", 0.1, minimum=0.05
         )
-        self._ui_stall_warn_ms = _env_float("CC_DUMP_UI_STALL_WARN_MS", 600.0, minimum=50.0)
+        self._ui_stall_warn_ms = _env_float("CC_DUMP_UI_STALL_WARN_MS", 300.0, minimum=50.0)
         self._ui_stall_dump_ms = _env_float("CC_DUMP_UI_STALL_DUMP_MS", 3000.0, minimum=250.0)
         self._ui_stall_dump_cooldown_s = _env_float(
             "CC_DUMP_UI_STALL_DUMP_COOLDOWN_S", 20.0, minimum=0.0
