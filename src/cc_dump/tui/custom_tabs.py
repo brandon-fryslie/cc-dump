@@ -79,17 +79,6 @@ class CustomContentTabs(ContentTabs):
         width: 100%;
         height: 2;
     }
-    CustomContentTabs Tab.-active {
-        /* Active tab fill should be a clear variant lighten swatch. */
-        background: $primary-lighten-3;
-        color: $text;
-        text-style: bold;
-    }
-    CustomContentTabs:focus Tab.-active {
-        background: $primary-lighten-3;
-        color: $text;
-        text-style: bold;
-    }
     """
 
     def compose(self) -> ComposeResult:
