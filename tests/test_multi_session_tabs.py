@@ -241,6 +241,36 @@ async def test_side_channel_replay_uses_single_workbench_session_tab():
         assert str(tab.label) == "Workbench Session"
 
 
+async def test_workbench_tabs_stay_rightmost_when_new_primary_sessions_arrive():
+    session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    session_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    replay_data = [
+        _make_replay_entry(
+            session_id=session_a,
+            content="primary-a-request",
+            response_text="primary-a-response",
+        ),
+        _make_side_channel_replay_entry(
+            session_id=session_a,
+            purpose="block_summary",
+            source_session_id=session_a,
+            content="side-request",
+            response_text="side-response",
+        ),
+        _make_replay_entry(
+            session_id=session_b,
+            content="primary-b-request",
+            response_text="primary-b-response",
+        ),
+    ]
+
+    async with run_app(replay_data=replay_data) as (pilot, app):
+        _ = pilot
+        labels = [str(tab.label) for tab in app._get_conv_tabs().query("Tab")]
+        assert labels[-1] == "Workbench"
+        assert labels[-2] == "Workbench Session"
+
+
 async def test_side_channel_stream_progress_routes_to_side_lane_without_primary_leakage():
     session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     user_id = f"user_deadbeef_account_{_ACCOUNT_ID}_session_{session_a}"

@@ -406,6 +406,20 @@ class CcDumpApp(App):
             return "SC " + suffix[:8]
         return session_key[:8]
 
+    def _session_insert_before_tab_id(self, session_key: str) -> str:
+        """Return anchor tab ID so workbench tabs stay rightmost.
+
+        // [LAW:one-source-of-truth] Tab ordering policy is centralized here.
+        """
+        key = self._normalize_session_key(session_key)
+        if key == self._workbench_session_key or self._is_side_channel_session_key(key):
+            return self._workbench_tab_id
+
+        workbench_session_tab_id = self._session_tab_ids.get(self._workbench_session_key)
+        if isinstance(workbench_session_tab_id, str) and workbench_session_tab_id:
+            return workbench_session_tab_id
+        return self._workbench_tab_id
+
     def _ensure_session_surface(self, session_key: str) -> None:
         """Ensure one DomainStore + TabPane + ConversationView exists for session key.
 
@@ -436,8 +450,8 @@ class CcDumpApp(App):
 
         pane = TabPane(self._session_tab_title(key), conv, id=tab_id)
         # [LAW:single-enforcer] Session-pane insertion order is centralized here:
-        # every dynamic session is inserted before Workbench results so results stay rightmost.
-        tabs.add_pane(pane, before=self._workbench_tab_id)
+        # workbench-related tabs are pinned to the right edge.
+        tabs.add_pane(pane, before=self._session_insert_before_tab_id(key))
 
         # // [LAW:dataflow-not-control-flow] Default tab always exists; first real
         # session auto-focuses only when default has no data.
