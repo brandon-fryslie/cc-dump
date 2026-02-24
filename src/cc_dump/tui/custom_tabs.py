@@ -40,7 +40,8 @@ class CustomUnderline(Underline):
         # variability is encoded in start/end values only.
         bar_style = self.get_component_rich_style("underline--bar")
         highlight_style = Style.from_color(bar_style.color)
-        background_style = Style.from_color(bar_style.bgcolor)
+        # Keep baseline underline as a solid (non-gray) stroke.
+        background_style = Style.from_color(bar_style.color)
         width = max(0, int(self.size.width))
         if width <= 0:
             return Text("", end="")
