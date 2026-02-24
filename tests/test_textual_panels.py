@@ -140,3 +140,14 @@ async def test_conversation_tabs_overlap_content_by_one_row():
         tabs = tabbed.query_one("ContentTabs")
         switcher = tabbed.query_one("ContentSwitcher")
         assert switcher.region.y - tabs.region.y == 1
+
+
+async def test_conversation_tabs_show_left_elbow_when_left_tab_unselected():
+    """Left edge elbow should remain visible when a non-left tab is active."""
+    async with run_app() as (pilot, app):
+        tabs = app._get_conv_tabs()
+        assert tabs is not None
+        tabs.active = app._workbench_tab_id
+        await pilot.pause()
+        svg = app.export_screenshot()
+        assert "┌" in svg

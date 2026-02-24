@@ -47,7 +47,11 @@ class CustomUnderline(Underline):
 
         output = Text("", end="")
         if start > 0:
-            output.append(self._LINE * start, style=background_style)
+            # Keep a left elbow visible even when the leftmost tab is not active.
+            output.append(
+                self._START_CAP + (self._LINE * (start - 1)),
+                style=background_style,
+            )
         output.append("".join(highlight_chars), style=highlight_style)
         if end < width:
             output.append(self._LINE * (width - end), style=background_style)
