@@ -20,6 +20,7 @@ from typing import Callable, Optional, TypedDict, cast
 
 import textual
 import textual.filter as _textual_filter
+import textual.widgets._tabs as _textual_tabs
 from textual.app import App, ComposeResult, SystemCommand
 from textual.css.query import NoMatches
 from textual.message import Message
@@ -93,7 +94,34 @@ def _patch_textual_monochrome_style() -> None:
     setattr(_textual_filter, "_cc_dump_monochrome_patch", True)
 
 
+def _patch_textual_underline_endcaps() -> None:
+    """Patch Textual tab underline rendering to avoid half-bar corner glyphs.
+
+    // [LAW:single-enforcer] Third-party compatibility patch applied once at app boundary.
+    """
+    if getattr(_textual_tabs, "_cc_dump_underline_caps_patch", False):
+        return
+
+    from textual.renderables.bar import Bar
+
+    class _FlatEndBar(Bar):
+        HALF_BAR_LEFT = Bar.BAR
+        HALF_BAR_RIGHT = Bar.BAR
+
+    def _flat_render(self):
+        bar_style = self.get_component_rich_style("underline--bar")
+        return _FlatEndBar(
+            highlight_range=self._highlight_range,
+            highlight_style=Style.from_color(bar_style.color),
+            background_style=Style.from_color(bar_style.bgcolor),
+        )
+
+    setattr(_textual_tabs.Underline, "render", _flat_render)
+    setattr(_textual_tabs, "_cc_dump_underline_caps_patch", True)
+
+
 _patch_textual_monochrome_style()
+_patch_textual_underline_endcaps()
 
 
 def _resolve_factory(dotted_path: str):
