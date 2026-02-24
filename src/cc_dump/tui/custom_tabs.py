@@ -11,7 +11,7 @@ from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import ContentSwitcher
 from textual.widgets._tabbed_content import ContentTab, ContentTabs, TabPane, TabbedContent
-from textual.widgets._tabs import Tab, Underline
+from textual.widgets._tabs import Underline
 
 ExpectType = TypeVar("ExpectType", bound=Widget)
 
@@ -23,7 +23,6 @@ class CustomUnderline(Underline):
     CustomUnderline {
         width: 1fr;
         height: 1;
-        layer: overlay;
         & > .underline--bar {
             /* Solid colors (no alpha) for stable border appearance. */
             color: $primary;
@@ -80,6 +79,17 @@ class CustomContentTabs(ContentTabs):
         width: 100%;
         height: 2;
     }
+    CustomContentTabs Tab.-active {
+        /* Active tab fill should be a clear variant lighten swatch. */
+        background: $primary-lighten-3;
+        color: $text;
+        text-style: bold;
+    }
+    CustomContentTabs:focus Tab.-active {
+        background: $primary-lighten-3;
+        color: $text;
+        text-style: bold;
+    }
     """
 
     def compose(self) -> ComposeResult:
@@ -88,14 +98,6 @@ class CustomContentTabs(ContentTabs):
                 with Horizontal(id="tabs-list"):
                     yield from self._tabs
                 yield CustomUnderline()
-
-    def watch_active(self, previously_active: str, active: str) -> None:
-        # [LAW:single-enforcer] Active tab visual marker is assigned in one place.
-        super().watch_active(previously_active, active)
-        for tab in self.query(Tab):
-            tab.remove_class("-cc-active")
-        if self.active_tab is not None:
-            self.active_tab.add_class("-cc-active")
 
 
 class CustomTabbedContent(TabbedContent):
