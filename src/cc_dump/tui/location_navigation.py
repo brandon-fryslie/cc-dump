@@ -17,6 +17,7 @@ class BlockLocation:
     turn_index: int
     block_index: int
     block: object | None = None
+    line_in_block: int = 0
 
 
 def resolve_scroll_key(turn, location: BlockLocation) -> int:
@@ -59,5 +60,5 @@ def go_to_location(
     conv.ensure_turn_rendered(location.turn_index)
     turn = conv._turns[location.turn_index]
     scroll_key = resolve_scroll_key(turn, location)
-    conv.scroll_to_block(location.turn_index, scroll_key)
+    conv.scroll_to_block(location.turn_index, scroll_key, line_in_block=location.line_in_block)
     return True

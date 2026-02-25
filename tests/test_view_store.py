@@ -13,9 +13,9 @@ from snarfx import textual as stx
 
 
 class TestSchema:
-    def test_schema_has_44_keys(self):
-        # 6 categories × 3 axes + 5 panel/follow + 9 footer + 8 side-channel + 4 search
-        assert len(cc_dump.app.view_store.SCHEMA) == 44
+    def test_schema_has_45_keys(self):
+        # 6 categories × 3 axes + 6 panel/follow + 9 footer + 8 side-channel + 4 search
+        assert len(cc_dump.app.view_store.SCHEMA) == 45
 
     def test_schema_keys_from_category_config(self):
         for _, name, _, _ in CATEGORY_CONFIG:
@@ -179,6 +179,7 @@ class TestPanelAndFollowSchema:
     def test_panel_booleans_default_false(self):
         assert cc_dump.app.view_store.SCHEMA["panel:side_channel"] is False
         assert cc_dump.app.view_store.SCHEMA["panel:settings"] is False
+        assert cc_dump.app.view_store.SCHEMA["panel:proxy_settings"] is False
         assert cc_dump.app.view_store.SCHEMA["panel:launch_config"] is False
 
     def test_follow_default(self):
@@ -189,6 +190,7 @@ class TestPanelAndFollowSchema:
         assert store.get("panel:active") == "session"
         assert store.get("panel:side_channel") is False
         assert store.get("panel:settings") is False
+        assert store.get("panel:proxy_settings") is False
         assert store.get("panel:launch_config") is False
         assert store.get("nav:follow") == "active"
 
@@ -273,6 +275,7 @@ class TestReconcileWithNewKeys:
         # All keys present with defaults
         assert store.get("panel:active") == "session"
         assert store.get("panel:side_channel") is False
+        assert store.get("panel:proxy_settings") is False
         assert store.get("nav:follow") == "active"
         assert store.get("filter:active") is None
         assert store.get("tmux:available") is False

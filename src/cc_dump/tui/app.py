@@ -16,6 +16,7 @@ import threading
 import time
 import tracemalloc
 import traceback
+from contextlib import contextmanager
 from functools import lru_cache
 from typing import Callable, Optional, TypedDict, cast
 
@@ -58,6 +59,8 @@ import cc_dump.app.launch_config
 import cc_dump.app.tmux_controller
 import cc_dump.tui.error_indicator
 import cc_dump.tui.settings_panel
+import cc_dump.tui.proxy_settings_panel
+import cc_dump.tui.settings_form_panel
 import cc_dump.tui.launch_config_panel
 import cc_dump.tui.side_channel_panel
 import cc_dump.tui.view_store_bridge
@@ -99,18 +102,17 @@ def _patch_textual_monochrome_style() -> None:
 _patch_textual_monochrome_style()
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    raw = str(os.environ.get(name, "1" if default else "0") or "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
-
-
-def _env_float(name: str, default: float, *, minimum: float = 0.0) -> float:
-    raw = str(os.environ.get(name, str(default)) or "").strip()
-    try:
-        value = float(raw)
-    except ValueError:
-        value = default
-    return max(minimum, value)
+# [LAW:one-source-of-truth] Runtime responsiveness policy defaults live here.
+_UI_WATCHDOG_ENABLED = True
+_UI_WATCHDOG_POLL_S = 0.25
+_UI_HEARTBEAT_INTERVAL_S = 0.1
+_UI_STALL_WARN_MS = 300.0
+_UI_STALL_DUMP_MS = 3000.0
+_UI_STALL_DUMP_COOLDOWN_S = 20.0
+_UI_BACKLOG_BUSY_THRESHOLD = 1
+_UI_BACKLOG_POLL_S = 0.05
+_SLOW_EVENT_WARN_MS = 80.0
+_SLOW_EVENT_LOG_COOLDOWN_S = 0.5
 
 
 def _resolve_factory(dotted_path: str):
@@ -185,6 +187,7 @@ class CcDumpApp(App):
         side_channel_manager=None,
         data_dispatcher=None,
         settings_store=None,
+        proxy_runtime=None,
         session_store=None,
         view_store=None,
         domain_store=None,
@@ -208,6 +211,7 @@ class CcDumpApp(App):
         self._side_channel_manager = side_channel_manager
         self._data_dispatcher = data_dispatcher
         self._settings_store = settings_store
+        self._proxy_runtime = proxy_runtime
         self._session_store = (
             session_store
             if session_store is not None
@@ -224,28 +228,22 @@ class CcDumpApp(App):
             in {"1", "true", "yes", "on"}
         )
         # [LAW:single-enforcer] UI responsiveness policy is configured once at app boundary.
-        self._ui_watchdog_enabled = _env_bool("CC_DUMP_UI_WATCHDOG", True)
-        self._ui_watchdog_poll_s = _env_float("CC_DUMP_UI_WATCHDOG_POLL_S", 0.25, minimum=0.05)
-        self._ui_heartbeat_interval_s = _env_float(
-            "CC_DUMP_UI_HEARTBEAT_INTERVAL_S", 0.1, minimum=0.05
-        )
-        self._ui_stall_warn_ms = _env_float("CC_DUMP_UI_STALL_WARN_MS", 300.0, minimum=50.0)
-        self._ui_stall_dump_ms = _env_float("CC_DUMP_UI_STALL_DUMP_MS", 3000.0, minimum=250.0)
-        self._ui_stall_dump_cooldown_s = _env_float(
-            "CC_DUMP_UI_STALL_DUMP_COOLDOWN_S", 20.0, minimum=0.0
-        )
+        self._ui_watchdog_enabled = _UI_WATCHDOG_ENABLED
+        self._ui_watchdog_poll_s = _UI_WATCHDOG_POLL_S
+        self._ui_heartbeat_interval_s = _UI_HEARTBEAT_INTERVAL_S
+        self._ui_stall_warn_ms = _UI_STALL_WARN_MS
+        self._ui_stall_dump_ms = _UI_STALL_DUMP_MS
+        self._ui_stall_dump_cooldown_s = _UI_STALL_DUMP_COOLDOWN_S
+        self._ui_backlog_busy_threshold = _UI_BACKLOG_BUSY_THRESHOLD
+        self._ui_backlog_poll_s = _UI_BACKLOG_POLL_S
         self._ui_last_heartbeat_ns = time.monotonic_ns()
         self._ui_last_dump_ns = 0
 
-        self._slow_event_warn_ms = _env_float("CC_DUMP_SLOW_EVENT_WARN_MS", 80.0, minimum=1.0)
-        self._slow_event_log_cooldown_s = _env_float(
-            "CC_DUMP_SLOW_EVENT_LOG_COOLDOWN_S", 0.5, minimum=0.0
-        )
+        self._slow_event_warn_ms = _SLOW_EVENT_WARN_MS
+        self._slow_event_log_cooldown_s = _SLOW_EVENT_LOG_COOLDOWN_S
         self._last_slow_event_log_ns = 0
 
-        cc_dump.experiments.perf_metrics.metrics.enabled = _env_bool(
-            "CC_DUMP_PERF_METRICS", False
-        )
+        cc_dump.experiments.perf_metrics.metrics.enabled = False
         if self._memory_snapshot_enabled and not tracemalloc.is_tracing():
             tracemalloc.start(25)
 
@@ -274,6 +272,8 @@ class CcDumpApp(App):
         self._workbench_view_id = "workbench-results-view"
         self._workbench_session_key = "workbench-session"
         self._search_bar_id = "search-bar"
+        # [LAW:one-source-of-truth] Global loading visibility derives from reason membership only.
+        self._busy_reasons: set[str] = set()
         # // [LAW:one-source-of-truth] Default session key and routing shape are owned by session_store.
         self._default_session_key = cc_dump.app.session_store.DEFAULT_SESSION_KEY
         cc_dump.app.session_store.ensure_routing_state(
@@ -491,6 +491,9 @@ class CcDumpApp(App):
         # [LAW:single-enforcer] Session-pane insertion order is centralized here:
         # workbench-related tabs are pinned to the right edge.
         tabs.add_pane(pane, before=self._session_insert_before_tab_id(key))
+        # [LAW:one-source-of-truth] New surfaces inherit current app-level busy state.
+        if hasattr(conv, "set_busy_state"):
+            conv.set_busy_state(bool(self._busy_reasons), tuple(sorted(self._busy_reasons)))
 
         # // [LAW:dataflow-not-control-flow] Default tab always exists; first real
         # session auto-focuses only when default has no data.
@@ -503,22 +506,6 @@ class CcDumpApp(App):
             and not default_store.get_active_stream_ids()
         ):
             tabs.active = tab_id
-
-    def _extract_session_id_from_body(self, body: object) -> str:
-        """Extract session_id from request body metadata.user_id."""
-        if not isinstance(body, dict):
-            return ""
-        metadata = body.get("metadata", {})
-        if not isinstance(metadata, dict):
-            return ""
-        user_id = metadata.get("user_id", "")
-        if not isinstance(user_id, str) or not user_id:
-            return ""
-        parsed = cc_dump.core.formatting.parse_user_id(user_id)
-        if not parsed:
-            return ""
-        session_id = parsed.get("session_id", "")
-        return session_id if isinstance(session_id, str) else ""
 
     def _bind_request_session(self, request_id: str, session_key: str) -> None:
         if not request_id:
@@ -540,7 +527,9 @@ class CcDumpApp(App):
         ctx = stream_registry.get(request_id)
         if ctx is None:
             return self._default_session_key
-        key = self._normalize_session_key(str(ctx.session_id or ""))
+        # [LAW:one-source-of-truth] Primary Claude traffic routes to one canonical lane.
+        # Stream registry session IDs are informational only, not tab identities.
+        key = self._default_session_key
         self._bind_request_session(request_id, key)
         return key
 
@@ -562,7 +551,8 @@ class CcDumpApp(App):
                 # [LAW:one-type-per-behavior] Workbench AI traffic is one inspectable lane.
                 key = self._workbench_session_key
             else:
-                key = self._normalize_session_key(self._extract_session_id_from_body(body))
+                # [LAW:one-source-of-truth] One Claude instance routes to one primary lane.
+                key = self._default_session_key
             self._bind_request_session(request_id, key)
             self._ensure_session_surface(key)
             return key
@@ -625,6 +615,9 @@ class CcDumpApp(App):
     def _get_stats(self):
         return self._get_panel("stats")
 
+    def _get_perf(self):
+        return self._get_panel("perf")
+
     def _get_economics(self):
         return self._get_panel("economics")
 
@@ -646,6 +639,31 @@ class CcDumpApp(App):
         except NoMatches:
             return None
 
+    def _set_busy_reason(self, reason: str, active: bool) -> None:
+        """Toggle named busy reason and refresh conversation busy overlays."""
+        before_reasons = tuple(sorted(self._busy_reasons))
+        if active:
+            self._busy_reasons.add(reason)
+        else:
+            self._busy_reasons.discard(reason)
+        after_reasons = tuple(sorted(self._busy_reasons))
+        if before_reasons == after_reasons:
+            return
+        is_busy = bool(after_reasons)
+        for session_key in tuple(self._session_conv_ids.keys()):
+            conv = self._get_conv(session_key=session_key)
+            if conv is not None and hasattr(conv, "set_busy_state"):
+                conv.set_busy_state(is_busy, after_reasons)
+
+    @contextmanager
+    def _busy(self, reason: str):
+        """Track busy scope for global loading indicator."""
+        self._set_busy_reason(reason, True)
+        try:
+            yield
+        finally:
+            self._set_busy_reason(reason, False)
+
     # ─── Lifecycle ─────────────────────────────────────────────────────
 
     def get_system_commands(self, screen):
@@ -657,7 +675,7 @@ class CcDumpApp(App):
             "Keys", "Show keyboard shortcuts", self.action_toggle_keys
         )
         yield SystemCommand(
-            "Cycle panel", "Cycle session/analytics", self.action_cycle_panel
+            "Cycle panel", "Cycle session/analytics/perf", self.action_cycle_panel
         )
         yield SystemCommand("Toggle logs", "Debug logs", self.action_toggle_logs)
         yield SystemCommand("Toggle info", "Server info panel", self.action_toggle_info)
@@ -665,6 +683,11 @@ class CcDumpApp(App):
         yield SystemCommand("Go to bottom", "Scroll to end", self.action_go_bottom)
         yield SystemCommand(
             "Toggle follow mode", "Auto-scroll", self.action_toggle_follow
+        )
+        yield SystemCommand(
+            "Toggle render metrics",
+            "Show/hide ConversationView render diagnostics overlay",
+            self.action_toggle_render_metrics_overlay,
         )
         yield SystemCommand(
             "Next special section",
@@ -777,10 +800,22 @@ class CcDumpApp(App):
     def on_mount(self):
         self._bind_view_store_reactions()
         self._touch_ui_heartbeat()
+        self._set_busy_reason("startup", False)
         # [LAW:single-enforcer] UI-thread heartbeat updates are centralized here.
         self.set_interval(
             self._ui_heartbeat_interval_s,
             self._touch_ui_heartbeat,
+            pause=False,
+        )
+        # [LAW:single-enforcer] Queue backlog -> busy state mapping lives in one sampler.
+        self.set_interval(
+            self._ui_backlog_poll_s,
+            self._sync_event_backlog_busy,
+            pause=False,
+        )
+        self.set_interval(
+            0.75,
+            self._refresh_active_perf_panel,
             pause=False,
         )
 
@@ -804,8 +839,11 @@ class CcDumpApp(App):
         self._app_log("INFO", "🚀 cc-dump proxy started")
         self._app_log("INFO", f"Listening on: http://{self._host}:{self._port}")
 
-        if self._target:
-            self._app_log("INFO", f"Reverse proxy mode: {self._target}")
+        server_info = self._build_server_info()
+        target = str(server_info.get("target") or "")
+        provider = str(server_info.get("provider") or "anthropic")
+        if target:
+            self._app_log("INFO", f"Reverse proxy mode: {target} ({provider})")
             self._app_log(
                 "INFO",
                 f"Usage: ANTHROPIC_BASE_URL=http://{self._host}:{self._port} claude",
@@ -861,9 +899,11 @@ class CcDumpApp(App):
         self._log_memory_snapshot("startup")
 
         if self._replay_data:
-            self._process_replay_data()
+            with self._busy("replay"):
+                self._process_replay_data()
         if self._resume_ui_state is not None:
-            self._apply_resume_ui_state_postload()
+            with self._busy("restore"):
+                self._apply_resume_ui_state_postload()
 
     def _bind_view_store_reactions(self) -> None:
         """(Re)bind view-store reactions after app mount.
@@ -925,6 +965,15 @@ class CcDumpApp(App):
             pass
         sys.__stderr__.write(f"[{level}] {message}\n")
         sys.__stderr__.flush()
+
+    def _sync_event_backlog_busy(self) -> None:
+        """Mirror event queue backlog pressure into global busy indicator."""
+        backlog = 0
+        try:
+            backlog = int(self._event_queue.qsize())
+        except (AttributeError, NotImplementedError, TypeError, ValueError):
+            backlog = 0
+        self._set_busy_reason("event-backlog", backlog >= self._ui_backlog_busy_threshold)
 
     def _watch_ui_responsiveness(self) -> None:
         """Background watchdog for UI-thread stalls.
@@ -1025,14 +1074,25 @@ class CcDumpApp(App):
         })
 
     def _build_server_info(self) -> dict:
-        """// [LAW:one-source-of-truth] All server info derived from constructor params."""
+        """// [LAW:one-source-of-truth] All server info derived from runtime snapshot + constructor params."""
         proxy_url = "http://{}:{}".format(self._host, self._port)
-        proxy_mode = "forward" if not self._target else "reverse"
+        target = self._target
+        provider = "anthropic"
+        runtime = self._proxy_runtime
+        if runtime is not None:
+            try:
+                snapshot = runtime.snapshot()
+                target = snapshot.active_base_url or None
+                provider = snapshot.provider
+            except Exception:
+                pass
+        proxy_mode = "forward" if not target else "reverse"
 
         return {
             "proxy_url": proxy_url,
             "proxy_mode": proxy_mode,
-            "target": self._target,
+            "provider": provider,
+            "target": target,
             "session_name": self._session_name,
             "session_id": self._session_id,
             "recording_path": self._recording_path,
@@ -1073,6 +1133,7 @@ class CcDumpApp(App):
             "panel:active",
             "panel:side_channel",
             "panel:settings",
+            "panel:proxy_settings",
             "panel:launch_config",
             "nav:follow",
             "filter:active",
@@ -1175,7 +1236,8 @@ class CcDumpApp(App):
         if stx.is_safe(self):
             conv = self._get_conv()
             if conv is not None:
-                conv.rerender(self.active_filters)
+                with self._busy("rerender"):
+                    conv.rerender(self.active_filters)
 
     # ─── Event pipeline ────────────────────────────────────────────────
 
@@ -1230,7 +1292,8 @@ class CcDumpApp(App):
             self.post_message(_ProxyEvent(event))
 
     def on__proxy_event(self, message: _ProxyEvent):
-        self._handle_event(message.event)
+        with self._busy("events"):
+            self._handle_event(message.event)
 
     def _handle_event(self, event):
         started_ns = time.monotonic_ns()
@@ -1468,12 +1531,22 @@ class CcDumpApp(App):
     def action_toggle_settings(self):
         _actions.toggle_settings(self)
 
+    def action_toggle_proxy_settings(self):
+        _actions.toggle_proxy_settings(self)
+
+    def _settings_panel_initial_values(
+        self, fields: tuple[cc_dump.tui.settings_form_panel.FieldDef, ...]
+    ) -> dict[str, object]:
+        return cc_dump.tui.settings_form_panel.build_initial_values(
+            fields, self._settings_store
+        )
+
     def _open_settings(self):
-        """Open settings panel, populating from settings store."""
-        initial_values = {}
-        for field_def in cc_dump.tui.settings_panel.SETTINGS_FIELDS:
-            val = self._settings_store.get(field_def.key) if self._settings_store else None
-            initial_values[field_def.key] = val if val is not None else field_def.default
+        """Open app settings panel, populating from settings store."""
+        self._close_proxy_settings()
+        initial_values = self._settings_panel_initial_values(
+            cc_dump.tui.settings_panel.SETTINGS_FIELDS
+        )
 
         self._view_store.set("panel:settings", True)
         panel = cc_dump.tui.settings_panel.create_settings_panel(initial_values)
@@ -1488,15 +1561,47 @@ class CcDumpApp(App):
         if conv is not None:
             conv.focus()
 
-    def on_settings_panel_saved(self, msg) -> None:
-        """Handle SettingsPanel.Saved — update store (reactions handle persistence + side effects)."""
+    def _open_proxy_settings(self):
+        """Open proxy settings panel, populating from settings store."""
+        self._close_settings()
+        initial_values = self._settings_panel_initial_values(
+            cc_dump.tui.proxy_settings_panel.PROXY_SETTINGS_FIELDS
+        )
+
+        self._view_store.set("panel:proxy_settings", True)
+        panel = cc_dump.tui.proxy_settings_panel.create_proxy_settings_panel(
+            initial_values
+        )
+        self.screen.mount(panel)
+
+    def _close_proxy_settings(self) -> None:
+        """Close proxy settings panel and restore focus to conversation."""
+        for panel in self.screen.query(cc_dump.tui.proxy_settings_panel.ProxySettingsPanel):
+            panel.remove()
+        self._view_store.set("panel:proxy_settings", False)
+        conv = self._get_conv()
+        if conv is not None:
+            conv.focus()
+
+    def on_settings_form_panel_saved(self, msg) -> None:
+        """Handle shared settings form save events."""
         if self._settings_store is not None:
             self._settings_store.update(msg.values)
+        info = self._get_info()
+        if info is not None:
+            info.update_info(self._build_server_info())
+        if msg.panel_key == "proxy_settings":
+            self._close_proxy_settings()
+            self.notify("Proxy settings saved")
+            return
         self._close_settings()
         self.notify("Settings saved")
 
-    def on_settings_panel_cancelled(self, msg) -> None:
-        """Handle SettingsPanel.Cancelled — close without saving."""
+    def on_settings_form_panel_cancelled(self, msg) -> None:
+        """Handle shared settings form cancel events."""
+        if msg.panel_key == "proxy_settings":
+            self._close_proxy_settings()
+            return
         self._close_settings()
 
     # Launch configs
@@ -1629,11 +1734,20 @@ class CcDumpApp(App):
             self._view_store.set("sc:active_action", "summarize_recent")
 
         dispatcher = self._data_dispatcher
+        prepared = dispatcher.prepare_summary_prompt(messages)
+        prompt_override = self._resolve_prompt_override(
+            action_key="summarize_recent",
+            default_prompt=prepared.prompt,
+        )
 
         source_session_id = self._active_resume_session_id()
 
         def _do_summarize():
-            result = dispatcher.summarize_messages(messages, source_session_id=source_session_id)
+            result = dispatcher.summarize_messages(
+                messages,
+                source_session_id=source_session_id,
+                prompt_override=prompt_override,
+            )
             self.call_from_thread(self._on_side_channel_result, result, context_session_key)
 
         self.run_worker(_do_summarize, thread=True, exclusive=False)
@@ -1671,6 +1785,151 @@ class CcDumpApp(App):
     def _get_side_channel_panel_widget(self):
         panel = self.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel)
         return panel.first() if panel else None
+
+    def _resolve_prompt_override(
+        self,
+        *,
+        action_key: str,
+        default_prompt: str,
+    ) -> str | None:
+        """Resolve optional prompt override for a specific action key.
+
+        // [LAW:single-enforcer] Prompt-override selection/gating lives only here.
+        """
+        panel = self._get_side_channel_panel_widget()
+        if panel is None:
+            return None
+        draft = panel.read_prompt_editor_draft()
+        if not draft.use_override:
+            return None
+        if draft.target_action != action_key:
+            return None
+        override = str(draft.prompt_text or "").strip()
+        if not override:
+            return None
+        if override == default_prompt.strip():
+            return None
+        return override
+
+    def _prepare_workbench_prompt(
+        self,
+        *,
+        action_key: str,
+    ) -> tuple[object | None, str, str, str]:
+        """Build prompt payload for prompt preview/editor.
+
+        Returns (prepared_prompt, error, summary_line, context_session_key).
+        """
+        context_session_key = self._active_context_session_key()
+        dispatcher = self._data_dispatcher
+        if dispatcher is None:
+            return (None, "dispatcher unavailable", "", context_session_key)
+        panel = self._get_side_channel_panel_widget()
+        if panel is None:
+            return (None, "side-channel panel unavailable", "", context_session_key)
+
+        if action_key == "summarize_recent":
+            messages = self._collect_recent_messages(10)
+            if not messages:
+                return (None, "no captured messages available", "", context_session_key)
+            prepared = dispatcher.prepare_summary_prompt(messages)
+            return (prepared, "", f"messages={len(messages)}", context_session_key)
+
+        if action_key == "qa_submit":
+            messages = self._collect_recent_messages(50)
+            if not messages:
+                return (None, "no captured messages available", "", context_session_key)
+            qa_draft = panel.read_qa_draft()
+            scope, parse_error = self._parse_qa_scope(qa_draft, total_messages=len(messages))
+            normalized_scope = cc_dump.ai.conversation_qa.normalize_scope(
+                scope, total_messages=len(messages)
+            )
+            question = qa_draft.question.strip()
+            if not question:
+                return (None, "question is required", "", context_session_key)
+            if parse_error:
+                return (None, parse_error, "", context_session_key)
+            if normalized_scope.error:
+                return (None, normalized_scope.error, "", context_session_key)
+            selected_messages = cc_dump.ai.conversation_qa.select_messages(
+                messages, normalized_scope
+            )
+            prepared = dispatcher.prepare_conversation_qa_prompt(
+                question=question,
+                selected_messages=selected_messages,
+            )
+            scope_line = cc_dump.tui.side_channel_panel.render_qa_scope_line(
+                scope_mode=normalized_scope.scope.mode,
+                selected_indices=normalized_scope.selected_indices,
+            )
+            return (
+                prepared,
+                "",
+                f"question={question!r} messages={len(selected_messages)} {scope_line}",
+                context_session_key,
+            )
+
+        if action_key == "action_extract":
+            messages = self._collect_recent_messages(50)
+            if not messages:
+                return (None, "no captured messages available", "", context_session_key)
+            prepared = dispatcher.prepare_action_extraction_prompt(messages)
+            return (prepared, "", f"messages={len(messages)}", context_session_key)
+
+        if action_key == "utility_run":
+            messages = self._collect_recent_messages(50)
+            utility_draft = panel.read_utility_draft()
+            utility_id = utility_draft.utility_id.strip()
+            prepared = dispatcher.prepare_utility_prompt(messages, utility_id=utility_id)
+            if prepared.error:
+                return (None, prepared.error, "", context_session_key)
+            return (
+                prepared,
+                "",
+                f"messages={len(messages)} utility_id={utility_id}",
+                context_session_key,
+            )
+
+        return (None, f"unsupported prompt target: {action_key}", "", context_session_key)
+
+    def action_sc_prompt_preview(self) -> None:
+        panel = self._get_side_channel_panel_widget()
+        if panel is None:
+            return
+        prompt_draft = panel.read_prompt_editor_draft()
+        prepared, error, summary_line, context_session_key = self._prepare_workbench_prompt(
+            action_key=prompt_draft.target_action
+        )
+        if error or prepared is None:
+            self._set_side_channel_result(
+                text=f"prompt preview blocked\nerror: {error or 'prompt unavailable'}",
+                source="fallback",
+                elapsed_ms=0,
+                loading=False,
+                active_action="",
+                focus_results=True,
+                context_session_key=context_session_key,
+            )
+            return
+        panel.set_prompt_editor_text(prepared.prompt)
+        lines = [
+            "prompt preview",
+            f"action: {prompt_draft.target_action}",
+            f"purpose: {prepared.purpose}",
+            f"prompt_version: {prepared.prompt_version}",
+        ]
+        if summary_line:
+            lines.append(summary_line)
+        lines.extend(["", prepared.prompt])
+        self._set_side_channel_result(
+            text="\n".join(lines),
+            source="preview",
+            elapsed_ms=0,
+            loading=False,
+            active_action="",
+            focus_results=True,
+            context_session_key=context_session_key,
+        )
 
     def _parse_qa_scope(self, draft, *, total_messages: int) -> tuple[cc_dump.ai.conversation_qa.QAScope, str]:
         """Build a QAScope from panel draft input.
@@ -1780,6 +2039,7 @@ class CcDumpApp(App):
             self._view_store.set("sc:result_text", text)
             self._view_store.set("sc:result_source", source)
             self._view_store.set("sc:result_elapsed_ms", elapsed_ms)
+        self._set_busy_reason("side-channel", loading)
         workbench_results = self._get_workbench_results_view()
         if workbench_results is not None:
             workbench_results.update_result(
@@ -1935,6 +2195,14 @@ class CcDumpApp(App):
         dispatcher = self._data_dispatcher
         source_session_id = self._active_resume_session_id()
         request_id = f"sc-qa-{int(time.time() * 1000)}"
+        prepared = dispatcher.prepare_conversation_qa_prompt(
+            question=question,
+            selected_messages=selected_messages,
+        )
+        prompt_override = self._resolve_prompt_override(
+            action_key="qa_submit",
+            default_prompt=prepared.prompt,
+        )
 
         def _do_qa() -> None:
             result = dispatcher.ask_conversation_question(
@@ -1943,6 +2211,7 @@ class CcDumpApp(App):
                 scope=scope,
                 source_session_id=source_session_id,
                 request_id=request_id,
+                prompt_override=prompt_override,
             )
             self.call_from_thread(
                 self._on_side_channel_qa_result,
@@ -2061,12 +2330,18 @@ class CcDumpApp(App):
         dispatcher = self._data_dispatcher
         source_session_id = self._active_resume_session_id()
         request_id = f"sc-action-{int(time.time() * 1000)}"
+        prepared = dispatcher.prepare_action_extraction_prompt(messages)
+        prompt_override = self._resolve_prompt_override(
+            action_key="action_extract",
+            default_prompt=prepared.prompt,
+        )
 
         def _do_action_extract() -> None:
             result = dispatcher.extract_action_items(
                 messages,
                 source_session_id=source_session_id,
                 request_id=request_id,
+                prompt_override=prompt_override,
             )
             self.call_from_thread(
                 self._on_side_channel_action_extract_result,
@@ -2264,12 +2539,18 @@ class CcDumpApp(App):
         )
         dispatcher = self._data_dispatcher
         source_session_id = self._active_resume_session_id()
+        prepared = dispatcher.prepare_utility_prompt(messages, utility_id=utility_id)
+        prompt_override = self._resolve_prompt_override(
+            action_key="utility_run",
+            default_prompt=prepared.prompt,
+        )
 
         def _do_utility_run() -> None:
             result = dispatcher.run_utility(
                 messages,
                 utility_id=utility_id,
                 source_session_id=source_session_id,
+                prompt_override=prompt_override,
             )
             self.call_from_thread(self._on_side_channel_utility_result, result, context_session_key)
 
@@ -2313,6 +2594,13 @@ class CcDumpApp(App):
     # Navigation
     def action_toggle_follow(self):
         _actions.toggle_follow(self)
+
+    def action_toggle_render_metrics_overlay(self):
+        conv = self._get_conv()
+        if conv is None or not hasattr(conv, "toggle_render_metrics_overlay"):
+            return
+        enabled = bool(conv.toggle_render_metrics_overlay())
+        self.notify(f"Render metrics overlay: {'on' if enabled else 'off'}")
 
     def action_focus_stream(self, request_id: str):
         _actions.focus_stream(self, request_id)
@@ -2365,6 +2653,9 @@ class CcDumpApp(App):
     def _refresh_economics(self):
         _actions.refresh_economics(self)
 
+    def _refresh_perf(self):
+        _actions.refresh_perf(self)
+
     def _refresh_timeline(self):
         _actions.refresh_timeline(self)
 
@@ -2388,10 +2679,18 @@ class CcDumpApp(App):
 
     def _sync_panel_display(self, active: str):
         """// [LAW:one-source-of-truth] Panel visibility driven by PANEL_ORDER from registry."""
+        # // [LAW:single-enforcer] Perf collector enablement is gated at active-panel boundary.
+        if active == "perf":
+            cc_dump.experiments.perf_metrics.metrics.enabled = True
         for name in cc_dump.tui.panel_registry.PANEL_ORDER:
             widget = self._get_panel(name)
             if widget is not None:
                 widget.display = (name == active)
+
+    def _refresh_active_perf_panel(self) -> None:
+        """Refresh perf panel while active so runtime diagnostics stay current."""
+        if self.active_panel == "perf":
+            self._refresh_perf()
 
     def watch_show_logs(self, value):
         pass
@@ -2411,7 +2710,8 @@ class CcDumpApp(App):
         if conv is not None:
             conv._block_strip_cache.clear()
             conv._line_cache.clear()
-            conv.rerender(self.active_filters, force=True)
+            with self._busy("rerender"):
+                conv.rerender(self.active_filters, force=True)
 
     def watch_app_focus(self, focused: bool) -> None:
         self.screen.set_class(not focused, "-app-unfocused")
@@ -2421,13 +2721,17 @@ class CcDumpApp(App):
     def _close_topmost_panel(self) -> bool:
         """Close the topmost open panel. Returns True if a panel was closed.
 
-        Checks store booleans in priority order (side_channel → launch_config → settings).
+        Checks store booleans in priority order
+        (side_channel → launch_config → proxy_settings → settings).
         """
         if self._view_store.get("panel:side_channel"):
             self._close_side_channel()
             return True
         if self._view_store.get("panel:launch_config"):
             self._close_launch_config()
+            return True
+        if self._view_store.get("panel:proxy_settings"):
+            self._close_proxy_settings()
             return True
         if self._view_store.get("panel:settings"):
             self._close_settings()

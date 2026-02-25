@@ -202,29 +202,24 @@ class TestHotReloadMultiSessionTabs:
             tabs = app._get_conv_tabs()
             assert tabs is not None
 
-            tab_b = app._session_tab_ids[session_b]
-            tabs.active = tab_b
+            tab_main = app._session_tab_ids[app._default_session_key]
+            tabs.active = tab_main
             await pilot.pause()
 
             old_conv_ids = {
-                session_a: id(app._get_conv(session_key=session_a)),
-                session_b: id(app._get_conv(session_key=session_b)),
+                app._default_session_key: id(app._get_conv(session_key=app._default_session_key)),
             }
 
             await hr.replace_all_widgets(app)
             await pilot.pause()
 
-            new_conv_a = app._get_conv(session_key=session_a)
-            new_conv_b = app._get_conv(session_key=session_b)
-            assert new_conv_a is not None
-            assert new_conv_b is not None
-            assert id(new_conv_a) != old_conv_ids[session_a]
-            assert id(new_conv_b) != old_conv_ids[session_b]
+            new_conv = app._get_conv(session_key=app._default_session_key)
+            assert new_conv is not None
+            assert id(new_conv) != old_conv_ids[app._default_session_key]
 
-            assert len(new_conv_a._turns) == 2
-            assert len(new_conv_b._turns) == 2
-            assert tabs.active == tab_b
-            assert app._domain_store is app._get_domain_store(session_b)
+            assert len(new_conv._turns) == 4
+            assert tabs.active == tab_main
+            assert app._domain_store is app._get_domain_store(app._default_session_key)
 
 
 # ============================================================================
@@ -314,6 +309,7 @@ class TestWidgetProtocolValidation:
     def test_validate_all_widgets_implement_protocol(self):
         from cc_dump.tui.widget_factory import (
             ConversationView,
+            PerfPanel,
             StatsPanel,
             TimelinePanel,
             ToolEconomicsPanel,
@@ -323,6 +319,7 @@ class TestWidgetProtocolValidation:
         widgets = [
             ConversationView(),
             StatsPanel(),
+            PerfPanel(),
             TimelinePanel(),
             ToolEconomicsPanel(),
         ]
@@ -838,7 +835,7 @@ class TestSearchStateHotReload:
         assert new_state.phase == SearchPhase.NAVIGATING
 
     def test_transient_fields_reset_on_new_state(self):
-        """matches, expanded_blocks, debounce_timer reset to defaults on new SearchState."""
+        """matches/expanded overrides/debounce reset to defaults on new SearchState."""
         import cc_dump.app.view_store
         from cc_dump.tui.search import SearchState, SearchPhase, SearchMatch
 
@@ -848,6 +845,7 @@ class TestSearchStateHotReload:
         old_state.query = "test"
         old_state.matches = [SearchMatch(0, 0, 0, 4)]
         old_state.expanded_blocks = [(0, 0)]
+        old_state.expanded_regions = [(1, 2, False)]
         old_state.debounce_timer = "fake_timer"
 
         # New SearchState on same store — transient fields are fresh
@@ -860,6 +858,7 @@ class TestSearchStateHotReload:
         # Transient fields are fresh defaults
         assert new_state.matches == []
         assert new_state.expanded_blocks == []
+        assert new_state.expanded_regions == []
         assert new_state.debounce_timer is None
         assert new_state.saved_filters == {}
         assert new_state.saved_scroll_y is None

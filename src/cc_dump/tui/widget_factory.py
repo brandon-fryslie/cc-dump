@@ -11,6 +11,7 @@ import os
 import sys
 import time
 import traceback
+from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
@@ -81,14 +82,14 @@ _FOLLOW_DEACTIVATE: dict[FollowState, FollowState] = {
 }
 
 
-def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
-    """Parse integer env var with clamp fallback."""
-    raw = str(os.environ.get(name, str(default)) or "").strip()
-    try:
-        value = int(raw)
-    except ValueError:
-        value = default
-    return max(minimum, value)
+# [LAW:one-source-of-truth] Render responsiveness/overlay defaults live here.
+_STREAM_PREVIEW_MAX_CHARS = 24_000
+_SLOW_INVALIDATE_WARN_MS = 120
+_SLOW_INVALIDATE_LOG_COOLDOWN_MS = 750
+_RERENDER_BUDGET_MS = 24
+_BG_RERENDER_BUDGET_MS = 12
+_OVERLAY_REFRESH_HZ = 12.0
+_OVERLAY_AUTO_HOLD_MS = 15_000
 
 
 def _bounded_stream_preview_text(text: str, max_chars: int) -> tuple[str, int]:
@@ -132,6 +133,24 @@ def _hash_strips(strips: list[Strip]) -> str:
     return digest.hexdigest()
 
 
+def _estimate_block_chars(blocks: list) -> int:
+    """Estimate source text chars for a block tree.
+
+    // [LAW:single-enforcer] Source-size estimation is centralized here for perf diagnostics.
+    """
+    total = 0
+    stack = list(blocks)
+    while stack:
+        block = stack.pop()
+        content = getattr(block, "content", None)
+        if isinstance(content, str):
+            total += len(content)
+        children = getattr(block, "children", None)
+        if children:
+            stack.extend(children)
+    return total
+
+
 @dataclass
 class TurnData:
     """Pre-rendered turn data for Line API storage."""
@@ -159,6 +178,7 @@ class TurnData:
     _pending_filter_snapshot: dict | None = (
         None  # deferred filters for lazy off-viewport re-render
     )
+    source_chars_est: int = 0  # estimated source text chars across block tree
 
 
     @property
@@ -202,12 +222,18 @@ class TurnData:
             overrides: Optional ViewOverrides for per-block view state.
         """
         # Create snapshot using ALWAYS_VISIBLE default to match filters dict structure
+        started_ns = time.monotonic_ns()
         snapshot = {k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE) for k in self.relevant_filter_keys}
         # Force re-render when search context changes
         if not force and search_ctx is None and snapshot == self._last_filter_snapshot:
+            cc_dump.experiments.perf_metrics.metrics.record(
+                "ui.turn.re_render.total",
+                elapsed_ns=time.monotonic_ns() - started_ns,
+            )
             return False
         self._last_filter_snapshot = snapshot
         self._pending_filter_snapshot = None  # clear deferred state
+        render_started_ns = time.monotonic_ns()
         strips, block_strip_map, flat_blocks = cc_dump.tui.rendering.render_turn_to_strips(
             self.blocks,
             filters,
@@ -218,8 +244,16 @@ class TurnData:
             turn_index=self.turn_index,
             overrides=overrides,
         )
+        cc_dump.experiments.perf_metrics.metrics.record(
+            "ui.turn.re_render.render_turn_to_strips",
+            elapsed_ns=time.monotonic_ns() - render_started_ns,
+        )
         strip_hash = _hash_strips(strips)
         if strip_hash == self._strip_hash:
+            cc_dump.experiments.perf_metrics.metrics.record(
+                "ui.turn.re_render.total",
+                elapsed_ns=time.monotonic_ns() - started_ns,
+            )
             return False
 
         self.strips = strips
@@ -227,6 +261,10 @@ class TurnData:
         self._flat_blocks = flat_blocks
         self._strip_hash = strip_hash
         self._widest_strip = _compute_widest(self.strips)
+        cc_dump.experiments.perf_metrics.metrics.record(
+            "ui.turn.re_render.total",
+            elapsed_ns=time.monotonic_ns() - started_ns,
+        )
         return True
 
     def strip_offset_for_block(self, block_index: int) -> int | None:
@@ -304,17 +342,43 @@ class ConversationView(ScrollView):
         self._background_rerender_scheduled: bool = False
         self._background_rerender_chunk_size: int = 8
         # [LAW:single-enforcer] Preview truncation policy is centralized in this widget.
-        self._stream_preview_char_budget: int = _env_int(
-            "CC_DUMP_STREAM_PREVIEW_MAX_CHARS", 24_000, minimum=1_024
-        )
+        self._stream_preview_char_budget: int = _STREAM_PREVIEW_MAX_CHARS
         self._stream_preview_truncated_notified: set[str] = set()
-        self._slow_invalidate_warn_ms: int = _env_int(
-            "CC_DUMP_SLOW_INVALIDATE_WARN_MS", 120, minimum=1
-        )
-        self._slow_invalidate_log_cooldown_ms: int = _env_int(
-            "CC_DUMP_SLOW_INVALIDATE_LOG_COOLDOWN_MS", 750, minimum=0
-        )
+        self._slow_invalidate_warn_ms: int = _SLOW_INVALIDATE_WARN_MS
+        self._slow_invalidate_log_cooldown_ms: int = _SLOW_INVALIDATE_LOG_COOLDOWN_MS
         self._last_slow_invalidate_log_ns: int = 0
+        self._rerender_budget_ms: int = _RERENDER_BUDGET_MS
+        self._background_rerender_budget_ms: int = _BG_RERENDER_BUDGET_MS
+        self._overlay_metrics_enabled: bool = False
+        self._busy_overlay_enabled: bool = True
+        self._busy_overlay: bool = False
+        self._busy_overlay_reasons: tuple[str, ...] = ()
+        self._invalidate_last_reason: str = ""
+        self._invalidate_last_ms: float = 0.0
+        self._invalidate_samples_ms: deque[float] = deque(maxlen=128)
+        self._overlay_auto_until_ns: int = 0
+        self._overlay_spinner_frames: tuple[str, ...] = (
+            "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
+        )
+        self._last_rerender_stats: dict[str, int | float | bool | str] = {
+            "scanned_turns": 0,
+            "viewport_turns": 0,
+            "rendered_viewport_turns": 0,
+            "deferred_turns": 0,
+            "first_changed": -1,
+            "elapsed_ms": 0.0,
+            "loop_ms": 0.0,
+            "recalc_ms": 0.0,
+            "search_active": False,
+        }
+        self._last_background_rerender_stats: dict[str, int | float | bool] = {
+            "processed_turns": 0,
+            "changed_turns": 0,
+            "remaining_pending_turns": 0,
+            "elapsed_ms": 0.0,
+            "loop_ms": 0.0,
+            "recalc_ms": 0.0,
+        }
 
         # Wire domain store callbacks
         self._wire_domain_store(self._domain_store)
@@ -334,6 +398,93 @@ class ConversationView(ScrollView):
         // [LAW:one-source-of-truth] DomainStore remains canonical; widget cache is derived.
         """
         self._hydrate_from_domain_store()
+        self.set_interval(1.0 / _OVERLAY_REFRESH_HZ, self._refresh_overlay_tick, pause=False)
+
+    def set_render_metrics_overlay(self, enabled: bool) -> None:
+        """Enable/disable the metrics overlay."""
+        self._overlay_metrics_enabled = bool(enabled)
+        if self.is_attached:
+            self.refresh()
+
+    def toggle_render_metrics_overlay(self) -> bool:
+        """Toggle render metrics overlay and return new enabled state."""
+        self.set_render_metrics_overlay(not self._overlay_metrics_enabled)
+        return self._overlay_metrics_enabled
+
+    def _metrics_overlay_visible(self) -> bool:
+        """Whether metrics row should currently be rendered."""
+        if self._overlay_metrics_enabled:
+            return True
+        return time.monotonic_ns() < self._overlay_auto_until_ns
+
+    def _refresh_overlay_tick(self) -> None:
+        """Refresh overlay animation/metrics when active."""
+        if self._busy_overlay_enabled and self._busy_overlay:
+            self.refresh()
+            return
+        if self._metrics_overlay_visible():
+            self.refresh()
+
+    def set_busy_state(self, busy: bool, reasons: tuple[str, ...] = ()) -> None:
+        """Set conversation overlay busy state from app-level busy reasons."""
+        self._busy_overlay = bool(busy)
+        self._busy_overlay_reasons = tuple(reasons)
+        if self.is_attached:
+            self.refresh()
+
+    def _overlay_lines(self, width: int) -> list[tuple[str, Style]]:
+        """Build top-right overlay lines (busy spinner + optional render metrics)."""
+        lines: list[tuple[str, Style]] = []
+        tc = cc_dump.tui.rendering.get_theme_colors()
+
+        if self._busy_overlay_enabled and self._busy_overlay:
+            frame_idx = int(time.monotonic() * 10.0) % len(self._overlay_spinner_frames)
+            frame = self._overlay_spinner_frames[frame_idx]
+            reason = self._busy_overlay_reasons[0] if self._busy_overlay_reasons else "working"
+            busy_text = f"{frame} {reason}"
+            lines.append((busy_text[: max(1, width)], Style(color=tc.accent, bold=True)))
+
+        if self._metrics_overlay_visible():
+            pending = sum(
+                1 for td in self._turns if (not td.is_streaming and td._pending_filter_snapshot is not None)
+            )
+            p95_ms = 0.0
+            if self._invalidate_samples_ms:
+                sorted_samples = sorted(self._invalidate_samples_ms)
+                p95_idx = int(0.95 * (len(sorted_samples) - 1))
+                p95_ms = float(sorted_samples[p95_idx])
+            metrics_text = (
+                f"inv {self._invalidate_last_ms:5.1f}ms "
+                f"p95 {p95_ms:5.1f} "
+                f"t {len(self._turns)} "
+                f"p {pending}"
+            )
+            lines.append((metrics_text[: max(1, width)], Style(color=tc.subtle)))
+
+        return lines
+
+    def _apply_top_right_overlay(self, strip: Strip, y: int, width: int) -> Strip:
+        """Paint overlay line y in the top-right corner of the viewport."""
+        lines = self._overlay_lines(width)
+        if y < 0 or y >= len(lines):
+            return strip
+        text, style = lines[y]
+        if not text:
+            return strip
+        overlay_width = min(width, len(text))
+        if overlay_width <= 0:
+            return strip
+        left_width = max(0, width - overlay_width)
+        left = strip.crop_extend(0, left_width, self.rich_style)
+        right = Strip([Segment(text[-overlay_width:], style)]).adjust_cell_length(overlay_width)
+        return Strip([*left._segments, *right._segments]).adjust_cell_length(width)
+
+    def _apply_viewport_overlays(self, strip: Strip, y: int, width: int) -> Strip:
+        """Apply all viewport-relative overlays in canonical order."""
+        strip = cc_dump.tui.error_indicator.composite_overlay(
+            strip, y, width, self._indicator
+        )
+        return self._apply_top_right_overlay(strip, y, width)
 
     def _hydrate_from_domain_store(self) -> None:
         """Rebuild rendered turns from current domain store state."""
@@ -418,12 +569,16 @@ class ConversationView(ScrollView):
 
         try:
             if actual_y >= self._total_lines:
-                return Strip.blank(width, self.rich_style)
+                return self._apply_viewport_overlays(
+                    Strip.blank(width, self.rich_style), y, width
+                )
 
             # Binary search for the turn containing this line
             turn = self._find_turn_for_line(actual_y)
             if turn is None:
-                return Strip.blank(width, self.rich_style)
+                return self._apply_viewport_overlays(
+                    Strip.blank(width, self.rich_style), y, width
+                )
 
             # Lazy re-render: if this turn was deferred during a filter toggle,
             # re-render it now that it's scrolled into view.
@@ -442,10 +597,8 @@ class ConversationView(ScrollView):
             # Bypass cache when selection is active (selection is transient)
             if selection is None and key in self._line_cache:
                 strip = self._line_cache[key].apply_style(self.rich_style)
-                # Apply overlay AFTER cache (viewport-relative, must not be cached)
-                return cc_dump.tui.error_indicator.composite_overlay(
-                    strip, y, width, self._indicator
-                )
+                # Apply overlays AFTER cache (viewport-relative, must not be cached)
+                return self._apply_viewport_overlays(strip, y, width)
 
             if local_y < len(turn.strips):
                 strip = turn.strips[local_y].crop_extend(
@@ -478,11 +631,8 @@ class ConversationView(ScrollView):
                 self._line_cache_index_write_count = 0
                 self._prune_line_cache_index()
 
-            # Apply overlay AFTER cache (viewport-relative, must not be cached)
-            strip = cc_dump.tui.error_indicator.composite_overlay(
-                strip, y, width, self._indicator
-            )
-            return strip
+            # Apply overlays AFTER cache (viewport-relative, must not be cached)
+            return self._apply_viewport_overlays(strip, y, width)
         except Exception as exc:
             sys.stderr.write("[render] " + traceback.format_exc())
             sys.stderr.flush()
@@ -671,12 +821,17 @@ class ConversationView(ScrollView):
 
         Processes a bounded number of turns per tick to keep UI responsive.
         """
+        started_total_ns = time.monotonic_ns()
         self._background_rerender_scheduled = False
+        started_ns = time.monotonic_ns()
+        budget_ns = self._background_rerender_budget_ms * 1_000_000
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
 
         first_changed: int | None = None
         processed = 0
+        changed = 0
+        loop_started_ns = time.monotonic_ns()
         for idx, td in enumerate(self._turns):
             if td.is_streaming or td._pending_filter_snapshot is None:
                 continue
@@ -690,20 +845,61 @@ class ConversationView(ScrollView):
             ):
                 if first_changed is None:
                     first_changed = idx
+                changed += 1
             processed += 1
             if processed >= self._background_rerender_chunk_size:
                 break
+            if (time.monotonic_ns() - started_ns) >= budget_ns:
+                break
+        loop_elapsed_ns = time.monotonic_ns() - loop_started_ns
 
+        recalc_elapsed_ns = 0
         if first_changed is not None:
+            recalc_started_ns = time.monotonic_ns()
             self._recalculate_offsets_from(first_changed)
             if not self._is_following:
                 self._resolve_anchor()
             self.refresh()
+            recalc_elapsed_ns = time.monotonic_ns() - recalc_started_ns
 
-        if any(
+        pending_scan_started_ns = time.monotonic_ns()
+        has_pending = any(
             (not td.is_streaming and td._pending_filter_snapshot is not None)
             for td in self._turns
-        ):
+        )
+        pending_scan_elapsed_ns = time.monotonic_ns() - pending_scan_started_ns
+        remaining_pending = sum(
+            1
+            for td in self._turns
+            if (not td.is_streaming and td._pending_filter_snapshot is not None)
+        )
+        self._last_background_rerender_stats = {
+            "processed_turns": int(processed),
+            "changed_turns": int(changed),
+            "remaining_pending_turns": int(remaining_pending),
+            "elapsed_ms": (time.monotonic_ns() - started_total_ns) / 1_000_000.0,
+            "loop_ms": loop_elapsed_ns / 1_000_000.0,
+            "recalc_ms": recalc_elapsed_ns / 1_000_000.0,
+        }
+        cc_dump.experiments.perf_metrics.metrics.record(
+            "ui.background_rerender.total",
+            elapsed_ns=time.monotonic_ns() - started_total_ns,
+        )
+        cc_dump.experiments.perf_metrics.metrics.record(
+            "ui.background_rerender.loop",
+            elapsed_ns=loop_elapsed_ns,
+        )
+        cc_dump.experiments.perf_metrics.metrics.record(
+            "ui.background_rerender.pending_scan",
+            elapsed_ns=pending_scan_elapsed_ns,
+        )
+        if recalc_elapsed_ns > 0:
+            cc_dump.experiments.perf_metrics.metrics.record(
+                "ui.background_rerender.recalculate_offsets",
+                elapsed_ns=recalc_elapsed_ns,
+            )
+
+        if has_pending:
             self._schedule_background_rerender()
 
     # ─── Unified render invalidation ─────────────────────────────────────────
@@ -742,8 +938,15 @@ class ConversationView(ScrollView):
         cc_dump.experiments.perf_metrics.metrics.record(
             "ui.invalidate.total", elapsed_ns=elapsed_ns
         )
+        cc_dump.experiments.perf_metrics.metrics.record(
+            f"ui.invalidate.{reason}", elapsed_ns=elapsed_ns
+        )
         elapsed_ms = elapsed_ns / 1_000_000.0
+        self._invalidate_last_reason = reason
+        self._invalidate_last_ms = elapsed_ms
+        self._invalidate_samples_ms.append(elapsed_ms)
         if elapsed_ms >= float(self._slow_invalidate_warn_ms):
+            self._overlay_auto_until_ns = time.monotonic_ns() + (_OVERLAY_AUTO_HOLD_MS * 1_000_000)
             now_ns = time.monotonic_ns()
             cooldown_ns = self._slow_invalidate_log_cooldown_ms * 1_000_000
             if (
@@ -835,6 +1038,7 @@ class ConversationView(ScrollView):
         For start_idx > 0, reuses offset from previous turn.
         Widest line is always recomputed from all turns (O(n) with cached _widest_strip).
         """
+        started_ns = time.monotonic_ns()
         turns = self._turns
         if start_idx > 0 and start_idx < len(turns):
             prev = turns[start_idx - 1]
@@ -857,6 +1061,10 @@ class ConversationView(ScrollView):
         self._widest_line = max(widest, self._last_width)
         self.virtual_size = Size(self._widest_line, self._total_lines)
         self._invalidate_cache_for_turns(start_idx, len(turns))
+        cc_dump.experiments.perf_metrics.metrics.record(
+            "ui.recalculate_offsets_from.total",
+            elapsed_ns=time.monotonic_ns() - started_ns,
+        )
 
     def _on_turn_added(self, blocks: list, index: int) -> None:
         """Domain store callback: a completed turn was added."""
@@ -926,6 +1134,7 @@ class ConversationView(ScrollView):
             block_strip_map=block_strip_map,
             _flat_blocks=flat_blocks,
         )
+        td.source_chars_est = _estimate_block_chars(blocks)
         td._strip_hash = _hash_strips(strips)
         td._widest_strip = _compute_widest(strips)
         td.compute_relevant_keys()
@@ -1375,15 +1584,24 @@ class ConversationView(ScrollView):
             force: Force re-render even if filter snapshot hasn't changed
                    (e.g. theme change rebuilds gutter colors).
         """
+        started_ns = time.monotonic_ns()
         self._last_filters = filters
         self._last_search_ctx = search_ctx  # Store for lazy rerenders
 
         if self._pending_restore is not None:
             self._invalidate("restore", filters=filters)
+            cc_dump.experiments.perf_metrics.metrics.record(
+                "ui.rerender.restore",
+                elapsed_ns=time.monotonic_ns() - started_ns,
+            )
             return
 
         reason = "search" if search_ctx is not None else "filters_changed"
         self._invalidate(reason, filters=filters, search_ctx=search_ctx, force=force)
+        cc_dump.experiments.perf_metrics.metrics.record(
+            f"ui.rerender.{reason}",
+            elapsed_ns=time.monotonic_ns() - started_ns,
+        )
 
     def _rerender_affected(self, filters: dict = None, search_ctx=None, force: bool = False) -> None:
         """Re-render affected turns in place using viewport-only strategy.
@@ -1391,11 +1609,14 @@ class ConversationView(ScrollView):
         // [LAW:single-enforcer] Called via _invalidate("filters_changed") or _invalidate("search").
         Post-render (anchor resolve) handled by _post_render.
         """
+        started_total_ns = time.monotonic_ns()
         if filters is None:
             filters = self._last_filters
 
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
+        started_ns = time.monotonic_ns()
+        budget_ns = self._rerender_budget_ms * 1_000_000
 
         # Viewport-only re-rendering: only process visible turns + buffer
         vp_start, vp_end = self._viewport_turn_range()
@@ -1405,24 +1626,42 @@ class ConversationView(ScrollView):
 
         first_changed = None
         has_deferred = False
+        rendered_viewport_turns = 0
+        deferred_turns = 0
+        scanned_turns = 0
+        loop_started_ns = time.monotonic_ns()
         for idx, td in enumerate(self._turns):
             # Skip streaming turns during filter changes
             if td.is_streaming:
                 continue
+            scanned_turns += 1
 
+            within_budget = (time.monotonic_ns() - started_ns) < budget_ns
+            can_render_now = within_budget or rendered_viewport_turns == 0
             if vp_start <= idx < vp_end:
-                # Viewport turn: re-render immediately
-                if td.re_render(
-                    filters,
-                    console,
-                    width,
-                    force=force,
-                    block_cache=self._block_strip_cache,
-                    search_ctx=search_ctx,
-                    overrides=self._view_overrides,
-                ):
-                    if first_changed is None:
-                        first_changed = idx
+                # Viewport turns render within time budget; overflow is deferred.
+                if can_render_now:
+                    if td.re_render(
+                        filters,
+                        console,
+                        width,
+                        force=force,
+                        block_cache=self._block_strip_cache,
+                        search_ctx=search_ctx,
+                        overrides=self._view_overrides,
+                    ):
+                        if first_changed is None:
+                            first_changed = idx
+                    rendered_viewport_turns += 1
+                else:
+                    snapshot = {
+                        k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE)
+                        for k in td.relevant_filter_keys
+                    }
+                    if force or snapshot != td._last_filter_snapshot:
+                        td._pending_filter_snapshot = snapshot
+                        has_deferred = True
+                        deferred_turns += 1
             else:
                 # Off-viewport turn: defer re-render, mark pending
                 # Use ALWAYS_VISIBLE default to match filters dict structure
@@ -1432,11 +1671,41 @@ class ConversationView(ScrollView):
                 if force or snapshot != td._last_filter_snapshot:
                     td._pending_filter_snapshot = snapshot
                     has_deferred = True
+                    deferred_turns += 1
+        loop_elapsed_ns = time.monotonic_ns() - loop_started_ns
 
+        recalc_elapsed_ns = 0
         if first_changed is not None:
+            recalc_started_ns = time.monotonic_ns()
             self._recalculate_offsets_from(first_changed)
+            recalc_elapsed_ns = time.monotonic_ns() - recalc_started_ns
         if has_deferred:
             self._schedule_background_rerender()
+        vp_span = max(0, vp_end - vp_start)
+        self._last_rerender_stats = {
+            "scanned_turns": int(scanned_turns),
+            "viewport_turns": int(vp_span),
+            "rendered_viewport_turns": int(rendered_viewport_turns),
+            "deferred_turns": int(deferred_turns),
+            "first_changed": int(first_changed if first_changed is not None else -1),
+            "elapsed_ms": (time.monotonic_ns() - started_total_ns) / 1_000_000.0,
+            "loop_ms": loop_elapsed_ns / 1_000_000.0,
+            "recalc_ms": recalc_elapsed_ns / 1_000_000.0,
+            "search_active": bool(search_ctx is not None),
+        }
+        cc_dump.experiments.perf_metrics.metrics.record(
+            "ui.rerender_affected.total",
+            elapsed_ns=time.monotonic_ns() - started_total_ns,
+        )
+        cc_dump.experiments.perf_metrics.metrics.record(
+            "ui.rerender_affected.loop",
+            elapsed_ns=loop_elapsed_ns,
+        )
+        if recalc_elapsed_ns > 0:
+            cc_dump.experiments.perf_metrics.metrics.record(
+                "ui.rerender_affected.recalculate_offsets",
+                elapsed_ns=recalc_elapsed_ns,
+            )
 
     def ensure_turn_rendered(self, turn_index: int):
         """Force-render a specific turn, then recalculate offsets.
@@ -1532,8 +1801,8 @@ class ConversationView(ScrollView):
         with self._programmatic_scroll():
             self.scroll_end(animate=False)
 
-    def scroll_to_block(self, turn_index: int, block_index: int) -> None:
-        """Scroll to center a specific block in the viewport."""
+    def scroll_to_block(self, turn_index: int, block_index: int, line_in_block: int = 0) -> None:
+        """Scroll to center a specific block line in the viewport."""
         if turn_index >= len(self._turns):
             return
         td = self._turns[turn_index]
@@ -1542,7 +1811,12 @@ class ConversationView(ScrollView):
             # Block filtered out — scroll to turn start instead
             target_y = td.line_offset
         else:
-            target_y = td.line_offset + strip_offset
+            block_size = self._block_strip_count(td, block_index)
+            if block_size <= 0:
+                target_y = td.line_offset + strip_offset
+            else:
+                clamped_line = max(0, min(int(line_in_block), block_size - 1))
+                target_y = td.line_offset + strip_offset + clamped_line
 
         # Center in viewport
         viewport_height = self.scrollable_content_region.height
@@ -1720,8 +1994,11 @@ class ConversationView(ScrollView):
         meta_type is META_TOGGLE_BLOCK or META_TOGGLE_REGION.
         meta_value is True for block toggles, or the region index for regions.
         """
-        meta = event.style.meta
-        content_y = int(event.y + self.scroll_offset.y)
+        meta = getattr(event.style, "meta", {}) or {}
+        content_offset = event.get_content_offset(self)
+        # [LAW:single-enforcer] Content-space click translation happens only here.
+        content_y_base = content_offset.y if content_offset is not None else event.y
+        content_y = int(content_y_base + self.scroll_offset.y)
         turn = self._find_turn_for_line(content_y)
         if turn is None:
             return None
@@ -1796,7 +2073,10 @@ class ConversationView(ScrollView):
         Also stores click position for text_select_all() block selection.
         """
         # Store for text_select_all (called by Widget._on_click on double-click)
-        self._last_click_content_y = int(event.y + self.scroll_offset.y)
+        content_offset = event.get_content_offset(self)
+        # [LAW:single-enforcer] Persist click anchor using the same content-space transform.
+        content_y_base = content_offset.y if content_offset is not None else event.y
+        self._last_click_content_y = int(content_y_base + self.scroll_offset.y)
 
         target = self._resolve_click_target(event)
         if target is None:
@@ -2197,6 +2477,285 @@ class StatsPanel(Static):
         self._refresh_display()
 
 
+class PerfPanel(Static):
+    """Runtime performance diagnostics panel.
+
+    // [LAW:one-source-of-truth] Perf snapshot is derived from live app/ConversationView state.
+    """
+
+    _VIEW_ORDER = ("overview", "hotspots", "ui", "render", "search", "pipeline")
+
+    def __init__(self):
+        super().__init__("")
+        self._view_index = 0
+        self._store = None
+        self._app = None
+        self._last_snapshot: dict = {}
+
+    def refresh_from_store(self, store, app=None):
+        """Refresh diagnostics from app runtime state.
+
+        store is accepted for protocol compatibility; app is the canonical runtime source.
+        """
+        self._store = store
+        if app is not None:
+            self._app = app
+        if self._app is None:
+            self._last_snapshot = {}
+            self._refresh_display()
+            return
+
+        view_mode = self._VIEW_ORDER[self._view_index]
+        include_pipeline = view_mode == "pipeline"
+        self._last_snapshot = self._build_snapshot(self._app, include_pipeline=include_pipeline)
+        self._refresh_display()
+
+    def _build_snapshot(self, app, *, include_pipeline: bool) -> dict:
+        """Build a perf snapshot from live app and active conversation state."""
+        conv = app._get_conv() if hasattr(app, "_get_conv") else None
+        now_ns = time.monotonic_ns()
+        ui_lag_ms = max(
+            0.0,
+            (now_ns - int(getattr(app, "_ui_last_heartbeat_ns", now_ns))) / 1_000_000.0,
+        )
+
+        try:
+            event_backlog = int(app._event_queue.qsize())
+        except Exception:
+            event_backlog = 0
+
+        if conv is not None:
+            pending_turns = sum(
+                1
+                for td in conv._turns
+                if (not td.is_streaming and td._pending_filter_snapshot is not None)
+            )
+            samples = list(conv._invalidate_samples_ms)
+            sorted_samples = sorted(float(v) for v in samples)
+            if sorted_samples:
+                p95_idx = int(0.95 * (len(sorted_samples) - 1))
+                avg_ms = sum(sorted_samples) / len(sorted_samples)
+                p95_ms = sorted_samples[p95_idx]
+                max_ms = sorted_samples[-1]
+                min_ms = sorted_samples[0]
+            else:
+                avg_ms = 0.0
+                p95_ms = 0.0
+                max_ms = 0.0
+                min_ms = 0.0
+            vp_start, vp_end = conv._viewport_turn_range()
+            turn_count = len(conv._turns)
+            top_level_blocks = sum(len(td.blocks) for td in conv._turns)
+            flat_blocks = sum(len(td._flat_blocks) for td in conv._turns)
+            source_chars_total = sum(int(getattr(td, "source_chars_est", 0)) for td in conv._turns)
+            source_chars_max = max(
+                (int(getattr(td, "source_chars_est", 0)) for td in conv._turns),
+                default=0,
+            )
+            source_chars_avg = (source_chars_total / turn_count) if turn_count > 0 else 0.0
+            render = {
+                "turn_count": turn_count,
+                "streaming_turns": sum(1 for td in conv._turns if td.is_streaming),
+                "pending_turns": pending_turns,
+                "total_lines": int(conv._total_lines),
+                "widest_line": int(conv._widest_line),
+                "line_cache_size": len(conv._line_cache),
+                "line_cache_cap": int(getattr(conv._line_cache, "maxsize", 0)),
+                "block_cache_size": len(conv._block_strip_cache),
+                "block_cache_cap": int(getattr(conv._block_strip_cache, "maxsize", 0)),
+                "top_level_blocks": int(top_level_blocks),
+                "flat_blocks": int(flat_blocks),
+                "source_chars_total": int(source_chars_total),
+                "source_chars_avg": float(source_chars_avg),
+                "source_chars_max": int(source_chars_max),
+                "invalidate_last_reason": str(conv._invalidate_last_reason or "--"),
+                "invalidate_last_ms": float(conv._invalidate_last_ms),
+                "invalidate_min_ms": min_ms,
+                "invalidate_avg_ms": avg_ms,
+                "invalidate_p95_ms": p95_ms,
+                "invalidate_max_ms": max_ms,
+                "rerender_budget_ms": int(conv._rerender_budget_ms),
+                "bg_budget_ms": int(conv._background_rerender_budget_ms),
+                "bg_chunk_size": int(conv._background_rerender_chunk_size),
+                "overlay_metrics_enabled": bool(conv._overlay_metrics_enabled),
+                "viewport_start": int(vp_start),
+                "viewport_end": int(vp_end),
+                "last_rerender_stats": dict(conv._last_rerender_stats),
+                "last_background_stats": dict(conv._last_background_rerender_stats),
+            }
+        else:
+            render = {
+                "turn_count": 0,
+                "streaming_turns": 0,
+                "pending_turns": 0,
+                "total_lines": 0,
+                "widest_line": 0,
+                "line_cache_size": 0,
+                "line_cache_cap": 0,
+                "block_cache_size": 0,
+                "block_cache_cap": 0,
+                "top_level_blocks": 0,
+                "flat_blocks": 0,
+                "source_chars_total": 0,
+                "source_chars_avg": 0.0,
+                "source_chars_max": 0,
+                "invalidate_last_reason": "--",
+                "invalidate_last_ms": 0.0,
+                "invalidate_min_ms": 0.0,
+                "invalidate_avg_ms": 0.0,
+                "invalidate_p95_ms": 0.0,
+                "invalidate_max_ms": 0.0,
+                "rerender_budget_ms": 0,
+                "bg_budget_ms": 0,
+                "bg_chunk_size": 0,
+                "overlay_metrics_enabled": False,
+                "viewport_start": 0,
+                "viewport_end": 0,
+                "last_rerender_stats": {},
+                "last_background_stats": {},
+            }
+
+        search_state = getattr(app, "_search_state", None)
+        if search_state is not None:
+            search_modes = int(search_state.modes)
+            search = {
+                "phase": search_state.phase.value,
+                "query_len": len(search_state.query),
+                "query_preview": (
+                    search_state.query[:80]
+                    + ("..." if len(search_state.query) > 80 else "")
+                ),
+                "cursor_pos": int(search_state.cursor_pos),
+                "match_count": len(search_state.matches),
+                "current_index": (int(search_state.current_index) + 1)
+                if search_state.matches
+                else 0,
+                "text_cache_size": len(search_state.text_cache),
+                "expanded_blocks": len(search_state.expanded_blocks),
+                "expanded_regions": len(search_state.expanded_regions),
+                "incremental": bool(search_modes & 8),
+                "last_scan_turns": int(getattr(search_state, "last_scan_turns", 0)),
+                "last_scan_blocks": int(getattr(search_state, "last_scan_blocks", 0)),
+                "last_scan_chars": int(getattr(search_state, "last_scan_chars", 0)),
+                "last_scan_matches": int(getattr(search_state, "last_scan_matches", 0)),
+                "last_search_ms": float(getattr(search_state, "last_search_ms", 0.0)),
+                "last_search_rerender_ms": float(
+                    getattr(search_state, "last_search_rerender_ms", 0.0)
+                ),
+                "last_nav_ms": float(getattr(search_state, "last_nav_ms", 0.0)),
+                "last_region_lookup_ms": float(
+                    getattr(search_state, "last_region_lookup_ms", 0.0)
+                ),
+            }
+        else:
+            search = {
+                "phase": "inactive",
+                "query_len": 0,
+                "query_preview": "",
+                "cursor_pos": 0,
+                "match_count": 0,
+                "current_index": 0,
+                "text_cache_size": 0,
+                "expanded_blocks": 0,
+                "expanded_regions": 0,
+                "incremental": False,
+                "last_scan_turns": 0,
+                "last_scan_blocks": 0,
+                "last_scan_chars": 0,
+                "last_scan_matches": 0,
+                "last_search_ms": 0.0,
+                "last_search_rerender_ms": 0.0,
+                "last_nav_ms": 0.0,
+                "last_region_lookup_ms": 0.0,
+            }
+
+        pipeline_enabled = bool(cc_dump.experiments.perf_metrics.metrics.enabled)
+        stage_rows: list[dict] = []
+        hotspot_rows: list[dict] = []
+        stage_count = 0
+        if pipeline_enabled:
+            # // [LAW:single-enforcer] Perf metrics are read from one collector boundary.
+            stats = cc_dump.experiments.perf_metrics.metrics.snapshot()
+            stage_count = len(stats)
+            for name, stage in stats.items():
+                stage_rows.append(
+                    {
+                        "name": name,
+                        "count": int(stage.count),
+                        "min_us": float(stage.min_us),
+                        "mean_us": float(stage.mean_us),
+                        "p50_us": float(stage.p50_us),
+                        "p95_us": float(stage.p95_us),
+                        "p99_us": float(stage.p99_us),
+                        "max_us": float(stage.max_us),
+                    }
+                )
+            stage_rows.sort(key=lambda r: (r["p95_us"], r["count"]), reverse=True)
+            hotspot_prefixes = (
+                "ui.rerender",
+                "ui.rerender_affected",
+                "ui.background_rerender",
+                "ui.recalculate_offsets",
+                "ui.turn.re_render",
+                "search.",
+                "render.search.matches_in_block",
+            )
+            hotspot_rows = [
+                row for row in stage_rows if str(row.get("name", "")).startswith(hotspot_prefixes)
+            ][:15]
+        top_stages = stage_rows[:24] if include_pipeline else stage_rows[:10]
+
+        return {
+            "ui_lag_ms": ui_lag_ms,
+            "ui_watchdog_enabled": bool(getattr(app, "_ui_watchdog_enabled", False)),
+            "ui_watchdog_poll_s": float(getattr(app, "_ui_watchdog_poll_s", 0.0)),
+            "ui_stall_warn_ms": float(getattr(app, "_ui_stall_warn_ms", 0.0)),
+            "ui_stall_dump_ms": float(getattr(app, "_ui_stall_dump_ms", 0.0)),
+            "ui_stall_dump_cooldown_s": float(
+                getattr(app, "_ui_stall_dump_cooldown_s", 0.0)
+            ),
+            "event_backlog": event_backlog,
+            "event_backlog_busy_threshold": int(
+                getattr(app, "_ui_backlog_busy_threshold", 0)
+            ),
+            "slow_event_warn_ms": float(getattr(app, "_slow_event_warn_ms", 0.0)),
+            "busy_reasons": tuple(sorted(getattr(app, "_busy_reasons", ()))),
+            "render": render,
+            "search": search,
+            "pipeline": {
+                "enabled": pipeline_enabled,
+                "stage_count": stage_count,
+                "top_stages": top_stages,
+                "hotspot_stages": hotspot_rows,
+            },
+        }
+
+    def _refresh_display(self):
+        if not self.is_attached:
+            return
+        view_mode = self._VIEW_ORDER[self._view_index]
+        text = cc_dump.tui.panel_renderers.render_perf_panel(
+            self._last_snapshot,
+            view_mode,
+        )
+        self.update(Text(text, style="default"))
+
+    def cycle_mode(self):
+        self._view_index = (self._view_index + 1) % len(self._VIEW_ORDER)
+        self.refresh_from_store(self._store, app=self._app)
+
+    def get_state(self) -> dict:
+        return {
+            "view_index": self._view_index,
+            "last_snapshot": dict(self._last_snapshot),
+        }
+
+    def restore_state(self, state: dict):
+        self._view_index = int(state.get("view_index", 0)) % len(self._VIEW_ORDER)
+        self._last_snapshot = dict(state.get("last_snapshot", {}))
+        self._refresh_display()
+
+
 class ToolEconomicsPanel(Static):
     """Panel showing per-tool token usage aggregates.
 
@@ -2371,6 +2930,11 @@ def create_conversation_view(view_store=None, domain_store=None) -> Conversation
 def create_stats_panel() -> StatsPanel:
     """Create a new StatsPanel instance."""
     return StatsPanel()
+
+
+def create_perf_panel() -> PerfPanel:
+    """Create a new PerfPanel instance."""
+    return PerfPanel()
 
 
 def create_economics_panel() -> ToolEconomicsPanel:

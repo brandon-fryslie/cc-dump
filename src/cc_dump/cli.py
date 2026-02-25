@@ -34,6 +34,8 @@ import cc_dump.app.domain_store
 import cc_dump.app.session_store
 import cc_dump.tui.view_store_bridge
 from cc_dump.tui.app import CcDumpApp
+from cc_dump.proxies.runtime import ProxyRuntime
+import cc_dump.proxies.registry
 
 
 def main():
@@ -110,6 +112,19 @@ def main():
         default=None,
         help="Seed hue (0-360) for color palette (default: 190, cyan). Env: CC_DUMP_SEED_HUE",
     )
+    parser.add_argument(
+        "--proxy-auth",
+        nargs="?",
+        const="active",
+        default=None,
+        help="Run provider auth flow and persist returned settings. Optional provider id; defaults to active provider.",
+    )
+    parser.add_argument(
+        "--proxy-auth-force",
+        action="store_true",
+        default=False,
+        help="Force fresh provider auth even when credentials are already configured.",
+    )
     args = parser.parse_args()
 
     # Install stderr tee before anything else writes to stderr
@@ -137,6 +152,30 @@ def main():
             for path in result["removed_paths"]:
                 print(f"  - {path}")
         return
+
+    auth_target = args.proxy_auth
+    if auth_target is not None:
+        force_auth = bool(args.proxy_auth_force)
+        provider_id = str(auth_target or "").strip().lower()
+        if provider_id in {"", "active"}:
+            provider_id = str(cc_dump.io.settings.load_setting("proxy_provider", "anthropic") or "anthropic").strip().lower()
+        plugin = cc_dump.proxies.registry.provider_plugin(provider_id)
+        if plugin is None:
+            print(f"Provider '{provider_id}' does not expose an auth flow.")
+            return
+        run_auth = getattr(plugin, "run_auth_flow", None)
+        if run_auth is None:
+            print(f"Provider '{provider_id}' does not expose an auth flow.")
+            return
+        try:
+            result = run_auth(force=force_auth)
+            for key, value in dict(result.settings_updates).items():
+                cc_dump.io.settings.save_setting(str(key), value)
+            print(str(result.message))
+            return
+        except Exception as e:
+            print(f"{provider_id} auth failed: {e}")
+            return
 
     # Resolve --continue / --resume to load latest recording
     if args.resume is not None:
@@ -183,8 +222,19 @@ def main():
             print(f"   Error loading HAR file: {e}")
             return
 
+    # Settings store (created early so proxy runtime can load persisted provider config)
+    base_settings_overrides = {
+        "proxy_anthropic_base_url": args.target.rstrip("/") if args.target else "",
+    }
+    settings_overrides = cc_dump.proxies.registry.apply_env_overrides(base_settings_overrides, os.environ)
+    settings_store = cc_dump.app.settings_store.create(initial_overrides=settings_overrides)
+    proxy_runtime = ProxyRuntime()
+    proxy_runtime.update_from_settings({k: settings_store.get(k) for k in cc_dump.app.settings_store.SCHEMA})
+
     # Always start proxy server
-    ProxyHandler.target_host = args.target.rstrip("/") if args.target else None
+    snapshot = proxy_runtime.snapshot()
+    ProxyHandler.target_host = snapshot.active_base_url or None
+    ProxyHandler.proxy_runtime = proxy_runtime
     ProxyHandler.event_queue = event_q
 
     server = http.server.ThreadingHTTPServer((args.host, args.port), ProxyHandler)
@@ -197,8 +247,14 @@ def main():
 
     print("🚀 cc-dump proxy started")
     print(f"   Listening on: http://{args.host}:{actual_port}")
-    if ProxyHandler.target_host:
-        print(f"   Reverse proxy mode: {ProxyHandler.target_host}")
+    startup_snapshot = proxy_runtime.snapshot()
+    if startup_snapshot.reverse_proxy_enabled:
+        print(
+            "   Reverse proxy mode: {} ({})".format(
+                startup_snapshot.active_base_url,
+                startup_snapshot.provider,
+            )
+        )
         print(f"   Usage: ANTHROPIC_BASE_URL=http://{args.host}:{actual_port} claude")
     else:
         print("   Forward proxy mode (dynamic targets)")
@@ -247,8 +303,7 @@ def main():
         print("   Recording: disabled (--no-record)")
 
     # Tmux integration (optional — no-op when not in tmux or libtmux missing)
-    # Create settings store (reactive, hot-reloadable)
-    settings_store = cc_dump.app.settings_store.create()
+    # Settings store already created above (reactive, hot-reloadable)
 
     tmux_ctrl = None
     TmuxState = cc_dump.app.tmux_controller.TmuxState
@@ -306,6 +361,7 @@ def main():
         "side_channel_manager": side_channel_mgr,
         "tmux_controller": tmux_ctrl,
         "settings_store": settings_store,
+        "proxy_runtime": proxy_runtime,
     }
     settings_store._reaction_disposers = cc_dump.app.settings_store.setup_reactions(
         settings_store, store_context
@@ -333,6 +389,7 @@ def main():
         side_channel_manager=side_channel_mgr,
         data_dispatcher=data_dispatcher,
         settings_store=settings_store,
+        proxy_runtime=proxy_runtime,
         session_store=session_store,
         view_store=view_store,
         domain_store=domain_store,

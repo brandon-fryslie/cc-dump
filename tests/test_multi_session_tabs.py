@@ -53,7 +53,7 @@ def _make_side_channel_replay_entry(
     )
 
 
-async def test_replay_routes_turns_to_per_session_domain_stores():
+async def test_replay_routes_turns_to_single_primary_domain_store():
     session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     session_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     replay_data = [
@@ -71,55 +71,20 @@ async def test_replay_routes_turns_to_per_session_domain_stores():
 
     async with run_app(replay_data=replay_data) as (pilot, app):
         _ = pilot
-        ds_a = app._get_domain_store(session_a)
-        ds_b = app._get_domain_store(session_b)
+        primary_ds = app._get_domain_store(app._default_session_key)
+        assert primary_ds.completed_count == 4
 
-        assert ds_a.completed_count == 2
-        assert ds_b.completed_count == 2
+        # [LAW:one-source-of-truth] Non-workbench traffic stays in one primary lane.
+        assert session_a not in app._session_tab_ids
+        assert session_b not in app._session_tab_ids
 
-        conv_a = app._get_conv(session_key=session_a)
-        conv_b = app._get_conv(session_key=session_b)
-        assert conv_a is not None
-        assert conv_b is not None
-
-        text_a = "".join(strips_to_text(td.strips) for td in conv_a._turns)
-        text_b = "".join(strips_to_text(td.strips) for td in conv_b._turns)
-        assert "session-a-request" in text_a
-        assert "session-a-response" in text_a
-        assert "session-b-request" not in text_a
-        assert "session-b-response" not in text_a
-        assert "session-b-request" in text_b
-        assert "session-b-response" in text_b
-        assert "session-a-request" not in text_b
-        assert "session-a-response" not in text_b
-
-
-async def test_tab_activation_updates_active_domain_store_alias():
-    session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    session_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-    replay_data = [
-        _make_replay_entry(
-            session_id=session_a,
-            content="session-a-request",
-            response_text="session-a-response",
-        ),
-        _make_replay_entry(
-            session_id=session_b,
-            content="session-b-request",
-            response_text="session-b-response",
-        ),
-    ]
-
-    async with run_app(replay_data=replay_data) as (pilot, app):
-        tabs = app._get_conv_tabs()
-        assert tabs is not None
-        tab_b = app._session_tab_ids[session_b]
-        tabs.active = tab_b
-        await pilot.pause()
-
-        active_store = app._get_active_domain_store()
-        assert active_store is app._get_domain_store(session_b)
-        assert app._domain_store is active_store
+        primary_conv = app._get_conv(session_key=app._default_session_key)
+        assert primary_conv is not None
+        primary_text = "".join(strips_to_text(td.strips) for td in primary_conv._turns)
+        assert "session-a-request" in primary_text
+        assert "session-a-response" in primary_text
+        assert "session-b-request" in primary_text
+        assert "session-b-response" in primary_text
 
 
 async def test_workbench_results_capture_active_session_context():
@@ -139,11 +104,6 @@ async def test_workbench_results_capture_active_session_context():
     ]
 
     async with run_app(replay_data=replay_data) as (pilot, app):
-        tabs = app._get_conv_tabs()
-        assert tabs is not None
-        tabs.active = app._session_tab_ids[session_b]
-        await pilot.pause()
-
         app._set_side_channel_result(
             text="workbench context probe",
             source="preview",
@@ -156,8 +116,8 @@ async def test_workbench_results_capture_active_session_context():
         workbench_results = app._get_workbench_results_view()
         assert workbench_results is not None
         state = workbench_results.get_state()
-        assert state["context_session_id"] == session_b
-        assert "context=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" in str(state["meta"])
+        assert state["context_session_id"] == app._default_session_key
+        assert "context=__default__" in str(state["meta"])
 
 
 async def test_side_channel_replay_routes_to_separate_lane_without_primary_contamination():
@@ -180,13 +140,13 @@ async def test_side_channel_replay_routes_to_separate_lane_without_primary_conta
     async with run_app(replay_data=replay_data) as (pilot, app):
         _ = pilot
         side_key = app._workbench_session_key
-        primary_ds = app._get_domain_store(session_a)
+        primary_ds = app._get_domain_store(app._default_session_key)
         side_ds = app._get_domain_store(side_key)
 
         assert primary_ds.completed_count == 2
         assert side_ds.completed_count == 2
 
-        primary_conv = app._get_conv(session_key=session_a)
+        primary_conv = app._get_conv(session_key=app._default_session_key)
         side_conv = app._get_conv(session_key=side_key)
         assert primary_conv is not None
         assert side_conv is not None
@@ -269,6 +229,9 @@ async def test_workbench_tabs_stay_rightmost_when_new_primary_sessions_arrive():
         labels = [str(tab.label) for tab in app._get_conv_tabs().query("Tab")]
         assert labels[-1] == "Workbench"
         assert labels[-2] == "Workbench Session"
+        assert "Session" in labels
+        assert "aaaaaaaa" not in " ".join(labels)
+        assert "bbbbbbbb" not in " ".join(labels)
 
 
 async def test_side_channel_stream_progress_routes_to_side_lane_without_primary_leakage():
@@ -328,7 +291,7 @@ async def test_side_channel_stream_progress_routes_to_side_lane_without_primary_
         await pilot.pause()
 
         side_key = app._workbench_session_key
-        primary_ds = app._get_domain_store(session_a)
+        primary_ds = app._get_domain_store(app._default_session_key)
         side_ds = app._get_domain_store(side_key)
 
         primary_blocks = primary_ds.get_stream_blocks(main_request_id)

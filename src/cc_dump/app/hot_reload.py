@@ -45,7 +45,9 @@ _RELOAD_ORDER = [
     "cc_dump.tui.error_indicator",  # depends on: nothing (pure rendering)
     "cc_dump.tui.info_panel",  # depends on: palette, panel_renderers
     "cc_dump.tui.keys_panel",  # depends on: panel_renderers
-    "cc_dump.tui.settings_panel",  # depends on: palette
+    "cc_dump.tui.settings_form_panel",  # depends on: palette, rendering, chip
+    "cc_dump.tui.settings_panel",  # depends on: settings_form_panel
+    "cc_dump.tui.proxy_settings_panel",  # depends on: settings_form_panel, proxy registry
     "cc_dump.tui.side_channel_panel",  # depends on: palette
     "cc_dump.tui.launch_config_panel",  # depends on: palette, settings_panel
     "cc_dump.tui.session_panel",  # depends on: panel_renderers

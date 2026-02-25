@@ -18,6 +18,7 @@ import cc_dump.tui.widget_factory
 import cc_dump.tui.info_panel
 import cc_dump.tui.keys_panel
 import cc_dump.tui.settings_panel
+import cc_dump.tui.proxy_settings_panel
 import cc_dump.tui.custom_footer
 import cc_dump.app.settings_store
 import cc_dump.app.view_store
@@ -454,6 +455,11 @@ async def _replace_all_widgets_inner(app) -> None:
         await panel.remove()
     app._view_store.set("panel:settings", False)
 
+    # Remove proxy settings panel if mounted (stateless, no state transfer needed)
+    for panel in app.screen.query(cc_dump.tui.proxy_settings_panel.ProxySettingsPanel):
+        await panel.remove()
+    app._view_store.set("panel:proxy_settings", False)
+
     # Remove launch config panel if mounted (stateless, no state transfer needed)
     for panel in app.screen.query(cc_dump.tui.launch_config_panel.LaunchConfigPanel):
         await panel.remove()
@@ -564,6 +570,10 @@ def _rehydrate_panels_from_store(app, new_panels: dict[str, object]) -> None:
     timeline_panel = new_panels.get("timeline")
     if timeline_panel is not None:
         timeline_panel.refresh_from_store(analytics_store)
+
+    perf_panel = new_panels.get("perf")
+    if perf_panel is not None:
+        perf_panel.refresh_from_store(analytics_store, app=app)
 
     session_panel = new_panels.get("session")
     if session_panel is not None:

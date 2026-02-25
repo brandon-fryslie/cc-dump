@@ -97,6 +97,23 @@ class TestNormalModeKeyDispatch:
         # Panel should be removed
         assert not app.screen.query(KeysPanel)
 
+    async def test_proxy_settings_panel_toggle(self, app_and_pilot):
+        """Pressing 'P' mounts proxy settings panel, pressing again removes it."""
+        pilot, app = app_and_pilot
+        from cc_dump.tui.proxy_settings_panel import ProxySettingsPanel
+
+        assert not app.screen.query(ProxySettingsPanel)
+
+        await pilot.press("P")
+        await pilot.pause()
+        assert app._view_store.get("panel:proxy_settings") is True
+        assert len(app.screen.query(ProxySettingsPanel)) == 1
+
+        await pilot.press("P")
+        await pilot.pause()
+        assert app._view_store.get("panel:proxy_settings") is False
+        assert not app.screen.query(ProxySettingsPanel)
+
     async def test_dot_cycles_active_panel(self, app_and_pilot):
         """Pressing '.' cycles active_panel through all registered panels."""
         from cc_dump.tui.panel_registry import PANEL_ORDER

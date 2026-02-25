@@ -26,6 +26,7 @@ for _key, _name, _desc, _default in CATEGORY_CONFIG:
 SCHEMA["panel:active"] = "session"
 SCHEMA["panel:side_channel"] = False
 SCHEMA["panel:settings"] = False
+SCHEMA["panel:proxy_settings"] = False
 SCHEMA["panel:launch_config"] = False
 # // [LAW:one-source-of-truth] String, not FollowState enum — enum class identity
 # changes on reload; string comparison is stable across reloads.

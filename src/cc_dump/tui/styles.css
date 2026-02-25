@@ -51,6 +51,15 @@ StatsPanel {
     background: $panel;
 }
 
+PerfPanel {
+    height: auto;
+    max-height: 12;
+    dock: top;
+    padding: 0 1;
+    border: solid $success-muted;
+    background: $panel;
+}
+
 SessionPanel {
     height: 1;
     dock: top;

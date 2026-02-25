@@ -103,6 +103,7 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
 
         # Settings panel
         "S": "toggle_settings",
+        "P": "toggle_proxy_settings",
 
         # Launch config panel
         "C": "toggle_launch_config",
@@ -156,6 +157,7 @@ FOOTER_KEYS: dict[InputMode, list[tuple[str, str]]] = {
         ("-=", "preset"),
         ("?", "keys"),
         ("/", "search"),
+        ("S/P", "settings"),
         ("c", "claude"),
         ("z", "zoom"),
     ],
@@ -214,6 +216,7 @@ KEY_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("C", "Run configs"),
         ("z/Z", "Zoom (tmux)"),
         ("S", "Settings"),
+        ("P", "Proxy settings"),
         ("X", "AI Workbench"),
         ("^C ^C", "Quit"),
     ]),
