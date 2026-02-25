@@ -15,7 +15,7 @@ def test_cache_key_includes_purpose_and_prompt_version(tmp_path):
         content=content,
     )
     key_c = cache.make_key(
-        purpose="decision_ledger",
+        purpose="handoff_note",
         prompt_version="v1",
         content=content,
     )

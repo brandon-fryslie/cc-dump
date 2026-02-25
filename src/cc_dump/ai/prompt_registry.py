@@ -7,8 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from cc_dump.ai.side_channel_purpose import normalize_purpose, UTILITY_CUSTOM_PURPOSE
-
+UTILITY_CUSTOM_PURPOSE = "utility_custom"
 
 @dataclass(frozen=True)
 class PromptSpec:
@@ -24,17 +23,6 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
         instruction=(
             "Summarize this conversation concisely. "
             "Focus on accomplishments and key decisions."
-        ),
-    ),
-    "decision_ledger": PromptSpec(
-        purpose="decision_ledger",
-        version="v1",
-        instruction=(
-            "Extract explicit decisions and return strict JSON only with shape "
-            "{\"decisions\":[{\"decision_id\":\"\",\"statement\":\"\",\"rationale\":\"\","
-            "\"alternatives\":[],\"consequences\":[],\"status\":\"proposed|accepted|revised|deprecated\","
-            "\"source_links\":[{\"message_index\":0}],\"supersedes\":[]}]}. "
-            "Use empty arrays for unknown fields."
         ),
     ),
     "action_extraction": PromptSpec(
@@ -105,6 +93,30 @@ _UTILITY_CUSTOM_PROMPT = PromptSpec(
     version="v1",
     instruction="Process the provided context according to the request.",
 )
+
+# Ordered for deterministic UI/report rendering.
+SIDE_CHANNEL_PURPOSES: tuple[str, ...] = (
+    "core_debug_lane",
+    "block_summary",
+    "action_extraction",
+    "handoff_note",
+    "release_notes",
+    "incident_timeline",
+    "conversation_qa",
+    "checkpoint_summary",
+    "compaction",
+    UTILITY_CUSTOM_PURPOSE,
+)
+
+_SIDE_CHANNEL_PURPOSE_SET = frozenset(SIDE_CHANNEL_PURPOSES)
+
+
+def normalize_purpose(purpose: str) -> str:
+    """Return canonical purpose value for side-channel requests.
+
+    // [LAW:single-enforcer] Purpose normalization is enforced only here.
+    """
+    return purpose if purpose in _SIDE_CHANNEL_PURPOSE_SET else UTILITY_CUSTOM_PURPOSE
 
 
 def get_prompt_spec(purpose: str) -> PromptSpec:

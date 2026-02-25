@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from cc_dump.ai.side_channel_purpose import SIDE_CHANNEL_PURPOSES, normalize_purpose
+from cc_dump.ai.prompt_registry import SIDE_CHANNEL_PURPOSES, normalize_purpose
 
 
 REDACTION_POLICY_VERSION = "redaction-v1"
