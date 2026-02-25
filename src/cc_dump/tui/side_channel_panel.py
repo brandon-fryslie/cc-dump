@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.widget import Widget
-from textual.widgets import Checkbox, Input, Select, Static
+from textual.widgets import Checkbox, Input, Select, Static, TextArea
 
 from cc_dump.core.analysis import fmt_tokens
 from cc_dump.ai.utility_catalog import UtilityRegistry
@@ -57,6 +57,15 @@ class UtilityLaunchDraft:
     """Selected utility from bounded launcher."""
 
     utility_id: str
+
+
+@dataclass(frozen=True)
+class PromptEditorDraft:
+    """Prompt preview/edit controls collected from panel widgets."""
+
+    target_action: str
+    use_override: bool
+    prompt_text: str
 
 
 @dataclass(frozen=True)
@@ -165,6 +174,19 @@ WORKBENCH_CONTROL_GROUPS: tuple[WorkbenchControlGroup, ...] = (
             ),
         ),
     ),
+    WorkbenchControlGroup(
+        title="Prompt",
+        controls=(
+            WorkbenchControlSpec(
+                key="prompt_preview",
+                intent="prompt",
+                label="Preview Prompt",
+                action="app.sc_prompt_preview",
+                availability="ready",
+                owner_ticket="cc-dump-mjb.1",
+            ),
+        ),
+    ),
 )
 
 
@@ -177,19 +199,25 @@ class SideChannelPanel(Widget):
         width: 40%;
         min-width: 30;
         max-width: 60;
-        border-left: solid $accent;
+        border-left: solid $secondary-muted;
         padding: 1;
         height: 1fr;
         layout: vertical;
+        background: $panel;
+        color: $text;
     }
 
     SideChannelPanel #sc-title {
         text-style: bold;
         margin-bottom: 1;
+        color: $text-primary;
     }
 
     SideChannelPanel #sc-status {
         margin-bottom: 1;
+        color: $text-secondary;
+        background: $panel-darken-1;
+        padding: 0 1;
     }
 
     SideChannelPanel #sc-usage-summary {
@@ -199,8 +227,10 @@ class SideChannelPanel(Widget):
 
     SideChannelPanel .sc-group-title {
         text-style: bold;
-        color: $text-muted;
+        color: $text-secondary;
         margin-top: 1;
+        border-top: solid $border-blurred;
+        padding-top: 1;
     }
 
     SideChannelPanel Chip {
@@ -210,8 +240,8 @@ class SideChannelPanel(Widget):
     }
 
     SideChannelPanel Chip.-dim {
-        background: $surface-lighten-1;
-        color: $text-muted;
+        background: $surface;
+        color: $text-disabled;
     }
 
     SideChannelPanel #sc-qa-question {
@@ -253,20 +283,64 @@ class SideChannelPanel(Widget):
         margin-bottom: 1;
     }
 
+    SideChannelPanel #sc-prompt-target {
+        margin-top: 1;
+    }
+
+    SideChannelPanel #sc-prompt-override {
+        margin-top: 1;
+    }
+
+    SideChannelPanel #sc-prompt-editor {
+        margin-top: 1;
+        margin-bottom: 1;
+        height: 10;
+        border: round $border;
+        background: $surface;
+        color: $text;
+    }
+
+    SideChannelPanel #sc-prompt-editor:focus {
+        border: round $primary;
+        background: $surface-lighten-1;
+    }
+
     SideChannelPanel #sc-result-scroll {
         height: 1fr;
         margin-top: 1;
+        border: round $border;
+        background: $surface-darken-1;
+        padding: 0 1;
     }
 
     SideChannelPanel #sc-meta {
         text-style: italic;
         color: $text-muted;
         margin-top: 1;
+        background: $panel-darken-1;
+        padding: 0 1;
     }
 
     SideChannelPanel #sc-usage {
         margin-top: 1;
         color: $text-muted;
+    }
+
+    SideChannelPanel Input,
+    SideChannelPanel Select {
+        background: $surface;
+        color: $text;
+        border: round $border;
+    }
+
+    SideChannelPanel Input:focus,
+    SideChannelPanel Select:focus {
+        border: round $primary;
+        background: $surface-lighten-1;
+    }
+
+    SideChannelPanel Checkbox {
+        color: $text-secondary;
     }
     """
 
@@ -306,6 +380,20 @@ class SideChannelPanel(Widget):
             allow_blank=False,
             id="sc-utility-select",
         )
+        yield Static("Prompt Editor", classes="sc-group-title")
+        yield Select(
+            [
+                ("Summarize Recent", "summarize_recent"),
+                ("Ask Scoped Q&A", "qa_submit"),
+                ("Extract Actions", "action_extract"),
+                ("Run Utility", "utility_run"),
+            ],
+            value="summarize_recent",
+            allow_blank=False,
+            id="sc-prompt-target",
+        )
+        yield Checkbox("Use edited prompt for selected tool", id="sc-prompt-override")
+        yield TextArea("", id="sc-prompt-editor")
         with VerticalScroll(id="sc-result-scroll"):
             yield Static("", id="sc-result")
         yield Static("", id="sc-meta")
@@ -385,6 +473,23 @@ class SideChannelPanel(Widget):
         value = self.query_one("#sc-utility-select", Select).value
         utility_id = value if isinstance(value, str) else _utility_default_value()
         return UtilityLaunchDraft(utility_id=utility_id)
+
+    def read_prompt_editor_draft(self) -> PromptEditorDraft:
+        """Read selected action target + optional prompt override text."""
+        target_value = self.query_one("#sc-prompt-target", Select).value
+        target_action = target_value if isinstance(target_value, str) else "summarize_recent"
+        editor = self.query_one("#sc-prompt-editor", TextArea)
+        return PromptEditorDraft(
+            target_action=target_action,
+            use_override=self.query_one("#sc-prompt-override", Checkbox).value,
+            prompt_text=str(editor.text or ""),
+        )
+
+    def set_prompt_editor_text(self, text: str) -> None:
+        """Replace prompt editor content with generated prompt text."""
+        editor = self.query_one("#sc-prompt-editor", TextArea)
+        editor.load_text(text)
+        editor.text = text
 
 
 def create_side_channel_panel() -> SideChannelPanel:

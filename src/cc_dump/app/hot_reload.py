@@ -19,11 +19,15 @@ from pathlib import Path
 _RELOAD_ORDER = [
     "cc_dump.core.palette",  # no deps within project, base for all colors
     "cc_dump.tui.input_modes",  # no deps within project, pure data
+    "cc_dump.tui.category_config",  # no deps within project, pure data
+    "cc_dump.tui.panel_registry",  # no deps within project, pure data registry
     "cc_dump.core.analysis",  # no deps within project
     "cc_dump.core.formatting",  # depends on: palette, analysis
+    "cc_dump.tui.protocols",  # no deps within project, runtime-checkable protocols
     "cc_dump.tui.action_config",  # depends on: formatting (VisState), pure data
     "cc_dump.app.launch_config",  # depends on: settings (pure data + persistence)
     "cc_dump.app.settings_store",  # depends on: settings (schema + reactions)
+    "cc_dump.app.session_store",  # depends on: snarfx only, pure schema
     "cc_dump.app.view_store",  # depends on: formatting (VisState), category_config
     "cc_dump.core.segmentation",  # depends on: nothing (pure parser, before rendering)
     "cc_dump.pipeline.router",  # depends on: nothing within reloadable set
@@ -31,6 +35,8 @@ _RELOAD_ORDER = [
     "cc_dump.tui.rendering",  # depends on: formatting, palette
     "cc_dump.tui.dump_formatting",  # depends on: formatting
     "cc_dump.tui.chip",  # depends on: nothing (pure widget)
+    "cc_dump.tui.location_navigation",  # depends on: nothing (pure navigation helpers)
+    "cc_dump.tui.view_overrides",  # depends on: formatting, rendering (lazy import)
     "cc_dump.tui.custom_footer",  # depends on: chip, palette, rendering
     "cc_dump.tui.panel_renderers",  # depends on: analysis
     "cc_dump.app.domain_store",  # depends on: formatting
@@ -39,12 +45,17 @@ _RELOAD_ORDER = [
     "cc_dump.tui.error_indicator",  # depends on: nothing (pure rendering)
     "cc_dump.tui.info_panel",  # depends on: palette, panel_renderers
     "cc_dump.tui.keys_panel",  # depends on: panel_renderers
-    "cc_dump.tui.settings_panel",  # depends on: palette
+    "cc_dump.tui.settings_form_panel",  # depends on: palette, rendering, chip
+    "cc_dump.tui.settings_panel",  # depends on: settings_form_panel
+    "cc_dump.tui.proxy_settings_panel",  # depends on: settings_form_panel, proxy registry
     "cc_dump.tui.side_channel_panel",  # depends on: palette
     "cc_dump.tui.launch_config_panel",  # depends on: palette, settings_panel
     "cc_dump.tui.session_panel",  # depends on: panel_renderers
+    "cc_dump.tui.workbench_results_view",  # depends on: textual widgets only
+    "cc_dump.tui.custom_tabs",  # depends on: textual widgets only
     "cc_dump.tui.widget_factory",  # depends on: analysis, rendering, panel_renderers, error_indicator
     "cc_dump.tui.dump_export",  # depends on: dump_formatting
+    "cc_dump.tui.search_controller",  # depends on: search, location_navigation, category_config
     "cc_dump.tui.theme_controller",  # depends on: rendering
     "cc_dump.tui.action_handlers",  # depends on: formatting, action_config, rendering, widget_factory
     "cc_dump.tui.view_store_bridge",  # depends on: widget_factory, custom_footer, side_channel_panel, action_handlers
@@ -55,34 +66,25 @@ _EXCLUDED_FILES = {
     "pipeline/proxy.py",  # stable boundary, never reload
     "cli.py",  # entry point, not reloadable at runtime
     "hot_reload.py",  # this file
-    "pipeline/event_types.py",  # stable type definitions, never reload
-    "pipeline/response_assembler.py",  # stable boundary, imported by proxy.py
     "app/tmux_controller.py",  # stable boundary, holds live pane refs
-    "io/stderr_tee.py",  # stable boundary, holds live sys.stderr ref
     "ai/side_channel.py",  # stable boundary, holds live subprocess refs
-    "ai/data_dispatcher.py",  # stable boundary, holds ref to side_channel
-    "__init__.py",  # module init
-    "__main__.py",  # entry point
 }
 
 # Directories/modules to exclude
 _EXCLUDED_MODULES = {
     "tui/app.py",  # live app instance, can't safely reload
-    "tui/category_config.py",  # pure data, but referenced at init time
-    "tui/search_controller.py",  # accesses live app/widget state
     "tui/hot_reload_controller.py",  # accesses live app/widget state
-    "tui/panel_registry.py",  # stable pure data, referenced at init time
 }
 
 # Excluded files worth monitoring for staleness (files a developer would edit).
-# Subset of _EXCLUDED_FILES ∪ _EXCLUDED_MODULES, minus boilerplate nobody touches.
+# [LAW:one-source-of-truth] Staleness is owned solely by this watchlist.
+# Keep it small and focused on high-impact boundaries that require restart.
 _STALENESS_WATCHLIST = {
-    # from _EXCLUDED_FILES
-    "pipeline/proxy.py", "cli.py", "pipeline/event_types.py", "pipeline/response_assembler.py",
-    "app/tmux_controller.py", "io/stderr_tee.py", "ai/side_channel.py", "ai/data_dispatcher.py",
-    # from _EXCLUDED_MODULES
-    "tui/app.py", "tui/category_config.py",
-    "tui/search_controller.py",
+    "pipeline/proxy.py",
+    "cli.py",
+    "app/tmux_controller.py",
+    "ai/side_channel.py",
+    "tui/app.py",
     "tui/hot_reload_controller.py",
 }
 
@@ -91,6 +93,7 @@ _excluded_hashes: dict[str, str] = {}
 
 # Set of reloadable relative paths (derived from _RELOAD_ORDER module names)
 _reloadable_rel_paths: set[str] = set()
+_refreshable_asset_rel_paths: set[str] = {"tui/styles.css"}
 
 
 def init(package_dir: str) -> None:
@@ -144,6 +147,25 @@ def is_reloadable(path: str) -> bool:
         rel = str(p).replace(os.sep, "/")
 
     return rel in _reloadable_rel_paths
+
+
+def is_refreshable_asset(path: str) -> bool:
+    """True if path maps to a refreshable non-module asset (e.g. CSS)."""
+    if not _watch_dirs:
+        return False
+
+    root = Path(_watch_dirs[0])
+    p = Path(path)
+
+    if p.is_absolute():
+        try:
+            rel = str(p.relative_to(root)).replace(os.sep, "/")
+        except ValueError:
+            return False
+    else:
+        rel = str(p).replace(os.sep, "/")
+
+    return rel in _refreshable_asset_rel_paths
 
 
 def check_and_get_reloaded() -> list[str]:

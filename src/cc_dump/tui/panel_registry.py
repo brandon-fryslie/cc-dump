@@ -23,6 +23,7 @@ class PanelSpec:
 PANEL_REGISTRY: list[PanelSpec] = [
     PanelSpec("session", "session-panel", "cc_dump.tui.session_panel.create_session_panel"),
     PanelSpec("stats", "stats-panel", "cc_dump.tui.widget_factory.create_stats_panel"),
+    PanelSpec("perf", "perf-panel", "cc_dump.tui.widget_factory.create_perf_panel"),
 ]
 
 # Derived — kept in sync automatically

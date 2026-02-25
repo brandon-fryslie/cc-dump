@@ -28,6 +28,8 @@ class StatusFooter(Widget):
         max-height: 3;
         padding: 0 1;
         layout: vertical;
+        background: $footer-background;
+        color: $footer-foreground;
     }
 
     StatusFooter Horizontal {
@@ -35,8 +37,18 @@ class StatusFooter(Widget):
         width: 100%;
     }
 
+    StatusFooter #footer-categories {
+        background: $footer-item-background;
+    }
+
+    StatusFooter #footer-commands {
+        background: $footer-background;
+    }
+
     StatusFooter #footer-streams {
         display: block;
+        background: $footer-description-background;
+        color: $footer-description-foreground;
     }
 
     StatusFooter Chip {
@@ -71,6 +83,7 @@ class StatusFooter(Widget):
     StatusFooter Static {
         width: auto;
         height: 1;
+        color: $footer-description-foreground;
     }
 
     StatusFooter .tmux {
@@ -167,6 +180,12 @@ class StatusFooter(Widget):
         """
         tc = cc_dump.tui.rendering.get_theme_colors()
 
+        # // [LAW:dataflow-not-control-flow] Foreground selection is deterministic from background value.
+        def _on(bg: Color) -> Color:
+            r, g, b = bg.rgb
+            brightness = (0.2126 * r) + (0.7152 * g) + (0.0722 * b)
+            return Color.parse(tc.background if brightness > 140 else tc.foreground)
+
         # Line 1: category chips — icon + color from state
         for key, name in self._CATEGORY_ITEMS:
             chip = self.query_one(f"#cat-{name}", Chip)
@@ -189,11 +208,14 @@ class StatusFooter(Widget):
 
         bg_color = Color.parse(tc.background)
         fg_color = Color.parse(tc.foreground)
+        primary_bg = Color.parse(tc.primary)
+        accent_bg = Color.parse(tc.accent)
+        surface_bg = Color.parse(tc.surface)
         # [LAW:dataflow-not-control-flow] Table lookup, not branches.
         _FOLLOW_DISPLAY: dict = {
-            FollowState.OFF: (" f off ", True, bg_color, fg_color),
-            FollowState.ENGAGED: (" f follow ", False, fg_color, bg_color),
-            FollowState.ACTIVE: (" f FOLLOW ", False, bg_color, fg_color),
+            FollowState.OFF: (" f off ", True, surface_bg, Color.parse(tc.text_muted_style)),
+            FollowState.ENGAGED: (" f follow ", False, accent_bg, _on(accent_bg)),
+            FollowState.ACTIVE: (" f FOLLOW ", False, primary_bg, _on(primary_bg)),
         }
         label, is_dim, follow_bg, follow_fg = _FOLLOW_DISPLAY[follow_state]
         follow_chip.update(label)
@@ -207,8 +229,8 @@ class StatusFooter(Widget):
         is_lanes = stream_mode == "lanes"
         stream_mode_chip.update(" m lanes " if is_lanes else " m focus ")
         stream_mode_chip.set_class(not is_lanes, "-dim")
-        stream_mode_chip.styles.background = fg_color if is_lanes else bg_color
-        stream_mode_chip.styles.color = bg_color if is_lanes else fg_color
+        stream_mode_chip.styles.background = accent_bg if is_lanes else surface_bg
+        stream_mode_chip.styles.color = _on(accent_bg) if is_lanes else Color.parse(tc.text_muted_style)
 
         # Filterset indicator
         # [LAW:dataflow-not-control-flow] Always update; style varies by value.
@@ -219,8 +241,8 @@ class StatusFooter(Widget):
         )
         # [LAW:dataflow-not-control-flow] Always set; values vary by state.
         has_filterset = active_slot is not None
-        filterset_label.styles.background = bg_color if has_filterset else fg_color
-        filterset_label.styles.color = fg_color if has_filterset else bg_color
+        filterset_label.styles.background = Color.parse(tc.secondary) if has_filterset else surface_bg
+        filterset_label.styles.color = _on(Color.parse(tc.secondary)) if has_filterset else Color.parse(tc.text_muted_style)
         filterset_label.styles.text_style = "bold" if has_filterset else None
         filterset_label.styles.opacity = 1.0 if has_filterset else 0.5
 
@@ -243,13 +265,17 @@ class StatusFooter(Widget):
         zoom_chip = self.query_one("#cmd-zoom", Chip)
         zoom_chip.update(" z zoom ")
         zoom_chip.set_class(not tmux_zoomed, "-dim")
-        zoom_chip.styles.text_style = "bold reverse" if tmux_zoomed else None
+        zoom_chip.styles.background = Color.parse(tc.secondary) if tmux_zoomed else surface_bg
+        zoom_chip.styles.color = _on(Color.parse(tc.secondary)) if tmux_zoomed else Color.parse(tc.text_muted_style)
+        zoom_chip.styles.text_style = "bold" if tmux_zoomed else None
 
         # Auto-zoom chip
         auto_chip = self.query_one("#cmd-auto-zoom", Chip)
         auto_chip.update(" Z auto ")
         auto_chip.set_class(not tmux_auto, "-dim")
-        auto_chip.styles.text_style = "bold reverse" if tmux_auto else None
+        auto_chip.styles.background = Color.parse(tc.success) if tmux_auto else surface_bg
+        auto_chip.styles.color = _on(Color.parse(tc.success)) if tmux_auto else Color.parse(tc.text_muted_style)
+        auto_chip.styles.text_style = "bold" if tmux_auto else None
 
         # Active request stream chips (concurrent streaming focus control).
         streams = state.get("active_streams", ())
@@ -260,18 +286,20 @@ class StatusFooter(Widget):
         stream_row.display = True
 
         kind_styles = {
-            "main": (Color.parse(tc.background), Color.parse(tc.foreground)),
-            "subagent": (Color.parse(tc.surface), Color.parse(tc.accent)),
-            "unknown": (Color.parse(tc.background), Color.parse(tc.warning)),
+            "main": (Color.parse(tc.primary), _on(Color.parse(tc.primary))),
+            "subagent": (Color.parse(tc.secondary), _on(Color.parse(tc.secondary))),
+            "unknown": (Color.parse(tc.warning), _on(Color.parse(tc.warning))),
         }
 
         if not streams:
             idle_chip = self.query_one("#stream-0", Chip)
             idle_chip.display = True
-            idle_chip.update(" streams idle ")
+            idle_label = " streams idle "
+            idle_chip.update(idle_label)
+            idle_chip.styles.width = len(idle_label)
             idle_chip._action = None
-            idle_chip.styles.background = bg_color
-            idle_chip.styles.color = fg_color
+            idle_chip.styles.background = surface_bg
+            idle_chip.styles.color = Color.parse(tc.text_muted_style)
             idle_chip.set_class(True, "-dim")
             for i in range(1, self._MAX_STREAM_CHIPS):
                 chip = self.query_one(f"#stream-{i}", Chip)
@@ -286,7 +314,9 @@ class StatusFooter(Widget):
 
             request_id, label, kind = streams[i]
             chip.display = True
-            chip.update(f" s{i + 1} {label} ")
+            chip_label = f" s{i + 1} {label} "
+            chip.update(chip_label)
+            chip.styles.width = len(chip_label)
             # // [LAW:dataflow-not-control-flow] Action payload is derived data.
             chip._action = f"app.focus_stream('{request_id}')"
 

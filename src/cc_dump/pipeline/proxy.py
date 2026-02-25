@@ -12,6 +12,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
+import cc_dump.proxies.registry
+from cc_dump.proxies.plugin_api import ProxyRequestContext
+from cc_dump.proxies.runtime import ProxyRuntimeSnapshot
 from cc_dump.pipeline.event_types import (
     ErrorEvent,
     LogEvent,
@@ -44,6 +47,17 @@ _EXCLUDED_HEADERS = frozenset(
 def _safe_headers(headers):
     """Filter out sensitive and noisy headers."""
     return {k: v for k, v in headers.items() if k.lower() not in _EXCLUDED_HEADERS}
+
+
+def _expects_json_body(request_path: str, provider_plugin=None) -> bool:
+    if request_path.startswith("/v1/messages"):
+        return True
+    if provider_plugin is None:
+        return False
+    try:
+        return bool(provider_plugin.expects_json_body(request_path))
+    except Exception:
+        return False
 
 
 # ─── Request Pipeline ────────────────────────────────────────────────────────
@@ -251,14 +265,86 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
     target_host = None  # set by cli.py from --target arg before server starts
     event_queue = None  # set by cli.py before server starts
     request_pipeline = None  # set by cli.py before server starts
+    proxy_runtime = None  # set by cli.py for live provider switching
 
     def log_message(self, fmt, *args):
         self.event_queue.put(LogEvent(method=self.command, path=self.path, status=args[0] if args else ""))
+
+    def _runtime_snapshot(self) -> ProxyRuntimeSnapshot | None:
+        runtime = self.proxy_runtime
+        if runtime is None:
+            return None
+        try:
+            return runtime.snapshot()
+        except Exception:
+            return None
+
+    def _active_provider_plugin(self, runtime_snapshot: ProxyRuntimeSnapshot | None):
+        if runtime_snapshot is None:
+            return None
+        return cc_dump.proxies.registry.provider_plugin(runtime_snapshot.provider)
+
+    def _dispatch_provider_plugin(
+        self,
+        *,
+        provider_plugin,
+        request_id: str,
+        request_path: str,
+        body: dict | None,
+        runtime_snapshot: ProxyRuntimeSnapshot | None,
+    ) -> bool:
+        if provider_plugin is None or runtime_snapshot is None:
+            return False
+        try:
+            if not provider_plugin.handles_path(request_path):
+                return False
+        except Exception:
+            return False
+        context = ProxyRequestContext(
+            request_id=request_id,
+            request_path=request_path,
+            request_body=body,
+            method=self.command,
+            request_headers=dict(self.headers.items()),
+            runtime_snapshot=runtime_snapshot,
+            handler=self,
+            event_queue=self.event_queue,
+            safe_headers=_safe_headers,
+        )
+        try:
+            return bool(provider_plugin.handle_request(context))
+        except Exception as e:
+            # // [LAW:single-enforcer] Plugin failures are contained at one boundary and converted to 502.
+            self.event_queue.put(
+                ProxyErrorEvent(
+                    error=f"provider-plugin:{runtime_snapshot.provider}: {e}",
+                    request_id=request_id,
+                    recv_ns=time.monotonic_ns(),
+                )
+            )
+            self.send_response(502)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "error": {
+                            "type": "api_error",
+                            "message": f"Provider plugin '{runtime_snapshot.provider}' failed while handling request.",
+                        },
+                    }
+                ).encode("utf-8")
+            )
+            return True
 
     def _proxy(self):
         request_id = uuid.uuid4().hex
         content_len = int(self.headers.get("Content-Length", 0))
         body_bytes = self.rfile.read(content_len) if content_len else b""
+        runtime_snapshot = self._runtime_snapshot()
+        target_host = runtime_snapshot.active_base_url if runtime_snapshot else self.target_host
+        provider_plugin = self._active_provider_plugin(runtime_snapshot)
 
         # Detect proxy mode and determine target URL
         if self.path.startswith("http://") or self.path.startswith("https://"):
@@ -271,8 +357,8 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 url = "https://" + url[7:]
         else:
             # Reverse proxy mode - relative URI
-            request_path = self.path
-            if not self.target_host:
+            request_path = urlparse(self.path).path
+            if not target_host:
                 self.event_queue.put(
                     ErrorEvent(
                         code=500,
@@ -287,10 +373,10 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                     b"No target configured. Use --target or send absolute URIs."
                 )
                 return
-            url = self.target_host + self.path
+            url = target_host + self.path
 
         body = None
-        if body_bytes and request_path.startswith("/v1/messages"):
+        if body_bytes and _expects_json_body(request_path, provider_plugin):
             try:
                 body = json.loads(body_bytes)
                 # Emit request headers before request body (TUI sees original request)
@@ -320,6 +406,15 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 self._send_synthetic_response(intercept_response, body, request_id)
                 return
             body_bytes = json.dumps(body).encode()  # re-serialize for upstream
+
+        if self._dispatch_provider_plugin(
+            provider_plugin=provider_plugin,
+            request_id=request_id,
+            request_path=request_path,
+            body=body,
+            runtime_snapshot=runtime_snapshot,
+        ):
+            return
 
         # Forward
         headers = {

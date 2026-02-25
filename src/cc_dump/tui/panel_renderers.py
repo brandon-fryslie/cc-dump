@@ -5,8 +5,8 @@ so it can be hot-reloaded without affecting the live widget instances.
 """
 
 import cc_dump.core.analysis
-import cc_dump.core.palette
 import cc_dump.tui.input_modes
+import cc_dump.tui.rendering
 from rich.text import Text
 from collections.abc import Callable
 
@@ -20,6 +20,281 @@ def _dashboard_tabs(active: str) -> str:
     for tab in tabs:
         labels.append(tab.upper() if tab == active else tab)
     return "Analytics: {}  (Tab/, cycle)".format(" | ".join(labels))
+
+
+def _perf_tabs(active: str) -> str:
+    """Render perf panel mode tabs."""
+    tabs = ["overview", "hotspots", "ui", "render", "search", "pipeline"]
+    labels = []
+    for tab in tabs:
+        labels.append(tab.upper() if tab == active else tab)
+    return "Perf: {}  (Tab/, cycle)".format(" | ".join(labels))
+
+
+def _fmt_ms(value: float | int) -> str:
+    return "{:.1f}ms".format(float(value))
+
+
+def _fmt_us(value: float | int) -> str:
+    return "{:.1f}us".format(float(value))
+
+
+def render_perf_overview(snapshot: dict) -> str:
+    """Render perf overview mode."""
+    render = snapshot.get("render", {})
+    search = snapshot.get("search", {})
+    pipeline = snapshot.get("pipeline", {})
+    busy_reasons = snapshot.get("busy_reasons", ())
+    busy_text = ", ".join(busy_reasons) if busy_reasons else "(none)"
+    lines = [
+        _perf_tabs("overview"),
+        "Overview:",
+        "  UI lag: {}  |  event backlog: {} (busy>= {})".format(
+            _fmt_ms(snapshot.get("ui_lag_ms", 0.0)),
+            int(snapshot.get("event_backlog", 0)),
+            int(snapshot.get("event_backlog_busy_threshold", 0)),
+        ),
+        "  Busy reasons: {}".format(busy_text),
+        "  Render: turns={} pending={} last={} ({})".format(
+            int(render.get("turn_count", 0)),
+            int(render.get("pending_turns", 0)),
+            str(render.get("invalidate_last_reason", "--")),
+            _fmt_ms(render.get("invalidate_last_ms", 0.0)),
+        ),
+        "  Blocks: top={} flat={} chars={} (avg {} max {})".format(
+            int(render.get("top_level_blocks", 0)),
+            int(render.get("flat_blocks", 0)),
+            _fmt_tokens(int(render.get("source_chars_total", 0))),
+            _fmt_tokens(int(render.get("source_chars_avg", 0.0))),
+            _fmt_tokens(int(render.get("source_chars_max", 0))),
+        ),
+        "  Search: phase={} query_len={} matches={} text_cache={}".format(
+            str(search.get("phase", "inactive")),
+            int(search.get("query_len", 0)),
+            int(search.get("match_count", 0)),
+            int(search.get("text_cache_size", 0)),
+        ),
+        "  Last scan: turns={} blocks={} chars={} matches={} ({})".format(
+            int(search.get("last_scan_turns", 0)),
+            int(search.get("last_scan_blocks", 0)),
+            _fmt_tokens(int(search.get("last_scan_chars", 0))),
+            int(search.get("last_scan_matches", 0)),
+            _fmt_ms(search.get("last_search_ms", 0.0)),
+        ),
+        "  Pipeline stages: {}  (collector: {})".format(
+            int(pipeline.get("stage_count", 0)),
+            "enabled" if pipeline.get("enabled") else "disabled",
+        ),
+    ]
+    return "\n".join(lines)
+
+
+def render_perf_hotspots(snapshot: dict) -> str:
+    """Render hotspot stages mapped to known expensive paths."""
+    pipeline = snapshot.get("pipeline", {})
+    rows = pipeline.get("hotspot_stages", [])
+    if not rows:
+        return "\n".join(
+            [
+                _perf_tabs("hotspots"),
+                "Hotspots:",
+                "  no hotspot samples yet",
+                "  open perf panel, then toggle filters/search to collect",
+            ]
+        )
+    lines = [
+        _perf_tabs("hotspots"),
+        "Hotspots (p95-sorted):",
+        "  {:<28} {:>6} {:>8} {:>8} {:>8} {:>8}".format(
+            "Stage", "Count", "mean", "p95", "p99", "max"
+        ),
+    ]
+    for row in rows[:8]:
+        lines.append(
+            "  {:<28} {:>6} {:>8} {:>8} {:>8} {:>8}".format(
+                str(row.get("name", ""))[:28],
+                int(row.get("count", 0)),
+                _fmt_us(row.get("mean_us", 0.0)),
+                _fmt_us(row.get("p95_us", 0.0)),
+                _fmt_us(row.get("p99_us", 0.0)),
+                _fmt_us(row.get("max_us", 0.0)),
+            )
+        )
+    return "\n".join(lines)
+
+
+def render_perf_ui(snapshot: dict) -> str:
+    """Render UI/watchdog mode."""
+    lines = [
+        _perf_tabs("ui"),
+        "UI Responsiveness:",
+        "  heartbeat lag: {}  |  watchdog: {}".format(
+            _fmt_ms(snapshot.get("ui_lag_ms", 0.0)),
+            "on" if snapshot.get("ui_watchdog_enabled") else "off",
+        ),
+        "  stall warn: {}  |  stall dump: {}  |  dump cooldown: {}s".format(
+            _fmt_ms(snapshot.get("ui_stall_warn_ms", 0.0)),
+            _fmt_ms(snapshot.get("ui_stall_dump_ms", 0.0)),
+            "{:.1f}".format(float(snapshot.get("ui_stall_dump_cooldown_s", 0.0))),
+        ),
+        "  queue backlog: {}  |  busy threshold: {}".format(
+            int(snapshot.get("event_backlog", 0)),
+            int(snapshot.get("event_backlog_busy_threshold", 0)),
+        ),
+        "  slow-event warn: {}  |  poll: {}s".format(
+            _fmt_ms(snapshot.get("slow_event_warn_ms", 0.0)),
+            "{:.2f}".format(float(snapshot.get("ui_watchdog_poll_s", 0.0))),
+        ),
+    ]
+    return "\n".join(lines)
+
+
+def render_perf_render(snapshot: dict) -> str:
+    """Render render-engine mode."""
+    render = snapshot.get("render", {})
+    lines = [
+        _perf_tabs("render"),
+        "Render Engine:",
+        "  turns={} lines={} widest={}".format(
+            int(render.get("turn_count", 0)),
+            int(render.get("total_lines", 0)),
+            int(render.get("widest_line", 0)),
+        ),
+        "  pending rerender={}  chunk={}  budget={}ms".format(
+            int(render.get("pending_turns", 0)),
+            int(render.get("bg_chunk_size", 0)),
+            int(render.get("bg_budget_ms", 0)),
+        ),
+        "  rerender loop/recalc/total: {} / {} / {}".format(
+            _fmt_ms(render.get("last_rerender_stats", {}).get("loop_ms", 0.0)),
+            _fmt_ms(render.get("last_rerender_stats", {}).get("recalc_ms", 0.0)),
+            _fmt_ms(render.get("last_rerender_stats", {}).get("elapsed_ms", 0.0)),
+        ),
+        "  bg loop/recalc/total: {} / {} / {} (proc {} rem {})".format(
+            _fmt_ms(render.get("last_background_stats", {}).get("loop_ms", 0.0)),
+            _fmt_ms(render.get("last_background_stats", {}).get("recalc_ms", 0.0)),
+            _fmt_ms(render.get("last_background_stats", {}).get("elapsed_ms", 0.0)),
+            int(render.get("last_background_stats", {}).get("processed_turns", 0)),
+            int(render.get("last_background_stats", {}).get("remaining_pending_turns", 0)),
+        ),
+        "  invalidate last: {} ({})".format(
+            str(render.get("invalidate_last_reason", "--")),
+            _fmt_ms(render.get("invalidate_last_ms", 0.0)),
+        ),
+        "  invalidate min/avg/p95/max: {} / {} / {} / {}".format(
+            _fmt_ms(render.get("invalidate_min_ms", 0.0)),
+            _fmt_ms(render.get("invalidate_avg_ms", 0.0)),
+            _fmt_ms(render.get("invalidate_p95_ms", 0.0)),
+            _fmt_ms(render.get("invalidate_max_ms", 0.0)),
+        ),
+        "  line cache: {}/{}  |  block cache: {}/{}".format(
+            int(render.get("line_cache_size", 0)),
+            int(render.get("line_cache_cap", 0)),
+            int(render.get("block_cache_size", 0)),
+            int(render.get("block_cache_cap", 0)),
+        ),
+        "  viewport turns: [{}, {})  |  overlay metrics: {}".format(
+            int(render.get("viewport_start", 0)),
+            int(render.get("viewport_end", 0)),
+            "on" if render.get("overlay_metrics_enabled") else "off",
+        ),
+    ]
+    return "\n".join(lines)
+
+
+def render_perf_search(snapshot: dict) -> str:
+    """Render search mode."""
+    search = snapshot.get("search", {})
+    lines = [
+        _perf_tabs("search"),
+        "Search:",
+        "  phase={}  incremental={}  query_len={}  cursor={}".format(
+            str(search.get("phase", "inactive")),
+            "on" if search.get("incremental") else "off",
+            int(search.get("query_len", 0)),
+            int(search.get("cursor_pos", 0)),
+        ),
+        "  matches={}  current_idx={}  text_cache={}".format(
+            int(search.get("match_count", 0)),
+            int(search.get("current_index", 0)),
+            int(search.get("text_cache_size", 0)),
+        ),
+        "  expanded blocks={}  expanded regions={}".format(
+            int(search.get("expanded_blocks", 0)),
+            int(search.get("expanded_regions", 0)),
+        ),
+        "  last search/rerender/nav: {} / {} / {}".format(
+            _fmt_ms(search.get("last_search_ms", 0.0)),
+            _fmt_ms(search.get("last_search_rerender_ms", 0.0)),
+            _fmt_ms(search.get("last_nav_ms", 0.0)),
+        ),
+        "  last scan terms: T={} B={} S={} M={}".format(
+            int(search.get("last_scan_turns", 0)),
+            int(search.get("last_scan_blocks", 0)),
+            _fmt_tokens(int(search.get("last_scan_chars", 0))),
+            int(search.get("last_scan_matches", 0)),
+        ),
+        "  query preview: {}".format(str(search.get("query_preview", ""))),
+    ]
+    return "\n".join(lines)
+
+
+def render_perf_pipeline(snapshot: dict) -> str:
+    """Render pipeline instrumentation mode."""
+    pipeline = snapshot.get("pipeline", {})
+    rows = pipeline.get("top_stages", [])
+    if not rows:
+        return "\n".join(
+            [
+                _perf_tabs("pipeline"),
+                "Pipeline:",
+                "  collector: {} (set active perf panel to collect)".format(
+                    "enabled" if pipeline.get("enabled") else "disabled"
+                ),
+                "  no stage samples yet",
+            ]
+        )
+    lines = [
+        _perf_tabs("pipeline"),
+        "Pipeline:",
+        "  collector: {}  stages: {}".format(
+            "enabled" if pipeline.get("enabled") else "disabled",
+            int(pipeline.get("stage_count", 0)),
+        ),
+        "  {:<24} {:>6} {:>8} {:>8} {:>8} {:>8} {:>8}".format(
+            "Stage", "Count", "min", "mean", "p95", "p99", "max"
+        ),
+    ]
+    for row in rows[:8]:
+        lines.append(
+            "  {:<24} {:>6} {:>8} {:>8} {:>8} {:>8} {:>8}".format(
+                str(row.get("name", ""))[:24],
+                int(row.get("count", 0)),
+                _fmt_us(row.get("min_us", 0.0)),
+                _fmt_us(row.get("mean_us", 0.0)),
+                _fmt_us(row.get("p95_us", 0.0)),
+                _fmt_us(row.get("p99_us", 0.0)),
+                _fmt_us(row.get("max_us", 0.0)),
+            )
+        )
+    return "\n".join(lines)
+
+
+# [LAW:dataflow-not-control-flow] Mode-to-renderer dispatch for perf dashboard.
+_PERF_VIEW_RENDERERS = {
+    "overview": render_perf_overview,
+    "hotspots": render_perf_hotspots,
+    "ui": render_perf_ui,
+    "render": render_perf_render,
+    "search": render_perf_search,
+    "pipeline": render_perf_pipeline,
+}  # type: dict[str, Callable[[dict], str]]
+
+
+def render_perf_panel(snapshot: dict, view_mode: str) -> str:
+    """Render perf panel by mode."""
+    renderer = _PERF_VIEW_RENDERERS.get(view_mode, render_perf_overview)
+    return renderer(snapshot)
 
 
 def render_analytics_summary(snapshot: dict) -> str:
@@ -439,12 +714,12 @@ def render_session_panel(
     """
     import time
 
-    p = cc_dump.core.palette.PALETTE
+    tc = cc_dump.tui.rendering.get_theme_colors()
 
     # Indicator + age inline
     result = Text()
     indicator = "\u25cf" if connected else "\u25cb"
-    indicator_style = f"bold {p.info}" if connected else "dim"
+    indicator_style = f"bold {tc.info}" if connected else tc.secondary
     label = "Connected" if connected else "Disconnected"
     result.append(indicator, style=indicator_style)
     result.append(" ")
@@ -456,14 +731,14 @@ def render_session_panel(
         age_s = time.monotonic() - last_message_time
         age_str = _format_age(age_s)
     result.append(" (")
-    result.append(age_str, style="" if last_message_time is not None else "dim")
+    result.append(age_str, style=tc.text_subtle_style)
     result.append(")")
 
     # Session ID — full, with span tracking for click-to-copy
     result.append(" | Session: ")
     session_display = session_id or "--"
     span_start = len(result)
-    result.append(session_display, style=f"{p.info}" if session_id else "dim")
+    result.append(session_display, style=f"{tc.info}" if session_id else tc.text_subtle_style)
     span_end = len(result)
 
     session_id_span = (span_start, span_end) if session_id else None
@@ -480,6 +755,7 @@ def render_info_panel(info: dict) -> Text:
         info: Dict with server info fields:
             - proxy_url: Full proxy URL (e.g., "http://127.0.0.1:12345")
             - proxy_mode: "reverse" or "forward"
+            - provider: Active upstream provider ID
             - target: Upstream target URL (or None)
             - session_name: Session name string
             - session_id: Session ID hex string (or None)
@@ -493,7 +769,7 @@ def render_info_panel(info: dict) -> Text:
     Returns:
         Rich Text object with labeled rows
     """
-    p = cc_dump.core.palette.PALETTE
+    tc = cc_dump.tui.rendering.get_theme_colors()
 
     # // [LAW:one-source-of-truth] Row definitions: (label, value)
     # Every row is rendered. None/empty → "--". All values are click-to-copy.
@@ -501,6 +777,7 @@ def render_info_panel(info: dict) -> Text:
     rows = [
         ("Proxy URL", proxy_url),
         ("Proxy Mode", info.get("proxy_mode", "--")),
+        ("Provider", info.get("provider") or "--"),
         ("Target", info.get("target") or "--"),
         ("Session", info.get("session_name", "--")),
         ("Session ID", info.get("session_id") or "--"),
@@ -513,24 +790,27 @@ def render_info_panel(info: dict) -> Text:
     ]
 
     text = Text()
-    text.append("Server Info", style=f"bold {p.info}")
+    text.append("Server Info", style=f"bold {tc.info}")
     text.append("\n")
 
     label_width = max(len(label) for label, _ in rows)
 
     for label, value in rows:
         text.append("  ")
-        text.append("{:<{}}".format(label + ":", label_width + 1), style="bold")
+        text.append(
+            "{:<{}}".format(label + ":", label_width + 1),
+            style=f"bold {tc.text_subtle_style}",
+        )
         text.append(" ")
-        text.append(value, style=f"{p.info}")
+        text.append(value, style=f"{tc.foreground}")
         text.append("\n")
 
     # Usage hint at bottom
     text.append("\n  ")
-    text.append("Usage: ", style="bold")
-    text.append("ANTHROPIC_BASE_URL=", style="dim")
-    text.append(proxy_url, style=f"bold {p.info}")
-    text.append(" claude", style="dim")
+    text.append("Usage: ", style=f"bold {tc.text_subtle_style}")
+    text.append("ANTHROPIC_BASE_URL=", style=tc.text_muted_style)
+    text.append(proxy_url, style=f"bold {tc.info}")
+    text.append(" claude", style=tc.text_muted_style)
 
     return text
 
@@ -543,22 +823,22 @@ def render_keys_panel() -> Text:
     Returns:
         Rich Text object with grouped key shortcuts
     """
-    p = cc_dump.core.palette.PALETTE
+    tc = cc_dump.tui.rendering.get_theme_colors()
     key_groups = cc_dump.tui.input_modes.KEY_GROUPS
 
     text = Text()
-    text.append("Keys", style=f"bold {p.info}")
+    text.append("Keys", style=f"bold {tc.info}")
     text.append("\n")
 
     for group_title, keys in key_groups:
         text.append(" ")
-        text.append(group_title, style="bold underline")
+        text.append(group_title, style=f"bold underline {tc.text_subtle_style}")
         text.append("\n")
         for key_display, description in keys:
             text.append("  ")
-            text.append("{:>6}".format(key_display), style=f"bold {p.info}")
+            text.append("{:>6}".format(key_display), style=f"bold {tc.info}")
             text.append("  ")
-            text.append(description, style="dim")
+            text.append(description, style=tc.text_muted_style)
             text.append("\n")
 
     return text

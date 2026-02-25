@@ -7,13 +7,14 @@
 import logging
 
 import cc_dump.io.settings
+import cc_dump.proxies.registry
 from snarfx.hot_reload import HotReloadStore
 from snarfx import reaction
 
 logger = logging.getLogger(__name__)
 
-# [LAW:one-source-of-truth] All known settings and their defaults
-SCHEMA: dict[str, object] = {
+# [LAW:one-source-of-truth] Core (non-provider-specific) settings defaults.
+_BASE_SCHEMA: dict[str, object] = {
     "auto_zoom_default": False,
     "side_channel_enabled": True,
     "side_channel_global_kill": False,
@@ -21,8 +22,30 @@ SCHEMA: dict[str, object] = {
     "side_channel_purpose_enabled": {},
     "side_channel_timeout_by_purpose": {},
     "side_channel_budget_caps": {},
+    "proxy_provider": "anthropic",
     "theme": None,
 }
+
+
+def _provider_settings_defaults() -> dict[str, object]:
+    defaults: dict[str, object] = {}
+    for descriptor in cc_dump.proxies.registry.all_setting_descriptors():
+        key = str(descriptor.key or "").strip()
+        if not key:
+            continue
+        defaults.setdefault(key, descriptor.default)
+    return defaults
+
+
+def build_schema() -> dict[str, object]:
+    # // [LAW:one-source-of-truth] Effective schema is computed from core defaults + provider descriptors.
+    merged = dict(_BASE_SCHEMA)
+    merged.update(_provider_settings_defaults())
+    return merged
+
+
+# [LAW:one-source-of-truth] All known settings and defaults.
+SCHEMA: dict[str, object] = build_schema()
 
 
 def create(initial_overrides: dict | None = None):
@@ -95,6 +118,15 @@ def setup_reactions(store, context=None):
             disposers.append(reaction(
                 lambda: store.get("auto_zoom_default"),
                 lambda val, t=tmux: setattr(t, "auto_zoom", val),
+                fire_immediately=True,
+            ))
+
+        proxy_runtime = context.get("proxy_runtime")
+        if proxy_runtime is not None:
+            # [LAW:single-enforcer] Runtime proxy config synchronization happens in one reaction.
+            disposers.append(reaction(
+                lambda: {k: store.get(k) for k in SCHEMA},
+                lambda snapshot, runtime=proxy_runtime: runtime.update_from_settings(snapshot),
                 fire_immediately=True,
             ))
 

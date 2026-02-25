@@ -105,6 +105,79 @@ async def test_on_mount_seeds_footer_state():
         assert footer is not None
 
 
+async def test_conversation_busy_overlay_starts_hidden():
+    """Conversation busy overlay should start hidden."""
+    async with run_app() as (pilot, app):
+        _ = pilot
+        conv = app._get_conv()
+        assert conv is not None
+        assert conv._busy_overlay is False
+
+
+async def test_conversation_busy_overlay_tracks_side_channel_loading():
+    """Side-channel loading state should drive conversation busy overlay visibility."""
+    async with run_app() as (pilot, app):
+        conv = app._get_conv()
+        assert conv is not None
+        assert conv._busy_overlay is False
+
+        app._set_side_channel_result(
+            text="Running scoped Q&A…",
+            source="preview",
+            elapsed_ms=0,
+            loading=True,
+            active_action="qa_submit",
+        )
+        await pilot.pause()
+        assert conv._busy_overlay is True
+
+        app._set_side_channel_result(
+            text="Complete",
+            source="preview",
+            elapsed_ms=1,
+            loading=False,
+            active_action="",
+        )
+        await pilot.pause()
+        assert conv._busy_overlay is False
+
+
+async def test_conversation_busy_overlay_tracks_event_backlog_pressure():
+    """Queue backlog should toggle conversation busy overlay via backlog sampler."""
+    async with run_app() as (pilot, app):
+        conv = app._get_conv()
+        assert conv is not None
+        assert conv._busy_overlay is False
+
+        class _QueueProbe:
+            def __init__(self, size: int) -> None:
+                self._size = size
+
+            def qsize(self) -> int:
+                return self._size
+
+        app._event_queue = _QueueProbe(3)
+        app._sync_event_backlog_busy()
+        await pilot.pause()
+        assert conv._busy_overlay is True
+
+        app._event_queue = _QueueProbe(0)
+        app._sync_event_backlog_busy()
+        await pilot.pause()
+        assert conv._busy_overlay is False
+
+
+async def test_conversation_busy_overlay_is_visible_in_viewport():
+    """Busy overlay text should render in the conversation viewport."""
+    async with run_app() as (pilot, app):
+        _ = pilot
+        app._set_busy_reason("events", True)
+        await pilot.pause()
+        svg = app.export_screenshot()
+        assert "events" in svg
+        app._set_busy_reason("events", False)
+
+
 async def test_ai_workbench_panel_opens_and_qa_action_dispatches():
     """Workbench panel should open and dispatch scoped QA action."""
     import cc_dump.tui.side_channel_panel
@@ -130,3 +203,24 @@ async def test_ai_workbench_panel_opens_and_qa_action_dispatches():
         state = workbench_results.get_state()
         assert state["context_session_id"] == "__default__"
         assert "context=__default__" in str(state["meta"])
+
+
+async def test_conversation_tabs_overlap_content_by_one_row():
+    """Conversation tabs should not reserve a blank spacer row under headers."""
+    async with run_app() as (pilot, app):
+        _ = pilot
+        tabbed = app._get_conv_tabs()
+        tabs = tabbed.query_one("ContentTabs")
+        switcher = tabbed.query_one("ContentSwitcher")
+        assert switcher.region.y - tabs.region.y == 1
+
+
+async def test_conversation_tabs_show_left_elbow_when_left_tab_unselected():
+    """Left edge elbow should remain visible when a non-left tab is active."""
+    async with run_app() as (pilot, app):
+        tabs = app._get_conv_tabs()
+        assert tabs is not None
+        tabs.active = app._workbench_tab_id
+        await pilot.pause()
+        svg = app.export_screenshot()
+        assert "┌" in svg

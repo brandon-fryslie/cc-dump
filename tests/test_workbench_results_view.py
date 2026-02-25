@@ -110,16 +110,16 @@ async def test_switching_to_workbench_tab_does_not_lose_active_session_context()
     async with run_app(replay_data=replay_data) as (pilot, app):
         tabs = app._get_conv_tabs()
         assert tabs is not None
-        tab_b = app._session_tab_ids[session_b]
-        tabs.active = tab_b
+        tab_main = app._session_tab_ids[app._default_session_key]
+        tabs.active = tab_main
         await pilot.pause()
-        assert app._active_session_key == session_b
+        assert app._active_session_key == app._default_session_key
 
         app._show_workbench_results_tab()
         await pilot.pause()
         assert tabs.active == app._workbench_tab_id
-        assert app._active_session_key == session_b
+        assert app._active_session_key == app._default_session_key
 
-        tabs.active = tab_b
+        tabs.active = tab_main
         await pilot.pause()
-        assert app._active_session_key == session_b
+        assert app._active_session_key == app._default_session_key

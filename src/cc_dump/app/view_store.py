@@ -26,6 +26,7 @@ for _key, _name, _desc, _default in CATEGORY_CONFIG:
 SCHEMA["panel:active"] = "session"
 SCHEMA["panel:side_channel"] = False
 SCHEMA["panel:settings"] = False
+SCHEMA["panel:proxy_settings"] = False
 SCHEMA["panel:launch_config"] = False
 # // [LAW:one-source-of-truth] String, not FollowState enum — enum class identity
 # changes on reload; string comparison is stable across reloads.
@@ -49,6 +50,8 @@ SCHEMA["sc:result_text"] = ""
 SCHEMA["sc:result_source"] = ""
 SCHEMA["sc:result_elapsed_ms"] = 0
 SCHEMA["sc:purpose_usage"] = {}
+SCHEMA["sc:action_batch_id"] = ""
+SCHEMA["sc:action_items"] = ()
 
 # Search identity state — survives hot-reload via reconcile
 # // [LAW:one-source-of-truth] String, not SearchPhase enum — stable across reloads.

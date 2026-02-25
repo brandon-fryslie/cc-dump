@@ -18,6 +18,7 @@ import cc_dump.tui.widget_factory
 import cc_dump.tui.info_panel
 import cc_dump.tui.keys_panel
 import cc_dump.tui.settings_panel
+import cc_dump.tui.proxy_settings_panel
 import cc_dump.tui.custom_footer
 import cc_dump.app.settings_store
 import cc_dump.app.view_store
@@ -27,9 +28,10 @@ import cc_dump.tui.search_controller
 import cc_dump.tui.theme_controller
 import cc_dump.tui.view_store_bridge
 import cc_dump.tui.protocols
-from cc_dump.tui.category_config import CATEGORY_CONFIG
-
-from cc_dump.tui.panel_registry import PANEL_REGISTRY
+import cc_dump.tui.category_config
+import cc_dump.tui.panel_registry
+import cc_dump.tui.custom_tabs
+import cc_dump.app.session_store
 
 from snarfx import EventStream
 
@@ -77,9 +79,23 @@ def stop_file_watcher() -> None:
 
 
 def _has_reloadable_changes(changes) -> bool:
-    """True if any changed file is a reloadable module."""
+    """True if any changed file is a reloadable module or refreshable asset."""
+    for _change_type, path in changes:
+        if cc_dump.app.hot_reload.is_reloadable(path) or cc_dump.app.hot_reload.is_refreshable_asset(path):
+            return True
+    return False
+
+
+def _has_module_changes(changes) -> bool:
     for _change_type, path in changes:
         if cc_dump.app.hot_reload.is_reloadable(path):
+            return True
+    return False
+
+
+def _has_asset_changes(changes) -> bool:
+    for _change_type, path in changes:
+        if cc_dump.app.hot_reload.is_refreshable_asset(path):
             return True
     return False
 
@@ -122,7 +138,7 @@ async def start_file_watcher(app) -> None:
     # Wire: reloadable file events → debounce → reload + replace widgets
     stream.filter(_has_reloadable_changes) \
           .debounce(_DEBOUNCE_S) \
-          .subscribe(lambda _: app.call_later(_do_hot_reload, app))
+          .subscribe(lambda changes: app.call_later(_do_hot_reload, app, changes))
 
     # Wire: all events → update staleness state (immediate, no debounce)
     stream.subscribe(lambda _: app.call_from_thread(_update_staleness, app))
@@ -134,19 +150,70 @@ async def start_file_watcher(app) -> None:
         stream.emit(changes)
 
 
-async def _do_hot_reload(app) -> None:
-    """Execute the actual reload after debounce settles."""
+def _refresh_custom_tabs_runtime(app) -> None:
+    """Apply reloaded custom-tabs classes to mounted tab widgets."""
     try:
-        reloaded_modules = cc_dump.app.hot_reload.check_and_get_reloaded()
-    except Exception as e:
-        app.notify(f"[hot-reload] error reloading: {e}", severity="error")
-        app._app_log("ERROR", f"Hot-reload error reloading: {e}")
+        tabs = app._get_conv_tabs()
+    except Exception:
+        tabs = None
+    if tabs is None:
         return
 
-    if not reloaded_modules:
+    # [LAW:single-enforcer] Hot-reload class rebinding for custom tabs is centralized here.
+    custom_tabbed_cls = cc_dump.tui.custom_tabs.CustomTabbedContent
+    custom_tabs_cls = cc_dump.tui.custom_tabs.CustomContentTabs
+    custom_underline_cls = cc_dump.tui.custom_tabs.CustomUnderline
+
+    try:
+        tabs.__class__ = custom_tabbed_cls
+    except TypeError:
+        pass
+
+    for node_name, cls in (
+        ("CustomContentTabs", custom_tabs_cls),
+        ("CustomUnderline", custom_underline_cls),
+    ):
+        try:
+            node = tabs.query_one(node_name)
+        except Exception:
+            continue
+        try:
+            node.__class__ = cls
+        except TypeError:
+            pass
+
+
+async def _do_hot_reload(app, changes=None) -> None:
+    """Execute the actual reload after debounce settles."""
+    changes = tuple(changes or ())
+    module_changes = _has_module_changes(changes)
+    asset_changes = _has_asset_changes(changes)
+
+    if not module_changes and not asset_changes:
         return
 
-    app._app_log("INFO", f"Hot-reload: {', '.join(reloaded_modules)}")
+    reloaded_modules: list[str] = []
+    if module_changes:
+        try:
+            reloaded_modules = cc_dump.app.hot_reload.check_and_get_reloaded()
+        except Exception as e:
+            app.notify(f"[hot-reload] error reloading: {e}", severity="error")
+            app._app_log("ERROR", f"Hot-reload error reloading: {e}")
+            return
+
+        if reloaded_modules:
+            app._app_log("INFO", f"Hot-reload: {', '.join(reloaded_modules)}")
+        else:
+            module_changes = False
+
+    if not module_changes and asset_changes:
+        try:
+            app.refresh_css(animate=False)
+            app.notify("[hot-reload] CSS updated", severity="information")
+        except Exception as e:
+            app.notify(f"[hot-reload] error applying CSS: {e}", severity="error")
+            app._app_log("ERROR", f"Hot-reload CSS apply failed: {e}")
+        return
 
     # // [LAW:one-source-of-truth] Identity fields (phase, query, modes, cursor_pos)
     # live in the view store — they survive reconcile() automatically.
@@ -185,6 +252,20 @@ async def _do_hot_reload(app) -> None:
         except Exception as e:
             app._app_log("ERROR", f"Hot-reload: settings store reconcile failed: {e}")
 
+    # Reconcile session store (values survive, schema updates apply)
+    session_store = getattr(app, "_session_store", None)
+    if session_store is not None:
+        try:
+            session_store.reconcile(
+                cc_dump.app.session_store.SCHEMA,
+                lambda store: cc_dump.app.session_store.setup_reactions(store, getattr(app, "_store_context", None)),
+            )
+            cc_dump.app.session_store.ensure_routing_state(
+                session_store, cc_dump.app.session_store.DEFAULT_SESSION_KEY
+            )
+        except Exception as e:
+            app._app_log("ERROR", f"Hot-reload: session store reconcile failed: {e}")
+
     # Reconcile view store (values survive, autorun re-registers)
     view_store = getattr(app, "_view_store", None)
     if view_store is not None:
@@ -204,11 +285,13 @@ async def _do_hot_reload(app) -> None:
     # // [LAW:dataflow-not-control-flow] Unconditional — all reloads take same path
     try:
         await replace_all_widgets(app)
+        _refresh_custom_tabs_runtime(app)
+        app.refresh_css(animate=False)
         # Single consolidated notification
-        app.notify(
-            f"[hot-reload] {len(reloaded_modules)} modules updated",
-            severity="information",
-        )
+        message = f"[hot-reload] {len(reloaded_modules)} modules updated"
+        if asset_changes:
+            message = message + " + CSS refreshed"
+        app.notify(message, severity="information")
     except Exception as e:
         app.notify(f"[hot-reload] error applying: {e}", severity="error")
         app._app_log("ERROR", f"Hot-reload error applying: {e}")
@@ -228,7 +311,7 @@ async def _do_hot_reload(app) -> None:
                 store.get(f"full:{name}"),
                 store.get(f"exp:{name}"),
             )
-            for _, name, _, _ in CATEGORY_CONFIG
+            for _, name, _, _ in cc_dump.tui.category_config.CATEGORY_CONFIG
         }
         conv = app._get_conv()
         state.saved_scroll_y = conv.scroll_offset.y if conv is not None else None
@@ -320,7 +403,7 @@ async def _replace_all_widgets_inner(app) -> None:
     # [LAW:one-source-of-truth] Capture cycling panel state from registry
     old_panels = {}
     panel_states = {}
-    for spec in PANEL_REGISTRY:
+    for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
         old_widget = app._get_panel(spec.name)
         old_panels[spec.name] = old_widget
         panel_states[spec.name] = old_widget.get_state() if old_widget else {}
@@ -347,7 +430,7 @@ async def _replace_all_widgets_inner(app) -> None:
 
     # [LAW:one-source-of-truth] Create cycling panels from registry
     new_panels = {}
-    for spec in PANEL_REGISTRY:
+    for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
         factory = _resolve_factory(spec.factory)
         widget = factory()
         _validate_and_restore_widget_state(
@@ -372,6 +455,11 @@ async def _replace_all_widgets_inner(app) -> None:
         await panel.remove()
     app._view_store.set("panel:settings", False)
 
+    # Remove proxy settings panel if mounted (stateless, no state transfer needed)
+    for panel in app.screen.query(cc_dump.tui.proxy_settings_panel.ProxySettingsPanel):
+        await panel.remove()
+    app._view_store.set("panel:proxy_settings", False)
+
     # Remove launch config panel if mounted (stateless, no state transfer needed)
     for panel in app.screen.query(cc_dump.tui.launch_config_panel.LaunchConfigPanel):
         await panel.remove()
@@ -385,7 +473,7 @@ async def _replace_all_widgets_inner(app) -> None:
     # 3. Remove old widgets
     for payload in old_conversations:
         await payload.conv.remove()
-    for spec in PANEL_REGISTRY:
+    for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
         old_widget = old_panels[spec.name]
         if old_widget is not None:
             await old_widget.remove()
@@ -404,7 +492,7 @@ async def _replace_all_widgets_inner(app) -> None:
         conv_id = payload.conv_id
         new_conversations[session_key].id = conv_id
 
-    for spec in PANEL_REGISTRY:
+    for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
         w = new_panels[spec.name]
         w.id = app._panel_ids[spec.name]
         w.display = (spec.name == active_panel)
@@ -415,7 +503,7 @@ async def _replace_all_widgets_inner(app) -> None:
     header = app.query_one(Header)
     # Mount cycling panels in registry order
     prev_widget = header
-    for spec in PANEL_REGISTRY:
+    for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
         await app.mount(new_panels[spec.name], after=prev_widget)
         prev_widget = new_panels[spec.name]
 
@@ -482,6 +570,10 @@ def _rehydrate_panels_from_store(app, new_panels: dict[str, object]) -> None:
     timeline_panel = new_panels.get("timeline")
     if timeline_panel is not None:
         timeline_panel.refresh_from_store(analytics_store)
+
+    perf_panel = new_panels.get("perf")
+    if perf_panel is not None:
+        perf_panel.refresh_from_store(analytics_store, app=app)
 
     session_panel = new_panels.get("session")
     if session_panel is not None:

@@ -104,6 +104,16 @@ class ThemeColors:
     # Functional aliases
     info: str  # theme.primary
 
+    # Secondary semantic shades
+    # // [LAW:one-source-of-truth] Shared muted/subtle tones derive once per theme.
+    muted: str
+    subtle: str
+
+    # Reusable text styles for non-primary content tiers
+    text_muted_style: str
+    text_subtle_style: str
+    text_hint_style: str
+
     # Code rendering
     code_theme: str  # "github-dark" or "friendly"
 
@@ -132,6 +142,26 @@ class ThemeColors:
     # (panels, toggles, etc.). Naturally distinct from filter_colors since
     # filter hues are placed in gaps *between* these theme colors.
     action_colors: list[str]
+
+
+def _mix_hex(fg: str, bg: str, fg_weight: float) -> str:
+    """Blend two #RRGGBB colors and return #RRGGBB.
+
+    fg_weight is clamped to [0, 1] and represents the fg contribution.
+    """
+    try:
+        fg_color = Color.parse(fg)
+        bg_color = Color.parse(bg)
+        fg_r, fg_g, fg_b = fg_color.rgb
+        bg_r, bg_g, bg_b = bg_color.rgb
+        weight = max(0.0, min(1.0, fg_weight))
+        inv = 1.0 - weight
+        r = int(round((fg_r * weight) + (bg_r * inv)))
+        g = int(round((fg_g * weight) + (bg_g * inv)))
+        b = int(round((fg_b * weight) + (bg_b * inv)))
+        return "#{:02X}{:02X}{:02X}".format(r, g, b)
+    except Exception:
+        return fg
 
 
 def _normalize_color(color: str | None, fallback: str) -> str:
@@ -197,7 +227,14 @@ def build_theme_colors(textual_theme) -> ThemeColors:
     # Markdown theme
     # [LAW:one-source-of-truth] markdown styling defined here
     md_code_style = f"{foreground} on {surface}"
-    md_h_dim = "dim italic"
+    muted = _mix_hex(foreground, surface, 0.62)
+    subtle = _mix_hex(foreground, background, 0.42)
+
+    text_muted_style = f"{muted}"
+    text_subtle_style = f"{subtle}"
+    text_hint_style = f"italic {muted}"
+
+    md_h_dim = f"italic {subtle}"
 
     markdown_theme_dict = {
         "markdown.text": foreground,
@@ -214,7 +251,7 @@ def build_theme_colors(textual_theme) -> ThemeColors:
         "markdown.h5": f"italic {foreground}",
         "markdown.h6": md_h_dim,
         "markdown.link": f"underline {primary}",
-        "markdown.link_url": f"dim underline {primary}",
+        "markdown.link_url": f"underline {muted}",
         "markdown.block_quote": f"italic {foreground}",
         "markdown.table.border": f"dim {foreground}",
         "markdown.table.header": f"bold {primary}",
@@ -249,6 +286,11 @@ def build_theme_colors(textual_theme) -> ThemeColors:
         assistant=secondary,
         system=accent,
         info=primary,
+        muted=muted,
+        subtle=subtle,
+        text_muted_style=text_muted_style,
+        text_subtle_style=text_subtle_style,
+        text_hint_style=text_hint_style,
         code_theme=code_theme,
         search_all_bg=surface,
         search_current_style=search_current_style,
@@ -282,6 +324,7 @@ def set_theme(textual_theme) -> None:
     // [LAW:single-enforcer] Sole entry point for theme changes.
     """
     global _theme_colors, ROLE_STYLES, TAG_STYLES, MSG_COLORS, FILTER_INDICATORS
+    global _TEXT_MUTED_STYLE, _TEXT_SUBTLE_STYLE, _TEXT_HINT_STYLE
 
     _theme_colors = build_theme_colors(textual_theme)
     tc = _theme_colors
@@ -297,6 +340,9 @@ def set_theme(textual_theme) -> None:
     TAG_STYLES = [p.fg_on_bg_for_mode(i, tc.dark) for i in range(min(p.count, cc_dump.core.palette.TAG_COLOR_COUNT))]
     MSG_COLORS = [p.msg_color_for_mode(i, tc.dark) for i in range(6)]
     FILTER_INDICATORS = _build_filter_indicators(tc)
+    _TEXT_MUTED_STYLE = tc.text_muted_style
+    _TEXT_SUBTLE_STYLE = tc.text_subtle_style
+    _TEXT_HINT_STYLE = tc.text_hint_style
 
 
 # ─── Visibility model constants ───────────────────────────────────────────────
@@ -414,8 +460,30 @@ def _resolve_visibility(block: FormattedBlock, filters: dict, overrides=None) ->
 # Initial values — rebuilt by set_theme()
 ROLE_STYLES: dict[str, str] = {}
 TAG_STYLES: list[tuple[str, str]] = []
+_TEXT_MUTED_STYLE = "#9A9A9A"
+_TEXT_SUBTLE_STYLE = "#808080"
+_TEXT_HINT_STYLE = "italic #9A9A9A"
 # Default MSG_COLORS to avoid division by zero in tests that don't call set_theme()
-MSG_COLORS: list[str] = ["cyan", "magenta", "yellow", "blue", "green", "red"]
+MSG_COLORS: list[str] = [
+    "#00B7C3",
+    "#A84BFF",
+    "#D39B00",
+    "#2A7FFF",
+    "#2DB46A",
+    "#E15A5A",
+]
+
+
+def _muted_style() -> str:
+    return _TEXT_MUTED_STYLE
+
+
+def _subtle_style() -> str:
+    return _TEXT_SUBTLE_STYLE
+
+
+def _hint_style() -> str:
+    return _TEXT_HINT_STYLE
 
 
 def _build_filter_indicators(tc: ThemeColors) -> dict[str, tuple[str, str]]:
@@ -517,25 +585,25 @@ def _render_xml_tag(tag_text: str) -> Text:
 
 def _render_separator(block: SeparatorBlock) -> Text | None:
     char = "\u2500" if block.style == "heavy" else "\u2504"
-    return Text(char * 70, style="dim")
+    return Text(char * 70, style=_subtle_style())
 
 
 def _render_separator_summary_collapsed(block: SeparatorBlock) -> Text | None:
     """Summary-collapsed separator renderer: minimal visual divider."""
     char = "\u2500" if block.style == "heavy" else "\u2504"
-    return Text(char * 18, style="dim")
+    return Text(char * 18, style=_subtle_style())
 
 
 def _render_separator_summary_expanded(block: SeparatorBlock) -> Text | None:
     """Summary-expanded separator renderer: medium visual divider."""
     char = "\u2500" if block.style == "heavy" else "\u2504"
-    return Text(char * 36, style="dim")
+    return Text(char * 36, style=_subtle_style())
 
 
 def _render_separator_full_collapsed(block: SeparatorBlock) -> Text | None:
     """Full-collapsed separator renderer: long divider, shorter than full-expanded."""
     char = "\u2500" if block.style == "heavy" else "\u2504"
-    return Text(char * 54, style="dim")
+    return Text(char * 54, style=_subtle_style())
 
 
 def _header_label_and_style(block: HeaderBlock) -> tuple[str, str]:
@@ -556,7 +624,7 @@ def _render_header(block: HeaderBlock) -> Text | None:
     label, style = _header_label_and_style(block)
     t = Text()
     t.append(" {} ".format(label), style=style)
-    t.append(" ({})".format(block.timestamp), style="dim")
+    t.append(" ({})".format(block.timestamp), style=_muted_style())
     return t
 
 
@@ -576,10 +644,10 @@ def _render_header_summary_expanded(block: HeaderBlock) -> Text | None:
 def _render_header_full_expanded(block: HeaderBlock) -> Text | None:
     """Full-expanded header renderer: header line plus transport metadata."""
     t = _render_header(block)
-    t.append("\n    ", style="dim")
-    t.append(f"type: {block.header_type}", style="dim italic")
+    t.append("\n    ", style=_muted_style())
+    t.append(f"type: {block.header_type}", style=_hint_style())
     if block.request_num:
-        t.append(f" | request: {block.request_num}", style="dim italic")
+        t.append(f" | request: {block.request_num}", style=_hint_style())
     return t
 
 
@@ -595,8 +663,8 @@ def _render_http_headers(block: HttpHeadersBlock) -> Text | None:
 
     for key in sorted(block.headers.keys()):
         value = block.headers[key]
-        t.append("\n    {}: ".format(key), style=f"dim {tc.info}")
-        t.append(value, style="dim")
+        t.append("\n    {}: ".format(key), style=tc.info)
+        t.append(value, style=_muted_style())
 
     return t
 
@@ -613,11 +681,14 @@ def _render_http_headers_summary(block: HttpHeadersBlock) -> Text | None:
     }
     label, style = labels.get(block.header_type, ("Headers", "bold"))
     t.append(label, style=style)
-    t.append("  ({} header{})".format(n, "s" if n != 1 else ""), style="dim")
+    t.append(
+        "  ({} header{})".format(n, "s" if n != 1 else ""),
+        style=_muted_style(),
+    )
     # Show content-type inline when present
     ct = block.headers.get("content-type", "")
     if ct:
-        t.append("  content-type: {}".format(ct), style="dim")
+        t.append("  content-type: {}".format(ct), style=_muted_style())
     return t
 
 
@@ -632,20 +703,23 @@ def _render_http_headers_summary_expanded(block: HttpHeadersBlock) -> Text | Non
     }
     label, style = labels.get(block.header_type, ("Headers", "bold"))
     t.append(label, style=style)
-    t.append("  ({} header{})".format(n, "s" if n != 1 else ""), style="dim")
+    t.append(
+        "  ({} header{})".format(n, "s" if n != 1 else ""),
+        style=_muted_style(),
+    )
 
     shown = 0
     for key in sorted(block.headers.keys()):
         if shown >= 6:
             break
         value = block.headers[key]
-        t.append("\n    {}: ".format(key), style=f"dim {tc.info}")
-        t.append(value, style="dim")
+        t.append("\n    {}: ".format(key), style=tc.info)
+        t.append(value, style=_muted_style())
         shown += 1
 
     if n > shown:
         t.append("\n    ")
-        t.append("··· {} more headers".format(n - shown), style="dim")
+        t.append("··· {} more headers".format(n - shown), style=_muted_style())
     return t
 
 
@@ -660,23 +734,31 @@ def _render_http_headers_full_collapsed(block: HttpHeadersBlock) -> Text | None:
     }
     label, style = labels.get(block.header_type, ("Headers", "bold"))
     t.append(label, style=style)
-    t.append("  ({} header{})".format(n, "s" if n != 1 else ""), style="dim")
+    t.append(
+        "  ({} header{})".format(n, "s" if n != 1 else ""),
+        style=_muted_style(),
+    )
 
     shown = 0
     for key, value in block.headers.items():
         if shown >= 3:
             break
-        t.append("\n    {}: ".format(key), style=f"dim {tc.info}")
-        t.append(value, style="dim")
+        t.append("\n    {}: ".format(key), style=tc.info)
+        t.append(value, style=_muted_style())
         shown += 1
 
     if n > shown:
         t.append("\n    ")
-        t.append("··· {} more headers [snippet]".format(n - shown), style="dim italic")
+        t.append(
+            "··· {} more headers [snippet]".format(n - shown),
+            style=_hint_style(),
+        )
     return t
 
 
 def _render_metadata(block: MetadataBlock) -> Text | None:
+    tc = get_theme_colors()
+    muted = tc.text_muted_style
     parts = [
         "model: ",
         ("{}".format(block.model), "bold"),
@@ -694,36 +776,38 @@ def _render_metadata(block: MetadataBlock) -> Text | None:
         parts.append(" | session: {}".format(block.session_id[:8]))
 
     t = Text()
-    t.append("  ", style="dim")
+    t.append("  ", style=muted)
     for part in parts:
         if isinstance(part, tuple):
             t.append(part[0], style=part[1])
         else:
             t.append(part)
-    t.stylize("dim")
+    t.stylize(muted)
     return t
 
 
 def _render_metadata_summary_collapsed(block: MetadataBlock) -> Text | None:
     """Summary-collapsed metadata renderer: key request identity only."""
-    t = Text("  ", style="dim")
-    t.append("model: ", style="dim")
+    muted = _muted_style()
+    t = Text("  ", style=muted)
+    t.append("model: ", style=muted)
     t.append("{}".format(block.model), style="bold")
     if block.tool_count:
-        t.append(" | tools: {}".format(block.tool_count), style="dim")
-    t.append(" | stream: {}".format(block.stream), style="dim")
+        t.append(" | tools: {}".format(block.tool_count), style=muted)
+    t.append(" | stream: {}".format(block.stream), style=muted)
     return t
 
 
 def _render_metadata_summary_expanded(block: MetadataBlock) -> Text | None:
     """Summary-expanded metadata renderer: compact details with optional identity line."""
-    t = Text("  ", style="dim")
-    t.append("model: ", style="dim")
+    muted = _muted_style()
+    t = Text("  ", style=muted)
+    t.append("model: ", style=muted)
     t.append("{}".format(block.model), style="bold")
-    t.append(" | max_tokens: {}".format(block.max_tokens), style="dim")
-    t.append(" | stream: {}".format(block.stream), style="dim")
+    t.append(" | max_tokens: {}".format(block.max_tokens), style=muted)
+    t.append(" | stream: {}".format(block.stream), style=muted)
     if block.tool_count:
-        t.append(" | tools: {}".format(block.tool_count), style="dim")
+        t.append(" | tools: {}".format(block.tool_count), style=muted)
 
     id_parts: list[str] = []
     if block.user_hash:
@@ -733,12 +817,14 @@ def _render_metadata_summary_expanded(block: MetadataBlock) -> Text | None:
     if block.session_id:
         id_parts.append("session: {}".format(block.session_id[:8]))
     if id_parts:
-        t.append("\n    ", style="dim")
-        t.append(" | ".join(id_parts), style="dim")
+        t.append("\n    ", style=muted)
+        t.append(" | ".join(id_parts), style=muted)
     return t
 
 
-def _render_metadata_full_expanded(block: MetadataBlock) -> Text | None:
+def _render_metadata_full_expanded(
+    block: MetadataBlock,
+) -> ConsoleRenderable | None:
     """Full-expanded metadata renderer with full identity values."""
     base = _render_metadata(block)
     if base is None:
@@ -755,8 +841,8 @@ def _render_metadata_full_expanded(block: MetadataBlock) -> Text | None:
         return base
 
     detail = Text("    ")
-    detail.append("identity: ", style="dim")
-    detail.append(" | ".join(id_parts), style="dim")
+    detail.append("identity: ", style=_muted_style())
+    detail.append(" | ".join(id_parts), style=_muted_style())
     return Group(base, detail)
 
 
@@ -849,7 +935,7 @@ def _render_tracked_changed(
         preview.append("\n")
         preview.append(
             "{}    ··· {} more diff lines".format(block.indent, hidden),
-            style="dim italic",
+            style=_hint_style(),
         )
     return Group(t, preview)
 
@@ -1000,12 +1086,12 @@ def _render_code_fence_collapsed(info: str | None, inner_text: str) -> Text:
         preview = preview[:60] + "\u2026"
 
     t = Text("  ")
-    t.append(f"▷ ```{lang}```", style="bold dim")
+    t.append(f"▷ ```{lang}```", style=f"bold {_muted_style()}")
     if line_count:
-        t.append(f" ({line_count} lines)", style="dim")
+        t.append(f" ({line_count} lines)", style=_muted_style())
     if preview:
         t.append(" ")
-        t.append(preview, style="dim")
+        t.append(preview, style=_muted_style())
     return t
 
 
@@ -1017,12 +1103,12 @@ def _render_md_fence_collapsed(inner_text: str) -> Text:
         preview = preview[:60] + "\u2026"
 
     t = Text("  ")
-    t.append("▷ ```md```", style="bold dim")
+    t.append("▷ ```md```", style=f"bold {_muted_style()}")
     if line_count:
-        t.append(f" ({line_count} lines)", style="dim")
+        t.append(f" ({line_count} lines)", style=_muted_style())
     if preview:
         t.append(" ")
-        t.append(preview, style="dim")
+        t.append(preview, style=_muted_style())
     return t
 
 
@@ -1238,7 +1324,7 @@ def _render_text_summary_collapsed(block: TextContentBlock) -> ConsoleRenderable
     t = Text("  ")
     t.append(preview)
     if lines > 1:
-        t.append(f"  ({lines} lines)", style="dim")
+        t.append(f"  ({lines} lines)", style=_muted_style())
     return t
 
 
@@ -1255,7 +1341,7 @@ def _render_text_summary_expanded(block: TextContentBlock) -> ConsoleRenderable 
     summary = Text("  ")
     summary.append(_preview_line(block.content, max_chars=110))
     if total_lines > 1:
-        summary.append(f"  ({total_lines} lines)", style="dim")
+        summary.append(f"  ({total_lines} lines)", style=_muted_style())
 
     # Cap at 8 rendered lines for summary-expanded:
     # 1 summary line + up to 6 preview lines + optional remainder line.
@@ -1270,11 +1356,11 @@ def _render_text_summary_expanded(block: TextContentBlock) -> ConsoleRenderable 
         if idx:
             preview.append("\n")
         preview.append("    ")
-        preview.append(_preview_line(line, max_chars=120), style="dim")
+        preview.append(_preview_line(line, max_chars=120), style=_muted_style())
     if hidden > 0:
         if preview_lines:
             preview.append("\n")
-        preview.append(f"    ··· {hidden} more lines", style="dim")
+        preview.append(f"    ··· {hidden} more lines", style=_muted_style())
 
     return Group(summary, preview)
 
@@ -1357,7 +1443,7 @@ def _tool_result_header(block: ToolResultBlock, color: str) -> Text:
     t = Text("  ")
     t.append(label, style="bold {}".format(color))
     if block.detail:
-        t.append(" {}".format(block.detail), style="dim")
+        t.append(" {}".format(block.detail), style=_muted_style())
     t.append(" ({} lines)".format(block.size))
     return t
 
@@ -1368,7 +1454,7 @@ def _append_special_marker_badges(t: Text, block: FormattedBlock) -> None:
     // [LAW:one-source-of-truth] Marker classification lives in special_content.
     """
     for marker in cc_dump.core.special_content.display_markers_for_block(block):
-        t.append(f" [{marker.label}]", style="bold dim")
+        t.append(f" [{marker.label}]", style=f"bold {_muted_style()}")
 
 
 # ─── ToolUseBlock renderers ────────────────────────────────────────────────────
@@ -1383,7 +1469,7 @@ def _render_tool_use_oneliner(block: ToolUseBlock) -> Text | None:
     t = Text("  ")
     t.append("[Use: {}]".format(block.name), style="bold {}".format(color))
     if block.detail:
-        t.append(" {}".format(block.detail), style="dim")
+        t.append(" {}".format(block.detail), style=_muted_style())
     _append_special_marker_badges(t, block)
     t.append(" ({} lines)".format(block.input_size))
     return t
@@ -1407,7 +1493,7 @@ def _render_tool_use_summary_expanded(block: ToolUseBlock) -> ConsoleRenderable 
     if len(desc_line) > 120:
         desc_line = desc_line[:117] + "..."
     desc_text = Text("    ")
-    desc_text.append(desc_line, style="dim italic")
+    desc_text.append(desc_line, style=_hint_style())
     return Group(base, desc_text)
 
 
@@ -1496,7 +1582,7 @@ def _render_tool_use_full_collapsed(block: ToolUseBlock) -> ConsoleRenderable | 
         return header
 
     preview_line = Text("    ")
-    preview_line.append(preview, style="dim")
+    preview_line.append(preview, style=_muted_style())
     return Group(header, preview_line)
 
 
@@ -1535,7 +1621,7 @@ def _render_tool_use_edit_full(block: ToolUseBlock) -> Text | None:
     t = Text("  ")
     t.append("[Use: Edit]", style="bold {}".format(color))
     if block.detail:
-        t.append(" {}".format(block.detail), style="dim")
+        t.append(" {}".format(block.detail), style=_muted_style())
     _append_special_marker_badges(t, block)
     t.append(" ({} lines)".format(block.input_size))
 
@@ -1559,7 +1645,7 @@ def _render_tool_use_read_full(block: ToolUseBlock) -> Text | None:
     t = Text("  ")
     t.append("[Use: Read]", style=f"bold {color}")
     if block.detail:
-        t.append(f" {block.detail}", style="dim")
+        t.append(f" {block.detail}", style=_muted_style())
     _append_special_marker_badges(t, block)
     t.append(f" ({block.input_size} lines)")
 
@@ -1573,7 +1659,7 @@ def _render_tool_use_read_full(block: ToolUseBlock) -> Text | None:
         t.append("\n    ")
         t.append(
             "offset={} limit={}".format(offset if offset is not None else 0, limit if limit is not None else "all"),
-            style="dim",
+            style=_muted_style(),
         )
     return t
 
@@ -1585,7 +1671,7 @@ def _render_tool_use_write_full(block: ToolUseBlock) -> Text | None:
     t = Text("  ")
     t.append("[Use: Write]", style=f"bold {color}")
     if block.detail:
-        t.append(f" {block.detail}", style="dim")
+        t.append(f" {block.detail}", style=_muted_style())
     _append_special_marker_badges(t, block)
     t.append(f" ({block.input_size} lines)")
 
@@ -1596,7 +1682,7 @@ def _render_tool_use_write_full(block: ToolUseBlock) -> Text | None:
         line_count = content.count("\n") + 1
         t.append("\n    ")
         t.append(f"+ payload ({line_count} lines): ", style=tc.success)
-        t.append(preview, style="dim")
+        t.append(preview, style=_muted_style())
     return t
 
 
@@ -1607,7 +1693,7 @@ def _render_tool_use_grep_full(block: ToolUseBlock) -> Text | None:
     t = Text("  ")
     t.append("[Use: Grep]", style=f"bold {color}")
     if block.detail:
-        t.append(f" {block.detail}", style="dim")
+        t.append(f" {block.detail}", style=_muted_style())
     _append_special_marker_badges(t, block)
     t.append(f" ({block.input_size} lines)")
 
@@ -1629,7 +1715,7 @@ def _render_tool_use_glob_full(block: ToolUseBlock) -> Text | None:
     t = Text("  ")
     t.append("[Use: Glob]", style=f"bold {color}")
     if block.detail:
-        t.append(f" {block.detail}", style="dim")
+        t.append(f" {block.detail}", style=_muted_style())
     _append_special_marker_badges(t, block)
     t.append(f" ({block.input_size} lines)")
 
@@ -1640,7 +1726,7 @@ def _render_tool_use_glob_full(block: ToolUseBlock) -> Text | None:
         t.append(pattern, style=tc.secondary)
     if path:
         t.append("\n    ")
-        t.append(path, style="dim")
+        t.append(path, style=_muted_style())
     return t
 
 
@@ -1679,7 +1765,7 @@ def _render_tool_use_full_with_desc(block: ToolUseBlock) -> ConsoleRenderable | 
     if len(desc_line) > 120:
         desc_line = desc_line[:117] + "..."
     desc_text = Text("    ")
-    desc_text.append(desc_line, style="dim italic")
+    desc_text.append(desc_line, style=_hint_style())
     return Group(base, desc_text)
 
 
@@ -1691,7 +1777,7 @@ def _render_tool_def_header(name: str, tokens: int) -> Text:
     t = Text("  ")
     t.append(f"{name:<18}", style="bold")
     if tokens > 0:
-        t.append(f"{_fmt_tokens(tokens)} tokens", style="dim")
+        t.append(f"{_fmt_tokens(tokens)} tokens", style=_muted_style())
     return t
 
 
@@ -1714,7 +1800,7 @@ def _render_tool_def_summary_expanded(block: FormattedBlock) -> ConsoleRenderabl
     if len(first_line) > 80:
         first_line = first_line[:77] + "..."
     preview = Text("    ")
-    preview.append(first_line, style="dim italic")
+    preview.append(first_line, style=_hint_style())
     return Group(header, preview)
 
 
@@ -1746,7 +1832,7 @@ def _render_tool_def_full_collapsed(block: FormattedBlock) -> ConsoleRenderable 
     stats = Text("    ")
     stats.append(
         "params: {} ({} required)".format(total_params, required_params),
-        style="dim",
+        style=_muted_style(),
     )
     return Group(header, stats)
 
@@ -1770,7 +1856,7 @@ def _render_tool_result_summary_collapsed(block: ToolResultBlock) -> Text | None
     suffix = " ERROR" if block.is_error else ""
     t.append("[Result{}]".format(suffix), style="bold {}".format(color))
     if block.size:
-        t.append(" ({} lines)".format(block.size), style="dim")
+        t.append(" ({} lines)".format(block.size), style=_muted_style())
     return t
 
 
@@ -1783,7 +1869,7 @@ def _render_tool_result_summary_expanded(block: ToolResultBlock) -> ConsoleRende
         return header
     preview = _preview_line(block.content, max_chars=120)
     body = Text("    ")
-    body.append(preview, style="dim")
+    body.append(preview, style=_muted_style())
     return Group(header, body)
 
 
@@ -1932,7 +2018,7 @@ def _render_tool_result_full(block: ToolResultBlock) -> ConsoleRenderable | None
     header = _tool_result_header(block, color)
     if block.content:
         header.append("\n")
-        header.append(block.content, style="dim")
+        header.append(block.content, style=_muted_style())
     return header
 
 
@@ -1954,11 +2040,11 @@ def _render_tool_use_summary_block_collapsed(block: ToolUseSummaryBlock) -> Text
     t = Text("  ")
     t.append(
         "[used {} tool{}]".format(block.total, "" if block.total == 1 else "s"),
-        style="dim",
+        style=_muted_style(),
     )
     if entries:
         name, count = entries[0]
-        t.append(" top: {} {}x".format(name, count), style="dim")
+        t.append(" top: {} {}x".format(name, count), style=_muted_style())
     return t
 
 
@@ -1976,10 +2062,10 @@ def _render_tool_use_summary_block_expanded(block: ToolUseSummaryBlock) -> Text 
             "" if block.total == 1 else "s",
             ", ".join(parts) if parts else "none",
         ),
-        style="dim",
+        style=_muted_style(),
     )
     if hidden > 0:
-        t.append(" (+{} more)".format(hidden), style="dim")
+        t.append(" (+{} more)".format(hidden), style=_muted_style())
     return t
 
 
@@ -1989,16 +2075,16 @@ def _render_tool_use_summary_block_full_collapsed(block: ToolUseSummaryBlock) ->
     t = Text("  ")
     t.append(
         "[used {} tool{}]".format(block.total, "" if block.total == 1 else "s"),
-        style="dim",
+        style=_muted_style(),
     )
     shown = entries[:3]
     for name, count in shown:
         t.append("\n    ")
-        t.append("- {}: {}x".format(name, count), style="dim")
+        t.append("- {}: {}x".format(name, count), style=_muted_style())
     hidden = max(len(entries) - len(shown), 0)
     if hidden > 0:
         t.append("\n    ")
-        t.append("··· {} more tools".format(hidden), style="dim")
+        t.append("··· {} more tools".format(hidden), style=_muted_style())
     return t
 
 
@@ -2013,63 +2099,63 @@ def _render_tool_use_summary(block: ToolUseSummaryBlock) -> Text | None:
             len(entries),
             "" if len(entries) == 1 else "s",
         ),
-        style="dim",
+        style=_muted_style(),
     )
     denom = block.total if block.total > 0 else 1
     for name, count in entries:
         pct = int(round((count / denom) * 100))
         t.append("\n    ")
-        t.append("- {}: {}x ({}%)".format(name, count, pct), style="dim")
+        t.append("- {}: {}x ({}%)".format(name, count, pct), style=_muted_style())
     return t
 
 
 def _render_image(block: ImageBlock) -> Text | None:
-    return Text("  [image: {}]".format(block.media_type), style="dim")
+    return Text("  [image: {}]".format(block.media_type), style=_muted_style())
 
 
 def _render_image_summary_collapsed(block: ImageBlock) -> Text | None:
     """Summary-collapsed image renderer: existence signal only."""
-    return Text("  [image]", style="dim")
+    return Text("  [image]", style=_muted_style())
 
 
 def _render_image_summary_expanded(block: ImageBlock) -> Text | None:
     """Summary-expanded image renderer: media type with hidden-payload hint."""
-    t = Text("  [image: {}]".format(block.media_type or "unknown"), style="dim")
-    t.append("\n    binary payload hidden", style="dim italic")
+    t = Text("  [image: {}]".format(block.media_type or "unknown"), style=_muted_style())
+    t.append("\n    binary payload hidden", style=_hint_style())
     return t
 
 
 def _render_image_full_collapsed(block: ImageBlock) -> Text | None:
     """Full-collapsed image renderer: compact media marker."""
-    return Text("  [image]", style="dim")
+    return Text("  [image]", style=_muted_style())
 
 
 def _render_unknown_type(block: UnknownTypeBlock) -> Text | None:
-    return Text("  [{}]".format(block.block_type), style="dim")
+    return Text("  [{}]".format(block.block_type), style=_muted_style())
 
 
 def _render_unknown_type_summary_collapsed(block: UnknownTypeBlock) -> Text | None:
     """Summary-collapsed unknown-type renderer: generic unsupported marker."""
     _ = block
-    return Text("  [unknown block]", style="dim")
+    return Text("  [unknown block]", style=_muted_style())
 
 
 def _render_unknown_type_summary_expanded(block: UnknownTypeBlock) -> Text | None:
     """Summary-expanded unknown-type renderer: include unknown type label."""
-    t = Text("  [unknown: {}]".format(block.block_type or "unspecified"), style="dim")
-    t.append("\n    unsupported content type", style="dim italic")
+    t = Text("  [unknown: {}]".format(block.block_type or "unspecified"), style=_muted_style())
+    t.append("\n    unsupported content type", style=_hint_style())
     return t
 
 
 def _render_unknown_type_full_expanded(block: UnknownTypeBlock) -> Text | None:
     """Full-expanded unknown-type renderer: explicit missing-renderer detail."""
-    t = Text("  [unknown: {}]".format(block.block_type or "unspecified"), style="dim")
-    t.append("\n    no renderer registered", style="dim italic")
+    t = Text("  [unknown: {}]".format(block.block_type or "unspecified"), style=_muted_style())
+    t.append("\n    no renderer registered", style=_hint_style())
     return t
 
 
 def _render_stream_info(block: StreamInfoBlock) -> Text | None:
-    t = Text("  ", style="dim")
+    t = Text("  ", style=_muted_style())
     t.append("model: ")
     t.append(block.model, style="bold")
     return t
@@ -2079,7 +2165,7 @@ def _render_stream_info_summary_collapsed(block: StreamInfoBlock) -> Text | None
     """Summary-collapsed stream info renderer: model identity only."""
     model = block.model or "unknown"
     compact = model if len(model) <= 24 else model[:23] + "…"
-    t = Text("  ", style="dim")
+    t = Text("  ", style=_muted_style())
     t.append("model: ")
     t.append(compact, style="bold")
     return t
@@ -2088,7 +2174,7 @@ def _render_stream_info_summary_collapsed(block: StreamInfoBlock) -> Text | None
 def _render_stream_info_summary_expanded(block: StreamInfoBlock) -> Text | None:
     """Summary-expanded stream info renderer: full model plus stream hint."""
     t = _render_stream_info(block)
-    t.append("\n    stream metadata", style="dim italic")
+    t.append("\n    stream metadata", style=_hint_style())
     return t
 
 
@@ -2117,7 +2203,7 @@ def _render_stream_tool_use_summary_collapsed(block: StreamToolUseBlock) -> Text
 def _render_stream_tool_use_summary_expanded(block: StreamToolUseBlock) -> Text | None:
     """Summary-expanded stream tool-use renderer: compact label plus pipeline hint."""
     t = _render_stream_tool_use_summary_collapsed(block)
-    t.append("\n    pending tool_result", style="dim italic")
+    t.append("\n    pending tool_result", style=_hint_style())
     return t
 
 
@@ -2140,13 +2226,13 @@ def _render_text_delta_summary_collapsed(block: TextDeltaBlock) -> Text | None:
     """Summary-collapsed text-delta renderer: compact stream delta signal."""
     content = block.content or ""
     t = Text("  ")
-    t.append("[delta]", style="bold dim")
+    t.append("[delta]", style=f"bold {_muted_style()}")
     if not content:
         return t
-    t.append(f" {len(content):,} chars", style="dim")
+    t.append(f" {len(content):,} chars", style=_muted_style())
     line_count = _line_count(content)
     if line_count > 1:
-        t.append(f" / {line_count} lines", style="dim")
+        t.append(f" / {line_count} lines", style=_muted_style())
     return t
 
 
@@ -2165,17 +2251,17 @@ def _render_text_delta_summary_expanded(block: TextDeltaBlock) -> ConsoleRendera
         if idx:
             preview.append("\n")
         preview.append("    ")
-        preview.append(_preview_line(line, max_chars=120), style="dim")
+        preview.append(_preview_line(line, max_chars=120), style=_muted_style())
     if hidden > 0:
         preview.append("\n")
-        preview.append(f"    ··· {hidden} more lines", style="dim")
+        preview.append(f"    ··· {hidden} more lines", style=_muted_style())
     return Group(header, preview)
 
 
 def _render_text_delta_full_collapsed(block: TextDeltaBlock) -> ConsoleRenderable | None:
     """Full-collapsed text-delta renderer: bounded content snippet."""
     header = Text("  ")
-    header.append("[delta]", style="bold dim")
+    header.append("[delta]", style=f"bold {_muted_style()}")
     preview = _render_full_collapsed_snippet(block.content or "", max_lines=3)
     if preview is None:
         return header
@@ -2183,7 +2269,7 @@ def _render_text_delta_full_collapsed(block: TextDeltaBlock) -> ConsoleRenderabl
 
 
 def _render_stop_reason(block: StopReasonBlock) -> Text | None:
-    t = Text("\n  stop: " + block.reason, style="dim")
+    t = Text("\n  stop: " + block.reason, style=_muted_style())
     return t
 
 
@@ -2199,20 +2285,20 @@ _STOP_REASON_HINTS: dict[str, str] = {
 
 def _render_stop_reason_summary_collapsed(block: StopReasonBlock) -> Text | None:
     """Summary-collapsed stop-reason renderer: concise enum only."""
-    return Text("  stop: " + block.reason, style="dim")
+    return Text("  stop: " + block.reason, style=_muted_style())
 
 
 def _render_stop_reason_summary_expanded(block: StopReasonBlock) -> Text | None:
     """Summary-expanded stop-reason renderer: enum plus interpretation."""
     hint = _STOP_REASON_HINTS.get(block.reason, "reason not recognized")
-    t = Text("  stop: " + block.reason, style="dim")
-    t.append("\n    " + hint, style="dim italic")
+    t = Text("  stop: " + block.reason, style=_muted_style())
+    t.append("\n    " + hint, style=_hint_style())
     return t
 
 
 def _render_stop_reason_full_collapsed(block: StopReasonBlock) -> Text | None:
     """Full-collapsed stop-reason renderer: compact stop marker."""
-    return Text("  stop", style="dim")
+    return Text("  stop", style=_muted_style())
 
 
 def _render_error(block: ErrorBlock) -> Text | None:
@@ -2233,7 +2319,7 @@ def _render_error_summary_expanded(block: ErrorBlock) -> Text | None:
     """Summary-expanded HTTP error renderer: status code with concise reason."""
     tc = get_theme_colors()
     t = Text("  [HTTP {} {}]".format(block.code, block.reason), style=f"bold {tc.error}")
-    t.append("\n    request failed", style="dim italic")
+    t.append("\n    request failed", style=_hint_style())
     return t
 
 
@@ -2241,7 +2327,7 @@ def _render_error_full_collapsed(block: ErrorBlock) -> Text | None:
     """Full-collapsed HTTP error renderer: compact failure marker."""
     tc = get_theme_colors()
     t = Text("  [HTTP {} {}]".format(block.code, block.reason), style=f"bold {tc.error}")
-    t.append(" [failed]", style="dim")
+    t.append(" [failed]", style=_muted_style())
     return t
 
 
@@ -2263,7 +2349,7 @@ def _render_proxy_error_summary_expanded(block: ProxyErrorBlock) -> Text | None:
     """Summary-expanded proxy-error renderer: include short proxy error text."""
     tc = get_theme_colors()
     t = Text("  [PROXY ERROR: {}]".format(block.error), style=f"bold {tc.error}")
-    t.append("\n    upstream transport failed", style="dim italic")
+    t.append("\n    upstream transport failed", style=_hint_style())
     return t
 
 
@@ -2271,7 +2357,7 @@ def _render_proxy_error_full_collapsed(block: ProxyErrorBlock) -> Text | None:
     """Full-collapsed proxy-error renderer: compact failure marker."""
     tc = get_theme_colors()
     t = Text("  [PROXY ERROR: {}]".format(block.error), style=f"bold {tc.error}")
-    t.append(" [failed]", style="dim")
+    t.append(" [failed]", style=_muted_style())
     return t
 
 
@@ -2337,7 +2423,7 @@ def _render_turn_budget(block: TurnBudgetBlock) -> Text | None:
                 _fmt_tokens(b.tool_result_tokens_est),
                 ", ".join(parts),
             ),
-            style="dim",
+            style=_muted_style(),
         )
 
     # Cache info (if actual data is available)
@@ -2359,7 +2445,7 @@ def _render_turn_budget(block: TurnBudgetBlock) -> Text | None:
                 " | {} created".format(_fmt_tokens(b.actual_cache_creation_tokens)),
                 style=f"dim {tc.warning}",
             )
-        t.append(" | {} fresh".format(_fmt_tokens(b.actual_input_tokens)), style="dim")
+        t.append(" | {} fresh".format(_fmt_tokens(b.actual_input_tokens)), style=_muted_style())
 
     return t
 
@@ -2483,7 +2569,7 @@ def _render_turn_budget_summary_expanded(block: TurnBudgetBlock) -> Text | None:
     if b.actual_input_tokens > 0 or b.actual_cache_read_tokens > 0:
         total_actual = b.actual_input_tokens + b.actual_cache_read_tokens
         t.append("\n    ")
-        t.append("cache: ", style="bold dim")
+        t.append("cache: ", style=f"bold {_muted_style()}")
         t.append(
             "{} read ({})".format(
                 _fmt_tokens(b.actual_cache_read_tokens),
@@ -2491,7 +2577,7 @@ def _render_turn_budget_summary_expanded(block: TurnBudgetBlock) -> Text | None:
             ),
             style=f"dim {tc.info}",
         )
-        t.append(" | {} fresh".format(_fmt_tokens(b.actual_input_tokens)), style="dim")
+        t.append(" | {} fresh".format(_fmt_tokens(b.actual_input_tokens)), style=_muted_style())
 
     if block.tool_result_by_name:
         top_tools = sorted(
@@ -2500,10 +2586,10 @@ def _render_turn_budget_summary_expanded(block: TurnBudgetBlock) -> Text | None:
             reverse=True,
         )[:3]
         t.append("\n    ")
-        t.append("top tools: ", style="bold dim")
+        t.append("top tools: ", style=f"bold {_muted_style()}")
         t.append(
             ", ".join("{} {}".format(name, _fmt_tokens(tokens)) for name, tokens in top_tools),
-            style="dim",
+            style=_muted_style(),
         )
 
     return t
@@ -2517,10 +2603,10 @@ def _render_turn_budget_summary_expanded(block: TurnBudgetBlock) -> Text | None:
 def _render_thinking(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render thinking block — full content with dim italic style."""
     t = Text()
-    t.append("[thinking] ", style="bold dim")
+    t.append("[thinking] ", style=f"bold {_muted_style()}")
     content = getattr(block, "content", "")
     if content:
-        t.append(content, style="dim italic")
+        t.append(content, style=_hint_style())
     return t
 
 
@@ -2529,8 +2615,8 @@ def _render_thinking_summary(block: FormattedBlock) -> ConsoleRenderable | None:
     content = getattr(block, "content", "")
     line_count = len(content.splitlines()) if content else 0
     t = Text()
-    t.append("[thinking]", style="bold dim")
-    t.append(f" ({line_count} lines)", style="dim")
+    t.append("[thinking]", style=f"bold {_muted_style()}")
+    t.append(f" ({line_count} lines)", style=_muted_style())
     return t
 
 
@@ -2539,8 +2625,8 @@ def _render_thinking_summary_expanded(block: FormattedBlock) -> ConsoleRenderabl
     content = getattr(block, "content", "")
     line_count = len(content.splitlines()) if content else 0
     header = Text()
-    header.append("[thinking]", style="bold dim")
-    header.append(f" ({line_count} lines)", style="dim")
+    header.append("[thinking]", style=f"bold {_muted_style()}")
+    header.append(f" ({line_count} lines)", style=_muted_style())
     if not content:
         return header
 
@@ -2554,10 +2640,10 @@ def _render_thinking_summary_expanded(block: FormattedBlock) -> ConsoleRenderabl
         if idx:
             preview.append("\n")
         preview.append("    ")
-        preview.append(_preview_line(line, max_chars=120), style="dim italic")
+        preview.append(_preview_line(line, max_chars=120), style=_hint_style())
     if hidden > 0:
         preview.append("\n")
-        preview.append(f"    ··· {hidden} more lines", style="dim")
+        preview.append(f"    ··· {hidden} more lines", style=_muted_style())
     return Group(header, preview)
 
 
@@ -2566,8 +2652,8 @@ def _render_thinking_full_collapsed(block: FormattedBlock) -> ConsoleRenderable 
     content = getattr(block, "content", "")
     line_count = len(content.splitlines()) if content else 0
     header = Text()
-    header.append("[thinking]", style="bold dim")
-    header.append(f" ({line_count} lines)", style="dim")
+    header.append("[thinking]", style=f"bold {_muted_style()}")
+    header.append(f" ({line_count} lines)", style=_muted_style())
     preview = _render_full_collapsed_snippet(content, max_lines=3)
     if preview is None:
         return header
@@ -2579,7 +2665,7 @@ def _render_config_content(block: FormattedBlock) -> ConsoleRenderable | None:
     source = getattr(block, "source", "unknown")
     content = getattr(block, "content", "")
     header = Text()
-    header.append(f"[config: {source}]", style="bold dim")
+    header.append(f"[config: {source}]", style=f"bold {_muted_style()}")
     _append_special_marker_badges(header, block)
     if not content:
         return header
@@ -2592,12 +2678,12 @@ def _render_config_content_summary(block: FormattedBlock) -> ConsoleRenderable |
     content = getattr(block, "content", "")
     line_count = len(content.splitlines()) if content else 0
     t = Text()
-    t.append(f"[config: {source}]", style="bold dim")
+    t.append(f"[config: {source}]", style=f"bold {_muted_style()}")
     _append_special_marker_badges(t, block)
     if line_count:
-        t.append(f" ({line_count} lines)", style="dim")
-        t.append(" ", style="dim")
-        t.append(_preview_line(content, max_chars=80), style="dim")
+        t.append(f" ({line_count} lines)", style=_muted_style())
+        t.append(" ", style=_muted_style())
+        t.append(_preview_line(content, max_chars=80), style=_muted_style())
     return t
 
 
@@ -2618,10 +2704,10 @@ def _render_config_content_summary_expanded(block: FormattedBlock) -> ConsoleRen
         if idx:
             preview.append("\n")
         preview.append("    ")
-        preview.append(_preview_line(line, max_chars=120), style="dim")
+        preview.append(_preview_line(line, max_chars=120), style=_muted_style())
     if hidden > 0:
         preview.append("\n")
-        preview.append(f"    ··· {hidden} more lines", style="dim")
+        preview.append(f"    ··· {hidden} more lines", style=_muted_style())
 
     return Group(header, preview)
 
@@ -2640,10 +2726,10 @@ def _render_full_collapsed_snippet(content: str, max_lines: int = 4) -> Text | N
         if idx:
             preview.append("\n")
         preview.append("    ")
-        preview.append(_preview_line(line, max_chars=120), style="dim")
+        preview.append(_preview_line(line, max_chars=120), style=_muted_style())
     if hidden > 0:
         preview.append("\n")
-        preview.append(f"    ··· {hidden} more lines [snippet]", style="dim italic")
+        preview.append(f"    ··· {hidden} more lines [snippet]", style=_hint_style())
     return preview
 
 
@@ -2654,10 +2740,10 @@ def _render_config_content_full_collapsed(block: FormattedBlock) -> ConsoleRende
     line_count = len(content.splitlines()) if content else 0
 
     header = Text()
-    header.append(f"[config: {source}]", style="bold dim")
+    header.append(f"[config: {source}]", style=f"bold {_muted_style()}")
     _append_special_marker_badges(header, block)
     if line_count:
-        header.append(f" ({line_count} lines)", style="dim")
+        header.append(f" ({line_count} lines)", style=_muted_style())
 
     preview = _render_full_collapsed_snippet(content, max_lines=3)
     if preview is None:
@@ -2670,7 +2756,7 @@ def _render_hook_output(block: FormattedBlock) -> ConsoleRenderable | None:
     hook_name = getattr(block, "hook_name", "")
     content = getattr(block, "content", "")
     header = Text()
-    header.append(f"[hook: {hook_name}]", style="bold dim")
+    header.append(f"[hook: {hook_name}]", style=f"bold {_muted_style()}")
     _append_special_marker_badges(header, block)
     if not content:
         return header
@@ -2683,12 +2769,12 @@ def _render_hook_output_summary(block: FormattedBlock) -> ConsoleRenderable | No
     content = getattr(block, "content", "")
     line_count = len(content.splitlines()) if content else 0
     t = Text()
-    t.append(f"[hook: {hook_name}]", style="bold dim")
+    t.append(f"[hook: {hook_name}]", style=f"bold {_muted_style()}")
     _append_special_marker_badges(t, block)
     if line_count:
-        t.append(f" ({line_count} lines)", style="dim")
-        t.append(" ", style="dim")
-        t.append(_preview_line(content, max_chars=80), style="dim")
+        t.append(f" ({line_count} lines)", style=_muted_style())
+        t.append(" ", style=_muted_style())
+        t.append(_preview_line(content, max_chars=80), style=_muted_style())
     return t
 
 
@@ -2709,10 +2795,10 @@ def _render_hook_output_summary_expanded(block: FormattedBlock) -> ConsoleRender
         if idx:
             preview.append("\n")
         preview.append("    ")
-        preview.append(_preview_line(line, max_chars=120), style="dim")
+        preview.append(_preview_line(line, max_chars=120), style=_muted_style())
     if hidden > 0:
         preview.append("\n")
-        preview.append(f"    ··· {hidden} more lines", style="dim")
+        preview.append(f"    ··· {hidden} more lines", style=_muted_style())
 
     return Group(header, preview)
 
@@ -2724,10 +2810,10 @@ def _render_hook_output_full_collapsed(block: FormattedBlock) -> ConsoleRenderab
     line_count = len(content.splitlines()) if content else 0
 
     header = Text()
-    header.append(f"[hook: {hook_name}]", style="bold dim")
+    header.append(f"[hook: {hook_name}]", style=f"bold {_muted_style()}")
     _append_special_marker_badges(header, block)
     if line_count:
-        header.append(f" ({line_count} lines)", style="dim")
+        header.append(f" ({line_count} lines)", style=_muted_style())
 
     preview = _render_full_collapsed_snippet(content, max_lines=3)
     if preview is None:
@@ -2750,11 +2836,11 @@ def _render_message_header(
     idx = getattr(block, "msg_index", 0)
     timestamp = getattr(block, "timestamp", "")
     role_lower = role.lower()
-    style = ROLE_STYLES.get(role_lower, "bold magenta")
+    style = ROLE_STYLES.get(role_lower, f"bold {tc.accent}")
     label = role.upper().replace("_", " ")
     t = Text(f"{label} [{idx}]", style=style)
     if include_timestamp and timestamp:
-        t.append(f"  {timestamp}", style="dim")
+        t.append(f"  {timestamp}", style=_muted_style())
 
     agent_kind = getattr(block, "agent_kind", "") or "main"
     agent_label = getattr(block, "agent_label", "")
@@ -2817,14 +2903,14 @@ def _render_message_block_summary_expanded(block: FormattedBlock) -> ConsoleRend
         return header
 
     counts = _message_child_counts(children)
-    header.append(f"  | summary blocks: {total}", style="dim")
+    header.append(f"  | summary blocks: {total}", style=_muted_style())
     content_total = _message_content_count(counts)
     if content_total:
-        header.append(f" content:{content_total}", style="dim")
+        header.append(f" content:{content_total}", style=_muted_style())
     if counts.get(Category.TOOLS.value, 0):
-        header.append(f" tools:{counts[Category.TOOLS.value]}", style="dim")
+        header.append(f" tools:{counts[Category.TOOLS.value]}", style=_muted_style())
     if counts.get(Category.THINKING.value, 0):
-        header.append(f" thinking:{counts[Category.THINKING.value]}", style="dim")
+        header.append(f" thinking:{counts[Category.THINKING.value]}", style=_muted_style())
     return header
 
 
@@ -2839,15 +2925,15 @@ def _render_message_block_full_collapsed(block: FormattedBlock) -> ConsoleRender
     cat_counts = _message_child_counts(children)
     content_total = _message_content_count(cat_counts)
 
-    header.append(f"  | blocks: {total}", style="dim")
+    header.append(f"  | blocks: {total}", style=_muted_style())
     if content_total:
-        header.append(f" content:{content_total}", style="dim")
+        header.append(f" content:{content_total}", style=_muted_style())
     if cat_counts.get(Category.TOOLS.value, 0):
-        header.append(f" tools:{cat_counts[Category.TOOLS.value]}", style="dim")
+        header.append(f" tools:{cat_counts[Category.TOOLS.value]}", style=_muted_style())
     if cat_counts.get(Category.THINKING.value, 0):
-        header.append(f" thinking:{cat_counts[Category.THINKING.value]}", style="dim")
+        header.append(f" thinking:{cat_counts[Category.THINKING.value]}", style=_muted_style())
     if cat_counts.get("other", 0):
-        header.append(f" other:{cat_counts['other']}", style="dim")
+        header.append(f" other:{cat_counts['other']}", style=_muted_style())
     return header
 
 
@@ -2856,11 +2942,11 @@ def _render_section_with_counts(label: str, children: list[FormattedBlock]) -> T
 
     // [LAW:one-source-of-truth] Shared section summary formatting for container headers.
     """
-    t = Text(label, style="bold dim")
+    t = Text(label, style=f"bold {_muted_style()}")
     total = len(children)
     if total == 0:
         return t
-    t.append(f" ({total} block{'s' if total != 1 else ''})", style="dim")
+    t.append(f" ({total} block{'s' if total != 1 else ''})", style=_muted_style())
 
     type_counts: Counter[str] = Counter(type(child).__name__.replace("Block", "") for child in children)
     top = sorted(type_counts.items(), key=lambda item: (-item[1], item[0]))[:3]
@@ -2869,19 +2955,19 @@ def _render_section_with_counts(label: str, children: list[FormattedBlock]) -> T
         for name, count in top
     )
     if preview:
-        t.append(f"  {preview}", style="dim")
+        t.append(f"  {preview}", style=_muted_style())
     hidden = max(len(type_counts) - len(top), 0)
     if hidden > 0:
-        t.append(f" (+{hidden} more)", style="dim")
+        t.append(f" (+{hidden} more)", style=_muted_style())
     return t
 
 
 def _render_section_compact_count(label: str, children: list[FormattedBlock]) -> Text:
     """Build compact section header with child count only."""
-    t = Text(label, style="bold dim")
+    t = Text(label, style=f"bold {_muted_style()}")
     total = len(children)
     if total > 0:
-        t.append(f" ({total} block{'s' if total != 1 else ''})", style="dim")
+        t.append(f" ({total} block{'s' if total != 1 else ''})", style=_muted_style())
     return t
 
 
@@ -2902,14 +2988,14 @@ def _render_section_with_all_types(label: str, children: list[FormattedBlock]) -
         for name, count in sorted(type_counts.items(), key=lambda item: (-item[1], item[0]))
     ]
     if parts:
-        t.append("\n    ", style="dim")
-        t.append("types: " + ", ".join(parts), style="dim")
+        t.append("\n    ", style=_muted_style())
+        t.append("types: " + ", ".join(parts), style=_muted_style())
     return t
 
 
 def _render_metadata_section(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render metadata section container header."""
-    return Text("METADATA", style="bold dim")
+    return Text("METADATA", style=f"bold {_muted_style()}")
 
 
 def _render_metadata_section_summary_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
@@ -2932,7 +3018,7 @@ def _render_metadata_section_full_expanded(block: FormattedBlock) -> ConsoleRend
 
 def _render_system_section(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render system section container header."""
-    return Text("SYSTEM", style="bold dim")
+    return Text("SYSTEM", style=f"bold {_muted_style()}")
 
 
 def _render_system_section_summary_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
@@ -2959,8 +3045,8 @@ def _render_system_section_summary_expanded(block: FormattedBlock) -> ConsoleRen
         ]
         all_parts = parts + remaining
         if all_parts:
-            t.append("\n    ", style="dim")
-            t.append("status " + " ".join(all_parts), style="dim")
+            t.append("\n    ", style=_muted_style())
+            t.append("status " + " ".join(all_parts), style=_muted_style())
     return t
 
 
@@ -2988,9 +3074,9 @@ def _render_system_section_full_expanded(block: FormattedBlock) -> ConsoleRender
     shown = tag_ids[:5]
     hidden = max(len(tag_ids) - len(shown), 0)
     detail = Text("    ")
-    detail.append("tags " + ", ".join(shown), style="dim italic")
+    detail.append("tags " + ", ".join(shown), style=_hint_style())
     if hidden > 0:
-        detail.append(f" (+{hidden} more)", style="dim italic")
+        detail.append(f" (+{hidden} more)", style=_hint_style())
     return Group(base, detail)
 
 
@@ -2999,10 +3085,10 @@ def _render_tool_defs_section(block: FormattedBlock) -> ConsoleRenderable | None
     count = getattr(block, "tool_count", 0)
     tokens = getattr(block, "total_tokens", 0)
     t = Text()
-    t.append(f"{count} tools", style="bold dim")
+    t.append(f"{count} tools", style=f"bold {_muted_style()}")
     _append_special_marker_badges(t, block)
     if tokens:
-        t.append(f" / {_fmt_tokens(tokens)} tokens", style="dim")
+        t.append(f" / {_fmt_tokens(tokens)} tokens", style=_muted_style())
     return t
 
 
@@ -3010,7 +3096,7 @@ def _render_tool_defs_section_summary_collapsed(block: FormattedBlock) -> Consol
     """Render tool defs section summary-collapsed (count only)."""
     count = getattr(block, "tool_count", 0)
     t = Text()
-    t.append(f"{count} tools", style="bold dim")
+    t.append(f"{count} tools", style=f"bold {_muted_style()}")
     _append_special_marker_badges(t, block)
     return t
 
@@ -3026,7 +3112,7 @@ def _render_tool_defs_section_full_collapsed(block: FormattedBlock) -> ConsoleRe
     detail = Text("    ")
     detail.append(
         "avg: {} tokens/tool".format(_fmt_tokens(tokens // count)),
-        style="dim",
+        style=_muted_style(),
     )
     return Group(header, detail)
 
@@ -3049,9 +3135,9 @@ def _render_tool_defs_section_full_expanded(block: FormattedBlock) -> ConsoleRen
     shown = names[:6]
     hidden = max(len(names) - len(shown), 0)
     detail = Text("    ")
-    detail.append(", ".join(shown), style="dim")
+    detail.append(", ".join(shown), style=_muted_style())
     if hidden > 0:
-        detail.append(f" (+{hidden} more)", style="dim")
+        detail.append(f" (+{hidden} more)", style=_muted_style())
     return Group(header, detail)
 
 
@@ -3067,7 +3153,7 @@ def _render_tool_def(block: FormattedBlock) -> ConsoleRenderable | None:
 
     if description:
         desc = Text("    ")
-        desc.append(description, style="dim italic")
+        desc.append(description, style=_hint_style())
         lines.append(desc)
 
     properties = {}
@@ -3084,7 +3170,7 @@ def _render_tool_def(block: FormattedBlock) -> ConsoleRenderable | None:
         required = set()
 
     if properties:
-        params = Text("    parameters:", style="dim")
+        params = Text("    parameters:", style=_muted_style())
         lines.append(params)
         for pname, pinfo in properties.items():
             ptype = ""
@@ -3094,9 +3180,9 @@ def _render_tool_def(block: FormattedBlock) -> ConsoleRenderable | None:
                     ptype = raw_type
             req_marker = "*" if pname in required else ""
             row = Text("      ")
-            row.append(f"{pname}{req_marker}", style="bold dim")
+            row.append(f"{pname}{req_marker}", style=f"bold {_muted_style()}")
             if ptype:
-                row.append(f": {ptype}", style="dim")
+                row.append(f": {ptype}", style=_muted_style())
             lines.append(row)
 
     if len(lines) == 1:
@@ -3144,7 +3230,7 @@ def _render_named_def_child_summary_expanded(block: FormattedBlock) -> ConsoleRe
 
     preview = _preview_line(description, max_chars=90)
     detail = Text("    ")
-    detail.append(preview, style="dim")
+    detail.append(preview, style=_muted_style())
     return Group(header, detail)
 
 
@@ -3159,7 +3245,7 @@ def _render_named_def_child_full_collapsed(block: FormattedBlock) -> ConsoleRend
         return base
 
     extra = Text("    ")
-    extra.append(details[0], style="dim italic")
+    extra.append(details[0], style=_hint_style())
     return Group(base, extra)
 
 
@@ -3174,12 +3260,12 @@ def _render_named_def_child_full(block: FormattedBlock) -> ConsoleRenderable | N
 
     if description:
         desc = Text("    ")
-        desc.append(description, style="dim")
+        desc.append(description, style=_muted_style())
         lines.append(desc)
 
     for item in details:
         detail = Text("    ")
-        detail.append(item, style="dim italic")
+        detail.append(item, style=_hint_style())
         lines.append(detail)
 
     if len(lines) == 1:
@@ -3189,7 +3275,7 @@ def _render_named_def_child_full(block: FormattedBlock) -> ConsoleRenderable | N
 
 def _render_response_metadata_section(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render response metadata section container header."""
-    return Text("RESPONSE METADATA", style="bold dim")
+    return Text("RESPONSE METADATA", style=f"bold {_muted_style()}")
 
 
 def _render_response_metadata_section_summary_expanded(
@@ -3207,7 +3293,7 @@ def _render_response_metadata_section_summary_expanded(
         and getattr(child, "status_code", 0)
     ]
     if status_codes:
-        t.append("  HTTP {}".format(status_codes[0]), style="dim")
+        t.append("  HTTP {}".format(status_codes[0]), style=_muted_style())
     return t
 
 
@@ -3247,7 +3333,7 @@ def _render_response_metadata_section_full_expanded(
         return base
 
     detail_line = Text("    ")
-    detail_line.append(" | ".join(details), style="dim italic")
+    detail_line.append(" | ".join(details), style=_hint_style())
     return Group(base, detail_line)
 
 
@@ -3447,8 +3533,9 @@ RENDERERS = _build_renderer_registry()
 def _make_collapse_indicator(hidden_lines: int, content_width: int):
     """Create a dim '... N more lines' strip at content width (gutter added separately)."""
 
+    tc = get_theme_colors()
     text = "    \u00b7\u00b7\u00b7 {} more lines".format(hidden_lines)
-    seg = Segment(text, style=Style(dim=True))
+    seg = Segment(text, style=Style(color=tc.subtle, dim=True))
     # // [LAW:no-shared-mutable-globals] adjust_cell_length returns a NEW Strip
     return Strip([seg]).adjust_cell_length(content_width)
 
@@ -3503,10 +3590,12 @@ def _add_gutter_to_strips(
 
     # Neutral mode: dim gutters, no arrow
     if neutral:
-        left_seg = Segment("\u258c", Style(dim=True))  # ▌
+        tc = get_theme_colors()
+        neutral_style = Style(color=tc.subtle, dim=True)
+        left_seg = Segment("\u258c", neutral_style)  # ▌
         arrow_seg = Segment("   ", Style())  # three spaces
         continuation_seg = Segment("   ", Style())
-        right_seg = Segment("\u2590", Style(dim=True)) if show_right else None  # ▐
+        right_seg = Segment("\u2590", neutral_style) if show_right else None  # ▐
     # Category mode: colored gutters + arrow
     elif indicator_name and indicator_name in FILTER_INDICATORS:
         symbol, color = FILTER_INDICATORS[indicator_name]
