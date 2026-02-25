@@ -19,10 +19,12 @@ class KeysPanel(Static):
         width: 28%;
         min-width: 24;
         max-width: 36;
-        border-left: solid $accent;
+        border-left: solid $secondary-muted;
         padding: 1;
         height: 1fr;
         overflow-y: auto;
+        background: $panel;
+        color: $text;
     }
     """
 

@@ -10,6 +10,7 @@ This module is RELOADABLE.
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 from enum import Enum, IntFlag
 from typing import Callable
@@ -20,6 +21,7 @@ from textual.widgets import Static
 import cc_dump.core.palette
 from cc_dump.core.analysis import fmt_tokens
 import cc_dump.tui.rendering
+import cc_dump.experiments.perf_metrics
 
 
 # ─── Data types ──────────────────────────────────────────────────────────────
@@ -71,18 +73,25 @@ class SearchContext:
         to resolve the flat-vs-hierarchical index mismatch introduced by
         container blocks with children.
         """
+        started_ns = time.monotonic_ns()
         # // [LAW:dataflow-not-control-flow] identity_match is a value, filter always runs
         if block is not None:
-            return [
+            result = [
                 m
                 for m in self.all_matches
                 if m.turn_index == turn_index and m.block is block
             ]
-        return [
-            m
-            for m in self.all_matches
-            if m.turn_index == turn_index and m.block_index == block_index
-        ]
+        else:
+            result = [
+                m
+                for m in self.all_matches
+                if m.turn_index == turn_index and m.block_index == block_index
+            ]
+        cc_dump.experiments.perf_metrics.metrics.record(
+            "render.search.matches_in_block",
+            elapsed_ns=time.monotonic_ns() - started_ns,
+        )
+        return result
 
 
 class SearchState:
@@ -105,9 +114,18 @@ class SearchState:
         self.current_index: int = 0
         self.saved_filters: dict = {}
         self.expanded_blocks: list[tuple[int, int, object]] = []
+        self.expanded_regions: list[tuple[int, int, bool | None]] = []
         self.debounce_timer: object | None = None
         self.saved_scroll_y: float | None = None
         self.text_cache: dict[tuple[str, int], str] = {}
+        self.last_scan_turns: int = 0
+        self.last_scan_blocks: int = 0
+        self.last_scan_chars: int = 0
+        self.last_scan_matches: int = 0
+        self.last_search_ms: float = 0.0
+        self.last_search_rerender_ms: float = 0.0
+        self.last_nav_ms: float = 0.0
+        self.last_region_lookup_ms: float = 0.0
 
     # ── Identity properties (delegated to store) ──
 
@@ -267,6 +285,7 @@ def find_all_matches(
     turns: list,
     pattern: re.Pattern,
     text_cache: dict[tuple[str, int], str] | None = None,
+    stats: dict[str, int] | None = None,
 ) -> list[SearchMatch]:
     """Find all matches across all turns, ordered most-recent-first.
 
@@ -283,20 +302,26 @@ def find_all_matches(
     // blocks without children contribute only themselves.
     """
     matches: list[SearchMatch] = []
+    scanned_turns = 0
+    scanned_blocks = 0
+    scanned_chars = 0
 
     for turn_idx in range(len(turns) - 1, -1, -1):
         td = turns[turn_idx]
         if td.is_streaming:
             continue
+        scanned_turns += 1
 
         for block_idx in range(len(td.blocks) - 1, -1, -1):
             top_block = td.blocks[block_idx]
             searchable = _collect_descendants(top_block, block_idx)
 
             for hier_idx, block in searchable:
+                scanned_blocks += 1
                 text = get_searchable_text_cached(block, text_cache)
                 if not text:
                     continue
+                scanned_chars += len(text)
 
                 block_matches = list(pattern.finditer(text))
                 for m in reversed(block_matches):
@@ -309,6 +334,13 @@ def find_all_matches(
                             block=block,
                         )
                     )
+
+    if stats is not None:
+        # [LAW:one-source-of-truth] Search scan counters are produced only here.
+        stats["turns"] = scanned_turns
+        stats["blocks"] = scanned_blocks
+        stats["chars"] = scanned_chars
+        stats["matches"] = len(matches)
 
     return matches
 
@@ -330,7 +362,8 @@ class SearchBar(Static):
         color: $text;
         display: none;
         padding: 0 1;
-        border-top: solid $accent;
+        border-top: solid $primary-muted;
+        background: $surface-darken-1;
     }
     """
 
@@ -359,11 +392,14 @@ class SearchBar(Static):
             cursor = state.cursor_pos
             if cursor < len(query):
                 search_line.append(query[:cursor], style="bold")
-                search_line.append(query[cursor], style="bold reverse")  # Inverted cursor
+                search_line.append(
+                    query[cursor],
+                    style=f"bold {tc.background} on {tc.foreground}",
+                )
                 search_line.append(query[cursor + 1 :], style="bold")
             else:
                 search_line.append(query, style="bold")
-                search_line.append("█", style="")  # Block cursor at end
+                search_line.append("█", style=f"bold {tc.accent}")
         else:
             # Navigating: show query without cursor
             search_line.append(state.query, style="bold")
@@ -380,83 +416,83 @@ class SearchBar(Static):
             if pattern is None and state.query:
                 search_line.append("  [invalid pattern]", style=tc.search_error_style)
             else:
-                search_line.append("  [no matches]", style="dim")
+                search_line.append("  [no matches]", style=tc.text_muted_style)
 
         lines.append(search_line)
 
         # Line 2: Mode indicators
         mode_line = Text()
-        mode_line.append("Modes: ", style="dim")
+        mode_line.append("Modes: ", style=tc.text_muted_style)
 
         # Case insensitive
         if state.modes & SearchMode.CASE_INSENSITIVE:
             mode_line.append("i ", style=tc.search_active_style)
         else:
-            mode_line.append("i ", style="dim")
+            mode_line.append("i ", style=tc.text_muted_style)
 
         # Word boundary
         if state.modes & SearchMode.WORD_BOUNDARY:
             mode_line.append("w ", style=tc.search_active_style)
         else:
-            mode_line.append("w ", style="dim")
+            mode_line.append("w ", style=tc.text_muted_style)
 
         # Regex
         if state.modes & SearchMode.REGEX:
             mode_line.append(".* ", style=tc.search_active_style)
         else:
-            mode_line.append(".* ", style="dim")
+            mode_line.append(".* ", style=tc.text_muted_style)
 
         # Incremental
         if state.modes & SearchMode.INCREMENTAL:
             mode_line.append("inc", style=tc.search_active_style)
         else:
-            mode_line.append("inc", style="dim")
+            mode_line.append("inc", style=tc.text_muted_style)
 
         lines.append(mode_line)
 
         # Line 3: Mode toggle help
         help_line = Text()
-        help_line.append("Toggle: ", style="dim")
+        help_line.append("Toggle: ", style=tc.text_muted_style)
         help_line.append("Alt+c", style=tc.search_keys_style)
-        help_line.append("=case ", style="dim")
+        help_line.append("=case ", style=tc.text_muted_style)
         help_line.append("Alt+w", style=tc.search_keys_style)
-        help_line.append("=word ", style="dim")
+        help_line.append("=word ", style=tc.text_muted_style)
         help_line.append("Alt+r", style=tc.search_keys_style)
-        help_line.append("=regex ", style="dim")
+        help_line.append("=regex ", style=tc.text_muted_style)
         help_line.append("Alt+i", style=tc.search_keys_style)
-        help_line.append("=incr", style="dim")
+        help_line.append("=incr", style=tc.text_muted_style)
         lines.append(help_line)
 
         # Line 4: Navigation help
         nav_line = Text()
         if state.phase == SearchPhase.EDITING:
-            nav_line.append("Keys: ", style="dim")
+            nav_line.append("Keys: ", style=tc.text_muted_style)
             nav_line.append("Enter", style=tc.search_keys_style)
-            nav_line.append("=search ", style="dim")
+            nav_line.append("=search ", style=tc.text_muted_style)
             nav_line.append("^A/^E", style=tc.search_keys_style)
-            nav_line.append("=home/end ", style="dim")
+            nav_line.append("=home/end ", style=tc.text_muted_style)
             nav_line.append("^W", style=tc.search_keys_style)
-            nav_line.append("=del-word ", style="dim")
+            nav_line.append("=del-word ", style=tc.text_muted_style)
             nav_line.append("Esc", style=tc.search_keys_style)
-            nav_line.append("=exit(stay) ", style="dim")
+            nav_line.append("=exit(stay) ", style=tc.text_muted_style)
             nav_line.append("q", style=tc.search_keys_style)
-            nav_line.append("=exit(restore)", style="dim")
+            nav_line.append("=exit(restore)", style=tc.text_muted_style)
         else:
-            nav_line.append("Keys: ", style="dim")
+            nav_line.append("Keys: ", style=tc.text_muted_style)
             nav_line.append("n", style=tc.search_keys_style)
-            nav_line.append("=next ", style="dim")
+            nav_line.append("=next ", style=tc.text_muted_style)
             nav_line.append("N", style=tc.search_keys_style)
-            nav_line.append("=prev ", style="dim")
+            nav_line.append("=prev ", style=tc.text_muted_style)
             nav_line.append("^N/^P", style=tc.search_keys_style)
-            nav_line.append("=next/prev ", style="dim")
+            nav_line.append("=next/prev ", style=tc.text_muted_style)
             nav_line.append("Tab/S-Tab", style=tc.search_keys_style)
-            nav_line.append("=next/prev ", style="dim")
+            nav_line.append("=next/prev ", style=tc.text_muted_style)
             nav_line.append("/", style=tc.search_keys_style)
-            nav_line.append("=edit ", style="dim")
+            nav_line.append("=edit ", style=tc.text_muted_style)
             nav_line.append("Esc", style=tc.search_keys_style)
-            nav_line.append("=exit(stay) ", style="dim")
+            nav_line.append("=exit(stay) ", style=tc.text_muted_style)
             nav_line.append("q", style=tc.search_keys_style)
-            nav_line.append("=exit(restore)", style="dim")
+            nav_line.append("=exit(restore)", style=tc.text_muted_style)
         lines.append(nav_line)
 
         # Join lines with newlines

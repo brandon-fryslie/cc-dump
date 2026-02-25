@@ -25,7 +25,9 @@ class InfoPanel(Static):
         max-height: 20;
         dock: bottom;
         padding: 0 1;
-        border: solid $accent;
+        border: solid $primary-muted;
+        background: $panel;
+        color: $text;
     }
     """
 
@@ -37,6 +39,7 @@ class InfoPanel(Static):
         self._copiable_fields = {
             "Proxy URL": "proxy_url",
             "Proxy Mode": "proxy_mode",
+            "Provider": "provider",
             "Target": "target",
             "Session": "session_name",
             "Session ID": "session_id",

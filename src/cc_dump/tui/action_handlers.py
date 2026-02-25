@@ -17,10 +17,11 @@ import cc_dump.tui.location_navigation
 import cc_dump.tui.rendering
 
 # [LAW:one-source-of-truth] Panel order derived from registry
-from cc_dump.tui.panel_registry import PANEL_ORDER
+import cc_dump.tui.panel_registry
 from snarfx import transaction
 import cc_dump.tui.keys_panel
 import cc_dump.tui.settings_panel
+import cc_dump.tui.proxy_settings_panel
 import cc_dump.tui.launch_config_panel
 import cc_dump.tui.side_channel_panel
 import cc_dump.tui.widget_factory
@@ -122,9 +123,10 @@ def cycle_vis(app, category: str) -> None:
 def cycle_panel(app) -> None:
     """Cycle active_panel through PANEL_ORDER."""
     current = app.active_panel
-    idx = PANEL_ORDER.index(current) if current in PANEL_ORDER else -1
-    next_idx = (idx + 1) % len(PANEL_ORDER)
-    app.active_panel = PANEL_ORDER[next_idx]
+    panel_order = cc_dump.tui.panel_registry.PANEL_ORDER
+    idx = panel_order.index(current) if current in panel_order else -1
+    next_idx = (idx + 1) % len(panel_order)
+    app.active_panel = panel_order[next_idx]
 
 
 def cycle_panel_mode(app) -> None:
@@ -143,11 +145,15 @@ def refresh_active_panel(app, panel_name: str) -> None:
     if panel_name == "session":
         refresh_session(app)
         return
+    panel = app._get_panel(panel_name)
+    if panel is None:
+        return
+    if panel_name == "perf":
+        panel.refresh_from_store(app._analytics_store, app=app)
+        return
     if app._analytics_store is None:
         return
-    panel = app._get_panel(panel_name)
-    if panel is not None:
-        panel.refresh_from_store(app._analytics_store)
+    panel.refresh_from_store(app._analytics_store)
 
 
 def _toggle_panel(app, panel_key: str) -> None:
@@ -189,6 +195,16 @@ def toggle_settings(app) -> None:
         app._close_settings()
     else:
         app._open_settings()
+
+
+def toggle_proxy_settings(app) -> None:
+    """Toggle the proxy settings panel via mount/remove."""
+    panel_class = cc_dump.tui.proxy_settings_panel.ProxySettingsPanel
+    existing = app.screen.query(panel_class)
+    if existing:
+        app._close_proxy_settings()
+    else:
+        app._open_proxy_settings()
 
 
 def toggle_launch_config(app) -> None:
@@ -493,19 +509,25 @@ def half_page_up(app) -> None:
 
 def refresh_panel(app, name: str) -> None:
     """// [LAW:one-type-per-behavior] Generic refresh for store-backed panels."""
-    if not app.is_running or app._analytics_store is None:
+    if not app.is_running:
         return
     panel = app._get_panel(name)
-    if panel is not None:
-        # [LAW:dataflow-not-control-flow] Per-panel refresh kwargs via lookup table.
-        all_domain_stores = ()
-        iter_stores = getattr(app, "_iter_domain_stores", None)
-        if callable(iter_stores):
-            all_domain_stores = iter_stores()
-        panel_kwargs = {
-            "stats": {"domain_store": _active_domain_store(app), "all_domain_stores": all_domain_stores},
-        }
-        panel.refresh_from_store(app._analytics_store, **panel_kwargs.get(name, {}))
+    if panel is None:
+        return
+    if name == "perf":
+        panel.refresh_from_store(app._analytics_store, app=app)
+        return
+    if app._analytics_store is None:
+        return
+    # [LAW:dataflow-not-control-flow] Per-panel refresh kwargs via lookup table.
+    all_domain_stores = ()
+    iter_stores = getattr(app, "_iter_domain_stores", None)
+    if callable(iter_stores):
+        all_domain_stores = iter_stores()
+    panel_kwargs = {
+        "stats": {"domain_store": _active_domain_store(app), "all_domain_stores": all_domain_stores},
+    }
+    panel.refresh_from_store(app._analytics_store, **panel_kwargs.get(name, {}))
 
 
 def refresh_stats(app) -> None:
@@ -518,6 +540,10 @@ def refresh_economics(app) -> None:
 
 def refresh_timeline(app) -> None:
     refresh_panel(app, "timeline")
+
+
+def refresh_perf(app) -> None:
+    refresh_panel(app, "perf")
 
 
 def refresh_session(app) -> None:

@@ -17,6 +17,7 @@ from textual.message import Message
 from textual.widgets import Input, Label, OptionList, Select, Static, Switch
 
 import cc_dump.core.palette
+import cc_dump.tui.rendering
 from cc_dump.app.launch_config import SHELL_OPTIONS
 from cc_dump.tui.settings_panel import FieldDef
 
@@ -94,17 +95,21 @@ class LaunchConfigPanel(VerticalScroll):
         width: 35%;
         min-width: 30;
         max-width: 50;
-        border-left: solid $accent;
+        border-left: solid $secondary-muted;
         padding: 0 1;
         height: 1fr;
+        background: $panel;
+        color: $text;
     }
     LaunchConfigPanel .panel-title {
         text-style: bold;
         margin-bottom: 0;
+        color: $text-primary;
     }
     LaunchConfigPanel .section-title {
         text-style: bold;
         margin-top: 1;
+        color: $text-secondary;
     }
     LaunchConfigPanel .field-row {
         height: auto;
@@ -115,6 +120,7 @@ class LaunchConfigPanel(VerticalScroll):
         width: 1fr;
         text-style: bold;
         content-align-vertical: middle;
+        color: $text-secondary;
     }
     LaunchConfigPanel .field-desc {
         color: $text-muted;
@@ -125,31 +131,47 @@ class LaunchConfigPanel(VerticalScroll):
     LaunchConfigPanel .panel-footer {
         margin-top: 1;
         color: $text-muted;
+        background: $panel-darken-1;
+        padding: 0 1;
     }
     LaunchConfigPanel OptionList {
         height: auto;
         max-height: 10;
+        border: round $border;
+        background: $surface;
     }
     LaunchConfigPanel Switch {
         width: auto;
         height: auto;
-        border: none;
+        border: round $border-blurred;
         padding: 0 1;
     }
     LaunchConfigPanel Input {
         width: 1fr;
         height: 1;
-        border: none;
+        border: round $border;
         padding: 0;
+        background: $surface;
+        color: $text;
     }
     LaunchConfigPanel Input:focus {
-        border: none;
+        border: round $primary;
+        background: $surface-lighten-1;
     }
     LaunchConfigPanel Select {
         width: 1fr;
+        background: $surface;
+        color: $text;
+        border: round $border;
+    }
+    LaunchConfigPanel Select:focus {
+        border: round $primary;
     }
     LaunchConfigPanel #lc-edit-section {
         height: auto;
+        border-top: solid $border-blurred;
+        margin-top: 1;
+        padding-top: 1;
     }
     """
 
@@ -194,7 +216,10 @@ class LaunchConfigPanel(VerticalScroll):
         self._selected_idx = 0
 
     def compose(self) -> ComposeResult:
-        p = cc_dump.core.palette.PALETTE
+        try:
+            info_color = cc_dump.tui.rendering.get_theme_colors().info
+        except RuntimeError:
+            info_color = cc_dump.core.palette.PALETTE.info
         yield Static("Launch Configs", classes="panel-title")
 
         # Config list
@@ -213,7 +238,7 @@ class LaunchConfigPanel(VerticalScroll):
         yield Static(
             "[bold {info}]1-9[/] launch  [bold {info}]a[/] activate  [bold {info}]n[/] new\n"
             "[bold {info}]d[/] delete  [bold {info}]enter[/] save  [bold {info}]esc[/] close".format(
-                info=p.info
+                info=info_color
             ),
             classes="panel-footer",
         )

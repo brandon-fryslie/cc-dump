@@ -4,13 +4,17 @@
 // [LAW:locality-or-seam] All search logic here — app.py keeps thin delegates.
 // [LAW:single-enforcer] _force_vis is the sole runtime visibility override for search.
 
-Not hot-reloadable (accesses app state and widgets).
+Hot-reloadable — imported as module object in app.py and reloaded in place.
 """
 
 import cc_dump.core.formatting
+import cc_dump.core.segmentation
 import cc_dump.tui.search
 import cc_dump.tui.location_navigation
-from cc_dump.tui.category_config import CATEGORY_CONFIG
+import cc_dump.tui.category_config
+import cc_dump.tui.rendering
+import cc_dump.experiments.perf_metrics
+import time
 
 
 def _move_word_left(query: str, cursor_pos: int) -> int:
@@ -132,6 +136,7 @@ def start_search(app) -> None:
     state.matches = []
     state.current_index = 0
     state.expanded_blocks = []
+    state.expanded_regions = []
     # Save current filter state for restore on cancel
     store = app._view_store
     state.saved_filters = {
@@ -140,7 +145,7 @@ def start_search(app) -> None:
             store.get(f"full:{name}"),
             store.get(f"exp:{name}"),
         )
-        for _, name, _, _ in CATEGORY_CONFIG
+        for _, name, _, _ in cc_dump.tui.category_config.CATEGORY_CONFIG
     }
     # Save current scroll position
     conv = app._get_conv()
@@ -284,6 +289,7 @@ def _exit_search_common(app) -> None:
     state.matches = []
     state.current_index = 0
     state.expanded_blocks = []
+    state.expanded_regions = []
 
     # Cancel debounce timer
     if state.debounce_timer is not None:
@@ -359,28 +365,64 @@ def run_incremental_search(app) -> None:
 def run_search(app) -> None:
     """Compile pattern and find all matches."""
     state = app._search_state
+    started_ns = time.monotonic_ns()
     pattern = cc_dump.tui.search.compile_search_pattern(state.query, state.modes)
     if pattern is None:
         state.matches = []
         state.current_index = 0
+        state.last_scan_turns = 0
+        state.last_scan_blocks = 0
+        state.last_scan_chars = 0
+        state.last_scan_matches = 0
+        state.last_search_ms = (time.monotonic_ns() - started_ns) / 1_000_000.0
+        cc_dump.experiments.perf_metrics.metrics.record(
+            "search.run_search.total",
+            elapsed_ns=time.monotonic_ns() - started_ns,
+        )
         return
 
     conv = app._get_conv()
     if conv is None:
         state.matches = []
+        state.last_scan_turns = 0
+        state.last_scan_blocks = 0
+        state.last_scan_chars = 0
+        state.last_scan_matches = 0
+        state.last_search_ms = (time.monotonic_ns() - started_ns) / 1_000_000.0
+        cc_dump.experiments.perf_metrics.metrics.record(
+            "search.run_search.total",
+            elapsed_ns=time.monotonic_ns() - started_ns,
+        )
         return
 
     # // [LAW:no-shared-mutable-globals] Cache is state-owned; bounded locally.
     if len(state.text_cache) > 20_000:
         state.text_cache.clear()
 
+    scan_started_ns = time.monotonic_ns()
+    scan_stats: dict[str, int] = {}
     state.matches = cc_dump.tui.search.find_all_matches(
         conv._turns,
         pattern,
         text_cache=state.text_cache,
+        stats=scan_stats,
+    )
+    cc_dump.experiments.perf_metrics.metrics.record(
+        "search.find_all_matches.total",
+        elapsed_ns=time.monotonic_ns() - scan_started_ns,
     )
     if state.current_index >= len(state.matches):
         state.current_index = 0
+    state.last_scan_turns = int(scan_stats.get("turns", 0))
+    state.last_scan_blocks = int(scan_stats.get("blocks", 0))
+    state.last_scan_chars = int(scan_stats.get("chars", 0))
+    state.last_scan_matches = int(scan_stats.get("matches", 0))
+    elapsed_ns = time.monotonic_ns() - started_ns
+    state.last_search_ms = elapsed_ns / 1_000_000.0
+    cc_dump.experiments.perf_metrics.metrics.record(
+        "search.run_search.total",
+        elapsed_ns=elapsed_ns,
+    )
 
 
 def navigate_next(app) -> None:
@@ -410,13 +452,24 @@ def navigate_to_current(app) -> None:
 
     // [LAW:single-enforcer] _force_vis is the sole runtime visibility override.
     """
+    started_ns = time.monotonic_ns()
     state = app._search_state
     if not state.matches:
+        state.last_nav_ms = (time.monotonic_ns() - started_ns) / 1_000_000.0
+        cc_dump.experiments.perf_metrics.metrics.record(
+            "search.navigate_to_current.total",
+            elapsed_ns=time.monotonic_ns() - started_ns,
+        )
         return
 
     match = state.matches[state.current_index]
     conv = app._get_conv()
     if conv is None:
+        state.last_nav_ms = (time.monotonic_ns() - started_ns) / 1_000_000.0
+        cc_dump.experiments.perf_metrics.metrics.record(
+            "search.navigate_to_current.total",
+            elapsed_ns=time.monotonic_ns() - started_ns,
+        )
         return
 
     # Clear previous expansion
@@ -461,11 +514,26 @@ def navigate_to_current(app) -> None:
             conv._view_overrides._search_block_ids.add(matched_block.block_id)
         state.expanded_blocks.append((match.turn_index, match.block_index, matched_block.block_id))
 
+    # Expand matched collapsible content region so the highlighted match is visible.
+    # [LAW:single-enforcer] Search-only region expansion/restore is owned by search_controller.
+    region_lookup_started_ns = time.monotonic_ns()
+    region_idx = _matched_region_index(matched_block, match.text_offset)
+    state.last_region_lookup_ms = (
+        time.monotonic_ns() - region_lookup_started_ns
+    ) / 1_000_000.0
+    if region_idx is not None and conv is not None and matched_block is not None:
+        rvs = conv._view_overrides.get_region(matched_block.block_id, region_idx)
+        previous = rvs.expanded
+        rvs.expanded = True
+        state.expanded_regions.append((matched_block.block_id, region_idx, previous))
+
     # Re-render with search context, then navigate via shared location helper.
+    line_hint = _estimate_match_line_in_block(matched_block, match.text_offset)
     location = cc_dump.tui.location_navigation.BlockLocation(
         turn_index=match.turn_index,
         block_index=match.block_index,
         block=matched_block,
+        line_in_block=line_hint,
     )
     cc_dump.tui.location_navigation.go_to_location(
         conv,
@@ -473,6 +541,12 @@ def navigate_to_current(app) -> None:
         rerender=lambda: search_rerender(app),
     )
     update_search_bar(app)
+    elapsed_ns = time.monotonic_ns() - started_ns
+    state.last_nav_ms = elapsed_ns / 1_000_000.0
+    cc_dump.experiments.perf_metrics.metrics.record(
+        "search.navigate_to_current.total",
+        elapsed_ns=elapsed_ns,
+    )
 
 
 def clear_search_expand(app) -> None:
@@ -483,6 +557,12 @@ def clear_search_expand(app) -> None:
     """
     state = app._search_state
     conv = app._get_conv()
+    # Restore region-level overrides we changed for search navigation.
+    # [LAW:one-source-of-truth] Region expanded state is restored only through ViewOverrides.
+    if conv is not None:
+        for block_id, region_idx, previous in state.expanded_regions:
+            conv._view_overrides.get_region(block_id, region_idx).expanded = previous
+    state.expanded_regions.clear()
     if conv is not None:
         conv._view_overrides.clear_search()
     state.expanded_blocks.clear()
@@ -490,9 +570,15 @@ def clear_search_expand(app) -> None:
 
 def search_rerender(app) -> None:
     """Re-render conversation with search highlights."""
+    started_ns = time.monotonic_ns()
     state = app._search_state
     conv = app._get_conv()
     if conv is None:
+        state.last_search_rerender_ms = (time.monotonic_ns() - started_ns) / 1_000_000.0
+        cc_dump.experiments.perf_metrics.metrics.record(
+            "search.search_rerender.total",
+            elapsed_ns=time.monotonic_ns() - started_ns,
+        )
         return
 
     pattern = cc_dump.tui.search.compile_search_pattern(state.query, state.modes)
@@ -507,6 +593,67 @@ def search_rerender(app) -> None:
         )
 
     conv.rerender(app.active_filters, search_ctx=search_ctx)
+    elapsed_ns = time.monotonic_ns() - started_ns
+    state.last_search_rerender_ms = elapsed_ns / 1_000_000.0
+    cc_dump.experiments.perf_metrics.metrics.record(
+        "search.search_rerender.total",
+        elapsed_ns=elapsed_ns,
+    )
+
+
+def _estimate_match_line_in_block(block, text_offset: int) -> int:
+    """Estimate line offset within a block for scrolling to a match."""
+    text = getattr(block, "content", None)
+    if not isinstance(text, str) or not text:
+        return 0
+    offset = max(0, min(int(text_offset), len(text)))
+    return text.count("\n", 0, offset)
+
+
+def _matched_region_index(block, text_offset: int) -> int | None:
+    """Return collapsible region index containing text_offset, if any."""
+    started_ns = time.monotonic_ns()
+    if block is None:
+        cc_dump.experiments.perf_metrics.metrics.record(
+            "search.region_lookup.total",
+            elapsed_ns=time.monotonic_ns() - started_ns,
+        )
+        return None
+    text = getattr(block, "content", None)
+    regions = getattr(block, "content_regions", None)
+    if not isinstance(text, str) or not text or not isinstance(regions, list) or not regions:
+        cc_dump.experiments.perf_metrics.metrics.record(
+            "search.region_lookup.total",
+            elapsed_ns=time.monotonic_ns() - started_ns,
+        )
+        return None
+
+    offset = max(0, min(int(text_offset), max(len(text) - 1, 0)))
+    segment_started_ns = time.monotonic_ns()
+    seg = cc_dump.core.segmentation.segment(text)
+    cc_dump.experiments.perf_metrics.metrics.record(
+        "search.region_lookup.segment",
+        elapsed_ns=time.monotonic_ns() - segment_started_ns,
+    )
+    for idx, sub_block in enumerate(seg.sub_blocks):
+        if sub_block.span.start <= offset < sub_block.span.end and idx < len(regions):
+            region = regions[idx]
+            if region.kind in cc_dump.tui.rendering.COLLAPSIBLE_REGION_KINDS:
+                cc_dump.experiments.perf_metrics.metrics.record(
+                    "search.region_lookup.total",
+                    elapsed_ns=time.monotonic_ns() - started_ns,
+                )
+                return region.index
+            cc_dump.experiments.perf_metrics.metrics.record(
+                "search.region_lookup.total",
+                elapsed_ns=time.monotonic_ns() - started_ns,
+            )
+            return None
+    cc_dump.experiments.perf_metrics.metrics.record(
+        "search.region_lookup.total",
+        elapsed_ns=time.monotonic_ns() - started_ns,
+    )
+    return None
 
 
 def update_search_bar(app) -> None:

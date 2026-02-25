@@ -1,15 +1,18 @@
 Screen {
     layout: vertical;
     background: $surface;
+    color: $text;
 }
 
 Screen.-app-unfocused {
     background: $surface-lighten-1;
+    color: $text-muted;
 }
 
 ConversationView {
     height: 1fr;
     border: solid $primary;
+    background: $background;
 }
 
 ToolEconomicsPanel {
@@ -17,7 +20,8 @@ ToolEconomicsPanel {
     max-height: 12;
     dock: top;
     padding: 0 1;
-    border: solid $accent;
+    border: solid $primary-muted;
+    background: $panel;
 }
 
 TimelinePanel {
@@ -25,7 +29,8 @@ TimelinePanel {
     max-height: 12;
     dock: top;
     padding: 0 1;
-    border: solid $accent;
+    border: solid $secondary-muted;
+    background: $panel;
 }
 
 SearchBar {
@@ -33,7 +38,8 @@ SearchBar {
     height: auto;
     max-height: 6;
     padding: 0 1;
-    border-top: solid $accent;
+    border-top: solid $primary-muted;
+    background: $surface-darken-1;
 }
 
 StatsPanel {
@@ -41,11 +47,29 @@ StatsPanel {
     max-height: 12;
     dock: top;
     padding: 0 1;
-    border: solid $accent;
+    border: solid $accent-muted;
+    background: $panel;
+}
+
+PerfPanel {
+    height: auto;
+    max-height: 12;
+    dock: top;
+    padding: 0 1;
+    border: solid $success-muted;
+    background: $panel;
 }
 
 SessionPanel {
     height: 1;
     dock: top;
     padding: 0 1;
+    background: $panel-darken-1;
+    color: $text-secondary;
+}
+
+#conversation-tabs > ContentSwitcher {
+    /* [LAW:dataflow-not-control-flow] Preserve native Tabs behavior and only
+       adjust layout data (offset) to remove the extra spacer row. */
+    margin-top: -1;
 }
