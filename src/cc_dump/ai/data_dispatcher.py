@@ -34,7 +34,6 @@ from cc_dump.ai.conversation_qa import (
     render_qa_markdown,
     select_messages,
 )
-from cc_dump.ai.decision_ledger import DecisionLedgerStore, parse_decision_entries, DecisionLedgerEntry
 from cc_dump.ai.handoff_notes import (
     HandoffArtifact,
     HandoffStore,
@@ -56,8 +55,7 @@ from cc_dump.ai.release_notes import (
     parse_release_notes_artifact,
     render_release_notes_markdown,
 )
-from cc_dump.ai.side_channel_purpose import UTILITY_CUSTOM_PURPOSE
-from cc_dump.ai.prompt_registry import get_prompt_spec, PromptSpec
+from cc_dump.ai.prompt_registry import get_prompt_spec, PromptSpec, UTILITY_CUSTOM_PURPOSE
 from cc_dump.ai.side_channel import SideChannelManager
 from cc_dump.ai.side_channel_analytics import SideChannelAnalytics
 from cc_dump.ai.summary_cache import SummaryCache
@@ -76,14 +74,6 @@ class EnrichedResult:
     text: str
     source: str  # "ai" | "cache" | "fallback" | "error"
     elapsed_ms: int
-
-
-@dataclass
-class DecisionLedgerResult:
-    entries: list[DecisionLedgerEntry]
-    source: str  # "ai" | "fallback" | "error"
-    elapsed_ms: int
-    error: str = ""
 
 
 @dataclass
@@ -150,6 +140,16 @@ class UtilityResult:
     error: str = ""
 
 
+@dataclass(frozen=True)
+class PreparedPrompt:
+    """Resolved prompt payload for preview/edit/send workflows."""
+
+    prompt: str
+    purpose: str
+    prompt_version: str
+    error: str = ""
+
+
 class DataDispatcher:
     """Routes enrichment requests to AI or fallback.
 
@@ -162,7 +162,6 @@ class DataDispatcher:
         self._side_channel = side_channel
         self._analytics = SideChannelAnalytics()
         self._summary_cache = summary_cache if summary_cache is not None else SummaryCache()
-        self._decision_ledger = DecisionLedgerStore()
         self._checkpoint_store = CheckpointStore()
         self._action_items = ActionItemStore()
         self._handoff_store = HandoffStore()
@@ -170,7 +169,12 @@ class DataDispatcher:
         self._release_notes_store = ReleaseNotesStore()
         self._utility_registry = UtilityRegistry()
 
-    def summarize_messages(self, messages: list[dict], source_session_id: str = "") -> EnrichedResult:
+    def summarize_messages(
+        self,
+        messages: list[dict],
+        source_session_id: str = "",
+        prompt_override: str | None = None,
+    ) -> EnrichedResult:
         """Summarize a list of API messages.
 
         BLOCKING — must be called from a worker thread, never from the TUI thread.
@@ -185,11 +189,11 @@ class DataDispatcher:
             elapsed_ms=0,
         )
 
-        spec = get_prompt_spec("block_summary")
+        prepared = self.prepare_summary_prompt(messages)
         context = _build_summary_context(messages)
         cache_key = self._summary_cache.make_key(
-            purpose=spec.purpose,
-            prompt_version=spec.version,
+            purpose=prepared.purpose,
+            prompt_version=prepared.prompt_version,
             content=context,
         )
         cached = self._summary_cache.get(cache_key)
@@ -203,12 +207,12 @@ class DataDispatcher:
         if not self._side_channel.enabled:
             return fallback
 
-        prompt = _build_summary_prompt(context, spec)
+        prompt = _resolve_prompt_override(prepared.prompt, prompt_override)
         profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
         result = self._side_channel.run(
             prompt=prompt,
-            purpose="block_summary",
-            prompt_version=spec.version,
+            purpose=prepared.purpose,
+            prompt_version=prepared.prompt_version,
             timeout=None,
             source_session_id=source_session_id,
             profile=profile,
@@ -230,8 +234,8 @@ class DataDispatcher:
             )
         self._summary_cache.put(
             key=cache_key,
-            purpose=spec.purpose,
-            prompt_version=spec.version,
+            purpose=prepared.purpose,
+            prompt_version=prepared.prompt_version,
             content=context,
             summary_text=result.text,
         )
@@ -244,38 +248,6 @@ class DataDispatcher:
     def side_channel_usage_snapshot(self) -> dict[str, dict[str, int]]:
         """Return purpose-level side-channel usage snapshot."""
         return self._analytics.snapshot()
-
-    def extract_decision_ledger(
-        self, messages: list[dict], *, source_session_id: str = "", request_id: str = ""
-    ) -> DecisionLedgerResult:
-        """Extract decision ledger entries from messages."""
-        if not self._side_channel.enabled:
-            return DecisionLedgerResult(entries=[], source="fallback", elapsed_ms=0, error="side-channel disabled")
-
-        spec = get_prompt_spec("decision_ledger")
-        context = _build_summary_context(messages)
-        prompt = _build_summary_prompt(context, spec)
-        profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
-        result = self._side_channel.run(
-            prompt=prompt,
-            purpose="decision_ledger",
-            prompt_version=spec.version,
-            timeout=None,
-            source_session_id=source_session_id,
-            profile=profile,
-        )
-        if result.error is not None:
-            if result.error.startswith("Guardrail:"):
-                logger.info("decision ledger blocked: %s", result.error)
-                return DecisionLedgerResult(entries=[], source="fallback", elapsed_ms=result.elapsed_ms, error=result.error)
-            return DecisionLedgerResult(entries=[], source="error", elapsed_ms=result.elapsed_ms, error=result.error)
-
-        entries = parse_decision_entries(result.text, request_id=request_id)
-        merged = self._decision_ledger.upsert_many(entries)
-        return DecisionLedgerResult(entries=merged, source="ai", elapsed_ms=result.elapsed_ms)
-
-    def decision_ledger_snapshot(self) -> list[DecisionLedgerEntry]:
-        return self._decision_ledger.snapshot()
 
     def create_checkpoint(
         self,
@@ -373,6 +345,7 @@ class DataDispatcher:
         *,
         source_session_id: str = "",
         request_id: str = "",
+        prompt_override: str | None = None,
     ) -> ActionExtractionResult:
         """Extract action/deferred candidates and stage them for explicit review."""
         if not self._side_channel.enabled:
@@ -385,14 +358,13 @@ class DataDispatcher:
                 error="side-channel disabled",
             )
 
-        spec = get_prompt_spec("action_extraction")
-        context = _build_summary_context(messages)
-        prompt = _build_summary_prompt(context, spec)
+        prepared = self.prepare_action_extraction_prompt(messages)
+        prompt = _resolve_prompt_override(prepared.prompt, prompt_override)
         profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
         result = self._side_channel.run(
             prompt=prompt,
-            purpose=spec.purpose,
-            prompt_version=spec.version,
+            purpose=prepared.purpose,
+            prompt_version=prepared.prompt_version,
             timeout=None,
             source_session_id=source_session_id,
             profile=profile,
@@ -631,6 +603,7 @@ class DataDispatcher:
         scope: QAScope | None = None,
         source_session_id: str = "",
         request_id: str = "",
+        prompt_override: str | None = None,
     ) -> ConversationQAResult:
         """Run scoped Q&A over conversation history with source-linked response."""
         spec = get_prompt_spec("conversation_qa")
@@ -678,12 +651,15 @@ class DataDispatcher:
                 error="side-channel disabled",
             )
 
-        context = _build_summary_context(selected_messages)
-        prompt = _build_conversation_qa_prompt(question=question, context=context, spec=spec)
+        prepared = self.prepare_conversation_qa_prompt(
+            question=question,
+            selected_messages=selected_messages,
+        )
+        prompt = _resolve_prompt_override(prepared.prompt, prompt_override)
         result = self._side_channel.run(
             prompt=prompt,
-            purpose=spec.purpose,
-            prompt_version=spec.version,
+            purpose=prepared.purpose,
+            prompt_version=prepared.prompt_version,
             timeout=None,
             source_session_id=source_session_id,
             profile=profile,
@@ -822,6 +798,7 @@ class DataDispatcher:
         *,
         utility_id: str,
         source_session_id: str = "",
+        prompt_override: str | None = None,
     ) -> UtilityResult:
         """Run registered lightweight utility with fallback behavior."""
         spec = self._utility_registry.get(utility_id)
@@ -843,13 +820,21 @@ class DataDispatcher:
                 elapsed_ms=0,
             )
 
-        context = _build_summary_context(messages)
-        prompt = utility_prompt(spec, context)
+        prepared = self.prepare_utility_prompt(messages, utility_id=utility_id)
+        if prepared.error:
+            return UtilityResult(
+                utility_id=utility_id,
+                text=fallback_text,
+                source="fallback",
+                elapsed_ms=0,
+                error=prepared.error,
+            )
+        prompt = _resolve_prompt_override(prepared.prompt, prompt_override)
         profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
         result = self._side_channel.run(
             prompt=prompt,
-            purpose=UTILITY_CUSTOM_PURPOSE,
-            prompt_version=spec.version,
+            purpose=prepared.purpose,
+            prompt_version=prepared.prompt_version,
             timeout=None,
             source_session_id=source_session_id,
             profile=profile,
@@ -872,6 +857,58 @@ class DataDispatcher:
             text=result.text,
             source="ai",
             elapsed_ms=result.elapsed_ms,
+        )
+
+    def prepare_summary_prompt(self, messages: list[dict]) -> PreparedPrompt:
+        """Build canonical prompt payload for summary actions."""
+        spec = get_prompt_spec("block_summary")
+        context = _build_summary_context(messages)
+        return PreparedPrompt(
+            prompt=_build_summary_prompt(context, spec),
+            purpose=spec.purpose,
+            prompt_version=spec.version,
+        )
+
+    def prepare_action_extraction_prompt(self, messages: list[dict]) -> PreparedPrompt:
+        """Build canonical prompt payload for action extraction."""
+        spec = get_prompt_spec("action_extraction")
+        context = _build_summary_context(messages)
+        return PreparedPrompt(
+            prompt=_build_summary_prompt(context, spec),
+            purpose=spec.purpose,
+            prompt_version=spec.version,
+        )
+
+    def prepare_conversation_qa_prompt(
+        self,
+        *,
+        question: str,
+        selected_messages: list[dict],
+    ) -> PreparedPrompt:
+        """Build canonical prompt payload for scoped conversation Q&A."""
+        spec = get_prompt_spec("conversation_qa")
+        context = _build_summary_context(selected_messages)
+        return PreparedPrompt(
+            prompt=_build_conversation_qa_prompt(question=question, context=context, spec=spec),
+            purpose=spec.purpose,
+            prompt_version=spec.version,
+        )
+
+    def prepare_utility_prompt(self, messages: list[dict], *, utility_id: str) -> PreparedPrompt:
+        """Build canonical prompt payload for a registered utility."""
+        spec = self._utility_registry.get(utility_id)
+        if spec is None:
+            return PreparedPrompt(
+                prompt="",
+                purpose=UTILITY_CUSTOM_PURPOSE,
+                prompt_version="v1",
+                error="unknown utility",
+            )
+        context = _build_summary_context(messages)
+        return PreparedPrompt(
+            prompt=utility_prompt(spec, context),
+            purpose=UTILITY_CUSTOM_PURPOSE,
+            prompt_version=spec.version,
         )
 
 
@@ -904,6 +941,12 @@ def _build_summary_prompt(context: str, spec: PromptSpec) -> str:
         f"{spec.instruction}\n\n"
         f"{context}"
     )
+
+
+def _resolve_prompt_override(default_prompt: str, prompt_override: str | None) -> str:
+    """Resolve optional user-edited prompt while preserving canonical fallback."""
+    override = str(prompt_override or "").strip()
+    return override if override else default_prompt
 
 
 def _build_incident_timeline_prompt(*, context: str, spec: PromptSpec, include_hypotheses: bool) -> str:

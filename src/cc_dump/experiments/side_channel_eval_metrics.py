@@ -8,7 +8,6 @@ from __future__ import annotations
 
 PURPOSE_MIN_PASS_RATE: dict[str, float] = {
     "block_summary": 1.0,
-    "decision_ledger": 1.0,
     "checkpoint_summary": 1.0,
     "action_extraction": 1.0,
     "handoff_note": 1.0,
