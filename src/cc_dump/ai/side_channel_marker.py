@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from cc_dump.ai.side_channel_purpose import normalize_purpose
+from cc_dump.ai.prompt_registry import normalize_purpose
 
 MARKER_PREFIX = "<<CC_DUMP_SIDE_CHANNEL:"
 MARKER_SUFFIX = ">>"
