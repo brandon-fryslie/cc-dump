@@ -19,7 +19,6 @@ from cc_dump.ai.action_items import ActionItemStore, parse_action_items
 from cc_dump.ai.checkpoints import render_checkpoint_diff
 from cc_dump.ai.conversation_qa import QAScope, normalize_scope, parse_qa_artifact
 from cc_dump.ai.data_dispatcher import DataDispatcher
-from cc_dump.ai.decision_ledger import parse_decision_entries
 from cc_dump.ai.handoff_notes import SECTION_ORDER, parse_handoff_artifact, render_handoff_markdown
 from cc_dump.ai.incident_timeline import parse_incident_timeline_artifact, render_incident_timeline_markdown
 from cc_dump.ai.side_channel import SideChannelManager
@@ -63,7 +62,6 @@ def run_evaluation(corpus_path: Path) -> dict[str, Any]:
 def _collect_checks(corpus: dict[str, Any]) -> list[EvalCheck]:
     checks: list[EvalCheck] = []
     checks.extend(_evaluate_block_summary(corpus))
-    checks.extend(_evaluate_decision_ledger(corpus))
     checks.extend(_evaluate_checkpoint_summary(corpus))
     checks.extend(_evaluate_action_extraction(corpus))
     checks.extend(_evaluate_handoff_note(corpus))
@@ -88,18 +86,6 @@ def _evaluate_block_summary(corpus: dict[str, Any]) -> list[EvalCheck]:
             detail=result.text[:120],
         ),
     ]
-
-
-def _evaluate_decision_ledger(corpus: dict[str, Any]) -> list[EvalCheck]:
-    item = corpus["decision_ledger"]
-    entries = parse_decision_entries(item["text"], request_id=item["request_id"])
-    passed = (
-        len(entries) == 1
-        and entries[0].decision_id == "dec_scope"
-        and entries[0].source_links
-        and entries[0].source_links[0].request_id == item["request_id"]
-    )
-    return [EvalCheck("decision_ledger", "structured_parse_with_sources", passed)]
 
 
 def _evaluate_checkpoint_summary(corpus: dict[str, Any]) -> list[EvalCheck]:

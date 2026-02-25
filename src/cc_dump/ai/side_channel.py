@@ -21,7 +21,7 @@ from collections.abc import Callable
 
 from cc_dump.ai.side_channel_boundary import apply_boundary
 from cc_dump.ai.side_channel_marker import SideChannelMarker, prepend_marker
-from cc_dump.ai.side_channel_purpose import normalize_purpose, SIDE_CHANNEL_PURPOSES
+from cc_dump.ai.prompt_registry import normalize_purpose, SIDE_CHANNEL_PURPOSES
 
 
 DEFAULT_TIMEOUT_SECONDS = 60
