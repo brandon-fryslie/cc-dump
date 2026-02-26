@@ -498,10 +498,19 @@ def render_info_panel(info: dict) -> Text:
     # // [LAW:one-source-of-truth] Row definitions: (label, value)
     # Every row is rendered. None/empty → "--". All values are click-to-copy.
     proxy_url = info.get("proxy_url", "--")
+    openai_proxy_url = info.get("openai_proxy_url")
     rows = [
-        ("Proxy URL", proxy_url),
+        ("Anthropic Proxy", proxy_url),
+    ]
+    if openai_proxy_url:
+        rows.append(("OpenAI Proxy", openai_proxy_url))
+    rows.extend([
         ("Proxy Mode", info.get("proxy_mode", "--")),
-        ("Target", info.get("target") or "--"),
+        ("Anthropic Target", info.get("target") or "--"),
+    ])
+    if openai_proxy_url:
+        rows.append(("OpenAI Target", info.get("openai_target") or "--"))
+    rows.extend([
         ("Session", info.get("session_name", "--")),
         ("Session ID", info.get("session_id") or "--"),
         ("Recording", info.get("recording_path") or "disabled"),
@@ -510,7 +519,7 @@ def render_info_panel(info: dict) -> Text:
         ("Python", info.get("python_version", "--")),
         ("Textual", info.get("textual_version", "--")),
         ("PID", str(info.get("pid", "--"))),
-    ]
+    ])
 
     text = Text()
     text.append("Server Info", style=f"bold {p.info}")
@@ -525,12 +534,18 @@ def render_info_panel(info: dict) -> Text:
         text.append(value, style=f"{p.info}")
         text.append("\n")
 
-    # Usage hint at bottom
+    # Usage hints at bottom
     text.append("\n  ")
     text.append("Usage: ", style="bold")
     text.append("ANTHROPIC_BASE_URL=", style="dim")
     text.append(proxy_url, style=f"bold {p.info}")
     text.append(" claude", style="dim")
+    if openai_proxy_url:
+        text.append("\n  ")
+        text.append("       ", style="bold")
+        text.append("OPENAI_BASE_URL=", style="dim")
+        text.append(openai_proxy_url, style=f"bold {p.info}")
+        text.append(" <your-tool>", style="dim")
 
     return text
 

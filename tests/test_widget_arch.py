@@ -865,7 +865,11 @@ class TestIncrementalOffsets:
         conv._recalculate_offsets()
         conv._scroll_anchor = ScrollAnchor(turn_index=3, block_index=0, line_in_block=0)
 
-        conv._on_turns_pruned(2)
+        cls = type(conv)
+        with patch.object(cls, 'is_attached', new_callable=PropertyMock, return_value=True), \
+             patch.object(conv, '_resolve_anchor'), \
+             patch.object(conv, 'refresh'):
+            conv._on_turns_pruned(2)
 
         assert len(conv._turns) == 2
         assert [td.turn_index for td in conv._turns] == [0, 1]
@@ -1100,6 +1104,40 @@ class TestViewportOnlyRerender:
                 f"Viewport turn {idx} should not have pending snapshot"
             )
 
+    def test_background_rerender_tick_avoids_full_turn_scan(self):
+        """Background rerender should process pending queue, not iterate all turns each tick."""
+        console = Console()
+        filters_initial = {"tools": ALWAYS_VISIBLE}
+        conv = self._make_conv_with_turns(console, 300, filters_initial)
+
+        class _CountingList(list):
+            def __init__(self, values):
+                super().__init__(values)
+                self.iter_count = 0
+
+            def __iter__(self):
+                for item in super().__iter__():
+                    self.iter_count += 1
+                    yield item
+
+        conv._turns = _CountingList(conv._turns)
+
+        with self._patch_scroll(conv, scroll_y=0, height=10):
+            conv.call_later = MagicMock()
+            conv._background_rerender_chunk_size = 8
+            conv._follow_state = FollowState.OFF
+            conv.rerender({"tools": HIDDEN})
+
+            # First scheduled callback is background rerender.
+            assert conv.call_later.called
+            background_cb = conv.call_later.call_args.args[0]
+
+            # Ignore iteration performed during the initial rerender pass.
+            conv._turns.iter_count = 0
+            background_cb()
+
+        assert conv._turns.iter_count == 0, "background tick should not scan all turns"
+
     def test_pending_snapshot_cleared_on_re_render(self):
         """When a turn with _pending_filter_snapshot is re-rendered, pending is cleared."""
         console = Console()
@@ -1222,7 +1260,8 @@ class TestRequestScopedStreaming:
     def _patch_app_console(self, conv):
         app_mock = MagicMock(console=Console())
         cls = type(conv)
-        with patch.object(cls, 'app', new_callable=PropertyMock, return_value=app_mock):
+        with patch.object(cls, 'app', new_callable=PropertyMock, return_value=app_mock), \
+             patch.object(cls, 'is_attached', new_callable=PropertyMock, return_value=True):
             yield
 
     def test_interleaved_requests_stay_partitioned(self):

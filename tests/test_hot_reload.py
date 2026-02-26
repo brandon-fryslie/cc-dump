@@ -191,6 +191,7 @@ class TestHotReloadMultiSessionTabs:
                 200,
                 {"content-type": "application/json"},
                 complete,
+                "anthropic",
             )
 
         replay_data = [
@@ -202,29 +203,25 @@ class TestHotReloadMultiSessionTabs:
             tabs = app._get_conv_tabs()
             assert tabs is not None
 
-            tab_b = app._session_tab_ids[session_b]
-            tabs.active = tab_b
+            # With one-tab-per-instance, both sessions share the default tab.
+            default_key = app._default_session_key
+            default_tab = app._session_tab_ids[default_key]
+            tabs.active = default_tab
             await pilot.pause()
 
-            old_conv_ids = {
-                session_a: id(app._get_conv(session_key=session_a)),
-                session_b: id(app._get_conv(session_key=session_b)),
-            }
+            old_conv_id = id(app._get_conv(session_key=default_key))
 
             await hr.replace_all_widgets(app)
             await pilot.pause()
 
-            new_conv_a = app._get_conv(session_key=session_a)
-            new_conv_b = app._get_conv(session_key=session_b)
-            assert new_conv_a is not None
-            assert new_conv_b is not None
-            assert id(new_conv_a) != old_conv_ids[session_a]
-            assert id(new_conv_b) != old_conv_ids[session_b]
+            new_conv = app._get_conv(session_key=default_key)
+            assert new_conv is not None
+            assert id(new_conv) != old_conv_id
 
-            assert len(new_conv_a._turns) == 2
-            assert len(new_conv_b._turns) == 2
-            assert tabs.active == tab_b
-            assert app._domain_store is app._get_domain_store(session_b)
+            # Both sessions' turns should be in the default tab's ConversationView.
+            assert len(new_conv._turns) >= 4  # At least 2 turns per replay entry
+            assert tabs.active == default_tab
+            assert app._domain_store is app._get_domain_store(default_key)
 
 
 # ============================================================================

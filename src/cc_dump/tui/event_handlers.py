@@ -199,6 +199,7 @@ def _handle_complete_response_payload(
     app_state,
     seq: int = 0,
     recv_ns: int = 0,
+    provider: str = "anthropic",
 ) -> dict[str, object]:
     """Canonical response finalization path for both streaming and non-streaming transport."""
     stream_registry = _get_stream_registry(app_state)
@@ -215,7 +216,7 @@ def _handle_complete_response_payload(
         response_blocks.extend(
             cc_dump.core.formatting.format_response_headers(status_code or 200, headers_dict)
         )
-    response_blocks.extend(cc_dump.core.formatting.format_complete_response(complete_body))
+    response_blocks.extend(cc_dump.core.formatting.format_complete_response_for_provider(provider, complete_body))
 
     _stamp_blocks(response_blocks, ctx)
     _maybe_update_main_session(state, ctx)
@@ -278,7 +279,8 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
             pending_headers_all = {}
         pending_headers = pending_headers_all.pop(event.request_id, None)
         app_state["pending_request_headers"] = pending_headers_all
-        blocks = cc_dump.core.formatting.format_request(body, state, request_headers=pending_headers)
+        provider = event.provider
+        blocks = cc_dump.core.formatting.format_request_for_provider(provider, body, state, request_headers=pending_headers)
         _stamp_blocks(blocks, ctx)
 
         domain_store = widgets["domain_store"]
@@ -537,6 +539,7 @@ def handle_response_non_streaming(event: ResponseNonStreamingEvent, state, widge
             app_state=app_state,
             seq=event.seq,
             recv_ns=event.recv_ns,
+            provider=event.provider,
         )
         log_fn("DEBUG", f"Complete response via non-streaming transport: HTTP {event.status_code}")
     except Exception as e:
@@ -556,6 +559,7 @@ def handle_response_complete(event: ResponseCompleteEvent, state, widgets, app_s
         app_state=app_state,
         seq=event.seq,
         recv_ns=event.recv_ns,
+        provider=event.provider,
     )
     log_fn("DEBUG", "Complete response finalized")
     return app_state

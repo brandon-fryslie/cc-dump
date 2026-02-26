@@ -1489,4 +1489,284 @@ class TestToolUseBlockDescription:
         tool_uses = _find_blocks(blocks, ToolUseBlock)
         assert len(tool_uses) == 1
         assert tool_uses[0].description == ""
-    HookOutputBlock,
+
+
+# ─── OpenAI Formatting Tests ─────────────────────────────────────────────────
+
+from cc_dump.core.formatting import (
+    format_openai_request,
+    format_openai_complete_response,
+    Category,
+)
+
+
+def _fresh_openai_state():
+    return {
+        "request_counter": 0,
+        "positions": {},
+        "known_hashes": {},
+        "next_id": 1,
+        "next_color": 0,
+    }
+
+
+class TestFormatOpenAIRequest:
+    """Tests for format_openai_request block generation."""
+
+    def test_basic_request_produces_expected_blocks(self):
+        """Basic OpenAI request produces header, metadata, and message blocks."""
+        body = {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+        blocks = format_openai_request(body, _fresh_openai_state())
+
+        assert _has_block(blocks, HeaderBlock)
+        assert _has_block(blocks, MetadataBlock)
+        assert _has_block(blocks, MetadataSection)
+        assert _has_block(blocks, MessageBlock)
+        assert _has_block(blocks, TurnBudgetBlock)
+
+        # Header says OpenAI
+        headers = _find_blocks(blocks, HeaderBlock)
+        assert any("OpenAI" in h.label for h in headers)
+
+        # MetadataBlock has model
+        meta = _find_blocks(blocks, MetadataBlock)
+        assert len(meta) == 1
+        assert meta[0].model == "gpt-4o"
+
+    def test_request_with_tools(self):
+        """Tool definitions extracted from OpenAI format."""
+        body = {
+            "model": "gpt-4o",
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "description": "Get weather for a city",
+                        "parameters": {"type": "object", "properties": {"city": {"type": "string"}}},
+                    },
+                },
+            ],
+            "messages": [{"role": "user", "content": "Weather?"}],
+        }
+        blocks = format_openai_request(body, _fresh_openai_state())
+
+        tool_defs = _find_blocks(blocks, ToolDefBlock)
+        assert len(tool_defs) == 1
+        assert tool_defs[0].name == "get_weather"
+        assert tool_defs[0].description == "Get weather for a city"
+
+        tool_sections = _find_blocks(blocks, ToolDefsSection)
+        assert len(tool_sections) == 1
+        assert tool_sections[0].tool_count == 1
+
+    def test_system_message_in_system_section(self):
+        """System message from messages array placed in SystemSection."""
+        body = {
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "Hi"},
+            ],
+        }
+        blocks = format_openai_request(body, _fresh_openai_state())
+
+        system_sections = _find_blocks(blocks, SystemSection)
+        assert len(system_sections) == 1
+        # System section should have tracked content
+        assert len(system_sections[0].children) > 0
+
+        # System message should NOT appear as a conversation MessageBlock
+        msg_blocks = _find_blocks(blocks, MessageBlock)
+        roles = [m.role for m in msg_blocks]
+        assert "system" not in roles
+
+    def test_assistant_tool_calls_produce_tool_use_blocks(self):
+        """tool_calls on assistant messages produce ToolUseBlock children."""
+        body = {
+            "model": "gpt-4o",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "Let me check.",
+                    "tool_calls": [
+                        {
+                            "id": "call_abc",
+                            "type": "function",
+                            "function": {
+                                "name": "read_file",
+                                "arguments": '{"path": "test.py"}',
+                            },
+                        },
+                    ],
+                },
+            ],
+        }
+        blocks = format_openai_request(body, _fresh_openai_state())
+
+        tool_uses = _find_blocks(blocks, ToolUseBlock)
+        assert len(tool_uses) == 1
+        assert tool_uses[0].name == "read_file"
+        assert tool_uses[0].tool_use_id == "call_abc"
+        assert tool_uses[0].tool_input == {"path": "test.py"}
+
+    def test_tool_role_messages_as_message_blocks(self):
+        """role='tool' messages produce MessageBlock with role='tool'."""
+        body = {
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "tool", "tool_call_id": "call_abc", "content": "file contents"},
+            ],
+        }
+        blocks = format_openai_request(body, _fresh_openai_state())
+
+        msg_blocks = _find_blocks(blocks, MessageBlock)
+        tool_msgs = [m for m in msg_blocks if m.role == "tool"]
+        assert len(tool_msgs) == 1
+
+        # Content should be in a TextContentBlock child
+        text_blocks = _find_blocks([tool_msgs[0]], TextContentBlock)
+        assert len(text_blocks) == 1
+        assert text_blocks[0].content == "file contents"
+
+    def test_increments_request_counter(self):
+        """Request counter incremented per call."""
+        state = _fresh_openai_state()
+        body = {"model": "gpt-4o", "messages": [{"role": "user", "content": "1"}]}
+
+        format_openai_request(body, state)
+        assert state["request_counter"] == 1
+
+        format_openai_request(body, state)
+        assert state["request_counter"] == 2
+
+    def test_multi_turn_conversation(self):
+        """Multiple conversation messages produce separate MessageBlocks."""
+        body = {
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there"},
+                {"role": "user", "content": "How are you?"},
+            ],
+        }
+        blocks = format_openai_request(body, _fresh_openai_state())
+
+        msg_blocks = _find_blocks(blocks, MessageBlock)
+        assert len(msg_blocks) == 3
+        assert msg_blocks[0].role == "user"
+        assert msg_blocks[1].role == "assistant"
+        assert msg_blocks[2].role == "user"
+
+
+class TestFormatOpenAICompleteResponse:
+    """Tests for format_openai_complete_response block generation."""
+
+    def test_text_response(self):
+        """Text content produces TextContentBlock in MessageBlock."""
+        msg = {
+            "id": "chatcmpl-abc",
+            "model": "gpt-4o",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Hello!"},
+                    "finish_reason": "stop",
+                },
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+        blocks = format_openai_complete_response(msg)
+
+        assert _has_block(blocks, StreamInfoBlock)
+        assert _has_block(blocks, MessageBlock)
+        assert _has_block(blocks, StopReasonBlock)
+
+        info = _find_blocks(blocks, StreamInfoBlock)
+        assert info[0].model == "gpt-4o"
+
+        text = _find_blocks(blocks, TextContentBlock)
+        assert len(text) == 1
+        assert text[0].content == "Hello!"
+
+        stop = _find_blocks(blocks, StopReasonBlock)
+        assert stop[0].reason == "stop"
+
+    def test_tool_calls_response(self):
+        """Tool calls produce ToolUseBlock children."""
+        msg = {
+            "id": "chatcmpl-xyz",
+            "model": "gpt-4o",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_123",
+                                "type": "function",
+                                "function": {
+                                    "name": "get_weather",
+                                    "arguments": '{"city": "NYC"}',
+                                },
+                            },
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                },
+            ],
+        }
+        blocks = format_openai_complete_response(msg)
+
+        tool_uses = _find_blocks(blocks, ToolUseBlock)
+        assert len(tool_uses) == 1
+        assert tool_uses[0].name == "get_weather"
+        assert tool_uses[0].tool_use_id == "call_123"
+        assert tool_uses[0].tool_input == {"city": "NYC"}
+
+        stop = _find_blocks(blocks, StopReasonBlock)
+        assert stop[0].reason == "tool_calls"
+
+    def test_empty_choices(self):
+        """Empty choices still produce structure blocks."""
+        msg = {"model": "gpt-4o", "choices": []}
+        blocks = format_openai_complete_response(msg)
+
+        assert _has_block(blocks, StreamInfoBlock)
+        assert _has_block(blocks, MessageBlock)
+        assert _has_block(blocks, StopReasonBlock)
+
+    def test_text_with_tool_calls(self):
+        """Response with both text and tool_calls produces both block types."""
+        msg = {
+            "model": "gpt-4o",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "I'll check that for you.",
+                        "tool_calls": [
+                            {
+                                "id": "call_456",
+                                "function": {"name": "search", "arguments": '{"q": "test"}'},
+                            },
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                },
+            ],
+        }
+        blocks = format_openai_complete_response(msg)
+
+        text = _find_blocks(blocks, TextContentBlock)
+        tools = _find_blocks(blocks, ToolUseBlock)
+        assert len(text) == 1
+        assert text[0].content == "I'll check that for you."
+        assert len(tools) == 1
+        assert tools[0].name == "search"

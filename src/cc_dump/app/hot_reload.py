@@ -10,6 +10,7 @@ This module owns: module classification, reload execution, staleness tracking.
 
 import hashlib
 import importlib
+import logging
 import os
 import sys
 from collections.abc import Iterator
@@ -91,6 +92,7 @@ _excluded_hashes: dict[str, str] = {}
 
 # Set of reloadable relative paths (derived from _RELOAD_ORDER module names)
 _reloadable_rel_paths: set[str] = set()
+logger = logging.getLogger(__name__)
 
 
 def init(package_dir: str) -> None:
@@ -165,15 +167,16 @@ def check_and_get_reloaded() -> list[str]:
             try:
                 importlib.reload(mod)
                 reloaded.append(mod_name)
-            except Exception as e:
-                print(f"[hot-reload] error reloading {mod_name}: {e}", file=sys.stderr)
+            except Exception:
+                logger.exception("hot-reload error while reloading module %s", mod_name)
                 # Continue with other modules even if one fails
                 # This way a syntax error in one module doesn't break the whole reload
 
     if reloaded:
-        print(
-            f"[hot-reload] reloaded {len(reloaded)} module(s): {', '.join(reloaded)}",
-            file=sys.stderr,
+        logger.info(
+            "hot-reload reloaded %d module(s): %s",
+            len(reloaded),
+            ", ".join(reloaded),
         )
 
     return reloaded

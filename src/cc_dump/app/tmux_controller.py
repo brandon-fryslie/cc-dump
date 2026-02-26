@@ -9,8 +9,8 @@ All libtmux usage is lazy-imported and wrapped in try/except.
 
 from __future__ import annotations
 
+import logging
 import os
-import sys
 import time
 from enum import Enum, auto
 from typing import TYPE_CHECKING
@@ -27,6 +27,7 @@ from cc_dump.pipeline.event_types import (
     StopReason,
 )
 
+logger = logging.getLogger(__name__)
 
 class TmuxState(Enum):
     """Controller state machine."""
@@ -395,6 +396,5 @@ class TmuxController:
 
 
 def _log(msg: str) -> None:
-    """Log to stderr (matches har_recorder.py pattern)."""
-    sys.stderr.write("[tmux] {}\n".format(msg))
-    sys.stderr.flush()
+    """Emit tmux diagnostics through the centralized logger."""
+    logger.info("[tmux] %s", msg)

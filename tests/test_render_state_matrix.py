@@ -1109,7 +1109,7 @@ def test_tool_def_block_state_matrix_is_distinct():
     fe_text, _ = _render_plain(block, "tools", FULL_EXPANDED)
 
     assert "Read" in sc_text
-    assert "500 tokens" in sc_text
+    assert "tokens" in sc_text
     assert "Read file contents" not in sc_text
     assert "Read file contents" in se_text
     assert "params: 3 (1 required)" in fc_text

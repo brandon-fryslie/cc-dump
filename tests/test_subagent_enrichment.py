@@ -37,13 +37,14 @@ def _request_body(session_id: str, task_tool_use_id: str = "") -> dict:
     }
 
 
-def _har_pair(session_id: str, task_tool_use_id: str = "") -> tuple[dict, dict, int, dict, dict]:
+def _har_pair(session_id: str, task_tool_use_id: str = "") -> tuple[dict, dict, int, dict, dict, str]:
     return (
         {"content-type": "application/json"},
         _request_body(session_id, task_tool_use_id),
         200,
         {"content-type": "application/json"},
         {"id": "msg_1", "type": "message", "content": [], "usage": {}},
+        "anthropic",
     )
 
 

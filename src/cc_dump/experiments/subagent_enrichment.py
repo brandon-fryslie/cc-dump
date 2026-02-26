@@ -18,7 +18,7 @@ import cc_dump.core.formatting
 import cc_dump.pipeline.har_replayer
 
 
-HARPair = tuple[dict, dict, int, dict, dict]
+HARPair = tuple[dict, dict, int, dict, dict, str]
 
 
 @dataclass(frozen=True)
@@ -130,7 +130,7 @@ def build_runtime_sessions(har_pairs: list[HARPair]) -> tuple[RuntimeSessionSumm
     """
     counts: dict[str, int] = {}
     task_ids: dict[str, set[str]] = {}
-    for _req_headers, request_body, _status, _resp_headers, _complete in har_pairs:
+    for _req_headers, request_body, _status, _resp_headers, _complete, _provider in har_pairs:
         session_id = _extract_runtime_session_id(request_body)
         if not session_id:
             continue

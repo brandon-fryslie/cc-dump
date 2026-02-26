@@ -3,6 +3,7 @@
 import json
 
 from cc_dump.pipeline.response_assembler import (
+    OpenAIResponseAssembler,
     ResponseAssembler,
     reconstruct_message_from_events,
     sse_event_to_dict,
@@ -509,3 +510,185 @@ def test_sse_event_to_dict_tool_use_roundtrip():
     assert result["content"][0]["name"] == "Grep"
     assert result["content"][0]["input"] == {"pattern": "foo"}
     assert result["stop_reason"] == "tool_use"
+
+
+# ─── OpenAIResponseAssembler ────────────────────────────────────────────────
+
+
+def test_openai_assembler_text_stream():
+    """OpenAI assembler reconstructs text content from streaming chunks."""
+    assembler = OpenAIResponseAssembler()
+
+    chunks = [
+        {
+            "id": "chatcmpl-abc123",
+            "model": "gpt-4o-mini",
+            "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}],
+        },
+        {
+            "id": "chatcmpl-abc123",
+            "model": "gpt-4o-mini",
+            "choices": [{"index": 0, "delta": {"content": "Hello"}}],
+        },
+        {
+            "id": "chatcmpl-abc123",
+            "model": "gpt-4o-mini",
+            "choices": [{"index": 0, "delta": {"content": ", world!"}}],
+        },
+        {
+            "id": "chatcmpl-abc123",
+            "model": "gpt-4o-mini",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        },
+        {
+            "id": "chatcmpl-abc123",
+            "model": "gpt-4o-mini",
+            "choices": [],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        },
+    ]
+
+    for chunk in chunks:
+        assembler.on_event("data", chunk)
+    assembler.on_done()
+
+    result = assembler.result
+    assert result is not None
+    assert result["id"] == "chatcmpl-abc123"
+    assert result["model"] == "gpt-4o-mini"
+    assert result["object"] == "chat.completion"
+    assert result["choices"][0]["message"]["content"] == "Hello, world!"
+    assert result["choices"][0]["finish_reason"] == "stop"
+    assert result["usage"]["prompt_tokens"] == 10
+    assert result["usage"]["completion_tokens"] == 5
+
+
+def test_openai_assembler_tool_calls():
+    """OpenAI assembler reconstructs tool calls from streaming chunks."""
+    assembler = OpenAIResponseAssembler()
+
+    chunks = [
+        {
+            "id": "chatcmpl-tool1",
+            "model": "gpt-4o",
+            "choices": [{"index": 0, "delta": {"role": "assistant", "content": None,
+                         "tool_calls": [{"index": 0, "id": "call_abc", "type": "function",
+                                         "function": {"name": "get_weather", "arguments": ""}}]}}],
+        },
+        {
+            "id": "chatcmpl-tool1",
+            "model": "gpt-4o",
+            "choices": [{"index": 0, "delta": {
+                "tool_calls": [{"index": 0, "function": {"arguments": '{"city":'}}]}}],
+        },
+        {
+            "id": "chatcmpl-tool1",
+            "model": "gpt-4o",
+            "choices": [{"index": 0, "delta": {
+                "tool_calls": [{"index": 0, "function": {"arguments": ' "NYC"}'}}]}}],
+        },
+        {
+            "id": "chatcmpl-tool1",
+            "model": "gpt-4o",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+        },
+    ]
+
+    for chunk in chunks:
+        assembler.on_event("data", chunk)
+    assembler.on_done()
+
+    result = assembler.result
+    assert result is not None
+    assert result["choices"][0]["finish_reason"] == "tool_calls"
+    msg = result["choices"][0]["message"]
+    assert msg["content"] is None
+    assert len(msg["tool_calls"]) == 1
+    tc = msg["tool_calls"][0]
+    assert tc["id"] == "call_abc"
+    assert tc["function"]["name"] == "get_weather"
+    assert tc["function"]["arguments"] == '{"city": "NYC"}'
+
+
+def test_openai_assembler_multiple_tool_calls():
+    """OpenAI assembler handles multiple parallel tool calls."""
+    assembler = OpenAIResponseAssembler()
+
+    chunks = [
+        {
+            "id": "chatcmpl-multi",
+            "model": "gpt-4o",
+            "choices": [{"index": 0, "delta": {"role": "assistant", "content": None,
+                         "tool_calls": [
+                             {"index": 0, "id": "call_1", "type": "function",
+                              "function": {"name": "read_file", "arguments": ""}},
+                             {"index": 1, "id": "call_2", "type": "function",
+                              "function": {"name": "write_file", "arguments": ""}},
+                         ]}}],
+        },
+        {
+            "id": "chatcmpl-multi",
+            "model": "gpt-4o",
+            "choices": [{"index": 0, "delta": {
+                "tool_calls": [{"index": 0, "function": {"arguments": '{"path":"a.txt"}'}}]}}],
+        },
+        {
+            "id": "chatcmpl-multi",
+            "model": "gpt-4o",
+            "choices": [{"index": 0, "delta": {
+                "tool_calls": [{"index": 1, "function": {"arguments": '{"path":"b.txt"}'}}]}}],
+        },
+        {
+            "id": "chatcmpl-multi",
+            "model": "gpt-4o",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+        },
+    ]
+
+    for chunk in chunks:
+        assembler.on_event("data", chunk)
+    assembler.on_done()
+
+    result = assembler.result
+    assert result is not None
+    msg = result["choices"][0]["message"]
+    assert len(msg["tool_calls"]) == 2
+    assert msg["tool_calls"][0]["function"]["name"] == "read_file"
+    assert msg["tool_calls"][0]["function"]["arguments"] == '{"path":"a.txt"}'
+    assert msg["tool_calls"][1]["function"]["name"] == "write_file"
+    assert msg["tool_calls"][1]["function"]["arguments"] == '{"path":"b.txt"}'
+
+
+def test_openai_assembler_no_events():
+    """OpenAI assembler with no events returns None."""
+    assembler = OpenAIResponseAssembler()
+    assembler.on_done()
+    assert assembler.result is None
+
+
+def test_openai_assembler_empty_content():
+    """OpenAI assembler with no content produces None content."""
+    assembler = OpenAIResponseAssembler()
+
+    chunks = [
+        {
+            "id": "chatcmpl-empty",
+            "model": "gpt-4o-mini",
+            "choices": [{"index": 0, "delta": {"role": "assistant"}}],
+        },
+        {
+            "id": "chatcmpl-empty",
+            "model": "gpt-4o-mini",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        },
+    ]
+
+    for chunk in chunks:
+        assembler.on_event("data", chunk)
+    assembler.on_done()
+
+    result = assembler.result
+    assert result is not None
+    # Empty string → None via `message_content or None`
+    assert result["choices"][0]["message"]["content"] is None
+    assert result["choices"][0]["finish_reason"] == "stop"

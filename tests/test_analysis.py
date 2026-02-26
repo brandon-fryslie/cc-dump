@@ -467,11 +467,204 @@ def test_classify_model_haiku():
 
 
 def test_classify_model_unknown():
-    key, pricing = classify_model("gpt-4o")
+    key, pricing = classify_model("some-totally-unknown-model")
     assert key == "unknown"
     assert pricing == MODEL_PRICING["sonnet"]  # fallback
+
+
+def test_classify_model_openai():
+    key, pricing = classify_model("gpt-4o")
+    assert key == "gpt-4o"
+    assert pricing == MODEL_PRICING["gpt-4o"]
+    # gpt-4o-mini must not be misclassified as gpt-4o
+    key2, pricing2 = classify_model("gpt-4o-mini-2024-07-18")
+    assert key2 == "gpt-4o-mini"
+    assert pricing2 == MODEL_PRICING["gpt-4o-mini"]
 
 
 def test_classify_model_empty():
     key, pricing = classify_model("")
     assert key == "unknown"
+
+
+# ─── OpenAI Turn Budget Tests ────────────────────────────────────────────────
+
+
+def test_compute_turn_budget_openai_tool_calls():
+    """OpenAI tool_calls on assistant messages counted as tool_use tokens."""
+    request = {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": "Let me check.",
+                "tool_calls": [
+                    {
+                        "id": "call_abc",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": '{"city": "NYC", "units": "fahrenheit"}',
+                        },
+                    },
+                ],
+            },
+        ],
+    }
+    budget = compute_turn_budget(request)
+    assert budget.assistant_text_tokens_est > 0
+    assert budget.tool_use_tokens_est > 0
+    assert budget.total_est > budget.assistant_text_tokens_est
+
+
+def test_compute_turn_budget_openai_tool_role():
+    """OpenAI role='tool' messages counted as tool_result tokens."""
+    request = {
+        "messages": [
+            {
+                "role": "tool",
+                "tool_call_id": "call_abc",
+                "content": "The weather in NYC is sunny, 72F with low humidity.",
+            },
+        ],
+    }
+    budget = compute_turn_budget(request)
+    assert budget.tool_result_tokens_est > 0
+    assert budget.total_est == budget.tool_result_tokens_est + 1  # +1 for empty system
+
+
+def test_compute_turn_budget_openai_multiple_tool_calls():
+    """Multiple parallel tool_calls all counted."""
+    request = {
+        "messages": [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "function": {"name": "read", "arguments": '{"path": "a.py"}'},
+                    },
+                    {
+                        "id": "call_2",
+                        "function": {"name": "read", "arguments": '{"path": "b.py"}'},
+                    },
+                ],
+            },
+        ],
+    }
+    budget = compute_turn_budget(request)
+    # Two tool calls, both should contribute
+    single_request = {
+        "messages": [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "function": {"name": "read", "arguments": '{"path": "a.py"}'},
+                    },
+                ],
+            },
+        ],
+    }
+    single_budget = compute_turn_budget(single_request)
+    assert budget.tool_use_tokens_est > single_budget.tool_use_tokens_est
+
+
+# ─── OpenAI Tool Correlation Tests ───────────────────────────────────────────
+
+
+def test_correlate_tools_openai_format():
+    """OpenAI tool_calls matched to role='tool' messages."""
+    messages = [
+        {
+            "role": "assistant",
+            "content": "Let me check.",
+            "tool_calls": [
+                {
+                    "id": "call_abc",
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": '{"city": "NYC"}',
+                    },
+                },
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_abc",
+            "content": "Sunny, 72F",
+        },
+    ]
+    invocations = correlate_tools(messages)
+    assert len(invocations) == 1
+    inv = invocations[0]
+    assert inv.tool_use_id == "call_abc"
+    assert inv.name == "get_weather"
+    assert "NYC" in inv.input_str
+    assert inv.result_str == "Sunny, 72F"
+    assert inv.is_error is False
+
+
+def test_correlate_tools_openai_multiple_parallel():
+    """Multiple parallel OpenAI tool calls all matched."""
+    messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "function": {"name": "read", "arguments": '{"path": "a.py"}'},
+                },
+                {
+                    "id": "call_2",
+                    "function": {"name": "write", "arguments": '{"path": "b.py"}'},
+                },
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "file contents A"},
+        {"role": "tool", "tool_call_id": "call_2", "content": "file contents B"},
+    ]
+    invocations = correlate_tools(messages)
+    assert len(invocations) == 2
+    names = {inv.name for inv in invocations}
+    assert names == {"read", "write"}
+
+
+def test_correlate_tools_openai_unmatched_tool_result():
+    """OpenAI role='tool' with no matching tool_call is skipped."""
+    messages = [
+        {"role": "tool", "tool_call_id": "call_orphan", "content": "orphan result"},
+    ]
+    assert correlate_tools(messages) == []
+
+
+def test_correlate_tools_mixed_formats_independent():
+    """Anthropic and OpenAI tool formats don't interfere with each other."""
+    messages = [
+        # Anthropic tool_use
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "anth_1", "name": "Read", "input": {"path": "x"}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "anth_1", "content": "anthropic result"},
+            ],
+        },
+        # OpenAI tool_calls
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": "oai_1", "function": {"name": "search", "arguments": '{"q": "test"}'}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "oai_1", "content": "openai result"},
+    ]
+    invocations = correlate_tools(messages)
+    assert len(invocations) == 2
+    names = {inv.name for inv in invocations}
+    assert names == {"Read", "search"}

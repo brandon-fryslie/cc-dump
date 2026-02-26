@@ -35,9 +35,11 @@ class InfoPanel(Static):
         # // [LAW:one-source-of-truth] Copiable field mapping: label → info dict key
         # // [LAW:one-type-per-behavior] All rows have identical click-to-copy behavior
         self._copiable_fields = {
-            "Proxy URL": "proxy_url",
+            "Anthropic Proxy": "proxy_url",
+            "OpenAI Proxy": "openai_proxy_url",
             "Proxy Mode": "proxy_mode",
-            "Target": "target",
+            "Anthropic Target": "target",
+            "OpenAI Target": "openai_target",
             "Session": "session_name",
             "Session ID": "session_id",
             "Recording": "recording_path",
