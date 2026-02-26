@@ -18,14 +18,14 @@ from cc_dump.pipeline.event_types import (
 )
 
 
-def load_har(path: str) -> list[tuple[dict, dict, int, dict, dict]]:
+def load_har(path: str) -> list[tuple[dict, dict, int, dict, dict, str]]:
     """Load HAR file and extract request/response pairs.
 
     Args:
         path: Path to HAR file
 
     Returns:
-        List of (request_headers, request_body, response_status, response_headers, complete_message) tuples
+        List of (request_headers, request_body, response_status, response_headers, complete_message, provider) tuples
 
     Raises:
         ValueError: If HAR structure is invalid
@@ -79,9 +79,13 @@ def load_har(path: str) -> list[tuple[dict, dict, int, dict, dict]]:
             complete_message = json.loads(content["text"])
 
             # Validate that response is a complete message (not SSE stream)
-            if "type" not in complete_message or complete_message["type"] != "message":
+            # Anthropic: type="message". OpenAI: object="chat.completion".
+            is_anthropic = complete_message.get("type") == "message"
+            is_openai = complete_message.get("object") == "chat.completion"
+            if not is_anthropic and not is_openai:
                 raise ValueError(
-                    f"Entry {i}: response is not a complete message (expected type='message')"
+                    f"Entry {i}: response is not a recognized complete message "
+                    f"(expected type='message' or object='chat.completion')"
                 )
 
             # Extract request headers
@@ -107,6 +111,17 @@ def load_har(path: str) -> list[tuple[dict, dict, int, dict, dict]]:
                     ):
                         response_headers[header["name"]] = header["value"]
 
+            # Detect provider: _cc_dump metadata (preferred) > URL heuristic > default
+            # // [LAW:one-source-of-truth] Provider detection at HAR load boundary.
+            cc_dump_meta = entry.get("_cc_dump", {})
+            provider = cc_dump_meta.get("provider", "") if isinstance(cc_dump_meta, dict) else ""
+            if not provider:
+                request_url = request.get("url", "")
+                if "openai.com" in request_url:
+                    provider = "openai"
+                else:
+                    provider = "anthropic"
+
             pairs.append(
                 (
                     request_headers,
@@ -114,6 +129,7 @@ def load_har(path: str) -> list[tuple[dict, dict, int, dict, dict]]:
                     response_status,
                     response_headers,
                     complete_message,
+                    provider,
                 )
             )
 
@@ -134,6 +150,7 @@ def convert_to_events(
     response_status: int,
     response_headers: dict,
     complete_message: dict,
+    provider: str = "anthropic",
 ) -> list[PipelineEvent]:
     """Convert a complete request/response pair to typed pipeline events.
 
@@ -142,7 +159,8 @@ def convert_to_events(
         request_body: Request body dict
         response_status: HTTP status code
         response_headers: Response headers dict
-        complete_message: Complete Claude message (non-streaming format)
+        complete_message: Complete message dict (Anthropic or OpenAI format)
+        provider: API provider identifier
 
     Returns:
         List of typed PipelineEvent objects
@@ -155,12 +173,14 @@ def convert_to_events(
             request_id=request_id,
             seq=0,
             recv_ns=time.monotonic_ns(),
+            provider=provider,
         ),
         RequestBodyEvent(
             body=request_body,
             request_id=request_id,
             seq=1,
             recv_ns=time.monotonic_ns(),
+            provider=provider,
         ),
         ResponseHeadersEvent(
             status_code=response_status,
@@ -168,11 +188,13 @@ def convert_to_events(
             request_id=request_id,
             seq=2,
             recv_ns=time.monotonic_ns(),
+            provider=provider,
         ),
         ResponseCompleteEvent(
             body=complete_message,
             request_id=request_id,
             seq=3,
             recv_ns=time.monotonic_ns(),
+            provider=provider,
         ),
     ]

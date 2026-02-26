@@ -315,3 +315,122 @@ class ResponseAssembler:
     def result(self) -> ReconstructedMessage | None:
         """The reconstructed complete message, or None if no events received."""
         return self._result
+
+
+class OpenAIResponseAssembler:
+    """Assembles OpenAI SSE fragments into a complete response dict.
+
+    Accumulates text deltas and tool call fragments from OpenAI's streaming
+    format into a dict that matches the OpenAI chat completion response shape.
+    """
+
+    def __init__(self) -> None:
+        self._chunks: list[dict] = []
+        self._result: dict | None = None
+
+    def on_raw(self, data: bytes) -> None:
+        pass
+
+    def on_event(self, event_type: str, event: dict) -> None:
+        self._chunks.append(event)
+
+    def on_done(self) -> None:
+        if not self._chunks:
+            return
+        self._result = _reconstruct_openai_message(self._chunks)
+
+    @property
+    def result(self) -> dict | None:
+        return self._result
+
+
+def _reconstruct_openai_message(chunks: list[dict]) -> dict:
+    """Reconstruct a complete OpenAI chat completion from streaming chunks.
+
+    Accumulates delta.content and delta.tool_calls into the non-streaming shape.
+    """
+    message_content = ""
+    model = ""
+    message_id = ""
+    finish_reason = None
+    tool_calls: dict[int, dict] = {}  # index → {id, type, function: {name, arguments}}
+    usage: dict[str, int] = {}
+
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+
+        if not message_id:
+            message_id = str(chunk.get("id", "") or "")
+        if not model:
+            model = str(chunk.get("model", "") or "")
+
+        # Usage from final chunk (OpenAI includes it when stream_options.include_usage=true)
+        chunk_usage = chunk.get("usage")
+        if isinstance(chunk_usage, dict):
+            for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                if k in chunk_usage:
+                    usage[k] = chunk_usage[k]
+
+        choices = chunk.get("choices", [])
+        if not isinstance(choices, list):
+            continue
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            fr = choice.get("finish_reason")
+            if isinstance(fr, str) and fr:
+                finish_reason = fr
+
+            delta = choice.get("delta", {})
+            if not isinstance(delta, dict):
+                continue
+
+            content = delta.get("content")
+            if isinstance(content, str):
+                message_content += content
+
+            delta_tool_calls = delta.get("tool_calls")
+            if isinstance(delta_tool_calls, list):
+                for tc in delta_tool_calls:
+                    if not isinstance(tc, dict):
+                        continue
+                    idx = tc.get("index", 0)
+                    if not isinstance(idx, int):
+                        idx = 0
+                    if idx not in tool_calls:
+                        tool_calls[idx] = {
+                            "id": tc.get("id", ""),
+                            "type": "function",
+                            "function": {"name": "", "arguments": ""},
+                        }
+                    entry = tool_calls[idx]
+                    tc_id = tc.get("id")
+                    if isinstance(tc_id, str) and tc_id:
+                        entry["id"] = tc_id
+                    func = tc.get("function", {})
+                    if isinstance(func, dict):
+                        name = func.get("name")
+                        if isinstance(name, str) and name:
+                            entry["function"]["name"] = name
+                        args = func.get("arguments")
+                        if isinstance(args, str):
+                            entry["function"]["arguments"] += args
+
+    result_message: dict = {"role": "assistant", "content": message_content or None}
+    if tool_calls:
+        result_message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
+
+    return {
+        "id": message_id,
+        "object": "chat.completion",
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "message": result_message,
+                "finish_reason": finish_reason,
+            }
+        ],
+        "usage": usage or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    }

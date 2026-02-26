@@ -9,7 +9,7 @@ import sys
 import threading
 from datetime import datetime
 
-from cc_dump.pipeline.proxy import ProxyHandler
+from cc_dump.pipeline.proxy import ProxyHandler, make_handler_class
 from cc_dump.pipeline.router import EventRouter, QueueSubscriber, DirectSubscriber
 from cc_dump.app.analytics_store import AnalyticsStore
 import cc_dump.io.stderr_tee
@@ -109,6 +109,24 @@ def main():
         default=None,
         help="Seed hue (0-360) for color palette (default: 190, cyan). Env: CC_DUMP_SEED_HUE",
     )
+    parser.add_argument(
+        "--openai-port",
+        type=int,
+        default=0,
+        help="Bind port for OpenAI proxy (default: 0, OS-assigned)",
+    )
+    parser.add_argument(
+        "--openai-target",
+        type=str,
+        default=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        help="Upstream OpenAI API URL (default: https://api.openai.com/v1). Env: OPENAI_BASE_URL",
+    )
+    parser.add_argument(
+        "--no-openai",
+        action="store_true",
+        default=False,
+        help="Disable the OpenAI proxy server",
+    )
     args = parser.parse_args()
 
     # Install stderr tee before anything else writes to stderr
@@ -182,28 +200,51 @@ def main():
             print(f"   Error loading HAR file: {e}")
             return
 
-    # Always start proxy server
-    ProxyHandler.target_host = args.target.rstrip("/") if args.target else None
-    ProxyHandler.event_queue = event_q
+    # ─── Start proxy servers ────────────────────────────────────────────────
+    # // [LAW:one-type-per-behavior] Both servers share ProxyHandler, parameterized by factory.
 
-    server = http.server.ThreadingHTTPServer((args.host, args.port), ProxyHandler)
+    def _start_proxy_server(host, port, handler_class):
+        """Create and start an HTTP proxy server. Returns (server, actual_port, thread)."""
+        srv = http.server.ThreadingHTTPServer((host, port), handler_class)
+        ap = srv.server_address[1]
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        return srv, ap, t
 
-    # Get the actual port assigned by the OS (important when args.port=0)
-    actual_port = server.server_address[1]
+    # Anthropic proxy (always started)
+    anthropic_handler = make_handler_class(
+        provider="anthropic",
+        target_host=args.target,
+        event_queue=event_q,
+    )
+    server, actual_port, _ = _start_proxy_server(args.host, args.port, anthropic_handler)
 
-    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-    server_thread.start()
+    # OpenAI proxy (started unless --no-openai)
+    openai_server = None
+    openai_port = None
+    if not args.no_openai:
+        openai_handler = make_handler_class(
+            provider="openai",
+            target_host=args.openai_target,
+            event_queue=event_q,
+        )
+        openai_server, openai_port, _ = _start_proxy_server(args.host, args.openai_port, openai_handler)
 
     print("🚀 cc-dump proxy started")
-    print(f"   Listening on: http://{args.host}:{actual_port}")
-    if ProxyHandler.target_host:
-        print(f"   Reverse proxy mode: {ProxyHandler.target_host}")
-        print(f"   Usage: ANTHROPIC_BASE_URL=http://{args.host}:{actual_port} claude")
+    print(f"   Anthropic proxy: http://{args.host}:{actual_port}")
+    anthropic_target = args.target.rstrip("/") if args.target else None
+    if anthropic_target:
+        print(f"     Target: {anthropic_target}")
+        print(f"     Usage: ANTHROPIC_BASE_URL=http://{args.host}:{actual_port} claude")
     else:
-        print("   Forward proxy mode (dynamic targets)")
+        print("     Forward proxy mode (dynamic targets)")
         print(
-            f"   Usage: HTTP_PROXY=http://{args.host}:{actual_port} ANTHROPIC_BASE_URL=https://api.anthropic.com claude"
+            f"     Usage: HTTP_PROXY=http://{args.host}:{actual_port} ANTHROPIC_BASE_URL=https://api.anthropic.com claude"
         )
+    if openai_port is not None:
+        print(f"   OpenAI proxy:    http://{args.host}:{openai_port}")
+        print(f"     Target: {args.openai_target.rstrip('/')}")
+        print(f"     Usage: OPENAI_BASE_URL=http://{args.host}:{openai_port} <your-tool>")
 
     # State dict for content tracking (used by formatting layer)
     state = {
@@ -287,7 +328,7 @@ def main():
         ],
         interceptors=[cc_dump.pipeline.sentinel.make_interceptor(tmux_ctrl)],
     )
-    ProxyHandler.request_pipeline = pipeline
+    anthropic_handler.request_pipeline = pipeline
 
     router.start()
 
@@ -320,7 +361,7 @@ def main():
         session_name=session_name,
         host=args.host,
         port=actual_port,
-        target=ProxyHandler.target_host,
+        target=anthropic_target,
         replay_data=replay_data,
         recording_path=record_path,
         replay_file=args.replay,
@@ -332,6 +373,8 @@ def main():
         view_store=view_store,
         domain_store=domain_store,
         store_context=store_context,
+        openai_port=openai_port,
+        openai_target=args.openai_target.rstrip("/") if openai_port is not None else None,
     )
 
     # Store context is finalized here; view-store reactions are bound on app mount.
@@ -371,6 +414,16 @@ def main():
                 print("   ✓ Server stopped", file=sys.stderr)
 
             server.server_close()
+
+        # Shutdown OpenAI server
+        if openai_server:
+            openai_shutdown = threading.Thread(target=openai_server.shutdown, daemon=True)
+            openai_shutdown.start()
+            try:
+                openai_shutdown.join(timeout=2.0)
+            except KeyboardInterrupt:
+                pass
+            openai_server.server_close()
 
         # Clean up other resources
         router.stop()

@@ -59,6 +59,7 @@ class TurnRecord:
     prompt_version: str = ""
     policy_version: str = ""
     is_side_channel: bool = False
+    provider: str = "anthropic"
     tool_invocations: list[ToolInvocationRecord] = field(default_factory=list)
 
 
@@ -73,6 +74,7 @@ class _PendingTurn:
     prompt_version: str
     policy_version: str
     is_side_channel: bool
+    provider: str = "anthropic"
 
 
 class DashboardTurnRow(TypedDict):
@@ -162,6 +164,7 @@ class AnalyticsStore:
                 prompt_version=marker.prompt_version if marker is not None else "",
                 policy_version=marker.policy_version if marker is not None else "",
                 is_side_channel=marker is not None,
+                provider=event.provider,
             )
 
         elif kind == PipelineEventKind.RESPONSE_COMPLETE:
@@ -172,14 +175,21 @@ class AnalyticsStore:
                 return
             body = event.body
             usage = body.get("usage", {})
+            # [LAW:single-enforcer] Normalize OpenAI usage keys to Anthropic names at boundary.
+            # OpenAI uses prompt_tokens/completion_tokens; Anthropic uses input_tokens/output_tokens.
             usage_map = {
-                "input_tokens": usage.get("input_tokens", 0),
-                "output_tokens": usage.get("output_tokens", 0),
+                "input_tokens": usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0),
+                "output_tokens": usage.get("output_tokens", 0) or usage.get("completion_tokens", 0),
                 "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0),
                 "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0),
             }
             model = body.get("model", "") or pending.model
+            # Anthropic: top-level stop_reason. OpenAI: choices[0].finish_reason.
             stop_reason = body.get("stop_reason", "") or ""
+            if not stop_reason:
+                choices = body.get("choices", [])
+                if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                    stop_reason = str(choices[0].get("finish_reason", "") or "")
             self._commit_turn(
                 pending=pending,
                 usage=usage_map,
@@ -236,6 +246,7 @@ class AnalyticsStore:
             prompt_version=pending.prompt_version,
             policy_version=pending.policy_version,
             is_side_channel=pending.is_side_channel,
+            provider=pending.provider,
             tool_invocations=tool_records,
         )
 

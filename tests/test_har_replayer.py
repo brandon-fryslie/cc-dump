@@ -68,7 +68,7 @@ def test_load_har_basic(tmp_path):
     pairs = load_har(str(har_path))
 
     assert len(pairs) == 1
-    req_headers, req_body, resp_status, resp_headers, complete_message = pairs[0]
+    req_headers, req_body, resp_status, resp_headers, complete_message, provider = pairs[0]
 
     # Verify request
     assert "content-type" in req_headers
@@ -79,6 +79,7 @@ def test_load_har_basic(tmp_path):
     assert "content-type" in resp_headers
     assert complete_message["id"] == "msg_123"
     assert complete_message["type"] == "message"
+    assert provider == "anthropic"
 
 
 def test_load_har_multiple_entries(tmp_path):
@@ -428,3 +429,154 @@ def test_roundtrip_har_load_and_convert(tmp_path):
     assert isinstance(events[2], ResponseHeadersEvent)
     assert isinstance(events[3], ResponseCompleteEvent)
     assert events[3].body["id"] == "msg_test"
+
+
+# ─── Provider Detection Tests ────────────────────────────────────────────────
+
+
+def test_load_har_detects_openai_from_url(tmp_path):
+    """OpenAI provider detected from request URL heuristic."""
+    har_path = tmp_path / "openai.har"
+    har = {
+        "log": {
+            "entries": [
+                {
+                    "request": {
+                        "method": "POST",
+                        "url": "https://api.openai.com/v1/chat/completions",
+                        "headers": [],
+                        "postData": {
+                            "text": json.dumps({"model": "gpt-4o"}),
+                        },
+                    },
+                    "response": {
+                        "status": 200,
+                        "headers": [],
+                        "content": {
+                            "text": json.dumps({
+                                "id": "chatcmpl-test",
+                                "object": "chat.completion",
+                                "model": "gpt-4o",
+                                "choices": [
+                                    {
+                                        "message": {"role": "assistant", "content": "Hi"},
+                                        "finish_reason": "stop",
+                                    },
+                                ],
+                                "usage": {"prompt_tokens": 5, "completion_tokens": 2},
+                            }),
+                        },
+                    },
+                },
+            ],
+        },
+    }
+
+    with open(har_path, "w") as f:
+        json.dump(har, f)
+
+    pairs = load_har(str(har_path))
+    assert len(pairs) == 1
+    assert pairs[0][5] == "openai"
+
+
+def test_load_har_detects_provider_from_cc_dump_metadata(tmp_path):
+    """Provider detected from _cc_dump metadata (preferred over URL)."""
+    har_path = tmp_path / "meta.har"
+    har = {
+        "log": {
+            "entries": [
+                {
+                    "_cc_dump": {"provider": "openai"},
+                    "request": {
+                        "method": "POST",
+                        "url": "https://api.anthropic.com/v1/messages",  # URL says Anthropic
+                        "headers": [],
+                        "postData": {
+                            "text": json.dumps({"model": "gpt-4o"}),
+                        },
+                    },
+                    "response": {
+                        "status": 200,
+                        "headers": [],
+                        "content": {
+                            "text": json.dumps({
+                                "object": "chat.completion",
+                                "model": "gpt-4o",
+                                "choices": [
+                                    {
+                                        "message": {"role": "assistant", "content": "Hi"},
+                                        "finish_reason": "stop",
+                                    },
+                                ],
+                                "usage": {"prompt_tokens": 5, "completion_tokens": 2},
+                            }),
+                        },
+                    },
+                },
+            ],
+        },
+    }
+
+    with open(har_path, "w") as f:
+        json.dump(har, f)
+
+    pairs = load_har(str(har_path))
+    # _cc_dump metadata takes precedence over URL
+    assert pairs[0][5] == "openai"
+
+
+def test_load_har_openai_response_accepted(tmp_path):
+    """OpenAI responses (object='chat.completion') pass validation."""
+    har_path = tmp_path / "openai_valid.har"
+    har = {
+        "log": {
+            "entries": [
+                {
+                    "request": {
+                        "headers": [],
+                        "postData": {"text": json.dumps({"model": "gpt-4o"})},
+                    },
+                    "response": {
+                        "status": 200,
+                        "headers": [],
+                        "content": {
+                            "text": json.dumps({
+                                "object": "chat.completion",
+                                "model": "gpt-4o",
+                                "choices": [
+                                    {
+                                        "message": {"role": "assistant", "content": "Ok"},
+                                        "finish_reason": "stop",
+                                    },
+                                ],
+                                "usage": {},
+                            }),
+                        },
+                    },
+                },
+            ],
+        },
+    }
+
+    with open(har_path, "w") as f:
+        json.dump(har, f)
+
+    pairs = load_har(str(har_path))
+    assert len(pairs) == 1
+    assert pairs[0][4]["object"] == "chat.completion"
+
+
+def test_convert_to_events_passes_provider():
+    """convert_to_events passes provider to all events."""
+    events = convert_to_events(
+        request_headers={},
+        request_body={"model": "gpt-4o"},
+        response_status=200,
+        response_headers={},
+        complete_message={"object": "chat.completion", "choices": []},
+        provider="openai",
+    )
+
+    for event in events:
+        assert event.provider == "openai"

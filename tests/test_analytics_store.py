@@ -643,3 +643,132 @@ def test_side_channel_summary_normalizes_unknown_purpose():
     assert "utility_custom" in summary
     assert summary["utility_custom"]["turns"] == 1
     assert summary["utility_custom"]["policy_versions"] == {"redaction-v1": 1}
+
+
+# ─── OpenAI Usage Key Normalization ──────────────────────────────────────────
+
+
+def test_openai_usage_keys_normalized():
+    """OpenAI prompt_tokens/completion_tokens normalized to input/output."""
+    store = AnalyticsStore()
+
+    store.on_event(
+        RequestBodyEvent(
+            body={"model": "gpt-4o", "messages": [{"role": "user", "content": "Hi"}]},
+            request_id="req-oai",
+            provider="openai",
+        )
+    )
+    store.on_event(
+        ResponseCompleteEvent(
+            body={
+                "id": "chatcmpl-test",
+                "model": "gpt-4o",
+                "object": "chat.completion",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "Hello!"},
+                        "finish_reason": "stop",
+                    },
+                ],
+                "usage": {
+                    "prompt_tokens": 42,
+                    "completion_tokens": 15,
+                    "total_tokens": 57,
+                },
+            },
+            request_id="req-oai",
+        )
+    )
+
+    assert len(store._turns) == 1
+    turn = store._turns[0]
+    assert turn.input_tokens == 42
+    assert turn.output_tokens == 15
+    assert turn.provider == "openai"
+
+
+def test_openai_stop_reason_from_choices():
+    """OpenAI stop_reason extracted from choices[0].finish_reason."""
+    store = AnalyticsStore()
+
+    store.on_event(
+        RequestBodyEvent(
+            body={"model": "gpt-4o", "messages": []},
+            request_id="req-stop",
+            provider="openai",
+        )
+    )
+    store.on_event(
+        ResponseCompleteEvent(
+            body={
+                "model": "gpt-4o",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "Done"},
+                        "finish_reason": "stop",
+                    },
+                ],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 3},
+            },
+            request_id="req-stop",
+        )
+    )
+
+    assert store._turns[0].stop_reason == "stop"
+
+
+def test_openai_tool_correlation_in_analytics():
+    """OpenAI tool_calls/role='tool' messages produce tool invocation records."""
+    store = AnalyticsStore()
+
+    store.on_event(
+        RequestBodyEvent(
+            body={
+                "model": "gpt-4o",
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "function": {
+                                    "name": "get_weather",
+                                    "arguments": '{"city": "NYC"}',
+                                },
+                            },
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call_1",
+                        "content": "Sunny, 72F",
+                    },
+                    {"role": "user", "content": "Thanks!"},
+                ],
+            },
+            request_id="req-tool",
+            provider="openai",
+        )
+    )
+    store.on_event(
+        ResponseCompleteEvent(
+            body={
+                "model": "gpt-4o",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "You're welcome!"},
+                        "finish_reason": "stop",
+                    },
+                ],
+                "usage": {"prompt_tokens": 50, "completion_tokens": 10},
+            },
+            request_id="req-tool",
+        )
+    )
+
+    assert len(store._turns) == 1
+    turn = store._turns[0]
+    assert len(turn.tool_invocations) == 1
+    assert turn.tool_invocations[0].tool_name == "get_weather"

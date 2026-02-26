@@ -110,6 +110,7 @@ class _PendingExchange:
     response_headers: dict | None = None
     complete_message: dict | None = None
     request_start_time: datetime | None = None
+    provider: str = "anthropic"
 
 
 
@@ -217,6 +218,9 @@ class HARRecordingSubscriber:
         else:
             self._pending_by_request.move_to_end(request_key)
 
+        # // [LAW:one-source-of-truth] Provider stamped from first event seen for this request.
+        pending.provider = event.provider
+
         if kind == PipelineEventKind.REQUEST_HEADERS:
             assert isinstance(event, RequestHeadersEvent)
             pending.request_headers = event.headers
@@ -260,10 +264,17 @@ class HARRecordingSubscriber:
                 else 0.0
             )
 
+            # [LAW:dataflow-not-control-flow] URL derived from provider, not branching.
+            _PROVIDER_URLS = {
+                "anthropic": "https://api.anthropic.com/v1/messages",
+                "openai": "https://api.openai.com/v1/chat/completions",
+            }
+            har_url = _PROVIDER_URLS.get(pending.provider, f"https://unknown/{pending.provider}")
+
             # Build HAR request/response
             har_request = build_har_request(
                 method="POST",
-                url="https://api.anthropic.com/v1/messages",
+                url=har_url,
                 headers=pending.request_headers or {},
                 body=pending.request_body,
             )
@@ -290,21 +301,23 @@ class HARRecordingSubscriber:
                     "receive": 0,
                 },
             }
+            # HAR allows custom fields using underscore prefix.
+            cc_dump_meta: dict[str, object] = {"provider": pending.provider}
             marker = extract_marker(pending.request_body or {})
             if marker is not None:
                 entry["comment"] = (
                     f"cc-dump side-channel run={marker.run_id} purpose={marker.purpose} "
                     f"prompt_version={marker.prompt_version} policy_version={marker.policy_version}"
                 )
-                # HAR allows custom fields using underscore prefix.
-                entry["_cc_dump"] = {
+                cc_dump_meta.update({
                     "category": "side_channel",
                     "run_id": marker.run_id,
                     "purpose": marker.purpose,
                     "prompt_version": marker.prompt_version,
                     "policy_version": marker.policy_version,
                     "source_session_id": marker.source_session_id,
-                }
+                })
+            entry["_cc_dump"] = cc_dump_meta
 
             # Serialize entry (compact JSON, no indent)
             entry_json = json.dumps(entry, ensure_ascii=False)
