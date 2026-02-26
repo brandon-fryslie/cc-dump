@@ -506,6 +506,9 @@ class CcDumpApp(App):
             self._bind_request_session(request_id, key)
         else:
             key = existing_key or self._default_session_key
+            self._bind_request_session(request_id, key)
+        else:
+            key = existing_key or self._default_session_key
         self._ensure_session_surface(key)
         return key
 
