@@ -224,7 +224,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "libtmux", specifier = ">=0.30.0" },
-    { name = "snarfx" },
+    { name = "snarfx", specifier = ">=0.1.0" },
     { name = "textual", specifier = ">=0.80.0" },
     { name = "textual-serve", specifier = ">=1.0.0" },
     { name = "tiktoken", specifier = ">=0.5.0" },
