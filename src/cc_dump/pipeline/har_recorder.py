@@ -125,13 +125,20 @@ class HARRecordingSubscriber:
     with no API traffic produce no file at all.
     """
 
-    def __init__(self, path: str):
+    def __init__(
+        self,
+        path: str,
+        *,
+        provider_filter: str = "",
+    ):
         """Initialize HAR recorder. File is NOT created until first entry.
 
         Args:
             path: Output file path for HAR file
+            provider_filter: Optional provider id; non-matching events are ignored.
         """
         self.path = path
+        self._provider_filter = str(provider_filter or "").strip().lower()
 
         # [LAW:one-source-of-truth] Request-scoped pending exchange state.
         self._pending_by_request: OrderedDict[str, _PendingExchange] = OrderedDict()
@@ -196,6 +203,8 @@ class HARRecordingSubscriber:
 
         Errors are logged but never crash the router.
         """
+        if self._provider_filter and event.provider != self._provider_filter:
+            return
         try:
             kind_name = event.kind.name
             self._events_received[kind_name] = self._events_received.get(kind_name, 0) + 1
@@ -394,3 +403,4 @@ class HARRecordingSubscriber:
             except OSError as e:
                 sys.stderr.write(f"[har] failed to delete {self.path}: {e}\n")
                 sys.stderr.flush()
+            return

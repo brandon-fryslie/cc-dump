@@ -8,8 +8,9 @@ import signal
 import sys
 import threading
 from datetime import datetime
+from pathlib import Path
 
-from cc_dump.pipeline.proxy import ProxyHandler, make_handler_class
+from cc_dump.pipeline.proxy import make_handler_class
 from cc_dump.pipeline.router import EventRouter, QueueSubscriber, DirectSubscriber
 from cc_dump.app.analytics_store import AnalyticsStore
 import cc_dump.io.stderr_tee
@@ -270,19 +271,36 @@ def main():
     # HAR recording subscriber (direct subscriber, inline writes)
     # [LAW:one-source-of-truth] Session name from CLI or default
     session_name = args.session
-    har_recorder = None
-    record_path = None
+    har_recorders: list[cc_dump.pipeline.har_recorder.HARRecordingSubscriber] = []
+    recording_paths: dict[str, str] = {}
+    primary_record_path = None
     if not args.no_record:
         # [LAW:one-source-of-truth] Recordings organized by session name
         record_dir = os.path.expanduser("~/.local/share/cc-dump/recordings")
-        session_dir = os.path.join(record_dir, session_name)
-        os.makedirs(session_dir, exist_ok=True)
-        record_path = args.record or os.path.join(
-            session_dir, f"recording-{datetime.now().strftime('%Y%m%d-%H%M%S')}.har"
-        )
-        har_recorder = cc_dump.pipeline.har_recorder.HARRecordingSubscriber(record_path)
-        router.add_subscriber(DirectSubscriber(har_recorder.on_event))
-        print(f"   Recording: {record_path} (created on first API call)")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        active_providers = ["anthropic"] + (["openai"] if openai_port is not None else [])
+
+        def _recording_path_for_provider(provider: str) -> str:
+            # // [LAW:dataflow-not-control-flow] Path is derived from provider + timestamp in one deterministic function.
+            if args.record:
+                custom = Path(os.path.expanduser(args.record))
+                custom_name = custom.name
+                if not custom_name.endswith(".har"):
+                    custom_name = custom_name + ".har"
+                return str(custom.parent / provider / custom_name)
+            return os.path.join(record_dir, session_name, provider, f"recording-{timestamp}.har")
+
+        for provider in active_providers:
+            record_path = _recording_path_for_provider(provider)
+            recording_paths[provider] = record_path
+            recorder = cc_dump.pipeline.har_recorder.HARRecordingSubscriber(
+                record_path,
+                provider_filter=provider,
+            )
+            har_recorders.append(recorder)
+            router.add_subscriber(DirectSubscriber(recorder.on_event))
+            print(f"   Recording ({provider}): {record_path} (created on first API call)")
+        primary_record_path = recording_paths.get("anthropic") or next(iter(recording_paths.values()), None)
     else:
         print("   Recording: disabled (--no-record)")
 
@@ -363,7 +381,7 @@ def main():
         port=actual_port,
         target=anthropic_target,
         replay_data=replay_data,
-        recording_path=record_path,
+        recording_path=primary_record_path,
         replay_file=args.replay,
         resume_ui_state=resume_ui_state,
         tmux_controller=tmux_ctrl,
@@ -427,15 +445,20 @@ def main():
 
         # Clean up other resources
         router.stop()
-        if har_recorder:
-            har_recorder.close()
+        for recorder in har_recorders:
+            recorder.close()
 
         # Persist UI sidecar next to active HAR (recording path or replay file).
-        sidecar_target = (
-            record_path if record_path and os.path.exists(record_path)
-            else args.replay if args.replay and os.path.exists(args.replay)
-            else None
+        candidate_record_paths = [
+            recording_paths.get("anthropic"),
+            *recording_paths.values(),
+        ]
+        sidecar_target = next(
+            (path for path in candidate_record_paths if path and os.path.exists(path)),
+            None,
         )
+        if sidecar_target is None and args.replay and os.path.exists(args.replay):
+            sidecar_target = args.replay
         if sidecar_target:
             try:
                 ui_state = app.export_ui_state()
@@ -447,7 +470,7 @@ def main():
         # Print restart command — unstoppable (mask SIGINT so Ctrl+C can't suppress it)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         replay_path = (
-            record_path if record_path and os.path.exists(record_path)
+            primary_record_path if primary_record_path and os.path.exists(primary_record_path)
             else args.replay if args.replay and os.path.exists(args.replay)
             else None
         )
