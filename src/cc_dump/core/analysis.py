@@ -360,7 +360,8 @@ MODEL_PRICING: dict[str, ModelPricing] = {
     "haiku": ModelPricing(
         base_input=1.0, cache_write_5m=1.25, cache_hit=0.10, output=5.0
     ),
-    # OpenAI models (cache_write/cache_hit set to base_input — no prompt caching equivalent)
+    # OpenAI models (cache_write set to base_input — no prompt cache write equivalent;
+    #               cache_hit set to half of base_input — OpenAI discounts cached input tokens at 50%)
     "gpt-4o": ModelPricing(
         base_input=2.50, cache_write_5m=2.50, cache_hit=1.25, output=10.0
     ),
