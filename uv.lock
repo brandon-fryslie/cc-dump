@@ -2,12 +2,6 @@ version = 1
 revision = 3
 requires-python = ">=3.10"
 
-[manifest]
-members = [
-    "cc-dump",
-    "snarfx",
-]
-
 [[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
@@ -230,7 +224,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "libtmux", specifier = ">=0.30.0" },
-    { name = "snarfx", editable = "snarfx" },
+    { name = "snarfx" },
     { name = "textual", specifier = ">=0.80.0" },
     { name = "textual-serve", specifier = ">=1.0.0" },
     { name = "tiktoken", specifier = ">=0.5.0" },
@@ -1338,17 +1332,11 @@ wheels = [
 [[package]]
 name = "snarfx"
 version = "0.1.0"
-source = { editable = "snarfx" }
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/91/e2/9c11ec1db326df25f62b7382b5c2f1f17172e84cebcd5dc3a2c45b93292a/snarfx-0.1.0.tar.gz", hash = "sha256:bfaffc9c881756f6c11ef07e988b334bc35d157a4967b611b008a272dafe51ef", size = 21542, upload-time = "2026-02-26T07:05:42.588Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/18/51/f1a4f6725ce0f26256e62e2f42545a5c16053a59c04b6fa0df1300b2de11/snarfx-0.1.0-py3-none-any.whl", hash = "sha256:4d4d351f1876f18fca0c550550a19ca9a425960cf994c84cedacc86ba070cef1", size = 18591, upload-time = "2026-02-26T07:05:41.323Z" },
 ]
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.0.0" }]
 
 [[package]]
 name = "textual"
