@@ -1646,22 +1646,12 @@ _COMPLETE_RESPONSE_FORMATTERS: dict[str, object] = {
 
 
 def format_request_for_provider(provider: str, body, state, request_headers=None) -> list:
-    """Dispatch request formatting by provider.
-
-    // [LAW:single-enforcer] Unknown providers fail fast — no silent misformatting.
-    """
-    formatter = _REQUEST_FORMATTERS.get(provider)
-    if formatter is None:
-        raise ValueError(f"Unknown provider {provider!r}, expected one of {sorted(_REQUEST_FORMATTERS)}")
+    """Dispatch request formatting by provider."""
+    formatter = _REQUEST_FORMATTERS.get(provider, format_request)
     return formatter(body, state, request_headers=request_headers)
 
 
 def format_complete_response_for_provider(provider: str, complete_message) -> list:
-    """Dispatch complete response formatting by provider.
-
-    // [LAW:single-enforcer] Unknown providers fail fast — no silent misformatting.
-    """
-    formatter = _COMPLETE_RESPONSE_FORMATTERS.get(provider)
-    if formatter is None:
-        raise ValueError(f"Unknown provider {provider!r}, expected one of {sorted(_COMPLETE_RESPONSE_FORMATTERS)}")
+    """Dispatch complete response formatting by provider."""
+    formatter = _COMPLETE_RESPONSE_FORMATTERS.get(provider, format_complete_response)
     return formatter(complete_message)
