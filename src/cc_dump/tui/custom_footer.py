@@ -152,6 +152,12 @@ class StatusFooter(Widget):
                 id="cmd-auto-zoom",
                 classes="tmux",
             )
+            yield Chip(
+                " L tail ",
+                action="app.open_tmux_log_tail",
+                id="cmd-tail-log",
+                classes="tmux",
+            )
         with Horizontal(id="footer-streams"):
             for i in range(self._MAX_STREAM_CHIPS):
                 yield Chip(

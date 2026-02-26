@@ -1318,6 +1318,23 @@ class CcDumpApp(App):
         self.notify("Auto-zoom: {}".format(label))
         self._sync_tmux_to_store()
 
+    def action_open_tmux_log_tail(self):
+        tmux = self._tmux_controller
+        if tmux is None:
+            self.notify("Tmux not available", severity="warning")
+            return
+        runtime_log = cc_dump.io.logging_setup.get_runtime()
+        log_file = runtime_log.file_path if runtime_log is not None else ""
+        if not log_file:
+            self.notify("Runtime log file unavailable", severity="error")
+            return
+        result = tmux.open_log_tail(log_file)
+        self._app_log("INFO", "open_log_tail: {}".format(result))
+        if result.success:
+            self.notify("{}: {}".format(result.action.value, result.detail))
+        else:
+            self.notify("Tail failed: {}".format(result.detail), severity="error")
+
     # Settings
     def action_toggle_settings(self):
         _actions.toggle_settings(self)
