@@ -107,6 +107,9 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         # Launch config panel
         "C": "toggle_launch_config",
 
+        # Logs panel
+        "ctrl+l": "toggle_logs",
+
         # Side channel (AI panel)
         "X": "toggle_side_channel",
 

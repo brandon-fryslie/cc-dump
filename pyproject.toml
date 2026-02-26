@@ -12,7 +12,7 @@ dependencies = [
     "tiktoken>=0.5.0",
     "libtmux>=0.30.0",
     "watchfiles>=1.0.0",
-    "snarfx",
+    "snarfx>=0.1.0",
 ]
 keywords = ["claude", "anthropic", "proxy", "api", "debugging", "tui"]
 classifiers = [
@@ -77,11 +77,3 @@ disable_error_code = [
     "attr-defined",   # 18 errors — dynamic attrs (_expandable, _xml_strip_ranges, etc.)
     "assignment",     #  8 errors — None → datetime, implicit Optional defaults
 ]
-
-[tool.uv.workspace]
-members = [
-    "snarfx",
-]
-
-[tool.uv.sources]
-snarfx = { workspace = true, editable = true }
