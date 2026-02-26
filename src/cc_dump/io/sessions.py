@@ -19,6 +19,7 @@ class RecordingInfo(TypedDict):
     filename: str
     session_id: str | None
     session_name: str | None
+    provider: str | None
     created: str
     entry_count: int
     size_bytes: int
@@ -72,23 +73,27 @@ def list_recordings(recordings_dir: Optional[str] = None) -> list[RecordingInfo]
     if not recordings_path.exists():
         return recordings
 
-    # [LAW:dataflow-not-control-flow] Search both session subdirectories and flat structure
-    # Collect all .har files from:
-    # 1. Session subdirectories (recordings/*/recording-*.har)
-    # 2. Flat directory (recordings/recording-*.har) - backwards compatibility
-    har_files: list[tuple[Path, str | None]] = []
+    # // [LAW:dataflow-not-control-flow] One recursive HAR scan supports old and new folder layouts.
+    har_files = sorted(path for path in recordings_path.rglob("*.har") if path.is_file())
 
-    # Session subdirectories
-    for session_dir in recordings_path.iterdir():
-        if session_dir.is_dir():
-            har_files.extend((path, session_dir.name) for path in session_dir.glob("*.har"))
-
-    # Flat directory (backwards compatibility)
-    har_files.extend((path, None) for path in recordings_path.glob("*.har"))
+    def _infer_context(path: Path) -> tuple[str | None, str | None]:
+        try:
+            rel_parts = path.relative_to(recordings_path).parts
+        except ValueError:
+            return (None, None)
+        if len(rel_parts) >= 3:
+            # recordings/<session>/<provider>/<file>.har
+            return (rel_parts[-3], rel_parts[-2])
+        if len(rel_parts) == 2:
+            # recordings/<session>/<file>.har
+            return (rel_parts[-2], None)
+        return (None, None)
 
     # Process all found .har files
-    for path, session_name in sorted(har_files, key=lambda x: x[0]):
+    for path in har_files:
         try:
+            session_name, provider = _infer_context(path)
+
             # Extract session_id from filename (recording-<session_id>.har)
             session_id = None
             if path.stem.startswith("recording-"):
@@ -116,6 +121,7 @@ def list_recordings(recordings_dir: Optional[str] = None) -> list[RecordingInfo]
                     "filename": path.name,
                     "session_id": session_id,
                     "session_name": session_name,  # None for flat structure files
+                    "provider": provider,
                     "created": created,
                     "entry_count": entry_count,
                     "size_bytes": path.stat().st_size,
@@ -154,7 +160,7 @@ def cleanup_recordings(
     keep: int = 20,
     dry_run: bool = False,
 ) -> CleanupResult:
-    """Delete older HAR recordings and optional sidecars, keeping newest N.
+    """Delete older HAR recordings and UI sidecars, keeping newest N.
 
     Args:
         recordings_dir: Base recordings directory (default: ~/.local/share/cc-dump/recordings)
@@ -196,6 +202,7 @@ def cleanup_recordings(
             bytes_freed += size
             removed_paths.append(str(candidate))
             touched_dirs.add(candidate.parent)
+            touched_dirs.add(candidate.parent.parent)
             if not dry_run:
                 candidate.unlink()
 
@@ -255,8 +262,10 @@ def print_recordings_list(recordings: list[RecordingInfo]) -> None:
     print(f"Found {len(recordings)} recording(s):\n")
 
     # Print table header
-    print(f"{'SESSION':<20} {'CREATED':<22} {'ENTRIES':<10} {'SIZE':<12} {'FILE':<50}")
-    print("-" * 114)
+    print(
+        f"{'SESSION':<20} {'PROVIDER':<12} {'CREATED':<22} {'ENTRIES':<10} {'SIZE':<12} {'FILE':<50}"
+    )
+    print("-" * 127)
 
     # Print each recording
     for rec in recordings:
@@ -272,7 +281,10 @@ def print_recordings_list(recordings: list[RecordingInfo]) -> None:
         size_str = format_size(rec["size_bytes"])
         filename = rec["filename"]
         session_name = rec.get("session_name") or "(flat)"
+        provider = rec.get("provider") or "(mixed)"
 
-        print(f"{session_name:<20} {created:<22} {rec['entry_count']:<10} {size_str:<12} {filename:<50}")
+        print(
+            f"{session_name:<20} {provider:<12} {created:<22} {rec['entry_count']:<10} {size_str:<12} {filename:<50}"
+        )
 
     print()

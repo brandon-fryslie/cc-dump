@@ -125,7 +125,8 @@ async def start_file_watcher(app) -> None:
           .subscribe(lambda _: app.call_later(_do_hot_reload, app))
 
     # Wire: all events → update staleness state (immediate, no debounce)
-    stream.subscribe(lambda _: app.call_from_thread(_update_staleness, app))
+    # call_later (not call_from_thread) — subscriber runs on event loop via async for
+    stream.subscribe(lambda _: app.call_later(_update_staleness, app))
 
     app._app_log("INFO", f"File watcher started on {len(paths)} path(s)")
 

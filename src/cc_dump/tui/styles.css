@@ -49,3 +49,9 @@ SessionPanel {
     dock: top;
     padding: 0 1;
 }
+
+Toast {
+    width: auto;
+    max-width: 60;
+    padding: 0 1;
+}
