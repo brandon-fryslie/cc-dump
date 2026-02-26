@@ -128,8 +128,6 @@ FILE                                      BUCKET           LAST_MODIFIED        
 experiments/__init__.py                   Eval/Harness     2026-02-23 15:55:59  Experiments package.
 experiments/memory_soak.py                Eval/Harness     2026-02-23 15:54:23  Deterministic memory soak harness for regression checks.
 experiments/perf_metrics.py               Eval/Harness     2026-02-23 15:54:23  Lightweight streaming-latency instrumentation for the cc-dump pipeline.
-experiments/side_channel_eval.py          Eval/Harness     2026-02-23 15:54:23  Deterministic side-channel evaluation harness.
-experiments/side_channel_eval_metrics.py  Eval/Harness     2026-02-22 05:46:31  Canonical machine-verifiable acceptance thresholds for side-channel purposes.
 experiments/subagent_enrichment.py        Eval/Harness     2026-02-23 15:54:23  Offline subagent parent-log enrichment for historical analysis.
 ```
 

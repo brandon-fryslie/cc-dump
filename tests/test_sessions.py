@@ -354,3 +354,24 @@ def test_list_recordings_no_timestamp(recordings_dir):
     assert len(recordings) == 1
     # Should have a created timestamp from file mtime
     assert recordings[0]["created"] is not None
+
+
+def test_list_recordings_provider_layout(recordings_dir):
+    """New layout recordings/<session>/<provider>/*.har is discovered with provider context."""
+    anthropic_dir = recordings_dir / "session-a" / "anthropic"
+    openai_dir = recordings_dir / "session-a" / "openai"
+    anthropic_dir.mkdir(parents=True)
+    openai_dir.mkdir(parents=True)
+
+    har_a = anthropic_dir / "recording-1.har"
+    har_o = openai_dir / "recording-2.har"
+    create_har_file(har_a, entry_count=1)
+    create_har_file(har_o, entry_count=2)
+
+    recordings = list_recordings(str(recordings_dir))
+    assert len(recordings) == 2
+    by_name = {rec["filename"]: rec for rec in recordings}
+    assert by_name["recording-1.har"]["session_name"] == "session-a"
+    assert by_name["recording-1.har"]["provider"] == "anthropic"
+    assert by_name["recording-2.har"]["session_name"] == "session-a"
+    assert by_name["recording-2.har"]["provider"] == "openai"

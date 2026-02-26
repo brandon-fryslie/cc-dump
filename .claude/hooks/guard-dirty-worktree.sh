@@ -27,6 +27,10 @@ fi
 
 for word in $DANGEROUS; do
   if echo "$GIT_LINES" | grep -qE "\bgit\b.*\b${word}\b"; then
+    # Allow rebase --continue and --abort (needed during conflict resolution)
+    if [ "$word" = "rebase" ] && echo "$GIT_LINES" | grep -qE "\bgit\b.*\brebase\b.*(--continue|--abort|--skip)"; then
+      continue
+    fi
     # Check for dirty worktree
     CWD=$(echo "$INPUT" | jq -r '.cwd')
     if cd "$CWD" 2>/dev/null && git status --porcelain 2>/dev/null | grep -q .; then

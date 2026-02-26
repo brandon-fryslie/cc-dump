@@ -453,7 +453,10 @@ class CcDumpApp(App):
         // never inferred or defaulted downstream.
         """
         if not event.provider:
-            raise ValueError(f"Event {type(event).__name__} has empty provider")
+            raise ValueError(
+                f"Event {type(event).__name__} has {'empty string' if event.provider == '' else 'missing/None'}"
+                f" provider (request_id={event.request_id!r})"
+            )
         return event.provider
 
     def _provider_tab_key(self, provider: str) -> str:
@@ -723,9 +726,16 @@ class CcDumpApp(App):
         # stderr_tee is a stable boundary — safe to use `from` import
         tee = _get_tee()
         if tee is not None:
+            _main_thread = threading.current_thread()
+
             def _drain(level, source, message):
                 formatted = f"[{source}] {message}" if source != "stderr" else message
-                self.call_from_thread(self._app_log, level, formatted, False)
+                # connect() flushes ring buffer on main thread; runtime stderr
+                # writes arrive from background threads — route accordingly
+                if threading.current_thread() is _main_thread:
+                    self._app_log(level, formatted, False)
+                else:
+                    self.call_from_thread(self._app_log, level, formatted, False)
             tee.connect(_drain)
 
         self._app_log("INFO", "🚀 cc-dump proxy started")
