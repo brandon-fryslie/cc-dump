@@ -77,11 +77,3 @@ disable_error_code = [
     "attr-defined",   # 18 errors — dynamic attrs (_expandable, _xml_strip_ranges, etc.)
     "assignment",     #  8 errors — None → datetime, implicit Optional defaults
 ]
-
-[tool.uv.workspace]
-members = [
-    "snarfx",
-]
-
-[tool.uv.sources]
-snarfx = { workspace = true, editable = true }
