@@ -8,6 +8,7 @@
 """
 
 import importlib
+import logging
 import os
 import queue
 import sys
@@ -31,6 +32,7 @@ from rich.style import Style
 # Module-level imports for hot-reload (never use `from` for these)
 import cc_dump.core.formatting
 import cc_dump.io.settings
+import cc_dump.io.logging_setup
 import cc_dump.tui.rendering
 import cc_dump.tui.widget_factory
 import cc_dump.tui.event_handlers
@@ -72,6 +74,8 @@ import cc_dump.app.domain_store
 import snarfx
 from snarfx import transaction
 from snarfx import textual as stx
+
+logger = logging.getLogger(__name__)
 
 
 def _patch_textual_monochrome_style() -> None:
@@ -721,7 +725,7 @@ class CcDumpApp(App):
         if tee is not None:
             def _drain(level, source, message):
                 formatted = f"[{source}] {message}" if source != "stderr" else message
-                self.call_from_thread(self._app_log, level, formatted)
+                self.call_from_thread(self._app_log, level, formatted, False)
             tee.connect(_drain)
 
         self._app_log("INFO", "🚀 cc-dump proxy started")
@@ -863,13 +867,16 @@ class CcDumpApp(App):
 
     # ─── Helpers ───────────────────────────────────────────────────────
 
-    def _app_log(self, level: str, message: str):
+    def _app_log(self, level: str, message: str, persist_to_file: bool = True):
         if level == "ERROR":
             self._error_log.append(f"[{level}] {message}")
         if self.is_running:
             logs = self._get_logs()
             if logs is not None:
                 logs.app_log(level, message)
+        if persist_to_file:
+            level_num = getattr(logging, level, logging.INFO)
+            logger.log(level_num, message, extra={"cc_dump_in_app": True})
 
     def _sync_tmux_to_store(self):
         """Mirror tmux controller state to view store for reactive footer updates."""
@@ -899,6 +906,8 @@ class CcDumpApp(App):
             "textual_version": textual.__version__,
             "pid": os.getpid(),
         }
+        runtime_log = cc_dump.io.logging_setup.get_runtime()
+        info["log_file"] = runtime_log.file_path if runtime_log is not None else None
         if self._openai_port is not None:
             info["openai_proxy_url"] = "http://{}:{}".format(self._host, self._openai_port)
             info["openai_target"] = self._openai_target
