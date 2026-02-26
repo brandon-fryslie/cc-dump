@@ -299,7 +299,7 @@ class MetadataBlock(FormattedBlock):
 class NewSessionBlock(FormattedBlock):
     """Indicates a new Claude Code session started."""
 
-    pass
+    session_id: str = ""
 
 
 @dataclass
@@ -1080,7 +1080,7 @@ def format_request(body, state, request_headers: dict | None = None):
     # Track session changes — emit NewSessionBlock when session changes
     current_session = state.get("current_session")
     if session_id and session_id != current_session:
-        blocks.append(NewSessionBlock())
+        blocks.append(NewSessionBlock(session_id=session_id))
         state["current_session"] = session_id
 
     # MetadataSection container — groups model params, HTTP headers, budget
