@@ -148,7 +148,7 @@ These divergences are documented, tested, and accepted as part of the HAR format
 
 ### Session Management
 
-Recordings stored in `~/.local/share/cc-dump/recordings/recording-<session_id>.har`
+Recordings stored in `~/.local/share/cc-dump/recordings/<session>/<provider>/recording-<timestamp>.har`
 
 CLI commands:
 - `cc-dump --list` — List available recordings with metadata (date, size, entry count)
