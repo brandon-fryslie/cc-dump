@@ -39,6 +39,9 @@ class DomainStore:
         # Item shape: (request_id, label, kind)
         self._recent_stream_chips: list[tuple[str, str, str]] = []
         self._focused_stream_id: str | None = None
+        # Session boundary index: (session_id, turn_index) pairs for within-tab navigation.
+        # // [LAW:one-source-of-truth] Derived from NewSessionBlock presence in turn data.
+        self._session_boundaries: list[tuple[str, int]] = []
 
         # Callbacks — ConversationView registers these
         self.on_turn_added: Callable | None = None
@@ -54,6 +57,13 @@ class DomainStore:
         """Add a completed turn (sealed block list)."""
         index = len(self._completed)
         self._completed.append(blocks)
+        # Index session boundaries for within-tab navigation.
+        for block in blocks:
+            if type(block).__name__ == "NewSessionBlock":
+                sid = getattr(block, "session_id", "")
+                if sid:
+                    self._session_boundaries.append((sid, index))
+                break
         if self.on_turn_added is not None:
             self.on_turn_added(blocks, index)
         self._enforce_completed_retention()
@@ -231,6 +241,12 @@ class DomainStore:
         if overflow <= 0:
             return
         del self._completed[:overflow]
+        # Adjust session boundary indices after pruning.
+        self._session_boundaries = [
+            (sid, idx - overflow)
+            for sid, idx in self._session_boundaries
+            if idx >= overflow
+        ]
         if self.on_turns_pruned is not None:
             self.on_turns_pruned(overflow)
 
@@ -247,6 +263,10 @@ class DomainStore:
 
     def get_focused_stream_id(self) -> str | None:
         return self._focused_stream_id
+
+    def get_session_boundaries(self) -> list[tuple[str, int]]:
+        """Return (session_id, turn_index) pairs for all session boundaries."""
+        return list(self._session_boundaries)
 
     def get_delta_text(self, request_id: str) -> list[str]:
         """Return the accumulated delta text buffer for a stream."""
@@ -391,6 +411,7 @@ class DomainStore:
             "stream_order": list(self._stream_order),
             "recent_stream_chips": list(self._recent_stream_chips),
             "focused_stream_id": self._focused_stream_id,
+            "session_boundaries": list(self._session_boundaries),
         }
 
     def restore_state(self, state: dict) -> None:
@@ -404,6 +425,7 @@ class DomainStore:
         self._stream_order.clear()
         self._recent_stream_chips.clear()
         self._focused_stream_id = None
+        self._session_boundaries.clear()
 
         active_streams = state.get("active_streams", {})
         if isinstance(active_streams, dict):
@@ -442,3 +464,11 @@ class DomainStore:
             self._focused_stream_id = focused
         elif self._stream_order:
             self._focused_stream_id = self._stream_order[0]
+
+        raw_boundaries = state.get("session_boundaries", [])
+        if isinstance(raw_boundaries, list):
+            for item in raw_boundaries:
+                if isinstance(item, (list, tuple)) and len(item) == 2:
+                    sid, idx = item
+                    if isinstance(sid, str) and isinstance(idx, int):
+                        self._session_boundaries.append((sid, idx))

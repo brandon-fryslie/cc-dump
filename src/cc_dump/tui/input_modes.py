@@ -115,6 +115,12 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         "left_square_bracket": "prev_theme",
         "]": "next_theme",
         "right_square_bracket": "next_theme",
+
+        # Session navigation (within merged tab)
+        "{": "prev_session",
+        "left_curly_bracket": "prev_session",
+        "}": "next_session",
+        "right_curly_bracket": "next_session",
     },
 
     InputMode.SEARCH_NAV: {
@@ -210,6 +216,7 @@ KEY_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("Other", [
         ("[/]", "Cycle theme"),
+        ("{/}", "Prev/next session"),
         ("c", "Claude (tmux)"),
         ("C", "Run configs"),
         ("z/Z", "Zoom (tmux)"),
