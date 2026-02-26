@@ -865,7 +865,11 @@ class TestIncrementalOffsets:
         conv._recalculate_offsets()
         conv._scroll_anchor = ScrollAnchor(turn_index=3, block_index=0, line_in_block=0)
 
-        conv._on_turns_pruned(2)
+        cls = type(conv)
+        with patch.object(cls, 'is_attached', new_callable=PropertyMock, return_value=True), \
+             patch.object(conv, '_resolve_anchor'), \
+             patch.object(conv, 'refresh'):
+            conv._on_turns_pruned(2)
 
         assert len(conv._turns) == 2
         assert [td.turn_index for td in conv._turns] == [0, 1]
@@ -1222,7 +1226,8 @@ class TestRequestScopedStreaming:
     def _patch_app_console(self, conv):
         app_mock = MagicMock(console=Console())
         cls = type(conv)
-        with patch.object(cls, 'app', new_callable=PropertyMock, return_value=app_mock):
+        with patch.object(cls, 'app', new_callable=PropertyMock, return_value=app_mock), \
+             patch.object(cls, 'is_attached', new_callable=PropertyMock, return_value=True):
             yield
 
     def test_interleaved_requests_stay_partitioned(self):
