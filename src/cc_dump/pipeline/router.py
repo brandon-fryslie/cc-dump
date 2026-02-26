@@ -5,8 +5,8 @@ Each subscriber can choose how to receive events (queue-based or direct callback
 """
 
 import queue
-import logging
 import threading
+import logging
 from typing import Protocol
 
 from cc_dump.pipeline.event_types import PipelineEvent
