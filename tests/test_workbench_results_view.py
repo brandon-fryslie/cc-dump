@@ -36,6 +36,7 @@ def _make_replay_entry(*, session_id: str, content: str, response_text: str):
         200,
         {"content-type": "application/json"},
         complete_message,
+        "anthropic",
     )
 
 

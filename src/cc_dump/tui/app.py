@@ -1041,30 +1041,34 @@ class CcDumpApp(App):
 
         self._app_log("INFO", f"Processing {len(self._replay_data)} request/response pairs")
 
-        for (
-            req_headers,
-            req_body,
-            resp_status,
-            resp_headers,
-            complete_message,
-            provider,
-        ) in self._replay_data:
-            try:
-                # // [LAW:one-source-of-truth] Replay uses the same event pipeline as live.
-                events = cc_dump.pipeline.har_replayer.convert_to_events(
-                    req_headers, req_body, resp_status, resp_headers, complete_message,
-                    provider=provider,
-                )
-                for event in events:
-                    self._handle_event(event)
-            except Exception as e:
-                self._app_log("ERROR", f"Error processing replay pair: {e}")
+        try:
+            for (
+                req_headers,
+                req_body,
+                resp_status,
+                resp_headers,
+                complete_message,
+                provider,
+            ) in self._replay_data:
+                try:
+                    # // [LAW:one-source-of-truth] Replay uses the same event pipeline as live.
+                    events = cc_dump.pipeline.har_replayer.convert_to_events(
+                        req_headers, req_body, resp_status, resp_headers, complete_message,
+                        provider=provider,
+                    )
+                    for event in events:
+                        self._handle_event(event)
+                except Exception as e:
+                    self._app_log("ERROR", f"Error processing replay pair: {e}")
 
-        self._app_log(
-            "INFO",
-            f"Replay complete: {self._state['request_counter']} requests processed",
-        )
-        self._replay_complete.set()
+            self._app_log(
+                "INFO",
+                f"Replay complete: {self._state['request_counter']} requests processed",
+            )
+        except Exception as e:
+            self._app_log("ERROR", f"Fatal error in replay processing: {e}")
+        finally:
+            self._replay_complete.set()
 
     def _drain_events(self):
         """Bridge thread: queue.get → post_message into Textual's message pump.

@@ -6,6 +6,7 @@ def make_replay_entry(
     response_text="Response from assistant",
     system_prompt=None,
     model="claude-sonnet-4-5-20250929",
+    provider="anthropic",
 ):
     """Create a single replay entry.
 
@@ -14,9 +15,10 @@ def make_replay_entry(
         response_text: Assistant response text
         system_prompt: Optional system prompt text (or list of text blocks)
         model: Model identifier
+        provider: API provider identifier
 
     Returns:
-        Tuple: (req_headers, req_body, resp_status, resp_headers, complete_message)
+        Tuple: (req_headers, req_body, resp_status, resp_headers, complete_message, provider)
     """
     req_body = {
         "model": model,
@@ -47,6 +49,7 @@ def make_replay_entry(
         200,  # resp_status
         {"content-type": "application/json"},  # resp_headers
         complete_message,
+        provider,
     )
 
 
@@ -72,9 +75,9 @@ def make_replay_data(n=1, **kwargs):
         # Create entry with unique message ID
         entry = make_replay_entry(**entry_kwargs)
         # Update message ID to be unique
-        req_headers, req_body, resp_status, resp_headers, complete_message = entry
+        req_headers, req_body, resp_status, resp_headers, complete_message, prov = entry
         complete_message = complete_message.copy()
         complete_message["id"] = f"msg_{i}"
-        entries.append((req_headers, req_body, resp_status, resp_headers, complete_message))
+        entries.append((req_headers, req_body, resp_status, resp_headers, complete_message, prov))
 
     return entries
