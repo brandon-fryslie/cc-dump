@@ -1,6 +1,7 @@
 """Unit tests for har_recorder.py - HAR 1.2 recording and message reconstruction."""
 
 import json
+import logging
 
 from cc_dump.pipeline.event_types import (
     RequestHeadersEvent,
@@ -578,19 +579,19 @@ def test_har_subscriber_incomplete_stream(tmp_path):
     assert subscriber._events_received["REQUEST"] == 1
 
 
-def test_har_subscriber_bounds_pending_requests(tmp_path, monkeypatch, capsys):
+def test_har_subscriber_bounds_pending_requests(tmp_path, monkeypatch, caplog):
     """Incomplete pending requests are bounded by configured max."""
     monkeypatch.setenv("CC_DUMP_HAR_MAX_PENDING", "2")
     har_path = tmp_path / "test.har"
     subscriber = HARRecordingSubscriber(str(har_path))
 
-    subscriber.on_event(RequestHeadersEvent(headers={"x-id": "1"}, request_id="req-1"))
-    subscriber.on_event(RequestHeadersEvent(headers={"x-id": "2"}, request_id="req-2"))
-    subscriber.on_event(RequestHeadersEvent(headers={"x-id": "3"}, request_id="req-3"))
+    with caplog.at_level(logging.WARNING, logger="cc_dump.pipeline.har_recorder"):
+        subscriber.on_event(RequestHeadersEvent(headers={"x-id": "1"}, request_id="req-1"))
+        subscriber.on_event(RequestHeadersEvent(headers={"x-id": "2"}, request_id="req-2"))
+        subscriber.on_event(RequestHeadersEvent(headers={"x-id": "3"}, request_id="req-3"))
 
     assert list(subscriber._pending_by_request.keys()) == ["req-2", "req-3"]
-    captured = capsys.readouterr()
-    assert "evicted incomplete pending request req-1" in captured.err
+    assert "evicted incomplete pending request req-1" in caplog.text
 
 
 def test_har_subscriber_large_content(tmp_path):
@@ -684,7 +685,7 @@ def test_har_subscriber_progressive_saving(tmp_path):
     assert len(har["log"]["entries"]) == 2
 
 
-def test_har_subscriber_close_deletes_empty_file_if_opened(tmp_path, capsys):
+def test_har_subscriber_close_deletes_empty_file_if_opened(tmp_path, caplog):
     """If file was somehow opened but has 0 entries, close() deletes it and logs FATAL."""
     har_path = tmp_path / "test.har"
     subscriber = HARRecordingSubscriber(str(har_path))
@@ -693,16 +694,16 @@ def test_har_subscriber_close_deletes_empty_file_if_opened(tmp_path, capsys):
     subscriber._open_file()
     assert har_path.exists()
 
-    subscriber.close()
+    with caplog.at_level(logging.WARNING, logger="cc_dump.pipeline.har_recorder"):
+        subscriber.close()
 
     # File should be deleted
     assert not har_path.exists()
 
-    # FATAL message should be in stderr
-    captured = capsys.readouterr()
-    assert "FATAL" in captured.err
-    assert "empty HAR file" in captured.err
-    assert "test.har" in captured.err
+    # FATAL message should be logged
+    assert "FATAL" in caplog.text
+    assert "empty HAR file" in caplog.text
+    assert "test.har" in caplog.text
 
 
 def test_har_subscriber_no_file_no_events(tmp_path):

@@ -18,6 +18,7 @@ from cc_dump.pipeline.event_types import (
     StopReason,
 )
 from cc_dump.app.tmux_controller import (
+    LogTailAction,
     LaunchAction,
     LaunchResult,
     TmuxController,
@@ -479,6 +480,149 @@ class TestConfigurableCommand:
         ctrl = make_controller()
         ctrl.set_claude_command("custom-claude")
         assert ctrl._claude_command == "custom-claude"
+
+
+# ─── open_log_tail ──────────────────────────────────────────────────────────
+
+
+class TestOpenLogTail:
+    def test_blocked_without_tmux_ready_state(self, make_controller):
+        ctrl = make_controller(state=TmuxState.NOT_IN_TMUX)
+        result = ctrl.open_log_tail("/tmp/cc-dump.log")
+        assert result.action == LogTailAction.BLOCKED
+        assert not result.success
+
+    def test_single_pane_splits_below(self, make_controller):
+        import libtmux.constants
+
+        our_pane = MagicMock()
+        our_pane.pane_id = "%0"
+        window = MagicMock()
+        window.panes = [our_pane]
+        our_pane.window = window
+        session = MagicMock()
+        ctrl = make_controller(
+            state=TmuxState.READY,
+            _our_pane=our_pane,
+            _session=session,
+        )
+
+        result = ctrl.open_log_tail("/tmp/cc-dump.log")
+
+        assert result.action == LogTailAction.SPLIT_BELOW
+        assert result.success
+        window.split.assert_called_once_with(
+            direction=libtmux.constants.PaneDirection.Below,
+            shell="tail -f -- /tmp/cc-dump.log",
+        )
+        session.cmd.assert_not_called()
+
+    def test_clod_pair_top_bottom_splits_right(self, make_controller):
+        import libtmux.constants
+
+        our_pane = MagicMock()
+        our_pane.pane_id = "%0"
+        our_pane.pane_left = "0"
+        our_pane.pane_top = "0"
+
+        clod_pane = MagicMock()
+        clod_pane.pane_id = "%1"
+        clod_pane.pane_current_command = "clod"
+        clod_pane.pane_left = "0"
+        clod_pane.pane_top = "15"
+
+        window = MagicMock()
+        window.panes = [our_pane, clod_pane]
+        our_pane.window = window
+        session = MagicMock()
+        ctrl = make_controller(
+            state=TmuxState.READY,
+            _our_pane=our_pane,
+            _session=session,
+            _claude_command="clod",
+        )
+
+        result = ctrl.open_log_tail("/tmp/cc-dump.log")
+
+        assert result.action == LogTailAction.SPLIT_RIGHT
+        assert result.success
+        clod_pane.select.assert_called_once()
+        window.split.assert_called_once_with(
+            direction=libtmux.constants.PaneDirection.Right,
+            shell="tail -f -- /tmp/cc-dump.log",
+        )
+        session.cmd.assert_not_called()
+
+    def test_clod_pair_side_by_side_splits_below(self, make_controller):
+        import libtmux.constants
+
+        our_pane = MagicMock()
+        our_pane.pane_id = "%0"
+        our_pane.pane_left = "0"
+        our_pane.pane_top = "0"
+
+        clod_pane = MagicMock()
+        clod_pane.pane_id = "%1"
+        clod_pane.pane_current_command = "clod"
+        clod_pane.pane_left = "100"
+        clod_pane.pane_top = "0"
+
+        window = MagicMock()
+        window.panes = [our_pane, clod_pane]
+        our_pane.window = window
+        session = MagicMock()
+        ctrl = make_controller(
+            state=TmuxState.READY,
+            _our_pane=our_pane,
+            _session=session,
+            _claude_command="clod",
+        )
+
+        result = ctrl.open_log_tail("/tmp/cc-dump.log")
+
+        assert result.action == LogTailAction.SPLIT_BELOW
+        assert result.success
+        clod_pane.select.assert_called_once()
+        window.split.assert_called_once_with(
+            direction=libtmux.constants.PaneDirection.Below,
+            shell="tail -f -- /tmp/cc-dump.log",
+        )
+        session.cmd.assert_not_called()
+
+    def test_non_pair_layout_creates_new_window(self, make_controller):
+        our_pane = MagicMock()
+        our_pane.pane_id = "%0"
+
+        clod_pane = MagicMock()
+        clod_pane.pane_id = "%1"
+        clod_pane.pane_current_command = "clod"
+
+        extra_pane = MagicMock()
+        extra_pane.pane_id = "%2"
+        extra_pane.pane_current_command = "bash"
+
+        window = MagicMock()
+        window.panes = [our_pane, clod_pane, extra_pane]
+        our_pane.window = window
+        session = MagicMock()
+        ctrl = make_controller(
+            state=TmuxState.READY,
+            _our_pane=our_pane,
+            _session=session,
+            _claude_command="clod",
+        )
+
+        result = ctrl.open_log_tail("/tmp/cc-dump.log")
+
+        assert result.action == LogTailAction.NEW_WINDOW
+        assert result.success
+        session.cmd.assert_called_once_with(
+            "new-window",
+            "-n",
+            "cc-dump-logs",
+            "tail -f -- /tmp/cc-dump.log",
+        )
+        window.split.assert_not_called()
 
 
 # ─── launch_claude with dead pane ──────────────────────────────────────────

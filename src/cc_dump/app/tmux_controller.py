@@ -9,8 +9,9 @@ All libtmux usage is lazy-imported and wrapped in try/except.
 
 from __future__ import annotations
 
+import logging
 import os
-import sys
+import shlex
 import time
 from enum import Enum, auto
 from typing import TYPE_CHECKING
@@ -27,6 +28,7 @@ from cc_dump.pipeline.event_types import (
     StopReason,
 )
 
+logger = logging.getLogger(__name__)
 
 class TmuxState(Enum):
     """Controller state machine."""
@@ -67,6 +69,38 @@ class LaunchResult:
         if self.command:
             parts += ", command={!r}".format(self.command)
         return "LaunchResult({})".format(parts)
+
+
+class LogTailAction(Enum):
+    """What open_log_tail decided to do."""
+
+    SPLIT_BELOW = "split_below"
+    SPLIT_RIGHT = "split_right"
+    NEW_WINDOW = "new_window"
+    BLOCKED = "blocked"
+
+
+class LogTailResult:
+    """Result of open_log_tail — what happened and why.
+
+    // [LAW:dataflow-not-control-flow] Pane-routing choice is represented as a value.
+    """
+
+    __slots__ = ("action", "detail", "success", "command")
+
+    def __init__(self, action: LogTailAction, detail: str, success: bool, command: str = ""):
+        self.action = action
+        self.detail = detail
+        self.success = success
+        self.command = command
+
+    def __repr__(self) -> str:
+        parts = "action={}, detail={!r}, success={}".format(
+            self.action.value, self.detail, self.success
+        )
+        if self.command:
+            parts += ", command={!r}".format(self.command)
+        return "LogTailResult({})".format(parts)
 
 
 # ─── Zoom decision table ─────────────────────────────────────────────────────
@@ -200,12 +234,13 @@ class TmuxController:
         try:
             # Extract binary name from command (e.g. "/usr/bin/claude" -> "claude")
             target = os.path.basename(self._claude_command)
+            targets = {target, "claude", "clod"}
             window = self._our_pane.window
             for pane in window.panes:
                 if pane.pane_id == self._our_pane.pane_id:
                     continue
                 current_cmd = getattr(pane, "pane_current_command", None) or ""
-                if os.path.basename(current_cmd) == target:
+                if os.path.basename(current_cmd) in targets:
                     return pane
         except Exception as e:
             _log("_find_claude_pane error: {}".format(e))
@@ -273,6 +308,91 @@ class TmuxController:
             return self._exec_launch(resolved_command)
 
         return LaunchResult(action, detail, success=False)
+
+    def _resolve_tail_split_direction(self, pane_a: "libtmux.Pane", pane_b: "libtmux.Pane"):
+        """Pick opposite split direction from a 2-pane layout.
+
+        // [LAW:dataflow-not-control-flow] Direction derives from pane coordinates.
+        """
+        import libtmux
+
+        a_left = int(getattr(pane_a, "pane_left", 0) or 0)
+        a_top = int(getattr(pane_a, "pane_top", 0) or 0)
+        b_left = int(getattr(pane_b, "pane_left", 0) or 0)
+        b_top = int(getattr(pane_b, "pane_top", 0) or 0)
+
+        is_top_bottom_split = (a_left == b_left) and (a_top != b_top)
+        return (
+            libtmux.constants.PaneDirection.Right
+            if is_top_bottom_split
+            else libtmux.constants.PaneDirection.Below
+        )
+
+    def _resolve_claude_for_tail(self) -> "libtmux.Pane | None":
+        """Return a live Claude/clod pane when one exists in our window."""
+        pane_alive = self._validate_claude_pane() if self._claude_pane is not None else False
+        if not pane_alive:
+            self._try_adopt_existing()
+        return self._claude_pane
+
+    def open_log_tail(self, log_file: str) -> LogTailResult:
+        """Open a tmux pane/window running `tail -f` for the runtime logfile.
+
+        Routing policy:
+        1. cc-dump alone in window -> split below (horizontal).
+        2. cc-dump + Claude/clod only -> split Claude/clod pane in opposite orientation.
+        3. Any other layout -> create and switch to a new tmux window.
+        """
+        state_ok = self.state in (TmuxState.READY, TmuxState.CLAUDE_RUNNING)
+        has_our_pane = self._our_pane is not None
+        has_session = self._session is not None
+        has_log_file = bool(str(log_file or "").strip())
+        blocked_reasons = []
+        blocked_reasons.extend(["state={}".format(self.state)] if not state_ok else [])
+        blocked_reasons.extend(["our pane missing"] if not has_our_pane else [])
+        blocked_reasons.extend(["session missing"] if not has_session else [])
+        blocked_reasons.extend(["log_file missing"] if not has_log_file else [])
+        if blocked_reasons:
+            detail = ", ".join(blocked_reasons)
+            _log("open_log_tail blocked: {}".format(detail))
+            return LogTailResult(LogTailAction.BLOCKED, detail, success=False)
+
+        shell = "tail -f -- {}".format(shlex.quote(log_file))
+        try:
+            import libtmux
+
+            window = self._our_pane.window
+            panes = list(window.panes)
+            pane_count = len(panes)
+            claude_pane = self._resolve_claude_for_tail()
+            is_claude_pair = (
+                pane_count == 2
+                and claude_pane is not None
+                and self._our_pane.pane_id != claude_pane.pane_id
+            )
+
+            # // [LAW:dataflow-not-control-flow] Strategy is a derived value from pane_count/is_claude_pair.
+            if pane_count == 1:
+                window.split(direction=libtmux.constants.PaneDirection.Below, shell=shell)
+                return LogTailResult(LogTailAction.SPLIT_BELOW, "split cc-dump pane", True, shell)
+
+            if is_claude_pair:
+                direction = self._resolve_tail_split_direction(self._our_pane, claude_pane)
+                claude_pane.select()
+                window.split(direction=direction, shell=shell)
+                action = (
+                    LogTailAction.SPLIT_RIGHT
+                    if direction == libtmux.constants.PaneDirection.Right
+                    else LogTailAction.SPLIT_BELOW
+                )
+                detail = "split {} pane".format(getattr(claude_pane, "pane_id", "claude"))
+                return LogTailResult(action, detail, True, shell)
+
+            self._session.cmd("new-window", "-n", "cc-dump-logs", shell)
+            return LogTailResult(LogTailAction.NEW_WINDOW, "opened cc-dump-logs window", True, shell)
+        except Exception as e:
+            _log("open_log_tail error: {}".format(e))
+            return LogTailResult(LogTailAction.BLOCKED, str(e), success=False, command=shell)
 
     def _exec_launch(self, command: str) -> LaunchResult:
         """Split pane and run the command with ANTHROPIC_BASE_URL set."""
@@ -395,6 +515,5 @@ class TmuxController:
 
 
 def _log(msg: str) -> None:
-    """Log to stderr (matches har_recorder.py pattern)."""
-    sys.stderr.write("[tmux] {}\n".format(msg))
-    sys.stderr.flush()
+    """Emit tmux diagnostics through the centralized logger."""
+    logger.info("[tmux] %s", msg)

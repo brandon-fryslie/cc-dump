@@ -9,8 +9,7 @@ for hot-reload preservation.
 """
 
 import json
-import sys
-import traceback
+import logging
 from dataclasses import dataclass, field
 from typing import TypedDict
 
@@ -30,6 +29,8 @@ from cc_dump.core.analysis import (
 )
 from cc_dump.ai.side_channel_marker import extract_marker
 from cc_dump.core.token_counter import count_tokens
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -143,10 +144,8 @@ class AnalyticsStore:
         """Handle an event from the router. Errors logged, never crash the proxy."""
         try:
             self._handle(event)
-        except Exception as e:
-            sys.stderr.write("[analytics] error: {}\n".format(e))
-            traceback.print_exc(file=sys.stderr)
-            sys.stderr.flush()
+        except Exception:
+            logger.exception("analytics subscriber error")
 
     def _handle(self, event: PipelineEvent) -> None:
         """Internal event handler - may raise exceptions."""

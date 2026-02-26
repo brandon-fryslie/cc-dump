@@ -5,11 +5,14 @@ recorded HAR files in the recordings directory.
 """
 
 import json
+import logging
 import os
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, TypedDict
+
+logger = logging.getLogger(__name__)
+
 
 class RecordingInfo(TypedDict):
     path: str
@@ -127,9 +130,7 @@ def list_recordings(recordings_dir: Optional[str] = None) -> list[RecordingInfo]
 
         except (json.JSONDecodeError, OSError, KeyError) as e:
             # Skip malformed files, but continue processing others
-
-            sys.stderr.write(f"[sessions] Warning: skipping {path.name}: {e}\n")
-            sys.stderr.flush()
+            logger.warning("skipping malformed recording %s: %s", path.name, e)
             continue
 
     return recordings
