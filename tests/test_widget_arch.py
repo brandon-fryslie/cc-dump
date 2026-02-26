@@ -303,6 +303,46 @@ class TestTurnDataReRender:
 
         assert result is False
 
+    def test_re_render_skips_when_render_key_unchanged(self):
+        """Search-active rerender should skip when render key and filters are unchanged."""
+        from cc_dump.tui.search import SearchContext, SearchMode, compile_search_pattern
+
+        blocks = [TextContentBlock(content="Hello", indent="")]
+        console = Console()
+        filters = {}
+        pattern = compile_search_pattern("hello", SearchMode.CASE_INSENSITIVE)
+        assert pattern is not None
+        search_ctx = SearchContext(
+            pattern=pattern,
+            pattern_str="hello",
+            current_match=None,
+            all_matches=[],
+        )
+
+        td = TurnData(turn_index=0, blocks=blocks, strips=[])
+        td.compute_relevant_keys()
+
+        with patch("cc_dump.tui.rendering.render_turn_to_strips") as render_mock:
+            render_mock.return_value = ([Strip.blank(80)], {}, blocks)
+            first = td.re_render(
+                filters,
+                console,
+                80,
+                search_ctx=search_ctx,
+                render_key=(80, 1, 1, 1),
+            )
+            second = td.re_render(
+                filters,
+                console,
+                80,
+                search_ctx=search_ctx,
+                render_key=(80, 1, 1, 1),
+            )
+
+        assert first is True
+        assert second is False
+        assert render_mock.call_count == 1
+
 
 class TestConversationViewBinarySearch:
     """Test ConversationView._find_turn_for_line binary search correctness.
