@@ -471,6 +471,50 @@ def render_session_panel(
     return result, session_id_span
 
 
+def info_panel_rows(info: dict) -> list[tuple[str, str]]:
+    """Canonical info-panel row data.
+
+    // [LAW:one-source-of-truth] Row definitions are centralized for rendering and click-copy mapping.
+    """
+    provider_rows = info.get("providers", [])
+    rows: list[tuple[str, str]] = []
+
+    if isinstance(provider_rows, list) and provider_rows:
+        for provider in provider_rows:
+            if not isinstance(provider, dict):
+                continue
+            name = str(provider.get("name", "") or "Provider")
+            proxy_url = str(provider.get("proxy_url", "") or "--")
+            target = str(provider.get("target", "") or "--")
+            rows.append((f"{name} Proxy", proxy_url))
+            rows.append((f"{name} Target", target))
+    else:
+        # Backward-compat fallback when callers still pass legacy keys.
+        proxy_url = str(info.get("proxy_url", "--"))
+        openai_proxy_url = info.get("openai_proxy_url")
+        rows.append(("Anthropic Proxy", proxy_url))
+        if openai_proxy_url:
+            rows.append(("OpenAI Proxy", str(openai_proxy_url)))
+        rows.append(("Anthropic Target", str(info.get("target") or "--")))
+        if openai_proxy_url:
+            rows.append(("OpenAI Target", str(info.get("openai_target") or "--")))
+
+    rows.extend(
+        [
+            ("Proxy Mode", str(info.get("proxy_mode", "--"))),
+            ("Session", str(info.get("session_name", "--"))),
+            ("Session ID", str(info.get("session_id") or "--")),
+            ("Recording", str(info.get("recording_path") or "disabled")),
+            ("Recordings Dir", str(info.get("recording_dir", "--"))),
+            ("Replay From", str(info.get("replay_file") or "--")),
+            ("Python", str(info.get("python_version", "--"))),
+            ("Textual", str(info.get("textual_version", "--"))),
+            ("PID", str(info.get("pid", "--"))),
+        ]
+    )
+    return rows
+
+
 def render_info_panel(info: dict) -> Text:
     """Render the server info panel display.
 
@@ -494,32 +538,7 @@ def render_info_panel(info: dict) -> Text:
         Rich Text object with labeled rows
     """
     p = cc_dump.core.palette.PALETTE
-
-    # // [LAW:one-source-of-truth] Row definitions: (label, value)
-    # Every row is rendered. None/empty → "--". All values are click-to-copy.
-    proxy_url = info.get("proxy_url", "--")
-    openai_proxy_url = info.get("openai_proxy_url")
-    rows = [
-        ("Anthropic Proxy", proxy_url),
-    ]
-    if openai_proxy_url:
-        rows.append(("OpenAI Proxy", openai_proxy_url))
-    rows.extend([
-        ("Proxy Mode", info.get("proxy_mode", "--")),
-        ("Anthropic Target", info.get("target") or "--"),
-    ])
-    if openai_proxy_url:
-        rows.append(("OpenAI Target", info.get("openai_target") or "--"))
-    rows.extend([
-        ("Session", info.get("session_name", "--")),
-        ("Session ID", info.get("session_id") or "--"),
-        ("Recording", info.get("recording_path") or "disabled"),
-        ("Recordings Dir", info.get("recording_dir", "--")),
-        ("Replay From", info.get("replay_file") or "--"),
-        ("Python", info.get("python_version", "--")),
-        ("Textual", info.get("textual_version", "--")),
-        ("PID", str(info.get("pid", "--"))),
-    ])
+    rows = info_panel_rows(info)
 
     text = Text()
     text.append("Server Info", style=f"bold {p.info}")
@@ -535,17 +554,38 @@ def render_info_panel(info: dict) -> Text:
         text.append("\n")
 
     # Usage hints at bottom
-    text.append("\n  ")
-    text.append("Usage: ", style="bold")
-    text.append("ANTHROPIC_BASE_URL=", style="dim")
-    text.append(proxy_url, style=f"bold {p.info}")
-    text.append(" claude", style="dim")
-    if openai_proxy_url:
+    provider_rows = info.get("providers", [])
+    if isinstance(provider_rows, list) and provider_rows:
+        text.append("\n")
+        rendered_idx = 0
+        for provider in provider_rows:
+            if not isinstance(provider, dict):
+                continue
+            proxy_url = str(provider.get("proxy_url", "") or "")
+            env_var = str(provider.get("base_url_env", "") or "")
+            hint = str(provider.get("client_hint", "<your-tool>"))
+            if not proxy_url or not env_var:
+                continue
+            text.append("\n  ")
+            text.append("Usage: " if rendered_idx == 0 else "       ", style="bold")
+            text.append(f"{env_var}=", style="dim")
+            text.append(proxy_url, style=f"bold {p.info}")
+            text.append(f" {hint}", style="dim")
+            rendered_idx += 1
+    else:
+        proxy_url = str(info.get("proxy_url", "--"))
+        openai_proxy_url = info.get("openai_proxy_url")
         text.append("\n  ")
-        text.append("       ", style="bold")
-        text.append("OPENAI_BASE_URL=", style="dim")
-        text.append(openai_proxy_url, style=f"bold {p.info}")
-        text.append(" <your-tool>", style="dim")
+        text.append("Usage: ", style="bold")
+        text.append("ANTHROPIC_BASE_URL=", style="dim")
+        text.append(proxy_url, style=f"bold {p.info}")
+        text.append(" claude", style="dim")
+        if openai_proxy_url:
+            text.append("\n  ")
+            text.append("       ", style="bold")
+            text.append("OPENAI_BASE_URL=", style="dim")
+            text.append(str(openai_proxy_url), style=f"bold {p.info}")
+            text.append(" <your-tool>", style="dim")
 
     return text
 

@@ -26,6 +26,7 @@ from cc_dump.pipeline.event_types import (
     sse_progress_payload,
 )
 from cc_dump.pipeline.response_assembler import ResponseAssembler, OpenAIResponseAssembler
+import cc_dump.providers
 
 # Headers to exclude from emitted events (security + noise reduction)
 _EXCLUDED_HEADERS = frozenset(
@@ -189,8 +190,9 @@ class EventQueueSink(StreamSink):
         self._provider = provider
 
     def on_event(self, event_type, event):
-        # [LAW:dataflow-not-control-flow] Provider selects extraction strategy.
-        extract = _PROGRESS_EXTRACTORS.get(self._provider, _extract_openai_progress)
+        # [LAW:dataflow-not-control-flow] Provider family selects extraction strategy.
+        family = cc_dump.providers.get_provider_spec(self._provider).protocol_family
+        extract = _PROGRESS_EXTRACTORS_BY_FAMILY.get(family, _extract_openai_progress)
         payload = extract(event_type, event)
         if payload is None:
             return
@@ -257,8 +259,8 @@ def _extract_openai_progress(_event_type: str, event: dict) -> dict[str, object]
     return None
 
 
-# [LAW:dataflow-not-control-flow] Provider → progress extraction strategy.
-_PROGRESS_EXTRACTORS: dict[str, Callable[[str, dict], dict[str, object] | None]] = {
+# [LAW:dataflow-not-control-flow] Protocol family → progress extraction strategy.
+_PROGRESS_EXTRACTORS_BY_FAMILY: dict[str, Callable[[str, dict], dict[str, object] | None]] = {
     "anthropic": _extract_anthropic_progress,
     "openai": _extract_openai_progress,
 }
@@ -543,13 +545,14 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         ))
 
     # [LAW:dataflow-not-control-flow] Provider → assembler type.
-    _ASSEMBLER_CLASSES: dict[str, type] = {
+    _ASSEMBLER_CLASSES_BY_FAMILY: dict[str, type] = {
         "anthropic": ResponseAssembler,
         "openai": OpenAIResponseAssembler,
     }
 
     def _stream_response(self, resp, request_id: str = ""):
-        assembler_cls = self._ASSEMBLER_CLASSES.get(self.provider, OpenAIResponseAssembler)
+        family = cc_dump.providers.get_provider_spec(self.provider).protocol_family
+        assembler_cls = self._ASSEMBLER_CLASSES_BY_FAMILY.get(family, OpenAIResponseAssembler)
         assembler = assembler_cls()
         event_sink = EventQueueSink(self.event_queue, request_id=request_id, provider=self.provider)
         _fan_out_sse(resp, [
@@ -575,15 +578,9 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             provider=self.provider,
         ))
 
-    # [LAW:dataflow-not-control-flow] Path matching table keyed by provider
-    _API_PATHS: dict[str, tuple[str, ...]] = {
-        "anthropic": ("/v1/messages",),
-        "openai": ("/v1/chat/completions",),
-    }
-
     def _expects_json_body(self, request_path: str) -> bool:
         """Check if this request path should be parsed as JSON."""
-        prefixes = self._API_PATHS.get(self.provider, ())
+        prefixes = cc_dump.providers.get_provider_spec(self.provider).api_paths
         return any(request_path.startswith(p) for p in prefixes)
 
     def do_POST(self):
@@ -611,11 +608,12 @@ def make_handler_class(
     // [LAW:one-type-per-behavior] All providers share one handler type,
     // parameterized by class attributes set here.
     """
+    spec = cc_dump.providers.require_provider_spec(provider)
     return type(
-        f"ProxyHandler_{provider}",
+        f"ProxyHandler_{spec.key}",
         (ProxyHandler,),
         {
-            "provider": provider,
+            "provider": spec.key,
             "target_host": target_host.rstrip("/") if target_host else None,
             "event_queue": event_queue,
             "request_pipeline": request_pipeline,

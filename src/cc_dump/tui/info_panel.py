@@ -32,23 +32,7 @@ class InfoPanel(Static):
     def __init__(self):
         super().__init__("")
         self._info: dict = {}
-        # // [LAW:one-source-of-truth] Copiable field mapping: label → info dict key
-        # // [LAW:one-type-per-behavior] All rows have identical click-to-copy behavior
-        self._copiable_fields = {
-            "Anthropic Proxy": "proxy_url",
-            "OpenAI Proxy": "openai_proxy_url",
-            "Proxy Mode": "proxy_mode",
-            "Anthropic Target": "target",
-            "OpenAI Target": "openai_target",
-            "Session": "session_name",
-            "Session ID": "session_id",
-            "Recording": "recording_path",
-            "Recordings Dir": "recording_dir",
-            "Replay From": "replay_file",
-            "Python": "python_version",
-            "Textual": "textual_version",
-            "PID": "pid",
-        }
+        self._rows: list[tuple[str, str]] = []
 
     def update_info(self, info: dict):
         """Update the info panel with server configuration.
@@ -61,6 +45,8 @@ class InfoPanel(Static):
 
     def _refresh_display(self):
         """Rebuild the info panel display."""
+        # // [LAW:one-source-of-truth] Rows are derived by panel_renderers.info_panel_rows.
+        self._rows = cc_dump.tui.panel_renderers.info_panel_rows(self._info)
         text = cc_dump.tui.panel_renderers.render_info_panel(self._info)
         self.update(text)
 
@@ -71,16 +57,10 @@ class InfoPanel(Static):
         // [LAW:dataflow-not-control-flow] Click always resolves to a row;
         // copy value is derived from the row's info key.
         """
-        # Row 0 is the "Server Info" title, rows 1+ are data rows
-        # // [LAW:one-source-of-truth] Row order derived from _copiable_fields
-        row_labels = list(self._copiable_fields.keys())
-
-        # Click y is relative to widget; row 0 = title, row 1+ = data
+        # Row 0 is the "Server Info" title, rows 1+ are data rows.
         clicked_row = int(event.y) - 1  # subtract title row
-        if 0 <= clicked_row < len(row_labels):
-            label = row_labels[clicked_row]
-            info_key = self._copiable_fields[label]
-            value = str(self._info.get(info_key, "") or "")
+        if 0 <= clicked_row < len(self._rows):
+            label, value = self._rows[clicked_row]
             if value:
                 self.app.copy_to_clipboard(value)
                 self.app.notify(f"Copied {label}: {value}", severity="information")

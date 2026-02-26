@@ -35,6 +35,7 @@ import cc_dump.app.hot_reload
 import cc_dump.app.domain_store
 import cc_dump.tui.view_store_bridge
 import cc_dump.io.logging_setup
+import cc_dump.providers
 from cc_dump.tui.app import CcDumpApp
 
 logger = logging.getLogger(__name__)
@@ -114,24 +115,28 @@ def main():
         default=None,
         help="Seed hue (0-360) for color palette (default: 190, cyan). Env: CC_DUMP_SEED_HUE",
     )
-    parser.add_argument(
-        "--openai-port",
-        type=int,
-        default=0,
-        help="Bind port for OpenAI proxy (default: 0, OS-assigned)",
-    )
-    parser.add_argument(
-        "--openai-target",
-        type=str,
-        default=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-        help="Upstream OpenAI API URL (default: https://api.openai.com/v1). Env: OPENAI_BASE_URL",
-    )
-    parser.add_argument(
-        "--no-openai",
-        action="store_true",
-        default=False,
-        help="Disable the OpenAI proxy server",
-    )
+    for spec in cc_dump.providers.optional_proxy_provider_specs():
+        parser.add_argument(
+            f"--{spec.key}-port",
+            type=int,
+            default=0,
+            help=f"Bind port for {spec.display_name} proxy (default: 0, OS-assigned)",
+        )
+        parser.add_argument(
+            f"--{spec.key}-target",
+            type=str,
+            default=os.environ.get(spec.base_url_env, spec.default_target),
+            help=(
+                f"Upstream {spec.display_name} API URL (default: {spec.default_target}). "
+                f"Env: {spec.base_url_env}"
+            ),
+        )
+        parser.add_argument(
+            f"--no-{spec.key}",
+            action="store_true",
+            default=False,
+            help=f"Disable the {spec.display_name} proxy server",
+        )
     args = parser.parse_args()
 
     # Install stderr tee before anything else writes to stderr
@@ -213,7 +218,7 @@ def main():
             return
 
     # ─── Start proxy servers ────────────────────────────────────────────────
-    # // [LAW:one-type-per-behavior] Both servers share ProxyHandler, parameterized by factory.
+    # // [LAW:one-type-per-behavior] All providers share ProxyHandler, parameterized by factory.
 
     def _start_proxy_server(host, port, handler_class):
         """Create and start an HTTP proxy server. Returns (server, actual_port, thread)."""
@@ -223,28 +228,45 @@ def main():
         t.start()
         return srv, ap, t
 
-    # Anthropic proxy (always started)
+    proxy_servers: dict[str, http.server.ThreadingHTTPServer] = {}
+    proxy_ports: dict[str, int] = {}
+    proxy_targets: dict[str, str | None] = {}
+    provider_endpoints: dict[str, dict[str, str]] = {}
+
+    # Anthropic proxy (always started).
     anthropic_handler = make_handler_class(
         provider="anthropic",
         target_host=args.target,
         event_queue=event_q,
     )
     server, actual_port, _ = _start_proxy_server(args.host, args.port, anthropic_handler)
+    proxy_servers["anthropic"] = server
+    proxy_ports["anthropic"] = actual_port
+    proxy_targets["anthropic"] = args.target.rstrip("/") if args.target else None
 
-    # OpenAI proxy (started unless --no-openai)
-    openai_server = None
-    openai_port = None
-    if not args.no_openai:
-        openai_handler = make_handler_class(
-            provider="openai",
-            target_host=args.openai_target,
+    # Optional providers (OpenAI, Copilot, ...), data-driven from provider registry.
+    for spec in cc_dump.providers.optional_proxy_provider_specs():
+        if getattr(args, f"no_{spec.key}"):
+            continue
+        target_host = str(getattr(args, f"{spec.key}_target"))
+        bind_port = int(getattr(args, f"{spec.key}_port"))
+        handler = make_handler_class(
+            provider=spec.key,
+            target_host=target_host,
             event_queue=event_q,
         )
-        openai_server, openai_port, _ = _start_proxy_server(args.host, args.openai_port, openai_handler)
+        srv, port, _ = _start_proxy_server(args.host, bind_port, handler)
+        proxy_servers[spec.key] = srv
+        proxy_ports[spec.key] = port
+        proxy_targets[spec.key] = target_host.rstrip("/") if target_host else None
 
     print("🚀 cc-dump proxy started")
+    anthropic_target = proxy_targets.get("anthropic")
+    provider_endpoints["anthropic"] = {
+        "proxy_url": f"http://{args.host}:{actual_port}",
+        "target": anthropic_target or "",
+    }
     print(f"   Anthropic proxy: http://{args.host}:{actual_port}")
-    anthropic_target = args.target.rstrip("/") if args.target else None
     if anthropic_target:
         print(f"     Target: {anthropic_target}")
         print(f"     Usage: ANTHROPIC_BASE_URL=http://{args.host}:{actual_port} claude")
@@ -253,10 +275,19 @@ def main():
         print(
             f"     Usage: HTTP_PROXY=http://{args.host}:{actual_port} ANTHROPIC_BASE_URL=https://api.anthropic.com claude"
         )
-    if openai_port is not None:
-        print(f"   OpenAI proxy:    http://{args.host}:{openai_port}")
-        print(f"     Target: {args.openai_target.rstrip('/')}")
-        print(f"     Usage: OPENAI_BASE_URL=http://{args.host}:{openai_port} <your-tool>")
+    for spec in cc_dump.providers.optional_proxy_provider_specs():
+        port = proxy_ports.get(spec.key)
+        if port is None:
+            continue
+        print(f"   {spec.display_name} proxy:    http://{args.host}:{port}")
+        target = proxy_targets.get(spec.key)
+        if target:
+            print(f"     Target: {target}")
+        print(f"     Usage: {spec.base_url_env}=http://{args.host}:{port} {spec.client_hint}")
+        provider_endpoints[spec.key] = {
+            "proxy_url": f"http://{args.host}:{port}",
+            "target": target or "",
+        }
 
     # State dict for content tracking (used by formatting layer)
     state = {
@@ -289,7 +320,7 @@ def main():
         # [LAW:one-source-of-truth] Recordings organized by session name
         record_dir = os.path.expanduser("~/.local/share/cc-dump/recordings")
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        active_providers = ["anthropic"] + (["openai"] if openai_port is not None else [])
+        active_providers = list(proxy_ports.keys())
 
         def _recording_path_for_provider(provider: str) -> str:
             # // [LAW:dataflow-not-control-flow] Path is derived from provider + timestamp in one deterministic function.
@@ -345,9 +376,34 @@ def main():
     side_channel_mgr = cc_dump.ai.side_channel.SideChannelManager()
     side_channel_mgr.enabled = sc_enabled
     side_channel_mgr.set_base_url(f"http://{args.host}:{actual_port}")
-    side_channel_mgr.set_usage_provider(
-        lambda purpose: analytics_store.get_side_channel_purpose_summary().get(purpose, {})
-    )
+
+    def _coerce_token_count(value: object) -> int:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                return 0
+        return 0
+
+    def _side_channel_usage_for_purpose(purpose: str) -> dict[str, int]:
+        usage_rows = analytics_store.get_side_channel_purpose_summary()
+        row = usage_rows.get(purpose)
+        if not isinstance(row, dict):
+            return {}
+        return {
+            "input_tokens": _coerce_token_count(row.get("input_tokens", 0)),
+            "cache_read_tokens": _coerce_token_count(row.get("cache_read_tokens", 0)),
+            "cache_creation_tokens": _coerce_token_count(row.get("cache_creation_tokens", 0)),
+            "output_tokens": _coerce_token_count(row.get("output_tokens", 0)),
+        }
+
+    side_channel_mgr.set_usage_provider(_side_channel_usage_for_purpose)
     data_dispatcher = cc_dump.ai.data_dispatcher.DataDispatcher(side_channel_mgr)
 
     # Request pipeline — transforms + interceptors run before forwarding
@@ -402,8 +458,7 @@ def main():
         view_store=view_store,
         domain_store=domain_store,
         store_context=store_context,
-        openai_port=openai_port,
-        openai_target=args.openai_target.rstrip("/") if openai_port is not None else None,
+        provider_endpoints=provider_endpoints,
     )
 
     # Store context is finalized here; view-store reactions are bound on app mount.
@@ -442,15 +497,17 @@ def main():
 
             server.server_close()
 
-        # Shutdown OpenAI server
-        if openai_server:
-            openai_shutdown = threading.Thread(target=openai_server.shutdown, daemon=True)
-            openai_shutdown.start()
+        # Shutdown optional provider servers
+        for provider, srv in proxy_servers.items():
+            if provider == "anthropic":
+                continue
+            shutdown_thread = threading.Thread(target=srv.shutdown, daemon=True)
+            shutdown_thread.start()
             try:
-                openai_shutdown.join(timeout=2.0)
+                shutdown_thread.join(timeout=2.0)
             except KeyboardInterrupt:
                 pass
-            openai_server.server_close()
+            srv.server_close()
 
         # Clean up other resources
         router.stop()
@@ -460,7 +517,7 @@ def main():
         # Persist UI sidecar next to active HAR (recording path or replay file).
         candidate_record_paths = [
             recording_paths.get("anthropic"),
-            *recording_paths.values(),
+            *[path for provider, path in recording_paths.items() if provider != "anthropic"],
         ]
         sidecar_target = next(
             (path for path in candidate_record_paths if path and os.path.exists(path)),
