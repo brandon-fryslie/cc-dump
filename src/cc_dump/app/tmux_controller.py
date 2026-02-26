@@ -408,6 +408,7 @@ class TmuxController:
                 direction=libtmux.constants.PaneDirection.Below,
                 shell=shell,
             )
+            self._claude_pane.select()
             self.state = TmuxState.CLAUDE_RUNNING
             self._monitor_exit()
             return LaunchResult(LaunchAction.LAUNCHED, command, success=True, command=shell)
