@@ -134,6 +134,7 @@ class TurnData:
     _stream_last_delta_version: int = -1  # last rendered delta version
     _stream_last_render_width: int = 0  # width used for last preview render
     _strip_hash: str = ""  # hash of rendered strips for no-op rerender detection
+    _last_render_key: tuple | None = None  # width/search/theme/override revision tuple
     _pending_filter_snapshot: dict | None = (
         None  # deferred filters for lazy off-viewport re-render
     )
@@ -170,6 +171,7 @@ class TurnData:
         block_cache=None,
         search_ctx=None,
         overrides=None,
+        render_key: tuple | None = None,
     ) -> bool:
         """Re-render if a relevant filter changed. Returns True if strips changed.
 
@@ -178,13 +180,19 @@ class TurnData:
             block_cache: Optional LRUCache for caching rendered strips per block.
             search_ctx: Optional SearchContext for highlighting matches.
             overrides: Optional ViewOverrides for per-block view state.
+            render_key: Optional revision tuple for width/search/theme/overrides.
         """
         # Create snapshot using ALWAYS_VISIBLE default to match filters dict structure
         snapshot = {k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE) for k in self.relevant_filter_keys}
-        # Force re-render when search context changes
-        if not force and search_ctx is None and snapshot == self._last_filter_snapshot:
+        snapshot_changed = snapshot != self._last_filter_snapshot
+        render_key_changed = render_key is not None and render_key != self._last_render_key
+        if not force and not snapshot_changed and not render_key_changed:
+            self._pending_filter_snapshot = None
             return False
+
         self._last_filter_snapshot = snapshot
+        if render_key is not None:
+            self._last_render_key = render_key
         self._pending_filter_snapshot = None  # clear deferred state
         strips, block_strip_map, flat_blocks = cc_dump.tui.rendering.render_turn_to_strips(
             self.blocks,
@@ -261,6 +269,11 @@ class ConversationView(ScrollView):
         self._last_filters: dict = {}
         self._last_width: int = 78
         self._last_search_ctx = None  # Store search context for lazy rerenders
+        self._search_revision: int = 0
+        self._theme_revision: int = 0
+        self._overrides_revision: int = 0
+        self._last_search_signature: tuple | None = None
+        self._last_theme_generation: int = self._read_theme_generation()
         # Local fallback for tests that don't pass a view_store
         self._follow_state_fallback: FollowState = FollowState.ACTIVE
         self._stream_view_mode_fallback: StreamViewMode = StreamViewMode.FOCUSED
@@ -288,6 +301,57 @@ class ConversationView(ScrollView):
 
         # Wire domain store callbacks
         self._wire_domain_store(self._domain_store)
+
+    def _read_theme_generation(self) -> int:
+        if self._view_store is None:
+            return 0
+        raw = self._view_store.get("theme:generation")
+        return int(raw) if isinstance(raw, int) else 0
+
+    @staticmethod
+    def _search_match_signature(match) -> tuple | None:
+        if match is None:
+            return None
+        return (
+            match.turn_index,
+            match.block_index,
+            match.text_offset,
+            match.text_length,
+            id(match.block) if match.block is not None else None,
+        )
+
+    def _search_signature(self, search_ctx) -> tuple | None:
+        if search_ctx is None:
+            return None
+        return (
+            search_ctx.pattern.pattern,
+            search_ctx.pattern.flags,
+            len(search_ctx.all_matches),
+            id(search_ctx.all_matches),
+            self._search_match_signature(search_ctx.current_match),
+        )
+
+    def _update_render_revisions(self, search_ctx) -> None:
+        theme_generation = self._read_theme_generation()
+        if theme_generation != self._last_theme_generation:
+            self._last_theme_generation = theme_generation
+            self._theme_revision += 1
+
+        search_signature = self._search_signature(search_ctx)
+        if search_signature != self._last_search_signature:
+            self._last_search_signature = search_signature
+            self._search_revision += 1
+
+    def _turn_render_key(self, width: int) -> tuple[int, int, int, int]:
+        return (
+            width,
+            self._search_revision,
+            self._theme_revision,
+            self._overrides_revision,
+        )
+
+    def mark_overrides_changed(self) -> None:
+        self._overrides_revision += 1
 
     def _wire_domain_store(self, ds) -> None:
         """Register rendering callbacks on domain store."""
@@ -600,6 +664,7 @@ class ConversationView(ScrollView):
         """
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
+        render_key = self._turn_render_key(width)
 
         # Apply the pending filters
         filters = dict(self._last_filters)
@@ -610,6 +675,7 @@ class ConversationView(ScrollView):
             block_cache=self._block_strip_cache,
             search_ctx=self._last_search_ctx,  # Pass stored search context
             overrides=self._view_overrides,
+            render_key=render_key,
         )
         # re_render clears _pending_filter_snapshot
 
@@ -657,6 +723,7 @@ class ConversationView(ScrollView):
         self._background_rerender_scheduled = False
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
+        render_key = self._turn_render_key(width)
         pending_before = len(self._pending_rerender_indices)
         first_changed: int | None = None
         processed = 0
@@ -688,6 +755,7 @@ class ConversationView(ScrollView):
                     block_cache=self._block_strip_cache,
                     search_ctx=self._last_search_ctx,
                     overrides=self._view_overrides,
+                    render_key=render_key,
                 ):
                     if first_changed is None:
                         first_changed = idx
@@ -910,19 +978,25 @@ class ConversationView(ScrollView):
             filters = self._last_filters
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
+        self._update_render_revisions(self._last_search_ctx)
+        turn_index = len(self._turns)
+        render_key = self._turn_render_key(width)
 
         strips, block_strip_map, flat_blocks = cc_dump.tui.rendering.render_turn_to_strips(
             blocks, filters, console, width, block_cache=self._block_strip_cache,
+            search_ctx=self._last_search_ctx,
+            turn_index=turn_index,
             overrides=self._view_overrides,
         )
         td = TurnData(
-            turn_index=len(self._turns),
+            turn_index=turn_index,
             blocks=blocks,
             strips=strips,
             block_strip_map=block_strip_map,
             _flat_blocks=flat_blocks,
         )
         td._strip_hash = _hash_strips(strips)
+        td._last_render_key = render_key
         td._widest_strip = _compute_widest(strips)
         td.compute_relevant_keys()
 
@@ -1357,6 +1431,7 @@ class ConversationView(ScrollView):
         """
         self._last_filters = filters
         self._last_search_ctx = search_ctx  # Store for lazy rerenders
+        self._update_render_revisions(search_ctx)
 
         if self._pending_restore is not None:
             self._invalidate("restore", filters=filters)
@@ -1380,8 +1455,7 @@ class ConversationView(ScrollView):
         # Viewport-only re-rendering: only process visible turns + buffer
         vp_start, vp_end = self._viewport_turn_range()
 
-        # Force re-render when search is active or caller requests it (theme change)
-        force = force or search_ctx is not None
+        render_key = self._turn_render_key(width)
 
         first_changed = None
         has_deferred = False
@@ -1419,6 +1493,7 @@ class ConversationView(ScrollView):
                         block_cache=self._block_strip_cache,
                         search_ctx=search_ctx,
                         overrides=self._view_overrides,
+                        render_key=render_key,
                     ):
                         if first_changed is None:
                             first_changed = idx
@@ -1429,7 +1504,8 @@ class ConversationView(ScrollView):
                         k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE)
                         for k in td.relevant_filter_keys
                     }
-                    if force or snapshot != td._last_filter_snapshot:
+                    needs_render_key = render_key != td._last_render_key
+                    if force or snapshot != td._last_filter_snapshot or needs_render_key:
                         td._pending_filter_snapshot = snapshot
                         # // [LAW:dataflow-not-control-flow] Queue index value drives background work.
                         self._pending_rerender_indices.append(idx)
@@ -1453,11 +1529,13 @@ class ConversationView(ScrollView):
             return
         td = self._turns[turn_index]
         width = self._content_width if self._size_known else self._last_width
+        render_key = self._turn_render_key(width)
         td.re_render(
             self._last_filters, self.app.console, width,
             force=True, block_cache=self._block_strip_cache,
             search_ctx=self._last_search_ctx,
             overrides=self._view_overrides,
+            render_key=render_key,
         )
         self._recalculate_offsets_from(turn_index)
 
@@ -1481,6 +1559,8 @@ class ConversationView(ScrollView):
         """Re-render all turns at current width. Used for resize."""
         width = self._last_width
         console = self.app.console
+        self._update_render_revisions(self._last_search_ctx)
+        render_key = self._turn_render_key(width)
         for td in self._turns:
             # Skip re-rendering streaming turns on resize
             if td.is_streaming:
@@ -1492,10 +1572,13 @@ class ConversationView(ScrollView):
                     console,
                     width,
                     block_cache=self._block_strip_cache,
+                    search_ctx=self._last_search_ctx,
+                    turn_index=td.turn_index,
                     overrides=self._view_overrides,
                 )
             )
             td._strip_hash = _hash_strips(td.strips)
+            td._last_render_key = render_key
             td._widest_strip = _compute_widest(td.strips)
         self._recalculate_offsets()
 
@@ -1897,6 +1980,7 @@ class ConversationView(ScrollView):
 
         # // [LAW:single-enforcer] Re-render via _invalidate
         if not turn.is_streaming:
+            self.mark_overrides_changed()
             self._invalidate("region_toggled", turn=turn)
 
     def _toggle_block_expand(self, turn: TurnData, block_idx: int):
@@ -1922,6 +2006,7 @@ class ConversationView(ScrollView):
 
         # // [LAW:single-enforcer] Re-render via _invalidate
         if not turn.is_streaming:
+            self.mark_overrides_changed()
             self._invalidate("block_toggled", turn=turn)
 
     def _render_single_turn(self, turn: TurnData = None) -> None:
@@ -1930,6 +2015,7 @@ class ConversationView(ScrollView):
             return
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
+        render_key = self._turn_render_key(width)
         turn.re_render(
             self._last_filters,
             console,
@@ -1937,6 +2023,7 @@ class ConversationView(ScrollView):
             force=True,
             block_cache=self._block_strip_cache,
             overrides=self._view_overrides,
+            render_key=render_key,
         )
         self._recalculate_offsets_from(turn.turn_index)
 
@@ -2008,6 +2095,7 @@ class ConversationView(ScrollView):
         # Restore view overrides
         vo_data = state.get("view_overrides", {})
         self._view_overrides = cc_dump.tui.view_overrides.ViewOverrides.from_dict(vo_data)
+        self.mark_overrides_changed()
 
     def _render_restore(self, filters: dict = None) -> None:
         """Dispatch target for _invalidate("restore"). Delegates to _rebuild_from_state."""
