@@ -453,7 +453,10 @@ class CcDumpApp(App):
         // never inferred or defaulted downstream.
         """
         if not event.provider:
-            raise ValueError(f"Event {type(event).__name__} has empty provider")
+            raise ValueError(
+                f"Event {type(event).__name__} has {'empty string' if event.provider == '' else 'missing/None'}"
+                f" provider (request_id={event.request_id!r})"
+            )
         return event.provider
 
     def _provider_tab_key(self, provider: str) -> str:
