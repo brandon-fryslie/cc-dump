@@ -19,7 +19,6 @@ from cc_dump.pipeline.event_types import (
 
 logger = logging.getLogger(__name__)
 
-
 def load_har(path: str) -> list[tuple[dict, dict, int, dict, dict, str]]:
     """Load HAR file and extract request/response pairs.
 
