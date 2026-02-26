@@ -491,9 +491,8 @@ class CcDumpApp(App):
         # // [LAW:single-enforcer] Binding is set on REQUEST only; subsequent events
         # for the same request_id reuse the existing binding.
         request_id = str(getattr(event, "request_id", "") or "")
-        existing_key = self._request_session_keys.get(request_id) if request_id else None
+        key = self._default_session_key
         if event.kind == cc_dump.pipeline.event_types.PipelineEventKind.REQUEST:
-            key = self._default_session_key
             body = getattr(event, "body", {})
             marker = (
                 cc_dump.ai.side_channel_marker.extract_marker(body)
@@ -503,12 +502,9 @@ class CcDumpApp(App):
             if marker is not None:
                 # [LAW:one-type-per-behavior] Workbench AI traffic is one inspectable lane.
                 key = self._workbench_session_key
-            self._bind_request_session(request_id, key)
-        else:
-            key = existing_key or self._default_session_key
-            self._bind_request_session(request_id, key)
-        else:
-            key = existing_key or self._default_session_key
+        elif request_id:
+            key = self._request_session_keys.get(request_id, key)
+        self._bind_request_session(request_id, key)
         self._ensure_session_surface(key)
         return key
 
