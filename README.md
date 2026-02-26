@@ -70,7 +70,7 @@ Each browser tab runs an independent cc-dump instance.
 cc-dump automatically records all API traffic to HAR files:
 
 ```bash
-# Normal operation — records to ~/.local/share/cc-dump/recordings/<session>/
+# Normal operation — records to ~/.local/share/cc-dump/recordings/<session>/<provider>/
 cc-dump
 
 # Replay a previous session (proxy still runs for new traffic)
@@ -83,7 +83,7 @@ cc-dump --continue
 # Disable recording
 cc-dump --no-record
 
-# Custom recording path
+# Custom recording path base (provider subdirectories are still created)
 cc-dump --record /path/to/output.har
 
 # Organize recordings by session name
@@ -102,7 +102,7 @@ HAR files are the source of truth for events. Replay mode loads previous data, t
 | `--session NAME` | `unnamed-session` | Session name — recordings are organized into subdirectories by session |
 | `--replay PATH` | — | Replay a HAR file (`latest` for most recent) |
 | `--continue` | — | Continue from most recent recording (replay + live proxy) |
-| `--record PATH` | auto | Custom HAR recording output path |
+| `--record PATH` | auto | Custom HAR recording output path base (saved as `<provider>/<name>.har`) |
 | `--no-record` | — | Disable HAR recording |
 | `--seed-hue HUE` | `190` (cyan) | Base hue (0–360) for the color palette. Also settable via `CC_DUMP_SEED_HUE` env var |
 
@@ -173,7 +173,7 @@ Text content is rendered using Rich:
 
 ### HAR Recording and Replay
 
-All API traffic is recorded in HAR 1.2 format. Recordings are organized by session name under `~/.local/share/cc-dump/recordings/`. Replay feeds saved data through the same rendering pipeline as live traffic.
+All API traffic is recorded in HAR 1.2 format. Recordings are organized by session and provider under `~/.local/share/cc-dump/recordings/<session>/<provider>/`. Replay feeds saved data through the same rendering pipeline as live traffic.
 
 ### Tmux Integration
 
@@ -318,7 +318,7 @@ Each press cycles: current → next visibility level.
 
 | Path | Contents |
 |------|----------|
-| `~/.local/share/cc-dump/recordings/` | HAR recordings, organized by session name |
+| `~/.local/share/cc-dump/recordings/` | HAR recordings, organized by session and provider |
 | `~/.config/cc-dump/settings.json` | Persisted settings (filtersets, theme) |
 
 ## Environment Variables
