@@ -12,6 +12,7 @@ import os
 import sys
 import traceback
 from contextlib import contextmanager
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from textual.dom import NoScreen
@@ -278,6 +279,12 @@ class ConversationView(ScrollView):
         self._stream_delta_flush_scheduled: bool = False
         self._background_rerender_scheduled: bool = False
         self._background_rerender_chunk_size: int = 8
+        # // [LAW:dataflow-not-control-flow] Deferred turn work is an explicit data queue.
+        self._background_rerender_generation: int = 0
+        self._pending_rerender_indices: deque[int] = deque()
+        self._widest_strip_max: int = 0
+        self._offset_recalc_incremental_count: int = 0
+        self._offset_recalc_full_width_interval: int = 128
 
         # Wire domain store callbacks
         self._wire_domain_store(self._domain_store)
@@ -308,6 +315,7 @@ class ConversationView(ScrollView):
         self._stream_preview_turns = {}
         self._attached_stream_id = None
         self._pending_stream_delta_request_ids = set()
+        self._reset_background_rerender_state()
         self._clear_line_cache()
 
         for blocks in self._domain_store.iter_completed_blocks():
@@ -621,25 +629,35 @@ class ConversationView(ScrollView):
             self._resolve_anchor()
         self.refresh()
 
+    def _reset_background_rerender_state(self) -> None:
+        """Cancel queued background rerender work and invalidate scheduled callbacks."""
+        # // [LAW:single-enforcer] Generation token is the sole cancellation mechanism.
+        self._background_rerender_generation += 1
+        self._background_rerender_scheduled = False
+        self._pending_rerender_indices.clear()
+
     def _schedule_background_rerender(self) -> None:
         """Schedule incremental off-viewport rerender work."""
         if self._background_rerender_scheduled:
             return
+        generation = self._background_rerender_generation
         self._background_rerender_scheduled = True
-        self.call_later(self._background_rerender)
+        self.call_later(lambda: self._background_rerender(generation))
 
-    def _background_rerender(self) -> None:
+    def _background_rerender(self, generation: int | None = None) -> None:
         """Incrementally rerender deferred turns in background.
 
         Processes a bounded number of turns per tick to keep UI responsive.
         """
+        active_generation = (
+            self._background_rerender_generation if generation is None else generation
+        )
+        if active_generation != self._background_rerender_generation:
+            return
         self._background_rerender_scheduled = False
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
-        pending_before = sum(
-            1 for td in self._turns
-            if (not td.is_streaming and td._pending_filter_snapshot is not None)
-        )
+        pending_before = len(self._pending_rerender_indices)
         first_changed: int | None = None
         processed = 0
         pending_after = pending_before
@@ -656,7 +674,11 @@ class ConversationView(ScrollView):
                 "first_changed": first_changed,
             },
         ):
-            for idx, td in enumerate(self._turns):
+            while processed < self._background_rerender_chunk_size and self._pending_rerender_indices:
+                idx = self._pending_rerender_indices.popleft()
+                if idx < 0 or idx >= len(self._turns):
+                    continue
+                td = self._turns[idx]
                 if td.is_streaming or td._pending_filter_snapshot is None:
                     continue
                 if td.re_render(
@@ -669,9 +691,9 @@ class ConversationView(ScrollView):
                 ):
                     if first_changed is None:
                         first_changed = idx
+                    elif idx < first_changed:
+                        first_changed = idx
                 processed += 1
-                if processed >= self._background_rerender_chunk_size:
-                    break
 
             if first_changed is not None:
                 self._recalculate_offsets_from(first_changed)
@@ -679,10 +701,7 @@ class ConversationView(ScrollView):
                     self._resolve_anchor()
                 self.refresh()
 
-            pending_after = sum(
-                1 for td in self._turns
-                if (not td.is_streaming and td._pending_filter_snapshot is not None)
-            )
+            pending_after = len(self._pending_rerender_indices)
             if pending_after > 0:
                 self._schedule_background_rerender()
 
@@ -782,7 +801,7 @@ class ConversationView(ScrollView):
         """Rebuild line offsets and virtual size from start_idx onwards.
 
         For start_idx > 0, reuses offset from previous turn.
-        Widest line is always recomputed from all turns (O(n) with cached _widest_strip).
+        Uses incremental widest-line tracking to avoid full-list scans per tick.
         """
         turns = self._turns
         start_idx_input = start_idx
@@ -802,15 +821,28 @@ class ConversationView(ScrollView):
                 offset = 0
                 start_idx = 0
 
+            suffix_widest = 0
             for i in range(start_idx, len(turns)):
                 turns[i].line_offset = offset
                 offset += turns[i].line_count
+                turn_widest = turns[i]._widest_strip
+                if turn_widest > suffix_widest:
+                    suffix_widest = turn_widest
 
-            # Widest: O(n) integer comparisons with cached _widest_strip
-            widest = 0
-            for turn in turns:
-                if turn._widest_strip > widest:
-                    widest = turn._widest_strip
+            needs_full_width_scan = (
+                start_idx == 0
+                or self._offset_recalc_incremental_count >= self._offset_recalc_full_width_interval
+            )
+            if needs_full_width_scan:
+                widest = 0
+                for turn in turns:
+                    if turn._widest_strip > widest:
+                        widest = turn._widest_strip
+                self._offset_recalc_incremental_count = 0
+            else:
+                widest = max(self._widest_strip_max, suffix_widest)
+                self._offset_recalc_incremental_count += 1
+            self._widest_strip_max = widest
 
             self._total_lines = offset
             self._widest_line = max(widest, self._last_width)
@@ -832,6 +864,7 @@ class ConversationView(ScrollView):
         if pruned_count >= len(self._turns):
             self._turns.clear()
             self._scroll_anchor = None
+            self._reset_background_rerender_state()
             self._clear_line_cache()
             self._recalculate_offsets()
             if self.is_attached:
@@ -851,6 +884,10 @@ class ConversationView(ScrollView):
                 block_index=self._scroll_anchor.block_index,
                 line_in_block=self._scroll_anchor.line_in_block,
             )
+
+        self._reset_background_rerender_state()
+        for td in self._turns:
+            td._pending_filter_snapshot = None
 
         self._clear_line_cache()
         self._recalculate_offsets()
@@ -1350,6 +1387,7 @@ class ConversationView(ScrollView):
         has_deferred = False
         deferred_count = 0
         viewport_count = 0
+        self._reset_background_rerender_state()
 
         with monitor_slow_path(
             "conversation.rerender_affected",
@@ -1393,8 +1431,12 @@ class ConversationView(ScrollView):
                     }
                     if force or snapshot != td._last_filter_snapshot:
                         td._pending_filter_snapshot = snapshot
+                        # // [LAW:dataflow-not-control-flow] Queue index value drives background work.
+                        self._pending_rerender_indices.append(idx)
                         has_deferred = True
                         deferred_count += 1
+                    else:
+                        td._pending_filter_snapshot = None
 
             if first_changed is not None:
                 self._recalculate_offsets_from(first_changed)

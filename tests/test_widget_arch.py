@@ -1104,6 +1104,40 @@ class TestViewportOnlyRerender:
                 f"Viewport turn {idx} should not have pending snapshot"
             )
 
+    def test_background_rerender_tick_avoids_full_turn_scan(self):
+        """Background rerender should process pending queue, not iterate all turns each tick."""
+        console = Console()
+        filters_initial = {"tools": ALWAYS_VISIBLE}
+        conv = self._make_conv_with_turns(console, 300, filters_initial)
+
+        class _CountingList(list):
+            def __init__(self, values):
+                super().__init__(values)
+                self.iter_count = 0
+
+            def __iter__(self):
+                for item in super().__iter__():
+                    self.iter_count += 1
+                    yield item
+
+        conv._turns = _CountingList(conv._turns)
+
+        with self._patch_scroll(conv, scroll_y=0, height=10):
+            conv.call_later = MagicMock()
+            conv._background_rerender_chunk_size = 8
+            conv._follow_state = FollowState.OFF
+            conv.rerender({"tools": HIDDEN})
+
+            # First scheduled callback is background rerender.
+            assert conv.call_later.called
+            background_cb = conv.call_later.call_args.args[0]
+
+            # Ignore iteration performed during the initial rerender pass.
+            conv._turns.iter_count = 0
+            background_cb()
+
+        assert conv._turns.iter_count == 0, "background tick should not scan all turns"
+
     def test_pending_snapshot_cleared_on_re_render(self):
         """When a turn with _pending_filter_snapshot is re-rendered, pending is cleared."""
         console = Console()
