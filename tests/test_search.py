@@ -10,6 +10,7 @@ from cc_dump.tui.search import (
     SearchMatch,
     SearchContext,
     SearchState,
+    SearchTextCache,
     get_searchable_text,
     compile_search_pattern,
     find_all_matches,
@@ -202,6 +203,31 @@ class TestGetSearchableText:
         assert search_mod.get_searchable_text_cached(block, cache) == "cached text"
         assert search_mod.get_searchable_text_cached(block, cache) == "cached text"
         assert calls["count"] == 1
+
+
+class TestSearchTextCache:
+    def test_lru_eviction_keeps_newest_entries(self):
+        cache = SearchTextCache(max_entries=2)
+        cache.put(("a", 1), "A", owner=1)
+        cache.put(("b", 1), "B", owner=1)
+        cache.get(("a", 1))  # mark "a" as most-recently-used
+        cache.put(("c", 1), "C", owner=1)
+
+        assert ("a", 1) in cache
+        assert ("b", 1) not in cache
+        assert ("c", 1) in cache
+
+    def test_invalidate_missing_owners_prunes_removed_turn_entries(self):
+        cache = SearchTextCache(max_entries=10)
+        cache.put(("a", 1), "A", owner=11)
+        cache.put(("b", 1), "B", owner=22)
+        cache.put(("c", 1), "C", owner=22)
+
+        cache.invalidate_missing_owners({22})
+
+        assert ("a", 1) not in cache
+        assert ("b", 1) in cache
+        assert ("c", 1) in cache
 
 
 # ─── Pattern compilation ─────────────────────────────────────────────────────
@@ -430,6 +456,7 @@ class TestSearchState:
         assert not (state.modes & SearchMode.WORD_BOUNDARY)
         assert state.matches == []
         assert state.current_index == 0
+        assert isinstance(state.text_cache, SearchTextCache)
 
     def test_property_proxy_round_trip(self):
         """Identity fields round-trip through store."""
