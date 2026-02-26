@@ -94,33 +94,30 @@ async def test_workbench_results_tab_is_rightmost_after_session_tabs():
 
 
 async def test_switching_to_workbench_tab_does_not_lose_active_session_context():
+    """Switching to workbench tab and back preserves the default tab's active state.
+
+    With one-tab-per-instance, all anthropic sessions share the default tab.
+    """
     session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    session_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     replay_data = [
         _make_replay_entry(
             session_id=session_a,
             content="session-a-request",
             response_text="session-a-response",
         ),
-        _make_replay_entry(
-            session_id=session_b,
-            content="session-b-request",
-            response_text="session-b-response",
-        ),
     ]
     async with run_app(replay_data=replay_data) as (pilot, app):
         tabs = app._get_conv_tabs()
         assert tabs is not None
-        tab_b = app._session_tab_ids[session_b]
-        tabs.active = tab_b
+        default_key = app._default_session_key
+        default_tab = app._session_tab_ids[default_key]
+        tabs.active = default_tab
         await pilot.pause()
-        assert app._active_session_key == session_b
 
         app._show_workbench_results_tab()
         await pilot.pause()
         assert tabs.active == app._workbench_tab_id
-        assert app._active_session_key == session_b
 
-        tabs.active = tab_b
+        tabs.active = default_tab
         await pilot.pause()
-        assert app._active_session_key == session_b
+        assert app._active_session_key_from_tabs() == default_key
