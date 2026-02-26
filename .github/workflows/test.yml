@@ -10,9 +10,6 @@ on:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
-    env:
-      # // [LAW:single-enforcer] Ensure snarfx resolves from workspace src across all test steps.
-      PYTHONPATH: ${{ github.workspace }}/snarfx/src
     strategy:
       fail-fast: false
       matrix:
@@ -26,9 +23,6 @@ jobs:
       uses: astral-sh/setup-uv@v5
       with:
         version: "latest"
-
-    - name: Create snarfx workspace stub
-      run: python .github/create-snarfx-stub.py
 
     - name: Set up Python ${{ matrix.python-version }}
       run: uv python install ${{ matrix.python-version }}
@@ -50,17 +44,11 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
-    env:
-      # // [LAW:single-enforcer] Keep snarfx import resolution identical to test job.
-      PYTHONPATH: ${{ github.workspace }}/snarfx/src
     steps:
     - uses: actions/checkout@v4
 
     - name: Install uv
       uses: astral-sh/setup-uv@v5
-
-    - name: Create snarfx workspace stub
-      run: python .github/create-snarfx-stub.py
 
     - name: Set up Python
       run: uv python install 3.12
@@ -75,17 +63,11 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
-    env:
-      # // [LAW:single-enforcer] Same import path contract as other jobs.
-      PYTHONPATH: ${{ github.workspace }}/snarfx/src
     steps:
     - uses: actions/checkout@v4
 
     - name: Install uv
       uses: astral-sh/setup-uv@v5
-
-    - name: Create snarfx workspace stub
-      run: python .github/create-snarfx-stub.py
 
     - name: Set up Python
       run: uv python install 3.12
