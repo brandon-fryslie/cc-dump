@@ -67,6 +67,8 @@ def clear_overrides(app, category_name: str) -> None:
     else:
         all_blocks = [block for td in conv._turns for block in td.blocks]
     conv._view_overrides.clear_category(all_blocks, cat)
+    if hasattr(conv, "mark_overrides_changed"):
+        conv.mark_overrides_changed()
 
 
 def toggle_vis(app, category: str) -> None:

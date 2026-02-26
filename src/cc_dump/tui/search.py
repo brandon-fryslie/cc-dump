@@ -10,6 +10,8 @@ This module is RELOADABLE.
 from __future__ import annotations
 
 import re
+from collections import OrderedDict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum, IntFlag
 from typing import Callable
@@ -85,6 +87,85 @@ class SearchContext:
         ]
 
 
+class SearchTextCache:
+    """Bounded LRU cache for searchable block text.
+
+    Entries are keyed by `_search_cache_key(block)` and optionally associated
+    with an owner (turn identity) for selective invalidation when old turns
+    are pruned.
+    """
+
+    def __init__(self, max_entries: int = 20_000):
+        self.max_entries = max(1, int(max_entries))
+        self._entries: OrderedDict[tuple[str, int], str] = OrderedDict()
+        self._owners_by_key: dict[tuple[str, int], int] = {}
+        self._keys_by_owner: dict[int, set[tuple[str, int]]] = {}
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+    def __contains__(self, key: tuple[str, int]) -> bool:
+        return key in self._entries
+
+    def clear(self) -> None:
+        self._entries.clear()
+        self._owners_by_key.clear()
+        self._keys_by_owner.clear()
+
+    def get(self, key: tuple[str, int]) -> str | None:
+        value = self._entries.get(key)
+        if value is not None:
+            self._entries.move_to_end(key)
+        return value
+
+    def put(self, key: tuple[str, int], value: str, owner: int | None = None) -> None:
+        if key in self._entries:
+            self._entries.move_to_end(key)
+        self._entries[key] = value
+        self._set_owner(key, owner)
+        while len(self._entries) > self.max_entries:
+            self._evict_oldest()
+
+    def invalidate_missing_owners(self, active_owners: Iterable[int]) -> None:
+        active = set(active_owners)
+        stale_owners = [owner for owner in self._keys_by_owner if owner not in active]
+        for owner in stale_owners:
+            self._remove_owner(owner)
+
+    def _set_owner(self, key: tuple[str, int], owner: int | None) -> None:
+        prev_owner = self._owners_by_key.get(key)
+        if prev_owner is not None and prev_owner != owner:
+            prev_keys = self._keys_by_owner.get(prev_owner)
+            if prev_keys is not None:
+                prev_keys.discard(key)
+                if not prev_keys:
+                    self._keys_by_owner.pop(prev_owner, None)
+
+        if owner is None:
+            self._owners_by_key.pop(key, None)
+            return
+
+        self._owners_by_key[key] = owner
+        self._keys_by_owner.setdefault(owner, set()).add(key)
+
+    def _evict_oldest(self) -> None:
+        old_key, _ = self._entries.popitem(last=False)
+        owner = self._owners_by_key.pop(old_key, None)
+        if owner is None:
+            return
+        owner_keys = self._keys_by_owner.get(owner)
+        if owner_keys is not None:
+            owner_keys.discard(old_key)
+            if not owner_keys:
+                self._keys_by_owner.pop(owner, None)
+
+    def _remove_owner(self, owner: int) -> None:
+        owner_keys = self._keys_by_owner.pop(owner, set())
+        for key in owner_keys:
+            self._entries.pop(key, None)
+            self._owners_by_key.pop(key, None)
+
+
 class SearchState:
     """Mutable search state managed by the app.
 
@@ -107,7 +188,7 @@ class SearchState:
         self.expanded_blocks: list[tuple[int, int, object]] = []
         self.debounce_timer: object | None = None
         self.saved_scroll_y: float | None = None
-        self.text_cache: dict[tuple[str, int], str] = {}
+        self.text_cache: SearchTextCache = SearchTextCache(max_entries=20_000)
 
     # ── Identity properties (delegated to store) ──
 
@@ -199,14 +280,19 @@ def _search_cache_key(block) -> tuple[str, int]:
 
 def get_searchable_text_cached(
     block,
-    cache: dict[tuple[str, int], str] | None = None,
+    cache: SearchTextCache | dict[tuple[str, int], str] | None = None,
+    owner: int | None = None,
 ) -> str:
     """Extract searchable text with optional cache.
 
     // [LAW:one-source-of-truth] This function is the sole cache read/write boundary.
     """
     cache_key = _search_cache_key(block)
-    if cache is not None and cache_key in cache:
+    if isinstance(cache, SearchTextCache):
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+    elif cache is not None and cache_key in cache:
         return cache[cache_key]
 
     type_name = type(block).__name__
@@ -214,7 +300,9 @@ def get_searchable_text_cached(
     if extractor is None:
         return ""
     text = extractor(block)
-    if cache is not None:
+    if isinstance(cache, SearchTextCache):
+        cache.put(cache_key, text, owner=owner)
+    elif cache is not None:
         cache[cache_key] = text
     return text
 
@@ -266,7 +354,7 @@ def _collect_descendants(block, hier_idx: int) -> list[tuple[int, object]]:
 def find_all_matches(
     turns: list,
     pattern: re.Pattern,
-    text_cache: dict[tuple[str, int], str] | None = None,
+    text_cache: SearchTextCache | dict[tuple[str, int], str] | None = None,
 ) -> list[SearchMatch]:
     """Find all matches across all turns, ordered most-recent-first.
 
@@ -288,13 +376,14 @@ def find_all_matches(
         td = turns[turn_idx]
         if td.is_streaming:
             continue
+        owner = id(td)
 
         for block_idx in range(len(td.blocks) - 1, -1, -1):
             top_block = td.blocks[block_idx]
             searchable = _collect_descendants(top_block, block_idx)
 
             for hier_idx, block in searchable:
-                text = get_searchable_text_cached(block, text_cache)
+                text = get_searchable_text_cached(block, text_cache, owner=owner)
                 if not text:
                     continue
 

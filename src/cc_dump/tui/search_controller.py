@@ -370,14 +370,18 @@ def run_search(app) -> None:
         state.matches = []
         return
 
-    # // [LAW:no-shared-mutable-globals] Cache is state-owned; bounded locally.
-    if len(state.text_cache) > 20_000:
-        state.text_cache.clear()
+    # // [LAW:no-shared-mutable-globals] Cache is state-owned and locally bounded.
+    cache = state.text_cache
+    if isinstance(cache, cc_dump.tui.search.SearchTextCache):
+        cache.invalidate_missing_owners(id(td) for td in conv._turns)
+    elif isinstance(cache, dict) and len(cache) > 20_000:
+        # Legacy fallback for tests/mocks that still provide a plain dict.
+        cache.clear()
 
     state.matches = cc_dump.tui.search.find_all_matches(
         conv._turns,
         pattern,
-        text_cache=state.text_cache,
+        text_cache=cache,
     )
     if state.current_index >= len(state.matches):
         state.current_index = 0
@@ -461,6 +465,9 @@ def navigate_to_current(app) -> None:
             conv._view_overrides._search_block_ids.add(matched_block.block_id)
         state.expanded_blocks.append((match.turn_index, match.block_index, matched_block.block_id))
 
+    if conv is not None and hasattr(conv, "mark_overrides_changed"):
+        conv.mark_overrides_changed()
+
     # Re-render with search context, then navigate via shared location helper.
     location = cc_dump.tui.location_navigation.BlockLocation(
         turn_index=match.turn_index,
@@ -485,6 +492,8 @@ def clear_search_expand(app) -> None:
     conv = app._get_conv()
     if conv is not None:
         conv._view_overrides.clear_search()
+        if hasattr(conv, "mark_overrides_changed"):
+            conv.mark_overrides_changed()
     state.expanded_blocks.clear()
 
 
