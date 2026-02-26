@@ -32,6 +32,7 @@ _RELOAD_ORDER = [
     "cc_dump.tui.rendering",  # depends on: formatting, palette
     "cc_dump.tui.dump_formatting",  # depends on: formatting
     "cc_dump.tui.chip",  # depends on: nothing (pure widget)
+    "cc_dump.tui.cycle_selector",  # depends on: nothing (pure widget)
     "cc_dump.tui.custom_footer",  # depends on: chip, palette, rendering
     "cc_dump.tui.panel_renderers",  # depends on: analysis
     "cc_dump.app.domain_store",  # depends on: formatting
