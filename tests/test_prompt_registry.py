@@ -36,14 +36,6 @@ def test_handoff_prompt_requires_fixed_sections():
     assert "\"next_steps\"" in spec.instruction
 
 
-def test_incident_timeline_prompt_declares_facts_and_hypotheses():
-    spec = get_prompt_spec("incident_timeline")
-    assert spec.purpose == "incident_timeline"
-    assert "strict JSON" in spec.instruction
-    assert "\"facts\"" in spec.instruction
-    assert "\"hypotheses\"" in spec.instruction
-
-
 def test_conversation_qa_prompt_declares_answer_with_sources():
     spec = get_prompt_spec("conversation_qa")
     assert spec.purpose == "conversation_qa"
@@ -52,9 +44,3 @@ def test_conversation_qa_prompt_declares_answer_with_sources():
     assert "\"source_links\"" in spec.instruction
 
 
-def test_release_notes_prompt_declares_template_sections():
-    spec = get_prompt_spec("release_notes")
-    assert spec.purpose == "release_notes"
-    assert "strict JSON" in spec.instruction
-    assert "\"user_highlights\"" in spec.instruction
-    assert "\"technical_changes\"" in spec.instruction

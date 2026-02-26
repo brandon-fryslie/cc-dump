@@ -86,9 +86,7 @@ ai/conversation_qa.py                     AI/Side-Channel  2026-02-22 05:43:48  
 ai/data_dispatcher.py                     AI/Side-Channel  2026-02-23 15:54:23  Data dispatcher — routes enrichment requests to AI or fallback.
 ai/decision_ledger.py                     AI/Side-Channel  2026-02-22 05:26:24  Decision ledger schema and merge semantics.
 ai/handoff_notes.py                       AI/Side-Channel  2026-02-22 05:38:18  Structured handoff note artifacts and persistence for resume flows.
-ai/incident_timeline.py                   AI/Side-Channel  2026-02-22 05:41:00  Incident/debug timeline artifacts and rendering.
 ai/prompt_registry.py                     AI/Side-Channel  2026-02-23 15:54:23  Prompt registry for side-channel purposes.
-ai/release_notes.py                       AI/Side-Channel  2026-02-22 06:02:03  Release-note/changelog artifacts, templates, and rendering.
 ai/side_channel.py                        AI/Side-Channel  2026-02-23 15:54:23  Side-channel manager — spawns `claude -p` for AI-powered enrichment.
 ai/side_channel_analytics.py              AI/Side-Channel  2026-02-22 04:01:46  Side-channel purpose-level analytics.
 ai/side_channel_boundary.py               AI/Side-Channel  2026-02-23 15:54:23  Centralized side-channel context boundary (minimization + redaction).
