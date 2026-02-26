@@ -191,6 +191,7 @@ class TestHotReloadMultiSessionTabs:
                 200,
                 {"content-type": "application/json"},
                 complete,
+                "anthropic",
             )
 
         replay_data = [
