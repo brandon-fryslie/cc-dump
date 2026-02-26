@@ -35,6 +35,7 @@ def _make_replay_entry(*, session_id: str, content: str, response_text: str):
         200,
         {"content-type": "application/json"},
         complete_message,
+        "anthropic",
     )
 
 
@@ -53,7 +54,8 @@ def _make_side_channel_replay_entry(
     )
 
 
-async def test_replay_routes_turns_to_per_session_domain_stores():
+async def test_all_sessions_route_to_default_tab():
+    """All Anthropic sessions share the default tab's single DomainStore."""
     session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     session_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     replay_data = [
@@ -71,30 +73,33 @@ async def test_replay_routes_turns_to_per_session_domain_stores():
 
     async with run_app(replay_data=replay_data) as (pilot, app):
         _ = pilot
-        ds_a = app._get_domain_store(session_a)
-        ds_b = app._get_domain_store(session_b)
+        default_ds = app._get_domain_store(app._default_session_key)
 
-        assert ds_a.completed_count == 2
-        assert ds_b.completed_count == 2
+        # Both sessions' turns land in the single default DomainStore.
+        # Each replay entry produces a request turn + response turn = 2 per session.
+        assert default_ds.completed_count >= 4
 
-        conv_a = app._get_conv(session_key=session_a)
-        conv_b = app._get_conv(session_key=session_b)
-        assert conv_a is not None
-        assert conv_b is not None
+        # Only one Claude tab exists (the default), not per-session tabs.
+        non_side_channel_tabs = [
+            k for k in app._session_tab_ids
+            if not app._is_side_channel_session_key(k)
+            and not k.startswith("openai:")
+        ]
+        assert len(non_side_channel_tabs) == 1
+        assert non_side_channel_tabs[0] == app._default_session_key
 
-        text_a = "".join(strips_to_text(td.strips) for td in conv_a._turns)
-        text_b = "".join(strips_to_text(td.strips) for td in conv_b._turns)
-        assert "session-a-request" in text_a
-        assert "session-a-response" in text_a
-        assert "session-b-request" not in text_a
-        assert "session-b-response" not in text_a
-        assert "session-b-request" in text_b
-        assert "session-b-response" in text_b
-        assert "session-a-request" not in text_b
-        assert "session-a-response" not in text_b
+        # Both sessions' content visible in the single ConversationView.
+        conv = app._get_conv(session_key=app._default_session_key)
+        assert conv is not None
+        text = "".join(strips_to_text(td.strips) for td in conv._turns)
+        assert "session-a-request" in text
+        assert "session-a-response" in text
+        assert "session-b-request" in text
+        assert "session-b-response" in text
 
 
-async def test_tab_activation_updates_active_domain_store_alias():
+async def test_single_claude_tab_active_domain_store():
+    """Active domain store is always the default when on the Claude tab."""
     session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     session_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     replay_data = [
@@ -111,18 +116,15 @@ async def test_tab_activation_updates_active_domain_store_alias():
     ]
 
     async with run_app(replay_data=replay_data) as (pilot, app):
-        tabs = app._get_conv_tabs()
-        assert tabs is not None
-        tab_b = app._session_tab_ids[session_b]
-        tabs.active = tab_b
-        await pilot.pause()
-
+        _ = pilot
         active_store = app._get_active_domain_store()
-        assert active_store is app._get_domain_store(session_b)
-        assert app._domain_store is active_store
+        default_store = app._get_domain_store(app._default_session_key)
+        assert active_store is default_store
+        assert app._domain_store is default_store
 
 
-async def test_workbench_results_capture_active_session_context():
+async def test_session_id_tracks_most_recent_session():
+    """app._session_id tracks the most recent session from API metadata."""
     session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     session_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     replay_data = [
@@ -139,25 +141,39 @@ async def test_workbench_results_capture_active_session_context():
     ]
 
     async with run_app(replay_data=replay_data) as (pilot, app):
-        tabs = app._get_conv_tabs()
-        assert tabs is not None
-        tabs.active = app._session_tab_ids[session_b]
-        await pilot.pause()
+        _ = pilot
+        # session_b was processed last, so _session_id should reflect it.
+        assert app._session_id == session_b
+        # _active_resume_session_id falls through to _session_id on the default tab.
+        assert app._active_resume_session_id() == session_b
 
-        app._set_side_channel_result(
-            text="workbench context probe",
-            source="preview",
-            elapsed_ms=0,
-            loading=False,
-            active_action="qa_estimate",
-            focus_results=False,
-        )
 
-        workbench_results = app._get_workbench_results_view()
-        assert workbench_results is not None
-        state = workbench_results.get_state()
-        assert state["context_session_id"] == session_b
-        assert "context=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" in str(state["meta"])
+async def test_session_boundary_tracking():
+    """DomainStore tracks session boundaries for navigation."""
+    session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    session_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    replay_data = [
+        _make_replay_entry(
+            session_id=session_a,
+            content="session-a-request",
+            response_text="session-a-response",
+        ),
+        _make_replay_entry(
+            session_id=session_b,
+            content="session-b-request",
+            response_text="session-b-response",
+        ),
+    ]
+
+    async with run_app(replay_data=replay_data) as (pilot, app):
+        _ = pilot
+        default_ds = app._get_domain_store(app._default_session_key)
+        boundaries = default_ds.get_session_boundaries()
+        # Should have at least one boundary (when session changes from a to b).
+        # Session a is the first session seen, so a NewSessionBlock fires for it too.
+        session_ids = [sid for sid, _idx in boundaries]
+        assert session_a in session_ids
+        assert session_b in session_ids
 
 
 async def test_side_channel_replay_routes_to_separate_lane_without_primary_contamination():

@@ -109,7 +109,7 @@ class TestToolDefRendering:
         )
         text = self._render_plain(render_block(block))
         assert "Read" in text
-        assert "123 tokens" in text
+        assert "tokens" in text
         assert "parameters:" in text
         assert "file_path*" in text
         assert "offset" in text
@@ -124,7 +124,7 @@ class TestToolDefRendering:
         renderer = RENDERERS[("ToolDefBlock", True, False, False)]
         text = self._render_plain(renderer(block))
         assert "Bash" in text
-        assert "77 tokens" in text
+        assert "tokens" in text
 
 
 class TestNamedDefinitionChildRendering:

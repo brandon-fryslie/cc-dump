@@ -36,13 +36,23 @@ class PipelineEventKind(Enum):
 
 
 class StopReason(Enum):
-    """Stop reason from message_delta."""
+    """Stop reason from message_delta.
+
+    Includes both Anthropic and OpenAI values. OpenAI values are normalized
+    at the translation boundary (OpenAI SSE parser).
+    """
 
     NONE = ""
+    # Anthropic stop reasons
     END_TURN = "end_turn"
     MAX_TOKENS = "max_tokens"
     STOP_SEQUENCE = "stop_sequence"
     TOOL_USE = "tool_use"
+    # OpenAI stop reasons (normalized from finish_reason)
+    STOP = "stop"  # OpenAI equivalent of end_turn
+    LENGTH = "length"  # OpenAI equivalent of max_tokens
+    TOOL_CALLS = "tool_calls"  # OpenAI equivalent of tool_use
+    CONTENT_FILTER = "content_filter"  # OpenAI-only
 
 
 class MessageRole(Enum):
@@ -161,6 +171,7 @@ class PipelineEvent:
     request_id: str = field(default="", kw_only=True)
     seq: int = field(default=0, kw_only=True)
     recv_ns: int = field(default=0, kw_only=True)
+    provider: str = field(default="anthropic", kw_only=True)
 
 
 @dataclass(frozen=True)

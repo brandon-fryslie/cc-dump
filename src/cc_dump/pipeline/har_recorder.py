@@ -5,12 +5,11 @@ pairs in HAR 1.2 format for replay and analysis in standard tools.
 """
 
 import json
+import logging
 import os
-import sys
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import traceback
 
 from cc_dump.pipeline.event_types import (
     PipelineEvent,
@@ -21,6 +20,8 @@ from cc_dump.pipeline.event_types import (
     ResponseHeadersEvent,
 )
 from cc_dump.ai.side_channel_marker import extract_marker
+
+logger = logging.getLogger(__name__)
 
 
 def build_har_request(method: str, url: str, headers: dict, body: dict) -> dict:
@@ -110,6 +111,7 @@ class _PendingExchange:
     response_headers: dict | None = None
     complete_message: dict | None = None
     request_start_time: datetime | None = None
+    provider: str = "anthropic"
 
 
 
@@ -159,11 +161,11 @@ class HARRecordingSubscriber:
         # // [LAW:single-enforcer] Pending request cap is enforced only here.
         while len(self._pending_by_request) > self._max_pending_requests:
             evicted_request_id, _ = self._pending_by_request.popitem(last=False)
-            sys.stderr.write(
-                f"[har] WARN: evicted incomplete pending request {evicted_request_id} "
-                f"(max_pending={self._max_pending_requests})\n"
+            logger.warning(
+                "evicted incomplete pending request %s (max_pending=%s)",
+                evicted_request_id,
+                self._max_pending_requests,
             )
-            sys.stderr.flush()
 
     def _open_file(self) -> None:
         """Create the HAR file and write the header. Called on first entry only."""
@@ -199,11 +201,8 @@ class HARRecordingSubscriber:
             kind_name = event.kind.name
             self._events_received[kind_name] = self._events_received.get(kind_name, 0) + 1
             self._handle(event)
-        except Exception as e:
-
-            sys.stderr.write(f"[har] error: {e}\n")
-            traceback.print_exc(file=sys.stderr)
-            sys.stderr.flush()
+        except Exception:
+            logger.exception("HAR recorder error")
 
     def _handle(self, event: PipelineEvent) -> None:
         """Internal event handler - may raise exceptions."""
@@ -216,6 +215,9 @@ class HARRecordingSubscriber:
             self._prune_pending_requests()
         else:
             self._pending_by_request.move_to_end(request_key)
+
+        # // [LAW:one-source-of-truth] Provider stamped from first event seen for this request.
+        pending.provider = event.provider
 
         if kind == PipelineEventKind.REQUEST_HEADERS:
             assert isinstance(event, RequestHeadersEvent)
@@ -260,10 +262,17 @@ class HARRecordingSubscriber:
                 else 0.0
             )
 
+            # [LAW:dataflow-not-control-flow] URL derived from provider, not branching.
+            _PROVIDER_URLS = {
+                "anthropic": "https://api.anthropic.com/v1/messages",
+                "openai": "https://api.openai.com/v1/chat/completions",
+            }
+            har_url = _PROVIDER_URLS.get(pending.provider, f"https://unknown/{pending.provider}")
+
             # Build HAR request/response
             har_request = build_har_request(
                 method="POST",
-                url="https://api.anthropic.com/v1/messages",
+                url=har_url,
                 headers=pending.request_headers or {},
                 body=pending.request_body,
             )
@@ -290,21 +299,23 @@ class HARRecordingSubscriber:
                     "receive": 0,
                 },
             }
+            # HAR allows custom fields using underscore prefix.
+            cc_dump_meta: dict[str, object] = {"provider": pending.provider}
             marker = extract_marker(pending.request_body or {})
             if marker is not None:
                 entry["comment"] = (
                     f"cc-dump side-channel run={marker.run_id} purpose={marker.purpose} "
                     f"prompt_version={marker.prompt_version} policy_version={marker.policy_version}"
                 )
-                # HAR allows custom fields using underscore prefix.
-                entry["_cc_dump"] = {
+                cc_dump_meta.update({
                     "category": "side_channel",
                     "run_id": marker.run_id,
                     "purpose": marker.purpose,
                     "prompt_version": marker.prompt_version,
                     "policy_version": marker.policy_version,
                     "source_session_id": marker.source_session_id,
-                }
+                })
+            entry["_cc_dump"] = cc_dump_meta
 
             # Serialize entry (compact JSON, no indent)
             entry_json = json.dumps(entry, ensure_ascii=False)
@@ -330,8 +341,7 @@ class HARRecordingSubscriber:
 
         except Exception as e:
             # Skip bad entries without corrupting file
-            sys.stderr.write(f"[har] error serializing entry: {e}\n")
-            sys.stderr.flush()
+            logger.exception("error serializing HAR entry: %s", e)
 
         # Clear state for this request.
         self._pending_by_request.pop(request_key, None)
@@ -346,38 +356,30 @@ class HARRecordingSubscriber:
             # File was never opened — no entries, no file. Expected path for
             # sessions with no API traffic. Log quietly for diagnostics.
             if self._events_received:
-                sys.stderr.write(
-                    f"[har] WARN: {os.path.basename(self.path)} received events "
-                    f"but wrote 0 HAR entries. Events: {self._events_received}. "
-                    f"No file created at {self.path}\n"
+                logger.warning(
+                    "%s received events but wrote 0 HAR entries. events=%s no file at %s",
+                    os.path.basename(self.path),
+                    self._events_received,
+                    self.path,
                 )
-                sys.stderr.flush()
             return
 
         try:
             self._file.close()
         except Exception as e:
-            sys.stderr.write(f"[har] error closing file: {e}\n")
-            sys.stderr.flush()
+            logger.exception("error closing HAR file: %s", e)
 
         # Belt-and-suspenders: if file was opened but has 0 entries, something
         # is broken — the lazy init should prevent this. Delete and scream.
         if self._entry_count == 0:
-            sys.stderr.write(
-                f"\n{'='*72}\n"
-                f"[har] FATAL: empty HAR file detected — deleting garbage\n"
-                f"  path:    {self.path}\n"
-                f"  entries: {self._entry_count}\n"
-                f"  events:  {self._events_received}\n"
-                f"  This should never happen with lazy file init.\n"
-                f"  If you see this, the bug is in _commit_entry or _open_file.\n"
-                f"{'='*72}\n\n"
+            logger.error(
+                "FATAL empty HAR file detected; deleting garbage path=%s entries=%s events=%s",
+                self.path,
+                self._entry_count,
+                self._events_received,
             )
-            sys.stderr.flush()
             try:
                 os.unlink(self.path)
-                sys.stderr.write(f"[har] deleted empty file: {self.path}\n")
-                sys.stderr.flush()
+                logger.warning("deleted empty HAR file: %s", self.path)
             except OSError as e:
-                sys.stderr.write(f"[har] failed to delete {self.path}: {e}\n")
-                sys.stderr.flush()
+                logger.exception("failed to delete empty HAR file %s: %s", self.path, e)

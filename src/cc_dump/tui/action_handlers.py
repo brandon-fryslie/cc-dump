@@ -488,6 +488,60 @@ def half_page_up(app) -> None:
     _conv_action(app, _half)
 
 
+# ─── Session navigation ──────────────────────────────────────────────────
+
+
+def _current_turn_index(conv) -> int:
+    """Return the turn index at the current scroll position."""
+    scroll_y = int(conv.scroll_offset.y)
+    turn = conv._find_turn_for_line(scroll_y)
+    if turn is None:
+        return 0
+    return turn.turn_index
+
+
+def next_session(app) -> None:
+    """Jump to the next session boundary in the active tab."""
+    ds = _active_domain_store(app)
+    if ds is None:
+        return
+    boundaries = ds.get_session_boundaries()
+    if not boundaries:
+        return
+
+    def _jump(conv):
+        current = _current_turn_index(conv)
+        for _sid, turn_idx in boundaries:
+            if turn_idx > current:
+                conv.scroll_to_block(turn_idx, 0)
+                return
+        # Wrap to first boundary
+        conv.scroll_to_block(boundaries[0][1], 0)
+
+    _conv_action(app, _jump)
+
+
+def prev_session(app) -> None:
+    """Jump to the previous session boundary in the active tab."""
+    ds = _active_domain_store(app)
+    if ds is None:
+        return
+    boundaries = ds.get_session_boundaries()
+    if not boundaries:
+        return
+
+    def _jump(conv):
+        current = _current_turn_index(conv)
+        for _sid, turn_idx in reversed(boundaries):
+            if turn_idx < current:
+                conv.scroll_to_block(turn_idx, 0)
+                return
+        # Wrap to last boundary
+        conv.scroll_to_block(boundaries[-1][1], 0)
+
+    _conv_action(app, _jump)
+
+
 # ─── Panel refresh ─────────────────────────────────────────────────────
 
 

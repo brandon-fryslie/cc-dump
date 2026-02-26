@@ -8,6 +8,7 @@
 """
 
 import importlib
+import logging
 import os
 import queue
 import sys
@@ -31,6 +32,7 @@ from rich.style import Style
 # Module-level imports for hot-reload (never use `from` for these)
 import cc_dump.core.formatting
 import cc_dump.io.settings
+import cc_dump.io.logging_setup
 import cc_dump.tui.rendering
 import cc_dump.tui.widget_factory
 import cc_dump.tui.event_handlers
@@ -72,6 +74,8 @@ import cc_dump.app.domain_store
 import snarfx
 from snarfx import transaction
 from snarfx import textual as stx
+
+logger = logging.getLogger(__name__)
 
 
 def _patch_textual_monochrome_style() -> None:
@@ -170,6 +174,8 @@ class CcDumpApp(App):
         view_store=None,
         domain_store=None,
         store_context=None,
+        openai_port: Optional[int] = None,
+        openai_target: Optional[str] = None,
     ):
         super().__init__()
         self._event_queue = event_queue
@@ -181,6 +187,8 @@ class CcDumpApp(App):
         self._host = host
         self._port = port
         self._target = target
+        self._openai_port = openai_port
+        self._openai_target = openai_target
         self._replay_data = replay_data
         self._recording_path = recording_path
         self._replay_file = replay_file
@@ -343,13 +351,19 @@ class CcDumpApp(App):
 
     def _session_tab_title(self, session_key: str) -> str:
         if session_key == self._default_session_key:
-            return "Session"
+            return "Claude"
         if session_key == self._workbench_session_key:
             return "Workbench Session"
         if self._is_side_channel_session_key(session_key):
             parts = session_key.split(":", 2)
             suffix = parts[2] if len(parts) > 2 else session_key
             return "SC " + suffix[:8]
+        # Provider-prefixed session keys: "openai:__default__" → "OpenAI"
+        if session_key.startswith("openai:"):
+            suffix = session_key[7:]
+            if suffix == "__default__":
+                return "OpenAI"
+            return "OAI " + suffix[:8]
         return session_key[:8]
 
     def _ensure_session_surface(self, session_key: str) -> None:
@@ -432,14 +446,51 @@ class CcDumpApp(App):
         self._bind_request_session(request_id, key)
         return key
 
+    def _resolve_event_provider(self, event: cc_dump.pipeline.event_types.PipelineEvent) -> str:
+        """Extract provider from event. Empty provider is a hard error.
+
+        // [LAW:single-enforcer] Provider is stamped at the proxy boundary and
+        // never inferred or defaulted downstream.
+        """
+        if not event.provider:
+            raise ValueError(f"Event {type(event).__name__} has empty provider")
+        return event.provider
+
+    def _provider_tab_key(self, provider: str) -> str:
+        """Map provider to its tab's session key.
+
+        // [LAW:one-source-of-truth] Provider → tab key mapping lives here.
+        """
+        if provider == "anthropic":
+            return self._default_session_key
+        return f"{provider}:__default__"
+
     def _resolve_event_session_key(self, event) -> str:
         """Resolve session key for event routing.
 
         // [LAW:one-source-of-truth] request_id -> session routing is resolved once here.
+        // Provider determines the tab. One tab per provider instance.
+        // Session identity preserved on blocks (block.session_id) and in
+        // formatting state (state["current_session"]), not in tab routing.
         """
+        provider = self._resolve_event_provider(event)
+        provider_key = self._provider_tab_key(provider)
+
+        # Non-anthropic providers: one tab per provider, no sub-session routing.
+        if provider != "anthropic":
+            self._bind_request_session(event.request_id, provider_key)
+            self._ensure_session_surface(provider_key)
+            return provider_key
+
+        # Anthropic: one tab per instance. Side-channel goes to workbench tab.
+        # // [LAW:one-source-of-truth] All non-side-channel Anthropic traffic routes
+        # to default tab. Session boundaries shown via NewSessionBlock separators.
+        # // [LAW:single-enforcer] Binding is set on REQUEST only; subsequent events
+        # for the same request_id reuse the existing binding.
         request_id = str(getattr(event, "request_id", "") or "")
-        key = self._default_session_key
+        existing_key = self._request_session_keys.get(request_id) if request_id else None
         if event.kind == cc_dump.pipeline.event_types.PipelineEventKind.REQUEST:
+            key = self._default_session_key
             body = getattr(event, "body", {})
             marker = (
                 cc_dump.ai.side_channel_marker.extract_marker(body)
@@ -449,13 +500,9 @@ class CcDumpApp(App):
             if marker is not None:
                 # [LAW:one-type-per-behavior] Workbench AI traffic is one inspectable lane.
                 key = self._workbench_session_key
-            else:
-                key = self._normalize_session_key(self._extract_session_id_from_body(body))
             self._bind_request_session(request_id, key)
-            self._ensure_session_surface(key)
-            return key
-        if request_id:
-            key = self._session_key_for_request_id(request_id)
+        else:
+            key = existing_key or self._default_session_key
         self._ensure_session_surface(key)
         return key
 
@@ -636,7 +683,7 @@ class CcDumpApp(App):
             yield widget
 
         with TabbedContent(id=self._conv_tabs_id):
-            with TabPane("Session", id=self._conv_tab_main_id):
+            with TabPane("Claude", id=self._conv_tab_main_id):
                 conv = cc_dump.tui.widget_factory.create_conversation_view(
                     view_store=self._view_store,
                     domain_store=self._domain_store,
@@ -678,7 +725,7 @@ class CcDumpApp(App):
         if tee is not None:
             def _drain(level, source, message):
                 formatted = f"[{source}] {message}" if source != "stderr" else message
-                self.call_from_thread(self._app_log, level, formatted)
+                self.call_from_thread(self._app_log, level, formatted, False)
             tee.connect(_drain)
 
         self._app_log("INFO", "🚀 cc-dump proxy started")
@@ -820,13 +867,16 @@ class CcDumpApp(App):
 
     # ─── Helpers ───────────────────────────────────────────────────────
 
-    def _app_log(self, level: str, message: str):
+    def _app_log(self, level: str, message: str, persist_to_file: bool = True):
         if level == "ERROR":
             self._error_log.append(f"[{level}] {message}")
         if self.is_running:
             logs = self._get_logs()
             if logs is not None:
                 logs.app_log(level, message)
+        if persist_to_file:
+            level_num = getattr(logging, level, logging.INFO)
+            logger.log(level_num, message, extra={"cc_dump_in_app": True})
 
     def _sync_tmux_to_store(self):
         """Mirror tmux controller state to view store for reactive footer updates."""
@@ -843,7 +893,7 @@ class CcDumpApp(App):
         proxy_url = "http://{}:{}".format(self._host, self._port)
         proxy_mode = "forward" if not self._target else "reverse"
 
-        return {
+        info = {
             "proxy_url": proxy_url,
             "proxy_mode": proxy_mode,
             "target": self._target,
@@ -856,6 +906,12 @@ class CcDumpApp(App):
             "textual_version": textual.__version__,
             "pid": os.getpid(),
         }
+        runtime_log = cc_dump.io.logging_setup.get_runtime()
+        info["log_file"] = runtime_log.file_path if runtime_log is not None else None
+        if self._openai_port is not None:
+            info["openai_proxy_url"] = "http://{}:{}".format(self._host, self._openai_port)
+            info["openai_target"] = self._openai_target
+        return info
 
     def _log_memory_snapshot(self, phase: str) -> None:
         """Emit a structured memory snapshot to the logs panel when enabled."""
@@ -999,28 +1055,34 @@ class CcDumpApp(App):
 
         self._app_log("INFO", f"Processing {len(self._replay_data)} request/response pairs")
 
-        for (
-            req_headers,
-            req_body,
-            resp_status,
-            resp_headers,
-            complete_message,
-        ) in self._replay_data:
-            try:
-                # // [LAW:one-source-of-truth] Replay uses the same event pipeline as live.
-                events = cc_dump.pipeline.har_replayer.convert_to_events(
-                    req_headers, req_body, resp_status, resp_headers, complete_message
-                )
-                for event in events:
-                    self._handle_event(event)
-            except Exception as e:
-                self._app_log("ERROR", f"Error processing replay pair: {e}")
+        try:
+            for (
+                req_headers,
+                req_body,
+                resp_status,
+                resp_headers,
+                complete_message,
+                provider,
+            ) in self._replay_data:
+                try:
+                    # // [LAW:one-source-of-truth] Replay uses the same event pipeline as live.
+                    events = cc_dump.pipeline.har_replayer.convert_to_events(
+                        req_headers, req_body, resp_status, resp_headers, complete_message,
+                        provider=provider,
+                    )
+                    for event in events:
+                        self._handle_event(event)
+                except Exception as e:
+                    self._app_log("ERROR", f"Error processing replay pair: {e}")
 
-        self._app_log(
-            "INFO",
-            f"Replay complete: {self._state['request_counter']} requests processed",
-        )
-        self._replay_complete.set()
+            self._app_log(
+                "INFO",
+                f"Replay complete: {self._state['request_counter']} requests processed",
+            )
+        except Exception as e:
+            self._app_log("ERROR", f"Fatal error in replay processing: {e}")
+        finally:
+            self._replay_complete.set()
 
     def _drain_events(self):
         """Bridge thread: queue.get → post_message into Textual's message pump.
@@ -1156,6 +1218,13 @@ class CcDumpApp(App):
 
     def action_prev_theme(self):
         _theme.cycle_theme(self, -1)
+
+    # Session navigation
+    def action_next_session(self):
+        _actions.next_session(self)
+
+    def action_prev_session(self):
+        _actions.prev_session(self)
 
     # Dump/export
     def action_dump_conversation(self):
