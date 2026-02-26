@@ -493,6 +493,8 @@ class CcDumpApp(App):
             if marker is not None:
                 # [LAW:one-type-per-behavior] Workbench AI traffic is one inspectable lane.
                 key = self._workbench_session_key
+        elif request_id:
+            key = self._request_session_keys.get(request_id, key)
         self._bind_request_session(request_id, key)
         self._ensure_session_surface(key)
         return key
