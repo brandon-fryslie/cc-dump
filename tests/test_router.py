@@ -1,5 +1,6 @@
 """Unit tests for router.py - event distribution."""
 
+import logging
 import queue
 import threading
 import time
@@ -279,8 +280,8 @@ def test_router_empty_subscribers(router, source_queue):
     router.stop()
 
 
-def test_router_subscriber_exception_logged(router, source_queue, capsys):
-    """Subscriber exceptions are logged to stderr."""
+def test_router_subscriber_exception_logged(router, source_queue, caplog):
+    """Subscriber exceptions are logged."""
     received_flag = []
 
     def failing_subscriber(event):
@@ -292,16 +293,15 @@ def test_router_subscriber_exception_logged(router, source_queue, capsys):
 
     _wait_for(lambda: router._thread and router._thread.is_alive())
 
-    source_queue.put(RequestBodyEvent(body={"test": "data"}))
+    with caplog.at_level(logging.ERROR, logger="cc_dump.pipeline.router"):
+        source_queue.put(RequestBodyEvent(body={"test": "data"}))
 
     # Wait for the subscriber to be called
     _wait_for(lambda: len(received_flag) >= 1)
-    # Small extra wait for stderr to be flushed
+    # Small extra wait for logging to flush
     time.sleep(0.05)
 
-    # Check that error was written to stderr
-    captured = capsys.readouterr()
-    assert "subscriber error" in captured.err or "Test error" in captured.err
+    assert "subscriber error" in caplog.text or "Test error" in caplog.text
 
 
 # ─── Concurrency Tests ────────────────────────────────────────────────────────

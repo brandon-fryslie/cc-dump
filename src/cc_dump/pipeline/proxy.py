@@ -2,8 +2,8 @@
 
 import http.server
 import json
+import logging
 import ssl
-import sys
 import time
 import uuid
 import urllib.error
@@ -39,6 +39,7 @@ _EXCLUDED_HEADERS = frozenset(
         "transfer-encoding",
     }
 )
+logger = logging.getLogger(__name__)
 
 
 def _safe_headers(headers):
@@ -367,8 +368,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                     provider=self.provider,
                 ))
             except json.JSONDecodeError as e:
-                sys.stderr.write(f"[proxy] malformed request JSON: {e}\n")
-                sys.stderr.flush()
+                logger.warning("malformed request JSON: %s", e)
 
         # Pipeline processing — transforms modify body/url, interceptors short-circuit
         if body is not None and self.request_pipeline is not None:

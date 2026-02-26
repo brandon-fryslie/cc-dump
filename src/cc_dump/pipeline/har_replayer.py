@@ -5,7 +5,7 @@ typed events the live pipeline produces.
 """
 
 import json
-import sys
+import logging
 import time
 import uuid
 
@@ -16,6 +16,8 @@ from cc_dump.pipeline.event_types import (
     ResponseHeadersEvent,
     ResponseCompleteEvent,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def load_har(path: str) -> list[tuple[dict, dict, int, dict, dict, str]]:
@@ -134,8 +136,7 @@ def load_har(path: str) -> list[tuple[dict, dict, int, dict, dict, str]]:
             )
 
         except (KeyError, json.JSONDecodeError, ValueError) as e:
-            sys.stderr.write(f"[har_replayer] Warning: skipping entry {i}: {e}\n")
-            sys.stderr.flush()
+            logger.warning("skipping HAR entry %s: %s", i, e)
             continue
 
     if not pairs:

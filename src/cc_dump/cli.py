@@ -2,6 +2,7 @@
 
 import argparse
 import http.server
+import logging
 import os
 import queue
 import signal
@@ -32,7 +33,10 @@ import cc_dump.app.view_store
 import cc_dump.app.hot_reload
 import cc_dump.app.domain_store
 import cc_dump.tui.view_store_bridge
+import cc_dump.io.logging_setup
 from cc_dump.tui.app import CcDumpApp
+
+logger = logging.getLogger(__name__)
 
 
 def main():
@@ -131,6 +135,13 @@ def main():
 
     # Install stderr tee before anything else writes to stderr
     cc_dump.io.stderr_tee.install()
+    # [LAW:single-enforcer] Runtime logger configuration is centralized in io.logging_setup.
+    log_runtime = cc_dump.io.logging_setup.configure(session_name=args.session)
+    logger.info(
+        "logging configured level=%s file=%s",
+        log_runtime.level_name,
+        log_runtime.file_path,
+    )
 
     # Initialize color palette before anything else imports it
     cc_dump.core.palette.init_palette(args.seed_hue)
@@ -385,18 +396,16 @@ def main():
     finally:
         # Dump buffered errors to stderr (TUI is gone, terminal is restored)
         if app._error_log:
-            print("\n[cc-dump] Errors during session:", file=sys.stderr)
+            logger.error("[cc-dump] Errors during session:")
             for line in app._error_log:
-                print(f"  {line}", file=sys.stderr)
-            sys.stderr.flush()
+                logger.error("  %s", line)
 
         # Clean up tmux state (unzoom)
         if tmux_ctrl:
             tmux_ctrl.cleanup()
         # Graceful shutdown with timeout for in-flight requests
         if server:
-            print("\n🛑 Shutting down gracefully (press Ctrl+C again to force quit)...", file=sys.stderr)
-            sys.stderr.flush()
+            logger.info("Shutting down gracefully (press Ctrl+C again to force quit)...")
 
             # Try graceful shutdown with 3 second timeout
             shutdown_thread = threading.Thread(target=server.shutdown, daemon=True)
@@ -408,10 +417,10 @@ def main():
 
             if shutdown_thread.is_alive():
                 # Timeout or interrupted - force close
-                print("   ⏱️  Timeout - forcing shutdown", file=sys.stderr)
+                logger.warning("Timeout during shutdown - forcing close")
             else:
                 # Graceful shutdown succeeded
-                print("   ✓ Server stopped", file=sys.stderr)
+                logger.info("Server stopped")
 
             server.server_close()
 
@@ -440,9 +449,9 @@ def main():
             try:
                 ui_state = app.export_ui_state()
                 sidecar_path = cc_dump.io.session_sidecar.save_ui_state(sidecar_target, ui_state)
-                print(f"   UI state saved: {sidecar_path}", file=sys.stderr)
+                logger.info("UI state saved: %s", sidecar_path)
             except Exception as e:
-                print(f"   UI state save failed: {e}", file=sys.stderr)
+                logger.exception("UI state save failed: %s", e)
 
         # Print restart command — unstoppable (mask SIGINT so Ctrl+C can't suppress it)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -454,6 +463,5 @@ def main():
         cmd = f"{sys.argv[0]} --port {actual_port}"
         if replay_path:
             cmd += f" --resume {replay_path}"
-        print(f"\n   To resume:\n   {cmd}", file=sys.stderr)
-        sys.stderr.flush()
+        logger.info("To resume: %s", cmd)
         signal.signal(signal.SIGINT, signal.SIG_DFL)

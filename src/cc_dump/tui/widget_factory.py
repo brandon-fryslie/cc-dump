@@ -7,6 +7,7 @@ instances from the updated class definitions and swap them in.
 import datetime
 import hashlib
 import json
+import logging
 import os
 import sys
 import traceback
@@ -33,6 +34,9 @@ import cc_dump.tui.panel_renderers
 import cc_dump.tui.error_indicator
 import cc_dump.tui.view_overrides
 import cc_dump.app.domain_store
+from cc_dump.io.perf_logging import monitor_slow_path
+
+logger = logging.getLogger(__name__)
 
 
 # ─── Follow mode state machine ──────────────────────────────────────────────
@@ -443,8 +447,7 @@ class ConversationView(ScrollView):
             )
             return strip
         except Exception as exc:
-            sys.stderr.write("[render] " + traceback.format_exc())
-            sys.stderr.flush()
+            logger.exception("render_line failed")
             # Show in error indicator overlay (deduplicate by exception type+message)
             err_key = f"render:{type(exc).__name__}"
             if not any(item.id == err_key for item in self._indicator.items):
@@ -633,37 +636,55 @@ class ConversationView(ScrollView):
         self._background_rerender_scheduled = False
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
-
+        pending_before = sum(
+            1 for td in self._turns
+            if (not td.is_streaming and td._pending_filter_snapshot is not None)
+        )
         first_changed: int | None = None
         processed = 0
-        for idx, td in enumerate(self._turns):
-            if td.is_streaming or td._pending_filter_snapshot is None:
-                continue
-            if td.re_render(
-                self._last_filters,
-                console,
-                width,
-                block_cache=self._block_strip_cache,
-                search_ctx=self._last_search_ctx,
-                overrides=self._view_overrides,
-            ):
-                if first_changed is None:
-                    first_changed = idx
-            processed += 1
-            if processed >= self._background_rerender_chunk_size:
-                break
+        pending_after = pending_before
 
-        if first_changed is not None:
-            self._recalculate_offsets_from(first_changed)
-            if not self._is_following:
-                self._resolve_anchor()
-            self.refresh()
-
-        if any(
-            (not td.is_streaming and td._pending_filter_snapshot is not None)
-            for td in self._turns
+        with monitor_slow_path(
+            "conversation.background_rerender_tick",
+            logger=logger,
+            context=lambda: {
+                "turn_count": len(self._turns),
+                "chunk_size": self._background_rerender_chunk_size,
+                "pending_before": pending_before,
+                "pending_after": pending_after,
+                "processed": processed,
+                "first_changed": first_changed,
+            },
         ):
-            self._schedule_background_rerender()
+            for idx, td in enumerate(self._turns):
+                if td.is_streaming or td._pending_filter_snapshot is None:
+                    continue
+                if td.re_render(
+                    self._last_filters,
+                    console,
+                    width,
+                    block_cache=self._block_strip_cache,
+                    search_ctx=self._last_search_ctx,
+                    overrides=self._view_overrides,
+                ):
+                    if first_changed is None:
+                        first_changed = idx
+                processed += 1
+                if processed >= self._background_rerender_chunk_size:
+                    break
+
+            if first_changed is not None:
+                self._recalculate_offsets_from(first_changed)
+                if not self._is_following:
+                    self._resolve_anchor()
+                self.refresh()
+
+            pending_after = sum(
+                1 for td in self._turns
+                if (not td.is_streaming and td._pending_filter_snapshot is not None)
+            )
+            if pending_after > 0:
+                self._schedule_background_rerender()
 
     # ─── Unified render invalidation ─────────────────────────────────────────
 
@@ -764,27 +785,37 @@ class ConversationView(ScrollView):
         Widest line is always recomputed from all turns (O(n) with cached _widest_strip).
         """
         turns = self._turns
-        if start_idx > 0 and start_idx < len(turns):
-            prev = turns[start_idx - 1]
-            offset = prev.line_offset + prev.line_count
-        else:
-            offset = 0
-            start_idx = 0
+        start_idx_input = start_idx
+        with monitor_slow_path(
+            "conversation.recalculate_offsets_from",
+            logger=logger,
+            context=lambda: {
+                "start_idx_input": start_idx_input,
+                "start_idx_effective": start_idx,
+                "turn_count": len(turns),
+            },
+        ):
+            if start_idx > 0 and start_idx < len(turns):
+                prev = turns[start_idx - 1]
+                offset = prev.line_offset + prev.line_count
+            else:
+                offset = 0
+                start_idx = 0
 
-        for i in range(start_idx, len(turns)):
-            turns[i].line_offset = offset
-            offset += turns[i].line_count
+            for i in range(start_idx, len(turns)):
+                turns[i].line_offset = offset
+                offset += turns[i].line_count
 
-        # Widest: O(n) integer comparisons with cached _widest_strip
-        widest = 0
-        for turn in turns:
-            if turn._widest_strip > widest:
-                widest = turn._widest_strip
+            # Widest: O(n) integer comparisons with cached _widest_strip
+            widest = 0
+            for turn in turns:
+                if turn._widest_strip > widest:
+                    widest = turn._widest_strip
 
-        self._total_lines = offset
-        self._widest_line = max(widest, self._last_width)
-        self.virtual_size = Size(self._widest_line, self._total_lines)
-        self._invalidate_cache_for_turns(start_idx, len(turns))
+            self._total_lines = offset
+            self._widest_line = max(widest, self._last_width)
+            self.virtual_size = Size(self._widest_line, self._total_lines)
+            self._invalidate_cache_for_turns(start_idx, len(turns))
 
     def _on_turn_added(self, blocks: list, index: int) -> None:
         """Domain store callback: a completed turn was added."""
@@ -1317,38 +1348,58 @@ class ConversationView(ScrollView):
 
         first_changed = None
         has_deferred = False
-        for idx, td in enumerate(self._turns):
-            # Skip streaming turns during filter changes
-            if td.is_streaming:
-                continue
+        deferred_count = 0
+        viewport_count = 0
 
-            if vp_start <= idx < vp_end:
-                # Viewport turn: re-render immediately
-                if td.re_render(
-                    filters,
-                    console,
-                    width,
-                    force=force,
-                    block_cache=self._block_strip_cache,
-                    search_ctx=search_ctx,
-                    overrides=self._view_overrides,
-                ):
-                    if first_changed is None:
-                        first_changed = idx
-            else:
-                # Off-viewport turn: defer re-render, mark pending
-                # Use ALWAYS_VISIBLE default to match filters dict structure
-                snapshot = {
-                    k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
-                }
-                if force or snapshot != td._last_filter_snapshot:
-                    td._pending_filter_snapshot = snapshot
-                    has_deferred = True
+        with monitor_slow_path(
+            "conversation.rerender_affected",
+            logger=logger,
+            context=lambda: {
+                "turn_count": len(self._turns),
+                "vp_start": vp_start,
+                "vp_end": vp_end,
+                "viewport_count": viewport_count,
+                "deferred_count": deferred_count,
+                "force": force,
+                "search_active": search_ctx is not None,
+                "first_changed": first_changed,
+            },
+        ):
+            for idx, td in enumerate(self._turns):
+                # Skip streaming turns during filter changes
+                if td.is_streaming:
+                    continue
 
-        if first_changed is not None:
-            self._recalculate_offsets_from(first_changed)
-        if has_deferred:
-            self._schedule_background_rerender()
+                if vp_start <= idx < vp_end:
+                    viewport_count += 1
+                    # Viewport turn: re-render immediately
+                    if td.re_render(
+                        filters,
+                        console,
+                        width,
+                        force=force,
+                        block_cache=self._block_strip_cache,
+                        search_ctx=search_ctx,
+                        overrides=self._view_overrides,
+                    ):
+                        if first_changed is None:
+                            first_changed = idx
+                else:
+                    # Off-viewport turn: defer re-render, mark pending
+                    # Use ALWAYS_VISIBLE default to match filters dict structure
+                    snapshot = {
+                        k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE)
+                        for k in td.relevant_filter_keys
+                    }
+                    if force or snapshot != td._last_filter_snapshot:
+                        td._pending_filter_snapshot = snapshot
+                        has_deferred = True
+                        deferred_count += 1
+
+            if first_changed is not None:
+                self._recalculate_offsets_from(first_changed)
+            if has_deferred:
+                self._schedule_background_rerender()
 
     def ensure_turn_rendered(self, turn_index: int):
         """Force-render a specific turn, then recalculate offsets.

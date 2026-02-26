@@ -1,6 +1,7 @@
 """Unit tests for har_replayer.py - HAR loading and event reconstruction."""
 
 import json
+import logging
 import pytest
 
 from cc_dump.pipeline.har_replayer import load_har, convert_to_events
@@ -190,7 +191,7 @@ def test_load_har_empty_entries(tmp_path):
         load_har(str(har_path))
 
 
-def test_load_har_malformed_entry_skipped(tmp_path, capsys):
+def test_load_har_malformed_entry_skipped(tmp_path, caplog):
     """Malformed entries are skipped with warning."""
     har_path = tmp_path / "test.har"
     har = {
@@ -228,15 +229,14 @@ def test_load_har_malformed_entry_skipped(tmp_path, capsys):
     with open(har_path, "w") as f:
         json.dump(har, f)
 
-    pairs = load_har(str(har_path))
+    with caplog.at_level(logging.WARNING, logger="cc_dump.pipeline.har_replayer"):
+        pairs = load_har(str(har_path))
 
     # Should have one valid entry
     assert len(pairs) == 1
     assert pairs[0][4]["id"] == "msg_valid"
 
-    # Check stderr for warning
-    captured = capsys.readouterr()
-    assert "skipping entry 1" in captured.err
+    assert "skipping HAR entry 1" in caplog.text
 
 
 def test_load_har_file_not_found():
@@ -255,7 +255,7 @@ def test_load_har_invalid_json(tmp_path):
         load_har(str(har_path))
 
 
-def test_load_har_response_not_complete_message(tmp_path, capsys):
+def test_load_har_response_not_complete_message(tmp_path):
     """Response that's not a complete message is skipped."""
     har_path = tmp_path / "test.har"
     har = {
