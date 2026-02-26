@@ -10,6 +10,9 @@ on:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    env:
+      # // [LAW:single-enforcer] Ensure snarfx resolves from workspace src across all test steps.
+      PYTHONPATH: ${{ github.workspace }}/snarfx/src
     strategy:
       fail-fast: false
       matrix:
@@ -47,6 +50,9 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    env:
+      # // [LAW:single-enforcer] Keep snarfx import resolution identical to test job.
+      PYTHONPATH: ${{ github.workspace }}/snarfx/src
     steps:
     - uses: actions/checkout@v4
 
@@ -69,6 +75,9 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
+    env:
+      # // [LAW:single-enforcer] Same import path contract as other jobs.
+      PYTHONPATH: ${{ github.workspace }}/snarfx/src
     steps:
     - uses: actions/checkout@v4
 
