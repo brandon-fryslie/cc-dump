@@ -25,7 +25,7 @@ from cc_dump.pipeline.event_types import (
     parse_sse_event,
     sse_progress_payload,
 )
-from cc_dump.pipeline.response_assembler import ResponseAssembler
+from cc_dump.pipeline.response_assembler import ResponseAssembler, OpenAIResponseAssembler
 
 # Headers to exclude from emitted events (security + noise reduction)
 _EXCLUDED_HEADERS = frozenset(
@@ -181,17 +181,16 @@ class ClientSink(StreamSink):
 class EventQueueSink(StreamSink):
     """Emits parsed events to the TUI event queue."""
 
-    def __init__(self, queue, request_id: str = "", seq_start: int = 0):
+    def __init__(self, queue, request_id: str = "", seq_start: int = 0, provider: str = "anthropic"):
         self._queue = queue
         self._request_id = request_id
         self._seq = seq_start
+        self._provider = provider
 
     def on_event(self, event_type, event):
-        try:
-            sse = parse_sse_event(event_type, event)
-        except ValueError:
-            return
-        payload = sse_progress_payload(sse)
+        # [LAW:dataflow-not-control-flow] Provider selects extraction strategy.
+        extract = _PROGRESS_EXTRACTORS.get(self._provider, _extract_openai_progress)
+        payload = extract(event_type, event)
         if payload is None:
             return
         self._seq += 1
@@ -199,6 +198,7 @@ class EventQueueSink(StreamSink):
             request_id=self._request_id,
             seq=self._seq,
             recv_ns=time.monotonic_ns(),
+            provider=self._provider,
             **payload,
         ))
 
@@ -208,6 +208,59 @@ class EventQueueSink(StreamSink):
     @property
     def seq(self) -> int:
         return self._seq
+
+
+def _extract_anthropic_progress(event_type: str, event: dict) -> dict[str, object] | None:
+    """Extract progress payload from Anthropic SSE event."""
+    try:
+        sse = parse_sse_event(event_type, event)
+    except ValueError:
+        return None
+    return sse_progress_payload(sse)
+
+
+def _extract_openai_progress(_event_type: str, event: dict) -> dict[str, object] | None:
+    """Extract progress payload from OpenAI SSE event (stub).
+
+    OpenAI SSE format: {"id":"...","choices":[{"index":0,"delta":{"content":"..."}}]}
+    """
+    choices = event.get("choices")
+    if not isinstance(choices, list) or not choices:
+        # First chunk often has model info
+        model = event.get("model")
+        if isinstance(model, str) and model:
+            return {"model": model}
+        return None
+
+    choice = choices[0]
+    if not isinstance(choice, dict):
+        return None
+
+    # Text delta
+    delta = choice.get("delta", {})
+    if isinstance(delta, dict):
+        content = delta.get("content")
+        if isinstance(content, str) and content:
+            return {"delta_text": content}
+
+    # Finish reason
+    finish_reason = choice.get("finish_reason")
+    if isinstance(finish_reason, str) and finish_reason:
+        return {"stop_reason": finish_reason}
+
+    # Model from first chunk
+    model = event.get("model")
+    if isinstance(model, str) and model:
+        return {"model": model}
+
+    return None
+
+
+# [LAW:dataflow-not-control-flow] Provider → progress extraction strategy.
+_PROGRESS_EXTRACTORS: dict[str, Callable[[str, dict], dict[str, object] | None]] = {
+    "anthropic": _extract_anthropic_progress,
+    "openai": _extract_openai_progress,
+}
 
 
 def _fan_out_sse(resp, sinks):
@@ -248,12 +301,13 @@ def _fan_out_sse(resp, sinks):
 
 
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
-    target_host = None  # set by cli.py from --target arg before server starts
-    event_queue = None  # set by cli.py before server starts
-    request_pipeline = None  # set by cli.py before server starts
+    target_host = None  # set by cli.py or factory before server starts
+    event_queue = None  # set by cli.py or factory before server starts
+    request_pipeline = None  # set by cli.py or factory before server starts
+    provider = "anthropic"  # set by factory for multi-provider support
 
     def log_message(self, fmt, *args):
-        self.event_queue.put(LogEvent(method=self.command, path=self.path, status=args[0] if args else ""))
+        self.event_queue.put(LogEvent(method=self.command, path=self.path, status=args[0] if args else "", provider=self.provider))
 
     def _proxy(self):
         request_id = uuid.uuid4().hex
@@ -279,6 +333,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                         reason="No target_host configured for reverse proxy mode",
                         request_id=request_id,
                         recv_ns=time.monotonic_ns(),
+                        provider=self.provider,
                     )
                 )
                 self.send_response(500)
@@ -290,7 +345,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             url = self.target_host + self.path
 
         body = None
-        if body_bytes and request_path.startswith("/v1/messages"):
+        if body_bytes and self._expects_json_body(request_path):
             try:
                 body = json.loads(body_bytes)
                 # Emit request headers before request body (TUI sees original request)
@@ -302,12 +357,14 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                     request_id=request_id,
                     seq=0,
                     recv_ns=time.monotonic_ns(),
+                    provider=self.provider,
                 ))
                 self.event_queue.put(RequestBodyEvent(
                     body=body,
                     request_id=request_id,
                     seq=1,
                     recv_ns=time.monotonic_ns(),
+                    provider=self.provider,
                 ))
             except json.JSONDecodeError as e:
                 sys.stderr.write(f"[proxy] malformed request JSON: {e}\n")
@@ -341,6 +398,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 reason=e.reason,
                 request_id=request_id,
                 recv_ns=time.monotonic_ns(),
+                provider=self.provider,
             ))
             self.send_response(e.code)
             for k, v in e.headers.items():
@@ -354,6 +412,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 error=str(e),
                 request_id=request_id,
                 recv_ns=time.monotonic_ns(),
+                provider=self.provider,
             ))
             self.send_response(502)
             self.end_headers()
@@ -378,6 +437,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 request_id=request_id,
                 seq=0,
                 recv_ns=time.monotonic_ns(),
+                provider=self.provider,
             ))
             self._stream_response(resp, request_id)
         else:
@@ -395,12 +455,14 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 request_id=request_id,
                 seq=0,
                 recv_ns=time.monotonic_ns(),
+                provider=self.provider,
             ))
             self.event_queue.put(ResponseCompleteEvent(
                 body=body,
                 request_id=request_id,
                 seq=1,
                 recv_ns=time.monotonic_ns(),
+                provider=self.provider,
             ))
 
     def _send_synthetic_response(self, response_text: str, body: dict, request_id: str) -> None:
@@ -430,6 +492,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 request_id=request_id,
                 seq=seq,
                 recv_ns=time.monotonic_ns(),
+                provider=self.provider,
             )
         )
         # Parse our own SSE bytes through the event queue sink + assembler
@@ -456,6 +519,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                         request_id=request_id,
                         seq=seq,
                         recv_ns=time.monotonic_ns(),
+                        provider=self.provider,
                         **payload,
                     ))
             except ValueError:
@@ -468,17 +532,26 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 request_id=request_id,
                 seq=seq,
                 recv_ns=time.monotonic_ns(),
+                provider=self.provider,
             ))
         seq += 1
         self.event_queue.put(ResponseDoneEvent(
             request_id=request_id,
             seq=seq,
             recv_ns=time.monotonic_ns(),
+            provider=self.provider,
         ))
 
+    # [LAW:dataflow-not-control-flow] Provider → assembler type.
+    _ASSEMBLER_CLASSES: dict[str, type] = {
+        "anthropic": ResponseAssembler,
+        "openai": OpenAIResponseAssembler,
+    }
+
     def _stream_response(self, resp, request_id: str = ""):
-        assembler = ResponseAssembler()
-        event_sink = EventQueueSink(self.event_queue, request_id=request_id)
+        assembler_cls = self._ASSEMBLER_CLASSES.get(self.provider, OpenAIResponseAssembler)
+        assembler = assembler_cls()
+        event_sink = EventQueueSink(self.event_queue, request_id=request_id, provider=self.provider)
         _fan_out_sse(resp, [
             ClientSink(self.wfile),
             event_sink,
@@ -492,13 +565,26 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 request_id=request_id,
                 seq=seq,
                 recv_ns=time.monotonic_ns(),
+                provider=self.provider,
             ))
         seq += 1
         self.event_queue.put(ResponseDoneEvent(
             request_id=request_id,
             seq=seq,
             recv_ns=time.monotonic_ns(),
+            provider=self.provider,
         ))
+
+    # [LAW:dataflow-not-control-flow] Path matching table keyed by provider
+    _API_PATHS: dict[str, tuple[str, ...]] = {
+        "anthropic": ("/v1/messages",),
+        "openai": ("/v1/chat/completions",),
+    }
+
+    def _expects_json_body(self, request_path: str) -> bool:
+        """Check if this request path should be parsed as JSON."""
+        prefixes = self._API_PATHS.get(self.provider, ())
+        return any(request_path.startswith(p) for p in prefixes)
 
     def do_POST(self):
         self._proxy()
@@ -512,3 +598,26 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "*")
         self.end_headers()
+
+
+def make_handler_class(
+    provider: str,
+    target_host: str | None,
+    event_queue,
+    request_pipeline=None,
+) -> type[ProxyHandler]:
+    """Create a configured ProxyHandler subclass for a specific provider.
+
+    // [LAW:one-type-per-behavior] All providers share one handler type,
+    // parameterized by class attributes set here.
+    """
+    return type(
+        f"ProxyHandler_{provider}",
+        (ProxyHandler,),
+        {
+            "provider": provider,
+            "target_host": target_host.rstrip("/") if target_host else None,
+            "event_queue": event_queue,
+            "request_pipeline": request_pipeline,
+        },
+    )

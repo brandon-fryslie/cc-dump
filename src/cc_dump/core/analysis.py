@@ -78,6 +78,7 @@ class TurnBudget:
 _ROLE_TOKEN_FIELDS = {
     "user": "user_text_tokens_est",
     "assistant": "assistant_text_tokens_est",
+    "tool": "tool_result_tokens_est",  # OpenAI role="tool" messages carry tool results
 }
 
 
@@ -166,6 +167,17 @@ def compute_turn_budget(request_body: dict) -> TurnBudget:
                 elif btype == "tool_result":
                     budget.tool_result_tokens_est += _estimate_tool_result_block(block)
 
+        # Handle OpenAI tool_calls on assistant messages
+        # // [LAW:dataflow-not-control-flow] Always run; empty list = 0 tokens.
+        tool_calls = msg.get("tool_calls", [])
+        if isinstance(tool_calls, list):
+            for tc in tool_calls:
+                if isinstance(tc, dict):
+                    func = tc.get("function", {})
+                    if isinstance(func, dict):
+                        args = func.get("arguments", "")
+                        budget.tool_use_tokens_est += estimate_tokens(str(args))
+
     budget.total_est = (
         budget.system_tokens_est
         + budget.tool_defs_tokens_est
@@ -208,58 +220,104 @@ class ToolEconomicsRow:
 def correlate_tools(messages: list) -> list[ToolInvocation]:
     """Match tool_use blocks to tool_result blocks by tool_use_id.
 
+    Handles both Anthropic format (tool_use/tool_result content blocks)
+    and OpenAI format (assistant.tool_calls + role="tool" messages).
+
     Returns a list of ToolInvocation with raw input/result strings.
     """
-    # Collect tool_use blocks by id
+    # Collect tool_use entries by id (both formats use id-based matching)
     uses: dict[str, dict] = {}
     for msg in messages:
-        content = msg.get("content", "")
-        if not isinstance(content, list):
+        if not isinstance(msg, dict):
             continue
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") == "tool_use":
-                tool_id = block.get("id", "")
-                if tool_id:
-                    uses[tool_id] = block
+        # Anthropic: tool_use content blocks
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "tool_use":
+                    tool_id = block.get("id", "")
+                    if tool_id:
+                        uses[tool_id] = block
+        # OpenAI: tool_calls on assistant messages
+        if msg.get("role") == "assistant":
+            tool_calls = msg.get("tool_calls", [])
+            if isinstance(tool_calls, list):
+                for tc in tool_calls:
+                    if not isinstance(tc, dict):
+                        continue
+                    tc_id = tc.get("id", "")
+                    if not tc_id:
+                        continue
+                    func = tc.get("function", {})
+                    if not isinstance(func, dict):
+                        func = {}
+                    args_str = func.get("arguments", "{}")
+                    try:
+                        parsed_input = json.loads(args_str) if args_str else {}
+                    except (json.JSONDecodeError, TypeError):
+                        parsed_input = {}
+                    uses[tc_id] = {
+                        "type": "tool_use",
+                        "id": tc_id,
+                        "name": func.get("name", "?"),
+                        "input": parsed_input,
+                    }
 
-    # Match tool_result blocks
+    # Match results to uses
     invocations = []
     for msg in messages:
-        content = msg.get("content", "")
-        if not isinstance(content, list):
+        if not isinstance(msg, dict):
             continue
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") == "tool_result":
-                tool_use_id = block.get("tool_use_id", "")
-                use_block = uses.get(tool_use_id)
-                if not use_block:
+        # Anthropic: tool_result content blocks
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
                     continue
+                if block.get("type") == "tool_result":
+                    tool_use_id = block.get("tool_use_id", "")
+                    use_block = uses.get(tool_use_id)
+                    if not use_block:
+                        continue
 
-                # Capture raw input/result strings (token counting happens downstream).
-                tool_input = use_block.get("input", {})
-                input_str = json.dumps(tool_input)
+                    tool_input = use_block.get("input", {})
+                    input_str = json.dumps(tool_input)
 
-                content_val = block.get("content", "")
-                if isinstance(content_val, list):
-                    result_str = json.dumps(content_val)
-                elif isinstance(content_val, str):
-                    result_str = content_val
-                else:
-                    result_str = json.dumps(content_val)
+                    content_val = block.get("content", "")
+                    if isinstance(content_val, list):
+                        result_str = json.dumps(content_val)
+                    elif isinstance(content_val, str):
+                        result_str = content_val
+                    else:
+                        result_str = json.dumps(content_val)
 
-                invocations.append(
-                    ToolInvocation(
-                        tool_use_id=tool_use_id,
-                        name=use_block.get("name", "?"),
-                        input_str=input_str,
-                        result_str=result_str,
-                        is_error=block.get("is_error", False),
+                    invocations.append(
+                        ToolInvocation(
+                            tool_use_id=tool_use_id,
+                            name=use_block.get("name", "?"),
+                            input_str=input_str,
+                            result_str=result_str,
+                            is_error=block.get("is_error", False),
+                        )
                     )
+        # OpenAI: role="tool" messages
+        if msg.get("role") == "tool":
+            tool_call_id = msg.get("tool_call_id", "")
+            use_block = uses.get(tool_call_id)
+            if not use_block:
+                continue
+            tool_input = use_block.get("input", {})
+            invocations.append(
+                ToolInvocation(
+                    tool_use_id=tool_call_id,
+                    name=use_block.get("name", "?"),
+                    input_str=json.dumps(tool_input),
+                    result_str=str(msg.get("content", "")),
+                    is_error=False,
                 )
+            )
 
     return invocations
 
@@ -292,6 +350,7 @@ class ModelPricing(NamedTuple):
 HAIKU_BASE_UNIT = 1.0  # $/MTok
 
 MODEL_PRICING: dict[str, ModelPricing] = {
+    # Anthropic models
     "opus": ModelPricing(
         base_input=5.0, cache_write_5m=6.25, cache_hit=0.50, output=25.0
     ),
@@ -301,18 +360,46 @@ MODEL_PRICING: dict[str, ModelPricing] = {
     "haiku": ModelPricing(
         base_input=1.0, cache_write_5m=1.25, cache_hit=0.10, output=5.0
     ),
+    # OpenAI models (cache_write/cache_hit set to base_input — no prompt caching equivalent)
+    "gpt-4o": ModelPricing(
+        base_input=2.50, cache_write_5m=2.50, cache_hit=1.25, output=10.0
+    ),
+    "gpt-4o-mini": ModelPricing(
+        base_input=0.15, cache_write_5m=0.15, cache_hit=0.075, output=0.60
+    ),
+    "o1": ModelPricing(
+        base_input=15.0, cache_write_5m=15.0, cache_hit=7.50, output=60.0
+    ),
+    "o1-mini": ModelPricing(
+        base_input=3.0, cache_write_5m=3.0, cache_hit=1.50, output=12.0
+    ),
+    "o3-mini": ModelPricing(
+        base_input=1.10, cache_write_5m=1.10, cache_hit=0.55, output=4.40
+    ),
 }
 
 FALLBACK_PRICING = MODEL_PRICING["sonnet"]
+
+# Sorted longest-first to avoid prefix collisions (e.g. "gpt-4o-mini" before "gpt-4o").
+_MODEL_PRICING_SORTED: tuple[tuple[str, ModelPricing], ...] = tuple(
+    sorted(MODEL_PRICING.items(), key=lambda kv: len(kv[0]), reverse=True)
+)
 
 
 # ─── Model Context Windows ────────────────────────────────────────────────────
 
 # [LAW:one-source-of-truth] Model context window limits
 MODEL_CONTEXT_WINDOW: dict[str, int] = {
+    # Anthropic
     "opus": 200_000,
     "sonnet": 200_000,
     "haiku": 200_000,
+    # OpenAI
+    "gpt-4o": 128_000,
+    "gpt-4o-mini": 128_000,
+    "o1": 200_000,
+    "o1-mini": 128_000,
+    "o3-mini": 200_000,
 }
 
 FALLBACK_CONTEXT_WINDOW = 200_000
@@ -370,14 +457,14 @@ def compute_session_cost(
 def classify_model(model_str: str) -> tuple[str, ModelPricing]:
     """Map a full model string to (display_key, pricing).
 
-    Matches on substring: "opus", "sonnet", "haiku".
-    Unknown models fall back to sonnet pricing.
+    Matches on substring, longest key first to avoid prefix collisions
+    (e.g. "gpt-4o-mini" before "gpt-4o"). Unknown models fall back to sonnet pricing.
     """
     if not model_str:
         return ("unknown", FALLBACK_PRICING)
 
     lower = model_str.lower()
-    for family, pricing in MODEL_PRICING.items():
+    for family, pricing in _MODEL_PRICING_SORTED:
         if family in lower:
             return (family, pricing)
 
@@ -386,21 +473,38 @@ def classify_model(model_str: str) -> tuple[str, ModelPricing]:
 
 # [LAW:one-source-of-truth] Family display labels used by model formatters.
 _MODEL_FAMILY_DISPLAY = {
+    # Anthropic
     "opus": "Opus",
     "sonnet": "Sonnet",
     "haiku": "Haiku",
+    # OpenAI
+    "gpt-4o": "GPT-4o",
+    "gpt-4o-mini": "GPT-4o mini",
+    "o1": "o1",
+    "o1-mini": "o1-mini",
+    "o3-mini": "o3-mini",
 }
+
+
+# Anthropic families where version extraction makes sense (e.g. "sonnet-4-6" → "4.6").
+_ANTHROPIC_FAMILIES = frozenset({"opus", "sonnet", "haiku"})
 
 
 def _extract_model_version(model: str, family: str) -> str:
     """Extract short version token from model identifier.
 
+    Only applies to Anthropic models where the suffix is a version number.
+    OpenAI model suffixes are dates, not versions.
+
     Examples:
         "claude-sonnet-4-6-20260114" -> "4.6"
         "claude-opus-4-20251101" -> "4"
         "sonnet" -> ""
+        "gpt-4o-2024-08-06" -> ""  (date, not version)
     """
     if not model or not family or family == "unknown":
+        return ""
+    if family not in _ANTHROPIC_FAMILIES:
         return ""
     pattern = rf"{re.escape(family)}-(\d+)(?:-(\d{{1,2}}))?(?:-|$)"
     match = re.search(pattern, model.lower())

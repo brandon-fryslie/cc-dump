@@ -1393,3 +1393,265 @@ def format_response_headers(status_code: int, headers_dict: dict) -> list:
             category=Category.METADATA,
         )
     ]
+
+
+# ─── Provider dispatch ────────────────────────────────────────────────────────
+# // [LAW:dataflow-not-control-flow] Dispatch table keyed by provider string.
+# Anthropic → existing formatters. Other providers → stubs for now.
+
+
+def format_openai_request(body, state, request_headers=None) -> list:
+    """Format an OpenAI API request as a list of FormattedBlock.
+
+    Mirrors format_request() structure using the same block types, but
+    parses OpenAI's message format (system in messages, tool_calls on
+    assistant messages, role="tool" for results).
+
+    // [LAW:one-source-of-truth] OpenAI request formatting happens here only.
+    """
+    state["request_counter"] += 1
+    request_num = state["request_counter"]
+
+    blocks: list[FormattedBlock] = []
+    blocks.append(NewlineBlock())
+    blocks.append(SeparatorBlock(style="heavy"))
+    blocks.append(HeaderBlock(
+        label="REQUEST #{} (OpenAI)".format(request_num),
+        request_num=request_num,
+        timestamp=_get_timestamp(),
+        header_type="request",
+    ))
+    blocks.append(SeparatorBlock(style="heavy"))
+
+    model = body.get("model", "?") if isinstance(body, dict) else "?"
+    max_tokens = body.get("max_tokens", "?") if isinstance(body, dict) else "?"
+    stream = body.get("stream", False) if isinstance(body, dict) else False
+    raw_tools = body.get("tools", []) if isinstance(body, dict) else []
+    tools = raw_tools if isinstance(raw_tools, list) else []
+
+    # MetadataSection: model params + headers + budget
+    metadata_block = MetadataBlock(
+        model=str(model),
+        max_tokens=str(max_tokens),
+        stream=stream,
+        tool_count=len(tools),
+    )
+    header_blocks = format_request_headers(request_headers or {})
+    budget = compute_turn_budget(body if isinstance(body, dict) else {})
+    messages = body.get("messages", []) if isinstance(body, dict) else []
+    messages = messages if isinstance(messages, list) else []
+    breakdown = tool_result_breakdown(messages)
+    budget_block = TurnBudgetBlock(budget=budget, tool_result_by_name=breakdown)
+
+    blocks.append(MetadataSection(
+        children=[metadata_block] + header_blocks + [budget_block],
+        category=Category.METADATA,
+    ))
+
+    # ToolDefsSection — OpenAI tools are {type: "function", function: {name, description, parameters}}
+    tool_def_children: list[FormattedBlock] = []
+    per_tool_tokens = [estimate_tokens(json.dumps(t)) for t in tools]
+    total_tool_tokens = sum(per_tool_tokens)
+    for i, tool in enumerate(tools):
+        func = tool.get("function", tool) if isinstance(tool, dict) else {}
+        if not isinstance(func, dict):
+            func = {}
+        tool_name = func.get("name", "?")
+        tool_desc = func.get("description", "")
+        tool_def_children.append(ToolDefBlock(
+            name=tool_name,
+            description=tool_desc,
+            input_schema=func.get("parameters", {}),
+            token_estimate=per_tool_tokens[i] if i < len(per_tool_tokens) else 0,
+            category=Category.TOOLS,
+        ))
+
+    blocks.append(ToolDefsSection(
+        tool_count=len(tools),
+        total_tokens=total_tool_tokens,
+        children=tool_def_children,
+        category=Category.TOOLS,
+    ))
+    blocks.append(SeparatorBlock(style="thin"))
+
+    # SystemSection — OpenAI system prompt is messages with role="system"
+    system_children: list[FormattedBlock] = []
+    for msg in messages:
+        if isinstance(msg, dict) and msg.get("role") == "system":
+            content = msg.get("content", "")
+            if isinstance(content, str) and content:
+                system_children.append(track_content(content, "system:0", state))
+
+    blocks.append(SystemSection(
+        children=system_children,
+        category=Category.SYSTEM,
+    ))
+    blocks.append(SeparatorBlock(style="thin"))
+
+    # // [LAW:dataflow-not-control-flow] Category from role, unconditionally.
+    _OPENAI_ROLE_CATEGORY = {
+        "user": Category.USER,
+        "assistant": Category.ASSISTANT,
+        "tool": Category.TOOLS,
+        "system": Category.SYSTEM,
+    }
+
+    # Conversation messages — each in a MessageBlock
+    msg_idx = 0
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role", "?")
+        # System messages already handled above
+        if role == "system":
+            continue
+
+        role_cat = _OPENAI_ROLE_CATEGORY.get(role)
+
+        if msg_idx > 0:
+            blocks.append(NewlineBlock())
+
+        msg_children: list[FormattedBlock] = []
+
+        # Text content (always a plain string in OpenAI format)
+        content = msg.get("content", "")
+        if isinstance(content, str) and content:
+            msg_children.append(TextContentBlock(
+                content=content,
+                indent="    ",
+                category=role_cat,
+            ))
+
+        # OpenAI tool_calls on assistant messages
+        tool_calls = msg.get("tool_calls", [])
+        if isinstance(tool_calls, list):
+            for tc in tool_calls:
+                if not isinstance(tc, dict):
+                    continue
+                func = tc.get("function", {})
+                if not isinstance(func, dict):
+                    func = {}
+                tc_name = func.get("name", "?")
+                tc_args_str = func.get("arguments", "{}")
+                try:
+                    tc_input = json.loads(tc_args_str) if tc_args_str else {}
+                except (json.JSONDecodeError, TypeError):
+                    tc_input = {}
+                msg_children.append(ToolUseBlock(
+                    name=tc_name,
+                    tool_use_id=tc.get("id", ""),
+                    tool_input=tc_input,
+                    input_size=max(1, tc_args_str.count("\n") + 1) if isinstance(tc_args_str, str) else 1,
+                    category=Category.TOOLS,
+                ))
+
+        blocks.append(MessageBlock(
+            role=role,
+            msg_index=msg_idx,
+            timestamp=_get_timestamp(),
+            children=msg_children,
+            category=role_cat,
+        ))
+        msg_idx += 1
+
+    blocks.append(NewlineBlock())
+    return blocks
+
+
+def format_openai_complete_response(complete_message) -> list:
+    """Format a complete OpenAI chat completion as FormattedBlocks.
+
+    Mirrors format_complete_response() structure: StreamInfoBlock, MessageBlock
+    container with content children, and StopReasonBlock.
+
+    // [LAW:one-source-of-truth] OpenAI response formatting happens here only.
+    """
+    result: list[FormattedBlock] = []
+
+    model = complete_message.get("model", "?") if isinstance(complete_message, dict) else "?"
+    result.append(StreamInfoBlock(model=model))
+
+    # Extract from choices[0].message (OpenAI format)
+    choices = complete_message.get("choices", []) if isinstance(complete_message, dict) else []
+    choices = choices if isinstance(choices, list) else []
+
+    content_children: list[FormattedBlock] = []
+    finish_reason = ""
+
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        fr = choice.get("finish_reason")
+        if isinstance(fr, str) and fr:
+            finish_reason = fr
+
+        message = choice.get("message", {})
+        if not isinstance(message, dict):
+            continue
+
+        # Text content
+        content = message.get("content")
+        if isinstance(content, str) and content:
+            content_children.append(TextContentBlock(
+                content=content,
+                category=Category.ASSISTANT,
+            ))
+
+        # Tool calls
+        tool_calls = message.get("tool_calls", [])
+        if isinstance(tool_calls, list):
+            for tc in tool_calls:
+                if not isinstance(tc, dict):
+                    continue
+                func = tc.get("function", {})
+                if not isinstance(func, dict):
+                    func = {}
+                tc_args_str = func.get("arguments", "{}")
+                try:
+                    tc_input = json.loads(tc_args_str) if tc_args_str else {}
+                except (json.JSONDecodeError, TypeError):
+                    tc_input = {}
+                content_children.append(ToolUseBlock(
+                    name=func.get("name", "?"),
+                    tool_use_id=tc.get("id", ""),
+                    tool_input=tc_input,
+                    input_size=max(1, tc_args_str.count("\n") + 1) if isinstance(tc_args_str, str) else 1,
+                    category=Category.TOOLS,
+                ))
+
+    # // [LAW:one-source-of-truth] MessageBlock wraps content, matching Anthropic pattern.
+    result.append(MessageBlock(
+        role="assistant",
+        msg_index=0,
+        children=content_children,
+        category=Category.ASSISTANT,
+    ))
+
+    # // [LAW:dataflow-not-control-flow] Always create block, let renderer handle empty
+    result.append(StopReasonBlock(reason=finish_reason))
+
+    return result
+
+
+# [LAW:dataflow-not-control-flow] Provider → formatter dispatch tables.
+_REQUEST_FORMATTERS: dict[str, object] = {
+    "anthropic": format_request,
+    "openai": format_openai_request,
+}
+
+_COMPLETE_RESPONSE_FORMATTERS: dict[str, object] = {
+    "anthropic": format_complete_response,
+    "openai": format_openai_complete_response,
+}
+
+
+def format_request_for_provider(provider: str, body, state, request_headers=None) -> list:
+    """Dispatch request formatting by provider."""
+    formatter = _REQUEST_FORMATTERS.get(provider, format_openai_request)
+    return formatter(body, state, request_headers=request_headers)
+
+
+def format_complete_response_for_provider(provider: str, complete_message) -> list:
+    """Dispatch complete response formatting by provider."""
+    formatter = _COMPLETE_RESPONSE_FORMATTERS.get(provider, format_openai_complete_response)
+    return formatter(complete_message)
