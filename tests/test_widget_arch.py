@@ -1138,6 +1138,50 @@ class TestViewportOnlyRerender:
 
         assert conv._turns.iter_count == 0, "background tick should not scan all turns"
 
+    def test_filter_rerender_avoids_full_turn_scan(self):
+        """Filter rerender should use bounded index ranges, not iterate the entire turn list."""
+        console = Console()
+        filters_initial = {"tools": ALWAYS_VISIBLE}
+        conv = self._make_conv_with_turns(console, 1000, filters_initial)
+
+        class _CountingList(list):
+            def __init__(self, values):
+                super().__init__(values)
+                self.iter_count = 0
+
+            def __iter__(self):
+                for item in super().__iter__():
+                    self.iter_count += 1
+                    yield item
+
+        conv._turns = _CountingList(conv._turns)
+
+        with self._patch_scroll(conv, scroll_y=0, height=10):
+            conv._follow_state = FollowState.OFF
+            conv._turns.iter_count = 0
+            conv.rerender({"tools": HIDDEN})
+
+        assert conv._turns.iter_count == 0, "filter rerender should not iterate full turn list"
+
+    def test_filter_rerender_queue_bounded_to_prefetch_window(self):
+        """Deferred queue should stay within viewport +/- prefetch window."""
+        console = Console()
+        filters_initial = {"tools": ALWAYS_VISIBLE}
+        conv = self._make_conv_with_turns(console, 1000, filters_initial)
+
+        with self._patch_scroll(conv, scroll_y=0, height=10):
+            conv._follow_state = FollowState.OFF
+            conv._background_rerender_prefetch_turn_window = 32
+            vp_start, vp_end = conv._viewport_turn_range()
+            prefetch_start = max(0, vp_start - conv._background_rerender_prefetch_turn_window)
+            prefetch_end = min(len(conv._turns), vp_end + conv._background_rerender_prefetch_turn_window)
+            conv.rerender({"tools": HIDDEN})
+
+        pending_indices = list(conv._pending_rerender_indices)
+        assert pending_indices, "expected deferred indices to be queued"
+        assert min(pending_indices) >= prefetch_start
+        assert max(pending_indices) < prefetch_end
+
     def test_pending_snapshot_cleared_on_re_render(self):
         """When a turn with _pending_filter_snapshot is re-rendered, pending is cleared."""
         console = Console()
