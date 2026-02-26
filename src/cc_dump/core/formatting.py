@@ -1647,11 +1647,11 @@ _COMPLETE_RESPONSE_FORMATTERS: dict[str, object] = {
 
 def format_request_for_provider(provider: str, body, state, request_headers=None) -> list:
     """Dispatch request formatting by provider."""
-    formatter = _REQUEST_FORMATTERS.get(provider, format_openai_request)
+    formatter = _REQUEST_FORMATTERS.get(provider, format_request)
     return formatter(body, state, request_headers=request_headers)
 
 
 def format_complete_response_for_provider(provider: str, complete_message) -> list:
     """Dispatch complete response formatting by provider."""
-    formatter = _COMPLETE_RESPONSE_FORMATTERS.get(provider, format_openai_complete_response)
+    formatter = _COMPLETE_RESPONSE_FORMATTERS.get(provider, format_complete_response)
     return formatter(complete_message)
