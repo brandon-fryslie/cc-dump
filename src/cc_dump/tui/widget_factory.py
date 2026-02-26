@@ -138,6 +138,7 @@ class TurnData:
     _pending_filter_snapshot: dict | None = (
         None  # deferred filters for lazy off-viewport re-render
     )
+    _filter_revision: int = 0  # last filter revision this turn was validated against
 
 
     @property
@@ -292,9 +293,13 @@ class ConversationView(ScrollView):
         self._stream_delta_flush_scheduled: bool = False
         self._background_rerender_scheduled: bool = False
         self._background_rerender_chunk_size: int = 8
+        self._background_rerender_prefetch_turn_window: int = 128
         # // [LAW:dataflow-not-control-flow] Deferred turn work is an explicit data queue.
         self._background_rerender_generation: int = 0
         self._pending_rerender_indices: deque[int] = deque()
+        self._active_filter_revision: int = 0
+        self._deferred_offset_recalc_scheduled: bool = False
+        self._deferred_offset_recalc_start_idx: int | None = None
         self._widest_strip_max: int = 0
         self._offset_recalc_incremental_count: int = 0
         self._offset_recalc_full_width_interval: int = 128
@@ -460,9 +465,12 @@ class ConversationView(ScrollView):
             if turn is None:
                 return Strip.blank(width, self.rich_style)
 
-            # Lazy re-render: if this turn was deferred during a filter toggle,
-            # re-render it now that it's scrolled into view.
-            if turn._pending_filter_snapshot is not None:
+            # Lazy re-render: refresh turns with deferred snapshots OR stale filter revision.
+            needs_filter_refresh = (
+                not turn.is_streaming
+                and turn._filter_revision != self._active_filter_revision
+            )
+            if turn._pending_filter_snapshot is not None or needs_filter_refresh:
                 self._lazy_rerender_turn(turn)
 
             local_y = actual_y - turn.line_offset
@@ -677,12 +685,34 @@ class ConversationView(ScrollView):
             overrides=self._view_overrides,
             render_key=render_key,
         )
+        turn._filter_revision = self._active_filter_revision
         # re_render clears _pending_filter_snapshot
 
-        # Schedule offset recalculation after current render pass completes.
-        # We can't recalculate inline because it invalidates the line cache
-        # and virtual_size while render_line() is still iterating.
-        self.call_later(self._deferred_offset_recalc, turn.turn_index)
+        # Coalesce deferred offset recalcs across multiple lazy-rerendered turns.
+        # // [LAW:dataflow-not-control-flow] Pending min index drives a fixed flush path.
+        self._schedule_deferred_offset_recalc(turn.turn_index)
+
+    def _schedule_deferred_offset_recalc(self, from_turn_index: int) -> None:
+        """Queue one deferred offset recalc using the earliest changed turn index."""
+        current = self._deferred_offset_recalc_start_idx
+        if current is None or from_turn_index < current:
+            self._deferred_offset_recalc_start_idx = from_turn_index
+        if self._deferred_offset_recalc_scheduled:
+            return
+        self._deferred_offset_recalc_scheduled = True
+        self.call_later(self._flush_deferred_offset_recalc)
+
+    def _flush_deferred_offset_recalc(self) -> None:
+        """Apply deferred offset recalculation and optional anchor restoration."""
+        self._deferred_offset_recalc_scheduled = False
+        start_idx = self._deferred_offset_recalc_start_idx
+        self._deferred_offset_recalc_start_idx = None
+        if start_idx is None:
+            return
+        self._recalculate_offsets_from(start_idx)
+        if not self._is_following:
+            self._resolve_anchor()
+        self.refresh()
 
     def _deferred_offset_recalc(self, from_turn_index: int):
         """Recalculate offsets after a lazy re-render, then refresh display.
@@ -690,10 +720,8 @@ class ConversationView(ScrollView):
         Resolves stored block-level anchor to prevent viewport drift
         when off-viewport turns lazily re-render and shift line offsets.
         """
-        self._recalculate_offsets_from(from_turn_index)
-        if not self._is_following:
-            self._resolve_anchor()
-        self.refresh()
+        self._deferred_offset_recalc_start_idx = from_turn_index
+        self._flush_deferred_offset_recalc()
 
     def _reset_background_rerender_state(self) -> None:
         """Cancel queued background rerender work and invalidate scheduled callbacks."""
@@ -761,6 +789,7 @@ class ConversationView(ScrollView):
                         first_changed = idx
                     elif idx < first_changed:
                         first_changed = idx
+                td._filter_revision = self._active_filter_revision
                 processed += 1
 
             if first_changed is not None:
@@ -897,15 +926,17 @@ class ConversationView(ScrollView):
                 if turn_widest > suffix_widest:
                     suffix_widest = turn_widest
 
-            needs_full_width_scan = (
-                start_idx == 0
-                or self._offset_recalc_incremental_count >= self._offset_recalc_full_width_interval
-            )
-            if needs_full_width_scan:
+            # // [LAW:dataflow-not-control-flow] Width strategy derives from start_idx + counter values.
+            if start_idx == 0:
+                # Already scanned all turns above when recomputing offsets from zero.
+                widest = suffix_widest
+                self._offset_recalc_incremental_count = 0
+            elif self._offset_recalc_incremental_count >= self._offset_recalc_full_width_interval:
                 widest = 0
-                for turn in turns:
-                    if turn._widest_strip > widest:
-                        widest = turn._widest_strip
+                for i in range(len(turns)):
+                    turn_widest = turns[i]._widest_strip
+                    if turn_widest > widest:
+                        widest = turn_widest
                 self._offset_recalc_incremental_count = 0
             else:
                 widest = max(self._widest_strip_max, suffix_widest)
@@ -1004,6 +1035,7 @@ class ConversationView(ScrollView):
         td._last_filter_snapshot = {
             k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
         }
+        td._filter_revision = self._active_filter_revision
         self._append_completed_turn(td)
 
     def add_turn(self, blocks: list, filters: dict = None):
@@ -1329,6 +1361,7 @@ class ConversationView(ScrollView):
         td._last_filter_snapshot = {
             k: self._last_filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
         }
+        td._filter_revision = self._active_filter_revision
 
         # Remove from preview registry
         self._stream_preview_turns.pop(request_id, None)
@@ -1452,16 +1485,140 @@ class ConversationView(ScrollView):
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
 
-        # Viewport-only re-rendering: only process visible turns + buffer
-        vp_start, vp_end = self._viewport_turn_range()
+        # [LAW:dataflow-not-control-flow] Revision value tracks whether a turn has been validated.
+        self._active_filter_revision += 1
+        target_revision = self._active_filter_revision
+        self._reset_background_rerender_state()
+        self._deferred_offset_recalc_scheduled = False
+        self._deferred_offset_recalc_start_idx = None
 
         render_key = self._turn_render_key(width)
+
+        # Search highlighting still uses full-scan queueing to preserve existing behavior.
+        is_search = search_ctx is not None
+        if is_search:
+            self._rerender_affected_full_scan(
+                filters=filters,
+                search_ctx=search_ctx,
+                force=True,
+                width=width,
+                console=console,
+                target_revision=target_revision,
+                render_key=render_key,
+            )
+            return
+
+        self._rerender_affected_bounded(
+            filters=filters,
+            force=force,
+            width=width,
+            console=console,
+            target_revision=target_revision,
+            render_key=render_key,
+        )
+
+    def _rerender_affected_bounded(
+        self,
+        *,
+        filters: dict,
+        force: bool,
+        width: int,
+        console,
+        target_revision: int,
+        render_key: tuple[int, int, int, int],
+    ) -> None:
+        """Re-render viewport turns immediately; prefetch a bounded off-viewport window.
+
+        // [LAW:dataflow-not-control-flow] Fixed operations; window bounds drive affected indices.
+        """
+        vp_start, vp_end = self._viewport_turn_range()
+        prefetch_start = max(0, vp_start - self._background_rerender_prefetch_turn_window)
+        prefetch_end = min(len(self._turns), vp_end + self._background_rerender_prefetch_turn_window)
 
         first_changed = None
         has_deferred = False
         deferred_count = 0
         viewport_count = 0
-        self._reset_background_rerender_state()
+
+        with monitor_slow_path(
+            "conversation.rerender_affected",
+            logger=logger,
+            context=lambda: {
+                "turn_count": len(self._turns),
+                "vp_start": vp_start,
+                "vp_end": vp_end,
+                "prefetch_start": prefetch_start,
+                "prefetch_end": prefetch_end,
+                "viewport_count": viewport_count,
+                "deferred_count": deferred_count,
+                "force": force,
+                "search_active": False,
+                "first_changed": first_changed,
+            },
+        ):
+            for idx in range(vp_start, min(vp_end, len(self._turns))):
+                td = self._turns[idx]
+                if td.is_streaming:
+                    continue
+                viewport_count += 1
+                if td.re_render(
+                    filters,
+                    console,
+                    width,
+                    force=force,
+                    block_cache=self._block_strip_cache,
+                    search_ctx=None,
+                    overrides=self._view_overrides,
+                    render_key=render_key,
+                ):
+                    if first_changed is None:
+                        first_changed = idx
+                td._pending_filter_snapshot = None
+                td._filter_revision = target_revision
+
+            for idx in range(prefetch_start, prefetch_end):
+                if vp_start <= idx < vp_end:
+                    continue
+                td = self._turns[idx]
+                if td.is_streaming:
+                    continue
+                snapshot = {
+                    k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE)
+                    for k in td.relevant_filter_keys
+                }
+                needs_render_key = render_key != td._last_render_key
+                if force or snapshot != td._last_filter_snapshot or needs_render_key:
+                    td._pending_filter_snapshot = snapshot
+                    # // [LAW:dataflow-not-control-flow] Queue index value drives background work.
+                    self._pending_rerender_indices.append(idx)
+                    has_deferred = True
+                    deferred_count += 1
+                else:
+                    td._pending_filter_snapshot = None
+                    td._filter_revision = target_revision
+
+            if first_changed is not None:
+                self._recalculate_offsets_from(first_changed)
+            if has_deferred:
+                self._schedule_background_rerender()
+
+    def _rerender_affected_full_scan(
+        self,
+        *,
+        filters: dict,
+        search_ctx,
+        force: bool,
+        width: int,
+        console,
+        target_revision: int,
+        render_key: tuple[int, int, int, int],
+    ) -> None:
+        """Full-scan rerender path used for search highlight propagation."""
+        vp_start, vp_end = self._viewport_turn_range()
+        first_changed = None
+        has_deferred = False
+        deferred_count = 0
+        viewport_count = 0
 
         with monitor_slow_path(
             "conversation.rerender_affected",
@@ -1473,18 +1630,15 @@ class ConversationView(ScrollView):
                 "viewport_count": viewport_count,
                 "deferred_count": deferred_count,
                 "force": force,
-                "search_active": search_ctx is not None,
+                "search_active": True,
                 "first_changed": first_changed,
             },
         ):
             for idx, td in enumerate(self._turns):
-                # Skip streaming turns during filter changes
                 if td.is_streaming:
                     continue
-
                 if vp_start <= idx < vp_end:
                     viewport_count += 1
-                    # Viewport turn: re-render immediately
                     if td.re_render(
                         filters,
                         console,
@@ -1497,9 +1651,9 @@ class ConversationView(ScrollView):
                     ):
                         if first_changed is None:
                             first_changed = idx
+                    td._pending_filter_snapshot = None
+                    td._filter_revision = target_revision
                 else:
-                    # Off-viewport turn: defer re-render, mark pending
-                    # Use ALWAYS_VISIBLE default to match filters dict structure
                     snapshot = {
                         k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE)
                         for k in td.relevant_filter_keys
@@ -1507,12 +1661,12 @@ class ConversationView(ScrollView):
                     needs_render_key = render_key != td._last_render_key
                     if force or snapshot != td._last_filter_snapshot or needs_render_key:
                         td._pending_filter_snapshot = snapshot
-                        # // [LAW:dataflow-not-control-flow] Queue index value drives background work.
                         self._pending_rerender_indices.append(idx)
                         has_deferred = True
                         deferred_count += 1
                     else:
                         td._pending_filter_snapshot = None
+                        td._filter_revision = target_revision
 
             if first_changed is not None:
                 self._recalculate_offsets_from(first_changed)
@@ -1580,6 +1734,8 @@ class ConversationView(ScrollView):
             td._strip_hash = _hash_strips(td.strips)
             td._last_render_key = render_key
             td._widest_strip = _compute_widest(td.strips)
+            td._pending_filter_snapshot = None
+            td._filter_revision = self._active_filter_revision
         self._recalculate_offsets()
 
     # ─── Sprint 2: Follow mode ───────────────────────────────────────────────
