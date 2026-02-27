@@ -4,6 +4,8 @@ import http.server
 import json
 import logging
 import ssl
+
+import truststore
 import time
 import uuid
 import urllib.error
@@ -390,7 +392,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             url, data=body_bytes or None, headers=headers, method=self.command
         )
         try:
-            ctx = ssl.create_default_context()
+            ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             resp = urllib.request.urlopen(req, context=ctx, timeout=300)
         except urllib.error.HTTPError as e:
             self.event_queue.put(ErrorEvent(
