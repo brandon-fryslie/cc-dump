@@ -130,3 +130,34 @@ async def test_ai_workbench_panel_opens_and_qa_action_dispatches():
         state = workbench_results.get_state()
         assert state["context_session_id"] == "__default__"
         assert "context=__default__" in str(state["meta"])
+
+
+async def test_command_palette_includes_launch_presets():
+    """System commands include one launch command per configured preset."""
+    async with run_app() as (pilot, app):
+        await pilot.pause()
+        commands = list(app.get_system_commands(app.screen))
+        titles = {command.title for command in commands}
+        assert "Launch preset: claude" in titles
+        assert "Launch preset: copilot" in titles
+
+
+async def test_launch_config_panel_uses_cycle_and_chip_controls():
+    """Launch config panel renders chip/cycle controls instead of OptionList/Switch/Select."""
+    from textual.widgets import OptionList, Select, Switch
+    import cc_dump.tui.launch_config_panel
+    from cc_dump.tui.cycle_selector import CycleSelector
+    from cc_dump.tui.chip import ToggleChip
+
+    async with run_app() as (pilot, app):
+        app.action_toggle_launch_config()
+        await pilot.pause()
+
+        panel = app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+        assert panel is not None
+        assert panel.query_one("#lc-config-selector", CycleSelector)
+        assert panel.query_one("#lc-field-launcher", CycleSelector)
+        assert panel.query(ToggleChip)
+        assert not panel.query(OptionList)
+        assert not panel.query(Select)
+        assert not panel.query(Switch)
