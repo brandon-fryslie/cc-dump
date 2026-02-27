@@ -26,8 +26,6 @@ Every side-channel request MUST:
 | `decision_ledger` | 24,000 | Default cap |
 | `action_extraction` | 24,000 | Default cap |
 | `handoff_note` | 24,000 | Default cap |
-| `release_notes` | 24,000 | Default cap |
-| `incident_timeline` | 24,000 | Default cap |
 | `conversation_qa` | 24,000 | Higher context utility |
 | `checkpoint_summary` | 24,000 | Default cap |
 | `compaction` | 40,000 | Highest cap by design |

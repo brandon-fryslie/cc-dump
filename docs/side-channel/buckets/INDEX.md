@@ -22,8 +22,6 @@ Active roadmap (implementation first):
 | `08-summary-checkpoints.md` | Time-sliced recall | Low-Medium | Ready for MVP |
 | `09-action-item-and-deferred-work-extraction.md` | Execution follow-through | Low-Medium | Ready for MVP |
 | `10-handoff-note-generation.md` | Session continuity | Low-Medium | Ready for MVP |
-| `11-release-notes-and-changelog.md` | Output automation | Low-Medium | Ready for MVP |
-| `12-incident-debug-timeline.md` | Faster incident analysis | Medium | Ready with event model alignment |
 | `13-lightweight-ai-utilities.md` | Broad quality-of-life wins | Low | Ready incrementally |
 | `14-conversation-qa-textbox.md` | Flexible ad-hoc analysis | Variable (Low-High) | Ready for constrained MVP |
 

@@ -13,8 +13,6 @@ Required for all side-channel requests:
 - `decision_ledger`
 - `action_extraction`
 - `handoff_note`
-- `release_notes`
-- `incident_timeline`
 - `conversation_qa`
 - `checkpoint_summary`
 - `compaction`

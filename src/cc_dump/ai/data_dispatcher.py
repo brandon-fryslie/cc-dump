@@ -41,20 +41,6 @@ from cc_dump.ai.handoff_notes import (
     parse_handoff_artifact,
     render_handoff_markdown,
 )
-from cc_dump.ai.incident_timeline import (
-    IncidentTimelineArtifact,
-    IncidentTimelineStore,
-    fallback_incident_timeline_artifact,
-    parse_incident_timeline_artifact,
-    render_incident_timeline_markdown,
-)
-from cc_dump.ai.release_notes import (
-    ReleaseNotesArtifact,
-    ReleaseNotesStore,
-    fallback_release_notes_artifact,
-    parse_release_notes_artifact,
-    render_release_notes_markdown,
-)
 from cc_dump.ai.prompt_registry import get_prompt_spec, PromptSpec, UTILITY_CUSTOM_PURPOSE
 from cc_dump.ai.side_channel import SideChannelManager
 from cc_dump.ai.side_channel_analytics import SideChannelAnalytics
@@ -103,31 +89,12 @@ class HandoffResult:
 
 
 @dataclass
-class IncidentTimelineResult:
-    artifact: IncidentTimelineArtifact
-    markdown: str
-    source: str  # "ai" | "fallback" | "error"
-    elapsed_ms: int
-    error: str = ""
-
-
-@dataclass
 class ConversationQAResult:
     artifact: QAArtifact
     markdown: str
     source: str  # "ai" | "fallback" | "error"
     elapsed_ms: int
     estimate: QABudgetEstimate
-    error: str = ""
-
-
-@dataclass
-class ReleaseNotesResult:
-    artifact: ReleaseNotesArtifact
-    markdown: str
-    source: str  # "ai" | "fallback" | "error"
-    elapsed_ms: int
-    variant: str
     error: str = ""
 
 
@@ -165,8 +132,6 @@ class DataDispatcher:
         self._checkpoint_store = CheckpointStore()
         self._action_items = ActionItemStore()
         self._handoff_store = HandoffStore()
-        self._incident_timeline_store = IncidentTimelineStore()
-        self._release_notes_store = ReleaseNotesStore()
         self._utility_registry = UtilityRegistry()
 
     def summarize_messages(
@@ -503,98 +468,6 @@ class DataDispatcher:
     def handoff_note_snapshot(self) -> list[HandoffArtifact]:
         return self._handoff_store.snapshot()
 
-    def generate_incident_timeline(
-        self,
-        messages: list[dict],
-        *,
-        source_start: int,
-        source_end: int,
-        source_session_id: str = "",
-        request_id: str = "",
-        include_hypotheses: bool = False,
-    ) -> IncidentTimelineResult:
-        """Generate incident/debug timeline artifact for selected scope."""
-        spec = get_prompt_spec("incident_timeline")
-        normalized_start, normalized_end = _normalize_message_range(
-            total_messages=len(messages),
-            source_start=source_start,
-            source_end=source_end,
-        )
-        selected_messages = _slice_messages_for_range(messages, normalized_start, normalized_end)
-        fallback_artifact = fallback_incident_timeline_artifact(
-            purpose=spec.purpose,
-            prompt_version=spec.version,
-            source_session_id=source_session_id,
-            request_id=request_id,
-            source_start=normalized_start,
-            source_end=normalized_end,
-            summary_text=_fallback_summary(selected_messages),
-            include_hypotheses=include_hypotheses,
-        )
-        profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
-
-        if not self._side_channel.enabled:
-            artifact = self._incident_timeline_store.add(fallback_artifact)
-            return IncidentTimelineResult(
-                artifact=artifact,
-                markdown=render_incident_timeline_markdown(artifact, include_hypotheses=include_hypotheses),
-                source="fallback",
-                elapsed_ms=0,
-            )
-
-        context = _build_summary_context(selected_messages)
-        prompt = _build_incident_timeline_prompt(
-            context=context,
-            spec=spec,
-            include_hypotheses=include_hypotheses,
-        )
-        result = self._side_channel.run(
-            prompt=prompt,
-            purpose=spec.purpose,
-            prompt_version=spec.version,
-            timeout=None,
-            source_session_id=source_session_id,
-            profile=profile,
-        )
-        self._analytics.record(purpose=result.purpose)
-        if result.error is not None:
-            source = "error"
-            if result.error.startswith("Guardrail:"):
-                logger.info("incident timeline blocked: %s", result.error)
-                source = "fallback"
-            artifact = self._incident_timeline_store.add(fallback_artifact)
-            return IncidentTimelineResult(
-                artifact=artifact,
-                markdown=render_incident_timeline_markdown(artifact, include_hypotheses=include_hypotheses),
-                source=source,
-                elapsed_ms=result.elapsed_ms,
-                error=result.error,
-            )
-        artifact = self._incident_timeline_store.add(
-            parse_incident_timeline_artifact(
-                result.text,
-                purpose=spec.purpose,
-                prompt_version=spec.version,
-                source_session_id=source_session_id,
-                request_id=request_id,
-                source_start=normalized_start,
-                source_end=normalized_end,
-                include_hypotheses=include_hypotheses,
-            )
-        )
-        return IncidentTimelineResult(
-            artifact=artifact,
-            markdown=render_incident_timeline_markdown(artifact, include_hypotheses=include_hypotheses),
-            source="ai",
-            elapsed_ms=result.elapsed_ms,
-        )
-
-    def latest_incident_timeline(self, source_session_id: str = "") -> IncidentTimelineArtifact | None:
-        return self._incident_timeline_store.latest(source_session_id=source_session_id)
-
-    def incident_timeline_snapshot(self) -> list[IncidentTimelineArtifact]:
-        return self._incident_timeline_store.snapshot()
-
     def ask_conversation_question(
         self,
         messages: list[dict],
@@ -693,101 +566,6 @@ class DataDispatcher:
             elapsed_ms=result.elapsed_ms,
             estimate=estimate,
         )
-
-    def generate_release_notes(
-        self,
-        messages: list[dict],
-        *,
-        source_start: int,
-        source_end: int,
-        variant: str = "user_facing",
-        source_session_id: str = "",
-        request_id: str = "",
-    ) -> ReleaseNotesResult:
-        """Generate scoped release-note/changelog draft for review/edit flow."""
-        spec = get_prompt_spec("release_notes")
-        normalized_start, normalized_end = _normalize_message_range(
-            total_messages=len(messages),
-            source_start=source_start,
-            source_end=source_end,
-        )
-        selected_messages = _slice_messages_for_range(messages, normalized_start, normalized_end)
-        fallback_artifact = fallback_release_notes_artifact(
-            purpose=spec.purpose,
-            prompt_version=spec.version,
-            source_session_id=source_session_id,
-            request_id=request_id,
-            source_start=normalized_start,
-            source_end=normalized_end,
-            summary_text=_fallback_summary(selected_messages),
-        )
-        profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
-        if not self._side_channel.enabled:
-            artifact = self._release_notes_store.add(fallback_artifact)
-            return ReleaseNotesResult(
-                artifact=artifact,
-                markdown=render_release_notes_markdown(artifact, variant=variant),
-                source="fallback",
-                elapsed_ms=0,
-                variant=variant,
-            )
-
-        context = _build_summary_context(selected_messages)
-        prompt = _build_summary_prompt(context, spec)
-        result = self._side_channel.run(
-            prompt=prompt,
-            purpose=spec.purpose,
-            prompt_version=spec.version,
-            timeout=None,
-            source_session_id=source_session_id,
-            profile=profile,
-        )
-        self._analytics.record(purpose=result.purpose)
-        if result.error is not None:
-            source = "error"
-            if result.error.startswith("Guardrail:"):
-                logger.info("release notes blocked: %s", result.error)
-                source = "fallback"
-            artifact = self._release_notes_store.add(fallback_artifact)
-            return ReleaseNotesResult(
-                artifact=artifact,
-                markdown=render_release_notes_markdown(artifact, variant=variant),
-                source=source,
-                elapsed_ms=result.elapsed_ms,
-                variant=variant,
-                error=result.error,
-            )
-        artifact = self._release_notes_store.add(
-            parse_release_notes_artifact(
-                result.text,
-                purpose=spec.purpose,
-                prompt_version=spec.version,
-                source_session_id=source_session_id,
-                request_id=request_id,
-                source_start=normalized_start,
-                source_end=normalized_end,
-            )
-        )
-        return ReleaseNotesResult(
-            artifact=artifact,
-            markdown=render_release_notes_markdown(artifact, variant=variant),
-            source="ai",
-            elapsed_ms=result.elapsed_ms,
-            variant=variant,
-        )
-
-    def latest_release_notes_draft(self, source_session_id: str = "") -> ReleaseNotesArtifact | None:
-        return self._release_notes_store.latest(source_session_id=source_session_id)
-
-    def release_notes_snapshot(self) -> list[ReleaseNotesArtifact]:
-        return self._release_notes_store.snapshot()
-
-    def render_release_notes_draft(self, *, artifact_id: str, variant: str = "user_facing") -> str:
-        """Render stored draft for review/edit/export flow."""
-        artifact = self._release_notes_store.get(artifact_id)
-        if artifact is None:
-            return "missing_release_notes_artifact:" + artifact_id
-        return render_release_notes_markdown(artifact, variant=variant)
 
     def list_utilities(self) -> list[UtilitySpec]:
         return self._utility_registry.list()
@@ -947,14 +725,6 @@ def _resolve_prompt_override(default_prompt: str, prompt_override: str | None) -
     """Resolve optional user-edited prompt while preserving canonical fallback."""
     override = str(prompt_override or "").strip()
     return override if override else default_prompt
-
-
-def _build_incident_timeline_prompt(*, context: str, spec: PromptSpec, include_hypotheses: bool) -> str:
-    """Build incident prompt with explicit mode (facts-only vs facts+hypotheses)."""
-    mode = "Include hypotheses section." if include_hypotheses else "Facts only. Omit hypotheses."
-    if not context:
-        return f"{spec.instruction}\n\n{mode}"
-    return f"{spec.instruction}\n\n{mode}\n\n{context}"
 
 
 def _build_conversation_qa_prompt(*, question: str, context: str, spec: PromptSpec) -> str:

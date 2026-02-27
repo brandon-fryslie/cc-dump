@@ -2185,9 +2185,6 @@ class CcDumpApp(App):
     def action_sc_preview_handoff(self) -> None:
         self._workbench_preview("Handoff Draft", "cc-dump-mjb.4")
 
-    def action_sc_preview_release_notes(self) -> None:
-        self._workbench_preview("Release Notes", "cc-dump-mjb.4")
-
     def action_sc_preview_utilities(self) -> None:
         self.action_sc_utility_run()
 
