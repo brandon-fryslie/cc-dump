@@ -526,6 +526,51 @@ def test_load_har_detects_provider_from_cc_dump_metadata(tmp_path):
     assert pairs[0][5] == "openai"
 
 
+def test_load_har_detects_copilot_from_url(tmp_path):
+    """Copilot provider detected from request URL heuristic."""
+    har_path = tmp_path / "copilot.har"
+    har = {
+        "log": {
+            "entries": [
+                {
+                    "request": {
+                        "method": "POST",
+                        "url": "https://api.githubcopilot.com/chat/completions",
+                        "headers": [],
+                        "postData": {"text": json.dumps({"model": "gpt-4o"})},
+                    },
+                    "response": {
+                        "status": 200,
+                        "headers": [],
+                        "content": {
+                            "text": json.dumps(
+                                {
+                                    "object": "chat.completion",
+                                    "model": "gpt-4o",
+                                    "choices": [
+                                        {
+                                            "message": {"role": "assistant", "content": "Hi"},
+                                            "finish_reason": "stop",
+                                        },
+                                    ],
+                                    "usage": {"prompt_tokens": 5, "completion_tokens": 2},
+                                }
+                            ),
+                        },
+                    },
+                },
+            ],
+        },
+    }
+
+    with open(har_path, "w") as f:
+        json.dump(har, f)
+
+    pairs = load_har(str(har_path))
+    assert len(pairs) == 1
+    assert pairs[0][5] == "copilot"
+
+
 def test_load_har_openai_response_accepted(tmp_path):
     """OpenAI responses (object='chat.completion') pass validation."""
     har_path = tmp_path / "openai_valid.har"

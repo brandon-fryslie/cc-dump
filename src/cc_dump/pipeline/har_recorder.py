@@ -20,6 +20,7 @@ from cc_dump.pipeline.event_types import (
     ResponseHeadersEvent,
 )
 from cc_dump.ai.side_channel_marker import extract_marker
+import cc_dump.providers
 
 logger = logging.getLogger(__name__)
 
@@ -226,7 +227,7 @@ class HARRecordingSubscriber:
             self._pending_by_request.move_to_end(request_key)
 
         # // [LAW:one-source-of-truth] Provider stamped from first event seen for this request.
-        pending.provider = event.provider
+        pending.provider = cc_dump.providers.get_provider_spec(event.provider).key
 
         if kind == PipelineEventKind.REQUEST_HEADERS:
             assert isinstance(event, RequestHeadersEvent)
@@ -271,12 +272,8 @@ class HARRecordingSubscriber:
                 else 0.0
             )
 
-            # [LAW:dataflow-not-control-flow] URL derived from provider, not branching.
-            _PROVIDER_URLS = {
-                "anthropic": "https://api.anthropic.com/v1/messages",
-                "openai": "https://api.openai.com/v1/chat/completions",
-            }
-            har_url = _PROVIDER_URLS.get(pending.provider, f"https://unknown/{pending.provider}")
+            # [LAW:dataflow-not-control-flow] HAR URL derived from provider registry.
+            har_url = cc_dump.providers.get_provider_spec(pending.provider).har_request_url
 
             # Build HAR request/response
             har_request = build_har_request(

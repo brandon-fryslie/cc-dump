@@ -2,6 +2,7 @@
 
 import pytest
 
+import cc_dump.providers
 from cc_dump.pipeline.event_types import RequestBodyEvent, ResponseProgressEvent
 from tests.harness import run_app, strips_to_text
 
@@ -83,7 +84,8 @@ async def test_all_sessions_route_to_default_tab():
         non_side_channel_tabs = [
             k for k in app._session_tab_ids
             if not app._is_side_channel_session_key(k)
-            and not k.startswith("openai:")
+            and cc_dump.providers.session_provider(k, default_session_key=app._default_session_key)
+            == cc_dump.providers.DEFAULT_PROVIDER_KEY
         ]
         assert len(non_side_channel_tabs) == 1
         assert non_side_channel_tabs[0] == app._default_session_key

@@ -20,7 +20,6 @@ from cc_dump.pipeline.event_types import (
 from cc_dump.app.tmux_controller import (
     LogTailAction,
     LaunchAction,
-    LaunchResult,
     TmuxController,
     TmuxState,
     _ZOOM_DECISIONS,
@@ -34,8 +33,8 @@ from cc_dump.app.tmux_controller import (
 
 _VALID_ATTRS = frozenset({
     "state", "auto_zoom", "_is_zoomed", "_port",
-    "_claude_command",
-    "_server", "_session", "_our_pane", "_claude_pane",
+    "_launch_command", "_process_names", "_launch_env", "_launcher_label",
+    "_server", "_session", "_our_pane", "_tool_pane",
 })
 
 
@@ -49,8 +48,11 @@ def make_controller():
             raise ValueError(f"Invalid TmuxController overrides: {bad}")
         with patch.dict(os.environ, {}, clear=True):
             ctrl = TmuxController()
+        command_override = overrides.pop("_launch_command", None)
         for k, v in overrides.items():
             setattr(ctrl, k, v)
+        if command_override is not None:
+            ctrl.set_launch_command(command_override)
         return ctrl
 
     return _factory
@@ -58,12 +60,12 @@ def make_controller():
 
 @pytest.fixture
 def active_controller(make_controller):
-    """Controller in CLAUDE_RUNNING state with mocked panes and auto_zoom on."""
+    """Controller in TOOL_RUNNING state with mocked panes and auto_zoom on."""
     return make_controller(
-        state=TmuxState.CLAUDE_RUNNING,
+        state=TmuxState.TOOL_RUNNING,
         auto_zoom=True,
         _our_pane=MagicMock(),
-        _claude_pane=MagicMock(),
+        _tool_pane=MagicMock(),
     )
 
 
@@ -161,7 +163,7 @@ class TestTmuxControllerStates:
 
     def test_not_in_tmux_cannot_launch(self, make_controller):
         ctrl = make_controller()
-        result = ctrl.launch_claude()
+        result = ctrl.launch_tool()
         assert result.action == LaunchAction.BLOCKED
         assert not result.success
 
@@ -183,11 +185,11 @@ class TestOnEvent:
 
     def test_end_turn_triggers_unzoom(self, make_controller):
         ctrl = make_controller(
-            state=TmuxState.CLAUDE_RUNNING,
+            state=TmuxState.TOOL_RUNNING,
             auto_zoom=True,
             _is_zoomed=True,
             _our_pane=MagicMock(),
-            _claude_pane=MagicMock(),
+            _tool_pane=MagicMock(),
         )
         event = ResponseCompleteEvent(body={"stop_reason": "end_turn"})
         ctrl.on_event(event)
@@ -195,11 +197,11 @@ class TestOnEvent:
 
     def test_tool_use_is_noop(self, make_controller):
         ctrl = make_controller(
-            state=TmuxState.CLAUDE_RUNNING,
+            state=TmuxState.TOOL_RUNNING,
             auto_zoom=True,
             _is_zoomed=True,
             _our_pane=MagicMock(),
-            _claude_pane=MagicMock(),
+            _tool_pane=MagicMock(),
         )
         event = ResponseCompleteEvent(body={"stop_reason": "tool_use"})
         ctrl.on_event(event)
@@ -209,11 +211,11 @@ class TestOnEvent:
 
     def test_error_triggers_unzoom(self, make_controller):
         ctrl = make_controller(
-            state=TmuxState.CLAUDE_RUNNING,
+            state=TmuxState.TOOL_RUNNING,
             auto_zoom=True,
             _is_zoomed=True,
             _our_pane=MagicMock(),
-            _claude_pane=MagicMock(),
+            _tool_pane=MagicMock(),
         )
         event = ErrorEvent(code=500, reason="fail")
         ctrl.on_event(event)
@@ -221,11 +223,11 @@ class TestOnEvent:
 
     def test_proxy_error_triggers_unzoom(self, make_controller):
         ctrl = make_controller(
-            state=TmuxState.CLAUDE_RUNNING,
+            state=TmuxState.TOOL_RUNNING,
             auto_zoom=True,
             _is_zoomed=True,
             _our_pane=MagicMock(),
-            _claude_pane=MagicMock(),
+            _tool_pane=MagicMock(),
         )
         event = ProxyErrorEvent(error="connection refused")
         ctrl.on_event(event)
@@ -242,7 +244,7 @@ class TestOnEvent:
         ctrl = make_controller(
             state=TmuxState.READY,
             _our_pane=MagicMock(),
-            _claude_pane=MagicMock(),
+            _tool_pane=MagicMock(),
         )
         event = RequestBodyEvent(body={})
         ctrl.on_event(event)
@@ -315,42 +317,42 @@ class TestCleanup:
         ctrl.cleanup()
         ctrl._our_pane.resize.assert_not_called()
 
-# ─── _validate_claude_pane ─────────────────────────────────────────────────
+# ─── _validate_tool_pane ─────────────────────────────────────────────────
 
 
 class TestValidateClaudePane:
     def test_alive_pane_returns_true(self, make_controller):
         pane = MagicMock()
         ctrl = make_controller(
-            state=TmuxState.CLAUDE_RUNNING,
-            _claude_pane=pane,
+            state=TmuxState.TOOL_RUNNING,
+            _tool_pane=pane,
             _our_pane=MagicMock(),
         )
-        assert ctrl._validate_claude_pane() is True
+        assert ctrl._validate_tool_pane() is True
         pane.refresh.assert_called_once()
 
     def test_dead_pane_transitions_to_ready(self, make_controller):
         pane = MagicMock()
         pane.refresh.side_effect = Exception("pane is dead")
         ctrl = make_controller(
-            state=TmuxState.CLAUDE_RUNNING,
-            _claude_pane=pane,
+            state=TmuxState.TOOL_RUNNING,
+            _tool_pane=pane,
             _our_pane=MagicMock(),
         )
-        assert ctrl._validate_claude_pane() is False
-        assert ctrl._claude_pane is None
+        assert ctrl._validate_tool_pane() is False
+        assert ctrl._tool_pane is None
         assert ctrl.state == TmuxState.READY
 
     def test_absent_pane_returns_false(self, make_controller):
         ctrl = make_controller(state=TmuxState.READY, _our_pane=MagicMock())
-        assert ctrl._validate_claude_pane() is False
+        assert ctrl._validate_tool_pane() is False
 
 
-# ─── _find_claude_pane ────────────────────────────────────────────────────
+# ─── _find_tool_pane ────────────────────────────────────────────────────
 
 
 class TestFindClaudePane:
-    def test_finds_claude_pane(self, make_controller):
+    def test_finds_tool_pane(self, make_controller):
         our_pane = MagicMock()
         our_pane.pane_id = "%0"
         claude_pane = MagicMock()
@@ -363,7 +365,7 @@ class TestFindClaudePane:
             state=TmuxState.READY,
             _our_pane=our_pane,
         )
-        assert ctrl._find_claude_pane() is claude_pane
+        assert ctrl._find_tool_pane() is claude_pane
 
     def test_no_claude_returns_none(self, make_controller):
         our_pane = MagicMock()
@@ -378,7 +380,7 @@ class TestFindClaudePane:
             state=TmuxState.READY,
             _our_pane=our_pane,
         )
-        assert ctrl._find_claude_pane() is None
+        assert ctrl._find_tool_pane() is None
 
     def test_skips_own_pane(self, make_controller):
         """Even if our own pane runs 'claude', it should not be adopted."""
@@ -392,7 +394,7 @@ class TestFindClaudePane:
             state=TmuxState.READY,
             _our_pane=our_pane,
         )
-        assert ctrl._find_claude_pane() is None
+        assert ctrl._find_tool_pane() is None
 
     def test_matches_custom_command(self, make_controller):
         our_pane = MagicMock()
@@ -406,9 +408,9 @@ class TestFindClaudePane:
         ctrl = make_controller(
             state=TmuxState.READY,
             _our_pane=our_pane,
-            _claude_command="my-claude",
+            _launch_command="my-claude",
         )
-        assert ctrl._find_claude_pane() is custom_pane
+        assert ctrl._find_tool_pane() is custom_pane
 
     def test_matches_basename_of_full_path(self, make_controller):
         """Command '/usr/bin/claude' should match pane running 'claude'."""
@@ -423,16 +425,16 @@ class TestFindClaudePane:
         ctrl = make_controller(
             state=TmuxState.READY,
             _our_pane=our_pane,
-            _claude_command="/usr/bin/claude",
+            _launch_command="/usr/bin/claude",
         )
-        assert ctrl._find_claude_pane() is claude_pane
+        assert ctrl._find_tool_pane() is claude_pane
 
 
 # ─── _try_adopt_existing ──────────────────────────────────────────────────
 
 
 class TestTryAdoptExisting:
-    def test_adopts_existing_claude_pane(self, make_controller):
+    def test_adopts_existing_tool_pane(self, make_controller):
         our_pane = MagicMock()
         our_pane.pane_id = "%0"
         claude_pane = MagicMock()
@@ -446,8 +448,8 @@ class TestTryAdoptExisting:
             _our_pane=our_pane,
         )
         ctrl._try_adopt_existing()
-        assert ctrl._claude_pane is claude_pane
-        assert ctrl.state == TmuxState.CLAUDE_RUNNING
+        assert ctrl._tool_pane is claude_pane
+        assert ctrl.state == TmuxState.TOOL_RUNNING
 
     def test_no_existing_stays_ready(self, make_controller):
         our_pane = MagicMock()
@@ -460,7 +462,7 @@ class TestTryAdoptExisting:
             _our_pane=our_pane,
         )
         ctrl._try_adopt_existing()
-        assert ctrl._claude_pane is None
+        assert ctrl._tool_pane is None
         assert ctrl.state == TmuxState.READY
 
 
@@ -470,16 +472,16 @@ class TestTryAdoptExisting:
 class TestConfigurableCommand:
     def test_default_command(self, make_controller):
         ctrl = make_controller()
-        assert ctrl._claude_command == "claude"
+        assert ctrl._launch_command == "claude"
 
     def test_custom_command_via_override(self, make_controller):
-        ctrl = make_controller(_claude_command="my-claude")
-        assert ctrl._claude_command == "my-claude"
+        ctrl = make_controller(_launch_command="my-claude")
+        assert ctrl._launch_command == "my-claude"
 
-    def test_set_claude_command(self, make_controller):
+    def test_set_launch_command(self, make_controller):
         ctrl = make_controller()
-        ctrl.set_claude_command("custom-claude")
-        assert ctrl._claude_command == "custom-claude"
+        ctrl.set_launch_command("custom-claude")
+        assert ctrl._launch_command == "custom-claude"
 
 
 # ─── open_log_tail ──────────────────────────────────────────────────────────
@@ -539,7 +541,7 @@ class TestOpenLogTail:
             state=TmuxState.READY,
             _our_pane=our_pane,
             _session=session,
-            _claude_command="clod",
+            _launch_command="clod",
         )
 
         result = ctrl.open_log_tail("/tmp/cc-dump.log")
@@ -575,7 +577,7 @@ class TestOpenLogTail:
             state=TmuxState.READY,
             _our_pane=our_pane,
             _session=session,
-            _claude_command="clod",
+            _launch_command="clod",
         )
 
         result = ctrl.open_log_tail("/tmp/cc-dump.log")
@@ -609,7 +611,7 @@ class TestOpenLogTail:
             state=TmuxState.READY,
             _our_pane=our_pane,
             _session=session,
-            _claude_command="clod",
+            _launch_command="clod",
         )
 
         result = ctrl.open_log_tail("/tmp/cc-dump.log")
@@ -625,12 +627,12 @@ class TestOpenLogTail:
         window.split.assert_not_called()
 
 
-# ─── launch_claude with dead pane ──────────────────────────────────────────
+# ─── launch_tool with dead pane ──────────────────────────────────────────
 
 
 class TestLaunchWithDeadPane:
     def test_dead_pane_triggers_relaunch(self, make_controller):
-        """launch_claude with a dead pane reference should try to adopt or relaunch."""
+        """launch_tool with a dead pane reference should try to adopt or relaunch."""
         dead_pane = MagicMock()
         dead_pane.refresh.side_effect = Exception("pane dead")
         our_pane = MagicMock()
@@ -640,9 +642,9 @@ class TestLaunchWithDeadPane:
         our_pane.window = window
 
         ctrl = make_controller(
-            state=TmuxState.CLAUDE_RUNNING,
+            state=TmuxState.TOOL_RUNNING,
             _our_pane=our_pane,
-            _claude_pane=dead_pane,
+            _tool_pane=dead_pane,
             _port=8080,
         )
 
@@ -650,16 +652,15 @@ class TestLaunchWithDeadPane:
         new_pane = MagicMock()
         window.split.return_value = new_pane
 
-        import libtmux.constants
-        result = ctrl.launch_claude()
+        result = ctrl.launch_tool()
 
         assert result.action == LaunchAction.LAUNCHED
         assert result.success
-        assert ctrl._claude_pane is new_pane
-        assert ctrl.state == TmuxState.CLAUDE_RUNNING
+        assert ctrl._tool_pane is new_pane
+        assert ctrl.state == TmuxState.TOOL_RUNNING
 
     def test_dead_pane_adopts_existing(self, make_controller):
-        """launch_claude with dead pane should adopt if another claude exists."""
+        """launch_tool with dead pane should adopt if another claude exists."""
         dead_pane = MagicMock()
         dead_pane.refresh.side_effect = Exception("pane dead")
         our_pane = MagicMock()
@@ -672,17 +673,17 @@ class TestLaunchWithDeadPane:
         our_pane.window = window
 
         ctrl = make_controller(
-            state=TmuxState.CLAUDE_RUNNING,
+            state=TmuxState.TOOL_RUNNING,
             _our_pane=our_pane,
-            _claude_pane=dead_pane,
+            _tool_pane=dead_pane,
             _port=8080,
         )
 
-        result = ctrl.launch_claude()
+        result = ctrl.launch_tool()
         assert result.action == LaunchAction.FOCUSED
         assert result.success
-        assert ctrl._claude_pane is existing_claude
-        assert ctrl.state == TmuxState.CLAUDE_RUNNING
+        assert ctrl._tool_pane is existing_claude
+        assert ctrl.state == TmuxState.TOOL_RUNNING
         existing_claude.select.assert_called_once()
 
 
@@ -690,7 +691,7 @@ class TestLaunchWithDeadPane:
 
 
 class TestAutoResume:
-    """End-to-end: session_id extraction → build_command_args → launch_claude exec."""
+    """End-to-end: session_id extraction → build_command_args → launch_tool exec."""
 
     def test_resume_flag_in_launched_command(self, make_controller):
         """When auto_resume is True and session_id is known, --resume appears in the command."""
@@ -714,7 +715,7 @@ class TestAutoResume:
         config = LaunchConfig(auto_resume=True)
         full_command = build_full_command(config, session_id)
 
-        result = ctrl.launch_claude(command=full_command)
+        result = ctrl.launch_tool(command=full_command)
 
         assert result.action == LaunchAction.LAUNCHED
         assert result.success
@@ -742,7 +743,7 @@ class TestAutoResume:
         config = LaunchConfig(auto_resume=True)
         full_command = build_full_command(config, "")
 
-        result = ctrl.launch_claude(command=full_command)
+        result = ctrl.launch_tool(command=full_command)
 
         assert result.action == LaunchAction.LAUNCHED
         assert "--resume" not in result.command
@@ -768,7 +769,7 @@ class TestAutoResume:
         config = LaunchConfig(auto_resume=False)
         full_command = build_full_command(config, "some-session-id")
 
-        result = ctrl.launch_claude(command=full_command)
+        result = ctrl.launch_tool(command=full_command)
 
         assert result.action == LaunchAction.LAUNCHED
         assert "--resume" not in result.command
@@ -809,14 +810,14 @@ class TestAutoResume:
 
 class TestOnEventWithDeadPane:
     def test_dead_pane_skips_zoom(self, make_controller):
-        """on_event with dead claude pane should not attempt zoom."""
+        """on_event with dead tool pane should not attempt zoom."""
         dead_pane = MagicMock()
         dead_pane.refresh.side_effect = Exception("pane dead")
         ctrl = make_controller(
-            state=TmuxState.CLAUDE_RUNNING,
+            state=TmuxState.TOOL_RUNNING,
             auto_zoom=True,
             _our_pane=MagicMock(),
-            _claude_pane=dead_pane,
+            _tool_pane=dead_pane,
         )
         event = RequestBodyEvent(body={})
         ctrl.on_event(event)

@@ -9,6 +9,7 @@ import logging
 import time
 import uuid
 
+import cc_dump.providers
 from cc_dump.pipeline.event_types import (
     PipelineEvent,
     RequestBodyEvent,
@@ -79,16 +80,6 @@ def load_har(path: str) -> list[tuple[dict, dict, int, dict, dict, str]]:
 
             complete_message = json.loads(content["text"])
 
-            # Validate that response is a complete message (not SSE stream)
-            # Anthropic: type="message". OpenAI: object="chat.completion".
-            is_anthropic = complete_message.get("type") == "message"
-            is_openai = complete_message.get("object") == "chat.completion"
-            if not is_anthropic and not is_openai:
-                raise ValueError(
-                    f"Entry {i}: response is not a recognized complete message "
-                    f"(expected type='message' or object='chat.completion')"
-                )
-
             # Extract request headers
             request_headers = {}
             if "headers" in request:
@@ -112,16 +103,24 @@ def load_har(path: str) -> list[tuple[dict, dict, int, dict, dict, str]]:
                     ):
                         response_headers[header["name"]] = header["value"]
 
-            # Detect provider: _cc_dump metadata (preferred) > URL heuristic > default
+            # Detect provider: _cc_dump metadata (preferred) > URL heuristic > default.
             # // [LAW:one-source-of-truth] Provider detection at HAR load boundary.
             cc_dump_meta = entry.get("_cc_dump", {})
-            provider = cc_dump_meta.get("provider", "") if isinstance(cc_dump_meta, dict) else ""
-            if not provider:
-                request_url = request.get("url", "")
-                if "openai.com" in request_url:
-                    provider = "openai"
-                else:
-                    provider = "anthropic"
+            raw_provider = cc_dump_meta.get("provider", "") if isinstance(cc_dump_meta, dict) else ""
+            if cc_dump.providers.is_known_provider(str(raw_provider)):
+                provider = cc_dump.providers.normalize_provider(str(raw_provider))
+            else:
+                provider = cc_dump.providers.infer_provider_from_url(request.get("url", ""))
+                if provider == cc_dump.providers.DEFAULT_PROVIDER_KEY:
+                    provider = cc_dump.providers.infer_provider_from_complete_message(
+                        complete_message
+                    )
+
+            if not cc_dump.providers.is_complete_response_for_provider(provider, complete_message):
+                raise ValueError(
+                    f"Entry {i}: response is not a recognized complete message "
+                    f"for provider={provider!r}"
+                )
 
             pairs.append(
                 (

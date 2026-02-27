@@ -68,6 +68,7 @@ import cc_dump.pipeline.event_types
 import cc_dump.app.view_store
 import cc_dump.ai.conversation_qa
 import cc_dump.ai.side_channel_marker
+import cc_dump.providers
 
 from cc_dump.io.stderr_tee import get_tee as _get_tee
 import cc_dump.app.domain_store
@@ -174,6 +175,7 @@ class CcDumpApp(App):
         view_store=None,
         domain_store=None,
         store_context=None,
+        provider_endpoints: Optional[dict[str, dict[str, object]]] = None,
         openai_port: Optional[int] = None,
         openai_target: Optional[str] = None,
     ):
@@ -187,8 +189,29 @@ class CcDumpApp(App):
         self._host = host
         self._port = port
         self._target = target
-        self._openai_port = openai_port
-        self._openai_target = openai_target
+        # // [LAW:one-source-of-truth] Active provider endpoints are owned here.
+        if provider_endpoints is None:
+            provider_endpoints = {
+                "anthropic": {
+                    "proxy_url": "http://{}:{}".format(host, port),
+                    "target": target,
+                },
+            }
+            if openai_port is not None:
+                provider_endpoints["openai"] = {
+                    "proxy_url": "http://{}:{}".format(host, openai_port),
+                    "target": openai_target,
+                }
+        normalized_endpoints: dict[str, dict[str, object]] = {}
+        for key, data in provider_endpoints.items():
+            if not isinstance(data, dict):
+                continue
+            spec = cc_dump.providers.get_provider_spec(key)
+            normalized_endpoints[spec.key] = {
+                "proxy_url": str(data.get("proxy_url", "") or ""),
+                "target": str(data.get("target", "") or ""),
+            }
+        self._provider_endpoints = normalized_endpoints
         self._replay_data = replay_data
         self._recording_path = recording_path
         self._replay_file = replay_file
@@ -351,19 +374,26 @@ class CcDumpApp(App):
 
     def _session_tab_title(self, session_key: str) -> str:
         if session_key == self._default_session_key:
-            return "Claude"
+            return cc_dump.providers.get_provider_spec(
+                cc_dump.providers.DEFAULT_PROVIDER_KEY
+            ).tab_title
         if session_key == self._workbench_session_key:
             return "Workbench Session"
         if self._is_side_channel_session_key(session_key):
             parts = session_key.split(":", 2)
             suffix = parts[2] if len(parts) > 2 else session_key
             return "SC " + suffix[:8]
-        # Provider-prefixed session keys: "openai:__default__" → "OpenAI"
-        if session_key.startswith("openai:"):
-            suffix = session_key[7:]
+        # Provider-prefixed session keys: "<provider>:__default__" → provider tab title.
+        provider = cc_dump.providers.session_provider(
+            session_key,
+            default_session_key=self._default_session_key,
+        )
+        if provider != cc_dump.providers.DEFAULT_PROVIDER_KEY:
+            spec = cc_dump.providers.get_provider_spec(provider)
+            _, _, suffix = session_key.partition(":")
             if suffix == "__default__":
-                return "OpenAI"
-            return "OAI " + suffix[:8]
+                return spec.tab_title
+            return f"{spec.tab_short_prefix} {suffix[:8]}"
         return session_key[:8]
 
     def _ensure_session_surface(self, session_key: str) -> None:
@@ -464,9 +494,10 @@ class CcDumpApp(App):
 
         // [LAW:one-source-of-truth] Provider → tab key mapping lives here.
         """
-        if provider == "anthropic":
-            return self._default_session_key
-        return f"{provider}:__default__"
+        return cc_dump.providers.provider_session_key(
+            provider,
+            default_session_key=self._default_session_key,
+        )
 
     def _resolve_event_session_key(self, event) -> str:
         """Resolve session key for event routing.
@@ -479,8 +510,8 @@ class CcDumpApp(App):
         provider = self._resolve_event_provider(event)
         provider_key = self._provider_tab_key(provider)
 
-        # Non-anthropic providers: one tab per provider, no sub-session routing.
-        if provider != "anthropic":
+        # Non-default providers: one tab per provider, no sub-session routing.
+        if provider != cc_dump.providers.DEFAULT_PROVIDER_KEY:
             self._bind_request_session(event.request_id, provider_key)
             self._ensure_session_surface(provider_key)
             return provider_key
@@ -739,19 +770,39 @@ class CcDumpApp(App):
 
         self._app_log("INFO", "🚀 cc-dump proxy started")
         self._app_log("INFO", f"Listening on: http://{self._host}:{self._port}")
-
-        if self._target:
-            self._app_log("INFO", f"Reverse proxy mode: {self._target}")
+        primary = self._provider_endpoints.get(cc_dump.providers.DEFAULT_PROVIDER_KEY, {})
+        primary_target = str(primary.get("target", "") or "")
+        primary_url = str(
+            primary.get("proxy_url")
+            or "http://{}:{}".format(self._host, self._port)
+        )
+        if primary_target:
+            self._app_log("INFO", f"Reverse proxy mode: {primary_target}")
             self._app_log(
                 "INFO",
-                f"Usage: ANTHROPIC_BASE_URL=http://{self._host}:{self._port} claude",
+                f"Usage: ANTHROPIC_BASE_URL={primary_url} claude",
             )
         else:
             self._app_log("INFO", "Forward proxy mode (dynamic targets)")
             self._app_log(
                 "INFO",
-                f"Usage: HTTP_PROXY=http://{self._host}:{self._port} ANTHROPIC_BASE_URL=https://api.anthropic.com claude",
+                f"Usage: HTTP_PROXY={primary_url} ANTHROPIC_BASE_URL=https://api.anthropic.com claude",
             )
+        for spec in cc_dump.providers.all_provider_specs():
+            provider_key = spec.key
+            if provider_key == cc_dump.providers.DEFAULT_PROVIDER_KEY:
+                continue
+            endpoint = self._provider_endpoints.get(provider_key)
+            if endpoint is None:
+                continue
+            proxy_url = str(endpoint.get("proxy_url", "") or "")
+            if not proxy_url:
+                continue
+            self._app_log("INFO", f"{spec.display_name} proxy: {proxy_url}")
+            target = str(endpoint.get("target", "") or "")
+            if target:
+                self._app_log("INFO", f"  Target: {target}")
+            self._app_log("INFO", f"  Usage: {spec.base_url_env}={proxy_url} {spec.client_hint}")
 
         self.run_worker(self._drain_events, thread=True, exclusive=False)
 
@@ -771,7 +822,7 @@ class CcDumpApp(App):
         # Wire snarfx auto-marshal now that call_from_thread is available
         snarfx.set_scheduler(self.call_from_thread)
 
-        # React to tmux pane exit — sync store when Claude dies
+        # React to tmux pane exit — sync store when launched tool exits
         if self._tmux_controller is not None:
             stx.reaction(self,
                 lambda: self._tmux_controller.pane_alive.get(),
@@ -780,7 +831,7 @@ class CcDumpApp(App):
 
         # Seed external state into view store for reactive footer
         self._sync_tmux_to_store()
-        self._view_store.set("launch:active_name", cc_dump.app.launch_config.load_active_name())
+        self._sync_active_launch_config_state()
         if self._resume_ui_state is not None:
             self._apply_resume_ui_state_preload()
         # Footer hydration — reactions are now active
@@ -890,22 +941,58 @@ class CcDumpApp(App):
     def _sync_tmux_to_store(self):
         """Mirror tmux controller state to view store for reactive footer updates."""
         tmux = self._tmux_controller
-        _TMUX_ACTIVE = {cc_dump.app.tmux_controller.TmuxState.READY, cc_dump.app.tmux_controller.TmuxState.CLAUDE_RUNNING}
+        _TMUX_ACTIVE = {cc_dump.app.tmux_controller.TmuxState.READY, cc_dump.app.tmux_controller.TmuxState.TOOL_RUNNING}
         self._view_store.update({
             "tmux:available": tmux is not None and tmux.state in _TMUX_ACTIVE,
             "tmux:auto_zoom": tmux.auto_zoom if tmux is not None else False,
             "tmux:zoomed": tmux._is_zoomed if tmux is not None else False,
         })
 
+    def _sync_active_launch_config_state(self) -> None:
+        """Mirror active launch config identity to view-store footer keys."""
+        active = cc_dump.app.launch_config.get_active_config()
+        self._view_store.update(
+            {
+                "launch:active_name": active.name,
+                "launch:active_tool": active.launcher,
+            }
+        )
+
     def _build_server_info(self) -> dict:
         """// [LAW:one-source-of-truth] All server info derived from constructor params."""
-        proxy_url = "http://{}:{}".format(self._host, self._port)
-        proxy_mode = "forward" if not self._target else "reverse"
+        anthropic_endpoint = self._provider_endpoints.get(
+            cc_dump.providers.DEFAULT_PROVIDER_KEY,
+            {},
+        )
+        proxy_url = str(
+            anthropic_endpoint.get("proxy_url")
+            or "http://{}:{}".format(self._host, self._port)
+        )
+        primary_target_raw = anthropic_endpoint.get("target", "")
+        primary_target = str(primary_target_raw or "") or None
+        proxy_mode = "forward" if not primary_target else "reverse"
+
+        provider_rows: list[dict[str, str]] = []
+        for spec in cc_dump.providers.all_provider_specs():
+            endpoint = self._provider_endpoints.get(spec.key)
+            if endpoint is None:
+                continue
+            provider_rows.append(
+                {
+                    "key": spec.key,
+                    "name": spec.display_name,
+                    "proxy_url": str(endpoint.get("proxy_url", "") or ""),
+                    "target": str(endpoint.get("target", "") or ""),
+                    "base_url_env": spec.base_url_env,
+                    "client_hint": spec.client_hint,
+                }
+            )
 
         info = {
             "proxy_url": proxy_url,
             "proxy_mode": proxy_mode,
-            "target": self._target,
+            "target": primary_target,
+            "providers": provider_rows,
             "session_name": self._session_name,
             "session_id": self._session_id,
             "recording_path": self._recording_path,
@@ -917,9 +1004,6 @@ class CcDumpApp(App):
         }
         runtime_log = cc_dump.io.logging_setup.get_runtime()
         info["log_file"] = runtime_log.file_path if runtime_log is not None else None
-        if self._openai_port is not None:
-            info["openai_proxy_url"] = "http://{}:{}".format(self._host, self._openai_port)
-            info["openai_target"] = self._openai_target
         return info
 
     def _log_memory_snapshot(self, phase: str) -> None:
@@ -1292,22 +1376,9 @@ class CcDumpApp(App):
         _actions.toggle_keys(self)
 
     # Tmux integration
-    def action_launch_claude(self):
-        tmux = self._tmux_controller
-        if tmux is None:
-            self.notify("Tmux not available", severity="warning")
-            return
+    def action_launch_tool(self):
         config = cc_dump.app.launch_config.get_active_config()
-        session_id = self._active_resume_session_id() if config.auto_resume else ""
-        command = cc_dump.app.launch_config.build_full_command(config, session_id)
-        tmux.set_claude_command(config.claude_command)
-        result = tmux.launch_claude(command=command)
-        self._app_log("INFO", "launch_claude: {}".format(result))
-        if result.success:
-            self.notify("{}: {}".format(result.action.value, result.detail))
-            self._sync_tmux_to_store()
-        else:
-            self.notify("Launch failed: {}".format(result.detail), severity="error")
+        self._launch_with_config(config, log_label="launch_tool")
 
     def action_toggle_tmux_zoom(self):
         tmux = self._tmux_controller
@@ -1403,7 +1474,7 @@ class CcDumpApp(App):
         if conv is not None:
             conv.focus()
 
-    def _launch_with_config(self, config) -> None:
+    def _launch_with_config(self, config, log_label: str = "launch_with_config") -> None:
         """Build args from config + session_id, launch via tmux."""
         tmux = self._tmux_controller
         if tmux is None:
@@ -1411,20 +1482,36 @@ class CcDumpApp(App):
             return
 
         session_id = self._active_resume_session_id() if config.auto_resume else ""
-        command = cc_dump.app.launch_config.build_full_command(config, session_id)
-        tmux.set_claude_command(config.claude_command)
-        result = tmux.launch_claude(command=command)
-        self._app_log("INFO", "launch_with_config: {}".format(result))
+        profile = cc_dump.app.launch_config.build_launch_profile(
+            config,
+            provider_endpoints=self._provider_endpoints,
+            session_id=session_id,
+        )
+        tmux.configure_launcher(
+            command=config.resolved_command,
+            process_names=profile.process_names,
+            launch_env=profile.environment,
+            launcher_label=profile.launcher_label,
+        )
+        result = tmux.launch_tool(command=profile.command)
+        self._app_log("INFO", "{}: {}".format(log_label, result))
         if result.success:
             self.notify("{}: {}".format(result.action.value, result.detail))
         else:
             self.notify("Launch failed: {}".format(result.detail), severity="error")
+        self._view_store.update(
+            {
+                "launch:active_name": config.name,
+                "launch:active_tool": profile.launcher_key,
+            }
+        )
         self._sync_tmux_to_store()
 
     def on_launch_config_panel_saved(self, msg) -> None:
         """Handle LaunchConfigPanel.Saved — persist configs."""
         cc_dump.app.launch_config.save_configs(msg.configs)
         cc_dump.app.launch_config.save_active_name(msg.active_name)
+        self._sync_active_launch_config_state()
         self._close_launch_config()
         self.notify("Launch configs saved")
 
@@ -1436,14 +1523,15 @@ class CcDumpApp(App):
         """Handle LaunchConfigPanel.QuickLaunch — save, close, launch."""
         cc_dump.app.launch_config.save_configs(msg.configs)
         cc_dump.app.launch_config.save_active_name(msg.active_name)
+        self._sync_active_launch_config_state()
         self._close_launch_config()
-        self._launch_with_config(msg.config)
+        self._launch_with_config(msg.config, log_label="quick_launch")
 
     def on_launch_config_panel_activated(self, msg) -> None:
         """Handle LaunchConfigPanel.Activated — save active name, notify."""
         cc_dump.app.launch_config.save_configs(msg.configs)
         cc_dump.app.launch_config.save_active_name(msg.name)
-        self._view_store.set("launch:active_name", msg.name)
+        self._sync_active_launch_config_state()
         self.notify("Active: {}".format(msg.name))
 
     # Side channel

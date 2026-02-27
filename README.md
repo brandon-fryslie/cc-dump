@@ -10,7 +10,7 @@ uv tool install -e .
 
 Requires Python 3.10+. Production dependencies: [Textual](https://github.com/Textualize/textual), [textual-serve](https://github.com/Textualize/textual-serve), tiktoken.
 
-**Optional:** For tmux integration (split-pane Claude launching, auto-zoom):
+**Optional:** For tmux integration (split-pane CLI launching, auto-zoom):
 
 ```bash
 uv tool install -e ".[tmux]"  # adds libtmux
@@ -179,7 +179,7 @@ All API traffic is recorded in HAR 1.2 format. Recordings are organized by sessi
 
 When running inside tmux with `libtmux` installed:
 
-- `c` — Launch Claude Code in a split pane (auto-configures `ANTHROPIC_BASE_URL`). If already running, focuses the Claude pane
+- `c` — Launch the active CLI config in a split pane (for example Claude or Copilot). If already running, focuses that pane
 - `z` — Manual zoom toggle (cc-dump pane ↔ full screen)
 - `Z` — Toggle auto-zoom: automatically zooms cc-dump when API requests arrive, unzooms when the turn completes
 
@@ -303,7 +303,7 @@ Each press cycles: current → next visibility level.
 
 | Key | Action |
 |-----|--------|
-| `c` | Launch Claude in split pane (or focus if running) |
+| `c` | Launch active tool in split pane (or focus if running) |
 | `z` | Toggle manual zoom |
 | `Z` | Toggle auto-zoom on API activity |
 

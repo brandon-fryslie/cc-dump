@@ -30,6 +30,7 @@ from cc_dump.pipeline.event_types import (
 from cc_dump.core.analysis import TurnBudget, compute_turn_budget, estimate_tokens, tool_result_breakdown
 from cc_dump.core.palette import TAG_COLOR_COUNT
 import cc_dump.core.segmentation
+import cc_dump.providers
 
 # Type alias for content block dicts from the API response
 _ContentBlockDict = dict[str, str | int | dict | list | None]
@@ -1400,7 +1401,13 @@ def format_response_headers(status_code: int, headers_dict: dict) -> list:
 # Anthropic → existing formatters. Other providers → stubs for now.
 
 
-def format_openai_request(body, state, request_headers=None) -> list:
+def format_openai_request(
+    body,
+    state,
+    request_headers=None,
+    *,
+    provider_label: str = "OpenAI",
+) -> list:
     """Format an OpenAI API request as a list of FormattedBlock.
 
     Mirrors format_request() structure using the same block types, but
@@ -1416,7 +1423,7 @@ def format_openai_request(body, state, request_headers=None) -> list:
     blocks.append(NewlineBlock())
     blocks.append(SeparatorBlock(style="heavy"))
     blocks.append(HeaderBlock(
-        label="REQUEST #{} (OpenAI)".format(request_num),
+        label="REQUEST #{} ({})".format(request_num, provider_label),
         request_num=request_num,
         timestamp=_get_timestamp(),
         header_type="request",
@@ -1633,13 +1640,10 @@ def format_openai_complete_response(complete_message) -> list:
     return result
 
 
-# [LAW:dataflow-not-control-flow] Provider → formatter dispatch tables.
-_REQUEST_FORMATTERS: dict[str, object] = {
-    "anthropic": format_request,
-    "openai": format_openai_request,
-}
+_CompleteResponseFormatter = Callable[[object], list]
 
-_COMPLETE_RESPONSE_FORMATTERS: dict[str, object] = {
+
+_COMPLETE_RESPONSE_FORMATTERS_BY_FAMILY: dict[str, _CompleteResponseFormatter] = {
     "anthropic": format_complete_response,
     "openai": format_openai_complete_response,
 }
@@ -1647,11 +1651,22 @@ _COMPLETE_RESPONSE_FORMATTERS: dict[str, object] = {
 
 def format_request_for_provider(provider: str, body, state, request_headers=None) -> list:
     """Dispatch request formatting by provider."""
-    formatter = _REQUEST_FORMATTERS.get(provider, format_request)
-    return formatter(body, state, request_headers=request_headers)
+    spec = cc_dump.providers.get_provider_spec(provider)
+    if spec.protocol_family == "openai":
+        return format_openai_request(
+            body,
+            state,
+            request_headers=request_headers,
+            provider_label=spec.display_name,
+        )
+    return format_request(body, state, request_headers=request_headers)
 
 
 def format_complete_response_for_provider(provider: str, complete_message) -> list:
     """Dispatch complete response formatting by provider."""
-    formatter = _COMPLETE_RESPONSE_FORMATTERS.get(provider, format_complete_response)
+    spec = cc_dump.providers.get_provider_spec(provider)
+    formatter = _COMPLETE_RESPONSE_FORMATTERS_BY_FAMILY.get(
+        spec.protocol_family,
+        format_complete_response,
+    )
     return formatter(complete_message)
