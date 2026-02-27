@@ -310,6 +310,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
     event_queue = None  # set by cli.py or factory before server starts
     request_pipeline = None  # set by cli.py or factory before server starts
     provider = "anthropic"  # set by factory for multi-provider support
+    mitm_ca = None  # set by factory when --mitm is enabled
 
     def log_message(self, fmt, *args):
         self.event_queue.put(LogEvent(method=self.command, path=self.path, status=args[0] if args else "", provider=self.provider))
@@ -585,6 +586,49 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         prefixes = cc_dump.providers.get_provider_spec(self.provider).api_paths
         return any(request_path.startswith(p) for p in prefixes)
 
+    def do_CONNECT(self):
+        """Handle HTTPS CONNECT tunneling with MITM TLS interception."""
+        if not self.mitm_ca:
+            self.send_error(501, "CONNECT not supported (start with --mitm)")
+            return
+
+        host, _, port_str = self.path.partition(":")
+        port = int(port_str) if port_str else 443
+
+        # Tell client the tunnel is established.
+        self.send_response(200, "Connection Established")
+        self.end_headers()
+
+        # Wrap client socket in TLS with a cert generated for this host.
+        ctx = self.mitm_ca.ssl_context_for_host(host)
+        try:
+            client_ssl = ctx.wrap_socket(self.connection, server_side=True)
+        except ssl.SSLError:
+            logger.debug("MITM TLS handshake failed for %s", host)
+            return
+
+        # Replace streams with the decrypted socket.
+        self.connection = client_ssl
+        self.rfile = client_ssl.makefile("rb")
+        self.wfile = client_ssl.makefile("wb")
+
+        # Route decrypted HTTP through the normal proxy pipeline.
+        self.target_host = "https://{}".format(host) + (":{}".format(port) if port != 443 else "")
+        self.provider = cc_dump.providers.infer_provider_from_url(host)
+
+        try:
+            while True:
+                self.handle_one_request()
+                if self.close_connection:
+                    break
+        except Exception:
+            pass
+        finally:
+            try:
+                client_ssl.close()
+            except Exception:
+                pass
+
     def do_POST(self):
         self._proxy()
 
@@ -604,6 +648,7 @@ def make_handler_class(
     target_host: str | None,
     event_queue,
     request_pipeline=None,
+    mitm_ca=None,
 ) -> type[ProxyHandler]:
     """Create a configured ProxyHandler subclass for a specific provider.
 
@@ -619,5 +664,6 @@ def make_handler_class(
             "target_host": target_host.rstrip("/") if target_host else None,
             "event_queue": event_queue,
             "request_pipeline": request_pipeline,
+            "mitm_ca": mitm_ca,
         },
     )

@@ -115,6 +115,24 @@ def main():
         default=None,
         help="Seed hue (0-360) for color palette (default: 190, cyan). Env: CC_DUMP_SEED_HUE",
     )
+    parser.add_argument(
+        "--mitm",
+        action="store_true",
+        default=True,
+        help="Enable MITM TLS interception for CONNECT proxy requests (default: enabled)",
+    )
+    parser.add_argument(
+        "--no-mitm",
+        action="store_false",
+        dest="mitm",
+        help="Disable MITM TLS interception",
+    )
+    parser.add_argument(
+        "--mitm-ca-dir",
+        type=str,
+        default=None,
+        help="Directory for MITM CA key/cert (default: ~/.cc-dump/mitm-ca/)",
+    )
     for spec in cc_dump.providers.optional_proxy_provider_specs():
         parser.add_argument(
             f"--{spec.key}-port",
@@ -235,11 +253,20 @@ def main():
     proxy_targets: dict[str, str | None] = {}
     provider_endpoints: dict[str, dict[str, str]] = {}
 
+    # MITM certificate authority for CONNECT interception.
+    mitm_ca = None
+    if args.mitm:
+        from cc_dump.pipeline.mitm import MitmCertificateAuthority
+        from pathlib import Path
+        ca_dir = Path(args.mitm_ca_dir) if args.mitm_ca_dir else None
+        mitm_ca = MitmCertificateAuthority(ca_dir=ca_dir)
+
     # Anthropic proxy (always started).
     anthropic_handler = make_handler_class(
         provider="anthropic",
         target_host=args.target,
         event_queue=event_q,
+        mitm_ca=mitm_ca,
     )
     server, actual_port, _ = _start_proxy_server(args.host, args.port, anthropic_handler)
     proxy_servers["anthropic"] = server
@@ -257,6 +284,7 @@ def main():
             provider=spec.key,
             target_host=target_host,
             event_queue=event_q,
+            mitm_ca=mitm_ca,
         )
         srv, port, _ = _start_proxy_server(args.host, bind_port, handler)
         proxy_servers[spec.key] = srv
@@ -266,10 +294,13 @@ def main():
 
     print("🚀 cc-dump proxy started")
     anthropic_target = proxy_targets.get("anthropic")
+    anthropic_proxy_url = f"http://{args.host}:{actual_port}"
     provider_endpoints["anthropic"] = {
-        "proxy_url": f"http://{args.host}:{actual_port}",
+        "proxy_url": anthropic_proxy_url,
         "target": anthropic_target or "",
     }
+    if mitm_ca:
+        provider_endpoints["_mitm"] = {"ca_cert_path": str(mitm_ca.ca_cert_path)}
     print(f"   Anthropic proxy: http://{args.host}:{actual_port}")
     if anthropic_target:
         print(f"     Target: {anthropic_target}")
@@ -279,6 +310,9 @@ def main():
         print(
             f"     Usage: HTTP_PROXY=http://{args.host}:{actual_port} ANTHROPIC_BASE_URL=https://api.anthropic.com claude"
         )
+    if mitm_ca:
+        print(f"   MITM CA cert:    {mitm_ca.ca_cert_path}")
+        print(f"     CONNECT proxy via HTTPS_PROXY=http://{args.host}:{actual_port}")
     for spec in cc_dump.providers.optional_proxy_provider_specs():
         port = proxy_ports.get(spec.key)
         if port is None:
