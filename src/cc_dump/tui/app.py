@@ -207,10 +207,17 @@ class CcDumpApp(App):
             if not isinstance(data, dict):
                 continue
             spec = cc_dump.providers.get_provider_spec(key)
-            normalized_endpoints[spec.key] = {
+            normalized: dict[str, object] = {
                 "proxy_url": str(data.get("proxy_url", "") or ""),
                 "target": str(data.get("target", "") or ""),
             }
+            extras = {
+                extra_key: extra_value
+                for extra_key, extra_value in data.items()
+                if extra_key not in {"proxy_url", "target"}
+            }
+            normalized.update(extras)
+            normalized_endpoints[spec.key] = normalized
         self._provider_endpoints = normalized_endpoints
         self._replay_data = replay_data
         self._recording_path = recording_path
@@ -970,7 +977,8 @@ class CcDumpApp(App):
         )
         primary_target_raw = anthropic_endpoint.get("target", "")
         primary_target = str(primary_target_raw or "") or None
-        proxy_mode = "forward" if not primary_target else "reverse"
+        mode_hint = str(anthropic_endpoint.get("proxy_mode", "") or "").strip().lower()
+        proxy_mode = mode_hint if mode_hint in {"forward", "reverse"} else ("forward" if not primary_target else "reverse")
 
         provider_rows: list[dict[str, str]] = []
         for spec in cc_dump.providers.all_provider_specs():
