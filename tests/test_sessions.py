@@ -360,18 +360,24 @@ def test_list_recordings_provider_layout(recordings_dir):
     """New layout recordings/<session>/<provider>/*.har is discovered with provider context."""
     anthropic_dir = recordings_dir / "session-a" / "anthropic"
     openai_dir = recordings_dir / "session-a" / "openai"
+    copilot_dir = recordings_dir / "session-a" / "copilot"
     anthropic_dir.mkdir(parents=True)
     openai_dir.mkdir(parents=True)
+    copilot_dir.mkdir(parents=True)
 
     har_a = anthropic_dir / "recording-1.har"
     har_o = openai_dir / "recording-2.har"
+    har_c = copilot_dir / "recording-3.har"
     create_har_file(har_a, entry_count=1)
     create_har_file(har_o, entry_count=2)
+    create_har_file(har_c, entry_count=3)
 
     recordings = list_recordings(str(recordings_dir))
-    assert len(recordings) == 2
+    assert len(recordings) == 3
     by_name = {rec["filename"]: rec for rec in recordings}
     assert by_name["recording-1.har"]["session_name"] == "session-a"
     assert by_name["recording-1.har"]["provider"] == "anthropic"
     assert by_name["recording-2.har"]["session_name"] == "session-a"
     assert by_name["recording-2.har"]["provider"] == "openai"
+    assert by_name["recording-3.har"]["session_name"] == "session-a"
+    assert by_name["recording-3.har"]["provider"] == "copilot"

@@ -182,10 +182,10 @@ def test_m4_tmux_auto_zoom_request_then_end_turn():
         controller = TmuxController()
 
     pane = MagicMock()
-    controller.state = TmuxState.CLAUDE_RUNNING
+    controller.state = TmuxState.TOOL_RUNNING
     controller.auto_zoom = True
     controller._our_pane = pane
-    controller._claude_pane = MagicMock()
+    controller._tool_pane = MagicMock()
 
     controller.on_event(RequestBodyEvent(body={}))
     assert controller._is_zoomed is True
