@@ -135,9 +135,9 @@ class StatusFooter(Widget):
             )
             yield Static(" F- ", id="cmd-filterset")
             yield Chip(
-                " c claude ",
-                action="app.launch_claude",
-                id="cmd-claude",
+                " c launch ",
+                action="app.launch_tool",
+                id="cmd-launch-tool",
                 classes="tmux",
             )
             yield Chip(
@@ -239,11 +239,13 @@ class StatusFooter(Widget):
         for widget in self.query(".tmux"):
             widget.set_class(tmux_available, "-available")
 
-        # Claude chip
-        claude_chip = self.query_one("#cmd-claude", Chip)
+        # Launcher chip
+        launch_chip = self.query_one("#cmd-launch-tool", Chip)
+        active_tool_key = str(state.get("active_launch_tool", "claude") or "claude")
+        active_tool_label = active_tool_key.replace("_", " ")
         active_config_name = state.get("active_launch_config_name", "")
         config_suffix = f" [{active_config_name}]" if (active_config_name and active_config_name != "default") else ""
-        claude_chip.update(f" c claude{config_suffix} ")
+        launch_chip.update(f" c {active_tool_label}{config_suffix} ")
 
         # Zoom chip
         zoom_chip = self.query_one("#cmd-zoom", Chip)

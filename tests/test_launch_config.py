@@ -7,6 +7,7 @@ import pytest
 from cc_dump.app.launch_config import (
     LaunchConfig,
     build_full_command,
+    build_launch_profile,
     get_active_config,
     load_active_name,
     load_configs,
@@ -35,26 +36,37 @@ class TestSerialization:
         configs = load_configs()
         assert len(configs) == 1
         assert configs[0].name == "default"
+        assert configs[0].launcher == "claude"
         assert configs[0].auto_resume is True
-        assert configs[0].claude_command == "claude"
+        assert configs[0].resolved_command == "claude"
 
     def test_round_trip(self, settings_file):
         """Save and reload preserves all fields."""
         configs = [
-            LaunchConfig(name="fast", claude_command="clod", model="haiku", auto_resume=False, extra_flags="--verbose"),
-            LaunchConfig(name="debug", model="opus", auto_resume=True, extra_flags=""),
+            LaunchConfig(
+                name="fast",
+                launcher="claude",
+                command="clod",
+                model="haiku",
+                auto_resume=False,
+                extra_flags="--verbose",
+            ),
+            LaunchConfig(name="debug", launcher="copilot", model="opus", auto_resume=True, extra_flags=""),
         ]
         save_configs(configs)
 
         loaded = load_configs()
         assert len(loaded) == 2
         assert loaded[0].name == "fast"
-        assert loaded[0].claude_command == "clod"
+        assert loaded[0].launcher == "claude"
+        assert loaded[0].command == "clod"
         assert loaded[0].model == "haiku"
         assert loaded[0].auto_resume is False
         assert loaded[0].extra_flags == "--verbose"
         assert loaded[1].name == "debug"
-        assert loaded[1].claude_command == "claude"
+        assert loaded[1].launcher == "copilot"
+        assert loaded[1].command == ""
+        assert loaded[1].resolved_command == "copilot"
         assert loaded[1].model == "opus"
         assert loaded[1].auto_resume is True
 
@@ -123,25 +135,25 @@ class TestGetActiveConfig:
 
 
 class TestBuildFullCommand:
-    """Full command assembly from config.claude_command + session_id."""
+    """Full command assembly from config + session_id."""
 
     def test_empty_config(self):
-        """Default config with no session produces just the claude command."""
+        """Default config with no session produces the default launcher command."""
         config = LaunchConfig()
         assert build_full_command(config) == "claude"
 
     def test_custom_command(self):
-        """Config with custom claude_command uses it."""
-        config = LaunchConfig(claude_command="clod")
+        """Config with custom command uses it."""
+        config = LaunchConfig(command="clod")
         assert build_full_command(config) == "clod"
 
-    def test_model_only(self):
-        """Config with model produces --model flag."""
+    def test_model_only_for_claude(self):
+        """Claude launcher accepts --model."""
         config = LaunchConfig(model="haiku")
         assert build_full_command(config) == "claude --model haiku"
 
-    def test_resume_with_session(self):
-        """auto_resume=True + session_id produces --resume flag."""
+    def test_resume_with_session_for_claude(self):
+        """Claude launcher adds --resume when session_id is present."""
         config = LaunchConfig(auto_resume=True)
         result = build_full_command(config, session_id="abc-123")
         assert "--resume abc-123" in result
@@ -163,8 +175,8 @@ class TestBuildFullCommand:
         config = LaunchConfig(extra_flags="--verbose --no-cache")
         assert build_full_command(config) == "claude --verbose --no-cache"
 
-    def test_all_combined(self):
-        """Model + resume + extra flags all present."""
+    def test_all_combined_for_claude(self):
+        """Model + resume + extra flags all present for Claude launcher."""
         config = LaunchConfig(
             model="opus",
             auto_resume=True,
@@ -173,13 +185,27 @@ class TestBuildFullCommand:
         result = build_full_command(config, session_id="sess-42")
         assert result == "claude --model opus --resume sess-42 --verbose"
 
-    def test_custom_command_all_combined(self):
-        """Custom command + model + resume + extra flags."""
+    def test_copilot_ignores_claude_specific_flags(self):
+        """Copilot launcher does not inject --model/--resume flags."""
         config = LaunchConfig(
-            claude_command="clod",
-            model="haiku",
+            launcher="copilot",
+            command="copilot",
+            model="ignored",
             auto_resume=True,
-            extra_flags="--fast",
+            extra_flags="--json",
         )
         result = build_full_command(config, session_id="sess-1")
-        assert result == "clod --model haiku --resume sess-1 --fast"
+        assert result == "copilot --json"
+
+
+class TestBuildLaunchProfile:
+    def test_profile_sets_provider_env_for_copilot(self):
+        config = LaunchConfig(launcher="copilot", command="")
+        endpoints = {
+            "copilot": {"proxy_url": "http://127.0.0.1:4567", "target": "https://api.githubcopilot.com"}
+        }
+        profile = build_launch_profile(config, provider_endpoints=endpoints, session_id="")
+        assert profile.launcher_key == "copilot"
+        assert profile.command == "copilot"
+        assert profile.environment == {"COPILOT_BASE_URL": "http://127.0.0.1:4567"}
+        assert "copilot" in profile.process_names

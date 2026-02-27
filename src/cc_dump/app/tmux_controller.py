@@ -1,4 +1,4 @@
-"""Tmux integration for cc-dump — split panes, auto-zoom on API activity.
+"""Tmux integration for cc-dump — split panes, launch external tools, auto-zoom.
 
 This module is STABLE — holds live pane references, never hot-reloaded.
 All libtmux usage is lazy-imported and wrapped in try/except.
@@ -30,30 +30,33 @@ from cc_dump.pipeline.event_types import (
 
 logger = logging.getLogger(__name__)
 
+
 class TmuxState(Enum):
     """Controller state machine."""
 
     NOT_IN_TMUX = auto()
     NO_LIBTMUX = auto()
     READY = auto()
-    CLAUDE_RUNNING = auto()
+    TOOL_RUNNING = auto()
 
 
 # ─── Launch result ────────────────────────────────────────────────────────────
 
 
 class LaunchAction(Enum):
-    """What launch_claude decided to do."""
+    """What launch_tool decided to do."""
+
     LAUNCHED = "launched"
     FOCUSED = "focused"
     BLOCKED = "blocked"
 
 
 class LaunchResult:
-    """Result of launch_claude — what happened and why.
+    """Result of launch_tool — what happened and why.
 
     // [LAW:dataflow-not-control-flow] The decision is a value, not hidden in branches.
     """
+
     __slots__ = ("action", "detail", "success", "command")
 
     def __init__(self, action: LaunchAction, detail: str, success: bool, command: str = ""):
@@ -149,23 +152,39 @@ def is_available() -> bool:
 
 
 class TmuxController:
-    """Manages tmux pane splitting, zoom, and claude lifecycle.
+    """Manages tmux pane splitting, zoom, and tool-launch lifecycle.
 
     // [LAW:single-enforcer] on_event() is the sole zoom decision point.
-    // [LAW:single-enforcer] _validate_claude_pane() is the sole pane liveness check.
+    // [LAW:single-enforcer] _validate_tool_pane() is the sole pane liveness check.
     """
 
-    def __init__(self, claude_command: str = "claude", auto_zoom: bool = False) -> None:
+    def __init__(
+        self,
+        launch_command: str = "claude",
+        process_names: tuple[str, ...] = (),
+        launch_env: dict[str, str] | None = None,
+        launcher_label: str = "tool",
+        auto_zoom: bool = False,
+    ) -> None:
         self.state = TmuxState.NOT_IN_TMUX
         self.auto_zoom = auto_zoom
         self._is_zoomed = False
-        self._port: int | None = None
-        self._claude_command = claude_command
+        self._port: int | None = None  # legacy fallback path
+        self._launch_command = ""
+        self._process_names: tuple[str, ...] = ()
+        self._launch_env: dict[str, str] = {}
+        self._launcher_label = launcher_label
         self._server: libtmux.Server | None = None
         self._session: libtmux.Session | None = None
         self._our_pane: libtmux.Pane | None = None
-        self._claude_pane: libtmux.Pane | None = None
-        self.pane_alive = Observable(False)  # reactive — True while Claude pane is alive
+        self._tool_pane: libtmux.Pane | None = None
+        self.pane_alive = Observable(False)  # reactive — True while launched pane is alive
+        self.configure_launcher(
+            command=launch_command,
+            process_names=process_names,
+            launch_env=launch_env or {},
+            launcher_label=launcher_label,
+        )
 
         if not os.environ.get("TMUX"):
             self.state = TmuxState.NOT_IN_TMUX
@@ -203,38 +222,87 @@ class TmuxController:
             self.state = TmuxState.NOT_IN_TMUX
 
     def set_port(self, port: int) -> None:
-        """Set the proxy port (called from cli.py after server starts)."""
+        """Set legacy proxy port fallback (used when launch_env is empty)."""
         self._port = port
 
-    def set_claude_command(self, command: str) -> None:
-        """Update the Claude command at runtime."""
-        self._claude_command = command
+    def configure_launcher(
+        self,
+        command: str,
+        process_names: tuple[str, ...] = (),
+        launch_env: dict[str, str] | None = None,
+        launcher_label: str = "tool",
+    ) -> None:
+        """Set launcher command identity + environment.
 
-    def _validate_claude_pane(self) -> bool:
+        // [LAW:one-source-of-truth] Launcher identity and env are configured here,
+        // then consumed by launch/adoption/tail logic.
+        """
+        normalized_command = str(command or "").strip() or "claude"
+        try:
+            tokenized = shlex.split(normalized_command)
+        except ValueError:
+            tokenized = [normalized_command]
+        primary_name = os.path.basename(tokenized[0]) if tokenized else ""
+        names = [primary_name, *process_names]
+        deduped = tuple(dict.fromkeys(name for name in names if name))
+
+        self._launch_command = normalized_command
+        self._process_names = deduped
+        self._launch_env = dict(launch_env or {})
+        self._launcher_label = str(launcher_label or "").strip() or "tool"
+
+    def set_launch_command(self, command: str) -> None:
+        """Update the launcher command while preserving env/matchers."""
+        self.configure_launcher(
+            command=command,
+            process_names=self._process_names,
+            launch_env=self._launch_env,
+            launcher_label=self._launcher_label,
+        )
+
+    def set_launch_env(self, launch_env: dict[str, str]) -> None:
+        """Update launch environment while preserving command/matchers."""
+        self.configure_launcher(
+            command=self._launch_command,
+            process_names=self._process_names,
+            launch_env=launch_env,
+            launcher_label=self._launcher_label,
+        )
+
+    def set_process_names(self, process_names: tuple[str, ...]) -> None:
+        """Update pane-adoption matchers while preserving command/env."""
+        self.configure_launcher(
+            command=self._launch_command,
+            process_names=process_names,
+            launch_env=self._launch_env,
+            launcher_label=self._launcher_label,
+        )
+
+    def _validate_tool_pane(self) -> bool:
         """// [LAW:single-enforcer] Sole pane liveness check.
 
-        Returns True if claude pane is alive, False if dead/absent.
+        Returns True if launched pane is alive, False if dead/absent.
         On dead pane: clears reference and transitions to READY.
         """
-        if self._claude_pane is None:
+        if self._tool_pane is None:
             return False
         try:
             # libtmux refresh fetches fresh state from tmux server
-            self._claude_pane.refresh()
+            self._tool_pane.refresh()
             return True
         except Exception:
-            self._claude_pane = None
+            self._tool_pane = None
             self.state = TmuxState.READY
             return False
 
-    def _find_claude_pane(self) -> "libtmux.Pane | None":
-        """Scan sibling panes for a running Claude process."""
+    def _find_tool_pane(self) -> "libtmux.Pane | None":
+        """Scan sibling panes for a running configured tool process."""
         if self._our_pane is None:
             return None
         try:
-            # Extract binary name from command (e.g. "/usr/bin/claude" -> "claude")
-            target = os.path.basename(self._claude_command)
-            targets = {target, "claude", "clod"}
+            targets = set(self._process_names)
+            if not targets:
+                return None
             window = self._our_pane.window
             for pane in window.panes:
                 if pane.pane_id == self._our_pane.pane_id:
@@ -243,46 +311,43 @@ class TmuxController:
                 if os.path.basename(current_cmd) in targets:
                     return pane
         except Exception as e:
-            _log("_find_claude_pane error: {}".format(e))
+            _log("_find_tool_pane error: {}".format(e))
         return None
 
     def _try_adopt_existing(self) -> None:
-        """Adopt an existing Claude pane if found. Transitions to CLAUDE_RUNNING."""
-        found = self._find_claude_pane()
+        """Adopt an existing tool pane if found. Transitions to TOOL_RUNNING."""
+        found = self._find_tool_pane()
         if found is not None:
-            self._claude_pane = found
-            self.state = TmuxState.CLAUDE_RUNNING
+            self._tool_pane = found
+            self.state = TmuxState.TOOL_RUNNING
 
     @property
-    def claude_command(self) -> str:
-        """The base claude command (e.g. 'claude', 'clod')."""
-        return self._claude_command
+    def launch_command(self) -> str:
+        """The base launcher command."""
+        return self._launch_command
 
-    def launch_claude(self, command: str = "") -> LaunchResult:
+    def launch_tool(self, command: str = "") -> LaunchResult:
         """Evaluate preconditions, derive action, log, execute.
 
         Args:
-            command: Full command to run (e.g. 'claude --resume abc' or
-                     'zsh -c "source ~/.zshrc; clod --resume abc"').
-                     If empty, falls back to self._claude_command.
+            command: Full command to run.
+                     If empty, falls back to self._launch_command.
 
         // [LAW:dataflow-not-control-flow] All preconditions evaluated unconditionally.
         // Action is a value derived from the preconditions, not hidden in branches.
         """
-        resolved_command = command or self._claude_command
+        resolved_command = command or self._launch_command
 
         # ── Evaluate all preconditions unconditionally ──
-        state_ok = self.state in (TmuxState.READY, TmuxState.CLAUDE_RUNNING)
-
-        pane_alive = (
-            self._validate_claude_pane() if self._claude_pane is not None
-            else False
-        )
+        state_ok = self.state in (TmuxState.READY, TmuxState.TOOL_RUNNING)
+        pane_alive = self._validate_tool_pane() if self._tool_pane is not None else False
         if not pane_alive:
             self._try_adopt_existing()
-            pane_alive = self._claude_pane is not None
+            pane_alive = self._tool_pane is not None
 
-        port_ok = self._port is not None
+        has_launch_env = bool(self._launch_env)
+        has_port_fallback = self._port is not None
+        launch_target_ok = has_launch_env or has_port_fallback
 
         # ── Derive action from preconditions ──
         action: LaunchAction
@@ -290,18 +355,18 @@ class TmuxController:
         if not state_ok:
             action, detail = LaunchAction.BLOCKED, "state={}".format(self.state)
         elif pane_alive:
-            pane_id = getattr(self._claude_pane, "pane_id", "?")
+            pane_id = getattr(self._tool_pane, "pane_id", "?")
             action, detail = LaunchAction.FOCUSED, "existing pane {}".format(pane_id)
-        elif not port_ok:
-            action, detail = LaunchAction.BLOCKED, "port not set"
+        elif not launch_target_ok:
+            action, detail = LaunchAction.BLOCKED, "launch env not configured"
         else:
             action, detail = LaunchAction.LAUNCHED, resolved_command
 
-        _log("launch_claude: {} ({})".format(action.value, detail))
+        _log("launch_tool: {} ({})".format(action.value, detail))
 
         # ── Execute ──
         if action == LaunchAction.FOCUSED:
-            ok = self.focus_claude()
+            ok = self.focus_tool()
             return LaunchResult(action, detail, ok)
 
         if action == LaunchAction.LAUNCHED:
@@ -328,22 +393,22 @@ class TmuxController:
             else libtmux.constants.PaneDirection.Below
         )
 
-    def _resolve_claude_for_tail(self) -> "libtmux.Pane | None":
-        """Return a live Claude/clod pane when one exists in our window."""
-        pane_alive = self._validate_claude_pane() if self._claude_pane is not None else False
+    def _resolve_tool_for_tail(self) -> "libtmux.Pane | None":
+        """Return a live tool pane when one exists in our window."""
+        pane_alive = self._validate_tool_pane() if self._tool_pane is not None else False
         if not pane_alive:
             self._try_adopt_existing()
-        return self._claude_pane
+        return self._tool_pane
 
     def open_log_tail(self, log_file: str) -> LogTailResult:
         """Open a tmux pane/window running `tail -f` for the runtime logfile.
 
         Routing policy:
         1. cc-dump alone in window -> split below (horizontal).
-        2. cc-dump + Claude/clod only -> split Claude/clod pane in opposite orientation.
+        2. cc-dump + launched tool only -> split tool pane in opposite orientation.
         3. Any other layout -> create and switch to a new tmux window.
         """
-        state_ok = self.state in (TmuxState.READY, TmuxState.CLAUDE_RUNNING)
+        state_ok = self.state in (TmuxState.READY, TmuxState.TOOL_RUNNING)
         has_our_pane = self._our_pane is not None
         has_session = self._session is not None
         has_log_file = bool(str(log_file or "").strip())
@@ -364,28 +429,28 @@ class TmuxController:
             window = self._our_pane.window
             panes = list(window.panes)
             pane_count = len(panes)
-            claude_pane = self._resolve_claude_for_tail()
-            is_claude_pair = (
+            tool_pane = self._resolve_tool_for_tail()
+            is_tool_pair = (
                 pane_count == 2
-                and claude_pane is not None
-                and self._our_pane.pane_id != claude_pane.pane_id
+                and tool_pane is not None
+                and self._our_pane.pane_id != tool_pane.pane_id
             )
 
-            # // [LAW:dataflow-not-control-flow] Strategy is a derived value from pane_count/is_claude_pair.
+            # // [LAW:dataflow-not-control-flow] Strategy is a derived value from pane_count/is_tool_pair.
             if pane_count == 1:
                 window.split(direction=libtmux.constants.PaneDirection.Below, shell=shell)
                 return LogTailResult(LogTailAction.SPLIT_BELOW, "split cc-dump pane", True, shell)
 
-            if is_claude_pair:
-                direction = self._resolve_tail_split_direction(self._our_pane, claude_pane)
-                claude_pane.select()
+            if is_tool_pair:
+                direction = self._resolve_tail_split_direction(self._our_pane, tool_pane)
+                tool_pane.select()
                 window.split(direction=direction, shell=shell)
                 action = (
                     LogTailAction.SPLIT_RIGHT
                     if direction == libtmux.constants.PaneDirection.Right
                     else LogTailAction.SPLIT_BELOW
                 )
-                detail = "split {} pane".format(getattr(claude_pane, "pane_id", "claude"))
+                detail = "split {} pane".format(getattr(tool_pane, "pane_id", self._launcher_label))
                 return LogTailResult(action, detail, True, shell)
 
             self._session.cmd("new-window", "-n", "cc-dump-logs", shell)
@@ -394,22 +459,33 @@ class TmuxController:
             _log("open_log_tail error: {}".format(e))
             return LogTailResult(LogTailAction.BLOCKED, str(e), success=False, command=shell)
 
+    def _resolved_launch_env(self) -> dict[str, str]:
+        """Return launch env from configured map or legacy port fallback."""
+        if self._launch_env:
+            return dict(self._launch_env)
+        if self._port is None:
+            return {}
+        return {"ANTHROPIC_BASE_URL": "http://127.0.0.1:{}".format(self._port)}
+
     def _exec_launch(self, command: str) -> LaunchResult:
-        """Split pane and run the command with ANTHROPIC_BASE_URL set."""
+        """Split pane and run command with configured launch environment."""
         try:
             import libtmux
 
             window = self._our_pane.window
-            shell = "ANTHROPIC_BASE_URL=http://127.0.0.1:{} {}".format(
-                self._port, command
+            env = self._resolved_launch_env()
+            env_prefix = " ".join(
+                "{}={}".format(key, shlex.quote(value))
+                for key, value in sorted(env.items())
             )
+            shell = "{} {}".format(env_prefix, command).strip()
             _log("exec: {}".format(shell))
-            self._claude_pane = window.split(
+            self._tool_pane = window.split(
                 direction=libtmux.constants.PaneDirection.Below,
                 shell=shell,
             )
-            self._claude_pane.select()
-            self.state = TmuxState.CLAUDE_RUNNING
+            self._tool_pane.select()
+            self.state = TmuxState.TOOL_RUNNING
             self._monitor_exit()
             return LaunchResult(LaunchAction.LAUNCHED, command, success=True, command=shell)
         except Exception as e:
@@ -417,7 +493,7 @@ class TmuxController:
             return LaunchResult(LaunchAction.BLOCKED, str(e), success=False)
 
     def _monitor_exit(self) -> None:
-        """Start watching for Claude pane exit.
+        """Start watching for launched pane exit.
 
         // [LAW:single-enforcer] Exit monitoring owned by the controller,
         // not the app. Callers react to pane_alive observable.
@@ -425,7 +501,7 @@ class TmuxController:
         self.pane_alive.set(True)
 
         def _poll():
-            while self._validate_claude_pane():
+            while self._validate_tool_pane():
                 time.sleep(2)
             self.pane_alive.set(False)
 
@@ -442,15 +518,15 @@ class TmuxController:
             _log("focus_self error: {}".format(e))
             return False
 
-    def focus_claude(self) -> bool:
-        """Select the claude pane (bring it to foreground)."""
-        if not self._validate_claude_pane():
+    def focus_tool(self) -> bool:
+        """Select the launched pane (bring it to foreground)."""
+        if not self._validate_tool_pane():
             return False
         try:
-            self._claude_pane.select()
+            self._tool_pane.select()
             return True
         except Exception as e:
-            _log("focus_claude error: {}".format(e))
+            _log("focus_tool error: {}".format(e))
             return False
 
     def zoom(self) -> None:
@@ -488,13 +564,13 @@ class TmuxController:
         """Subscriber callback — table lookup determines zoom/unzoom.
 
         // [LAW:dataflow-not-control-flow] Decision from _ZOOM_DECISIONS table.
-        Guards: only act when CLAUDE_RUNNING and auto_zoom is on.
+        Guards: only act when TOOL_RUNNING and auto_zoom is on.
         """
-        if self.state != TmuxState.CLAUDE_RUNNING or not self.auto_zoom:
+        if self.state != TmuxState.TOOL_RUNNING or not self.auto_zoom:
             return
 
         # Validate pane is still alive before zoom logic
-        if not self._validate_claude_pane():
+        if not self._validate_tool_pane():
             return
 
         key = _extract_decision_key(event)
@@ -511,7 +587,7 @@ class TmuxController:
             action()
 
     def cleanup(self) -> None:
-        """Unzoom on shutdown. Does NOT kill the claude pane."""
+        """Unzoom on shutdown. Does NOT kill the launched pane."""
         self.unzoom()
 
 

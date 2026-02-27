@@ -17,6 +17,8 @@ from textual.message import Message
 from textual.widgets import Input, Label, OptionList, Select, Static, Switch
 
 import cc_dump.core.palette
+import cc_dump.app.launch_config
+import cc_dump.app.launcher_registry
 from cc_dump.app.launch_config import SHELL_OPTIONS
 from cc_dump.tui.settings_panel import FieldDef
 
@@ -24,11 +26,19 @@ from cc_dump.tui.settings_panel import FieldDef
 # [LAW:one-source-of-truth] Field definitions for a LaunchConfig.
 CONFIG_FIELDS: list[FieldDef] = [
     FieldDef(
-        key="claude_command",
+        key="launcher",
+        label="Tool",
+        kind="select",
+        default=cc_dump.app.launcher_registry.DEFAULT_LAUNCHER_KEY,
+        options=cc_dump.app.launcher_registry.launcher_keys(),
+        description="Launcher profile",
+    ),
+    FieldDef(
+        key="command",
         label="Command",
         kind="text",
-        default="claude",
-        description="Claude binary (e.g. claude, clod)",
+        default="",
+        description="Executable command (blank uses tool default)",
     ),
     FieldDef(
         key="name",
@@ -373,7 +383,6 @@ class LaunchConfigPanel(VerticalScroll):
             event.stop()
             event.prevent_default()
             self._apply_form_to_selected()
-            import cc_dump.app.launch_config
             new_config = cc_dump.app.launch_config.LaunchConfig(
                 name="config-{}".format(len(configs) + 1)
             )

@@ -822,7 +822,7 @@ class CcDumpApp(App):
         # Wire snarfx auto-marshal now that call_from_thread is available
         snarfx.set_scheduler(self.call_from_thread)
 
-        # React to tmux pane exit — sync store when Claude dies
+        # React to tmux pane exit — sync store when launched tool exits
         if self._tmux_controller is not None:
             stx.reaction(self,
                 lambda: self._tmux_controller.pane_alive.get(),
@@ -831,7 +831,7 @@ class CcDumpApp(App):
 
         # Seed external state into view store for reactive footer
         self._sync_tmux_to_store()
-        self._view_store.set("launch:active_name", cc_dump.app.launch_config.load_active_name())
+        self._sync_active_launch_config_state()
         if self._resume_ui_state is not None:
             self._apply_resume_ui_state_preload()
         # Footer hydration — reactions are now active
@@ -941,12 +941,22 @@ class CcDumpApp(App):
     def _sync_tmux_to_store(self):
         """Mirror tmux controller state to view store for reactive footer updates."""
         tmux = self._tmux_controller
-        _TMUX_ACTIVE = {cc_dump.app.tmux_controller.TmuxState.READY, cc_dump.app.tmux_controller.TmuxState.CLAUDE_RUNNING}
+        _TMUX_ACTIVE = {cc_dump.app.tmux_controller.TmuxState.READY, cc_dump.app.tmux_controller.TmuxState.TOOL_RUNNING}
         self._view_store.update({
             "tmux:available": tmux is not None and tmux.state in _TMUX_ACTIVE,
             "tmux:auto_zoom": tmux.auto_zoom if tmux is not None else False,
             "tmux:zoomed": tmux._is_zoomed if tmux is not None else False,
         })
+
+    def _sync_active_launch_config_state(self) -> None:
+        """Mirror active launch config identity to view-store footer keys."""
+        active = cc_dump.app.launch_config.get_active_config()
+        self._view_store.update(
+            {
+                "launch:active_name": active.name,
+                "launch:active_tool": active.launcher,
+            }
+        )
 
     def _build_server_info(self) -> dict:
         """// [LAW:one-source-of-truth] All server info derived from constructor params."""
@@ -1366,22 +1376,9 @@ class CcDumpApp(App):
         _actions.toggle_keys(self)
 
     # Tmux integration
-    def action_launch_claude(self):
-        tmux = self._tmux_controller
-        if tmux is None:
-            self.notify("Tmux not available", severity="warning")
-            return
+    def action_launch_tool(self):
         config = cc_dump.app.launch_config.get_active_config()
-        session_id = self._active_resume_session_id() if config.auto_resume else ""
-        command = cc_dump.app.launch_config.build_full_command(config, session_id)
-        tmux.set_claude_command(config.claude_command)
-        result = tmux.launch_claude(command=command)
-        self._app_log("INFO", "launch_claude: {}".format(result))
-        if result.success:
-            self.notify("{}: {}".format(result.action.value, result.detail))
-            self._sync_tmux_to_store()
-        else:
-            self.notify("Launch failed: {}".format(result.detail), severity="error")
+        self._launch_with_config(config, log_label="launch_tool")
 
     def action_toggle_tmux_zoom(self):
         tmux = self._tmux_controller
@@ -1477,7 +1474,7 @@ class CcDumpApp(App):
         if conv is not None:
             conv.focus()
 
-    def _launch_with_config(self, config) -> None:
+    def _launch_with_config(self, config, log_label: str = "launch_with_config") -> None:
         """Build args from config + session_id, launch via tmux."""
         tmux = self._tmux_controller
         if tmux is None:
@@ -1485,20 +1482,36 @@ class CcDumpApp(App):
             return
 
         session_id = self._active_resume_session_id() if config.auto_resume else ""
-        command = cc_dump.app.launch_config.build_full_command(config, session_id)
-        tmux.set_claude_command(config.claude_command)
-        result = tmux.launch_claude(command=command)
-        self._app_log("INFO", "launch_with_config: {}".format(result))
+        profile = cc_dump.app.launch_config.build_launch_profile(
+            config,
+            provider_endpoints=self._provider_endpoints,
+            session_id=session_id,
+        )
+        tmux.configure_launcher(
+            command=config.resolved_command,
+            process_names=profile.process_names,
+            launch_env=profile.environment,
+            launcher_label=profile.launcher_label,
+        )
+        result = tmux.launch_tool(command=profile.command)
+        self._app_log("INFO", "{}: {}".format(log_label, result))
         if result.success:
             self.notify("{}: {}".format(result.action.value, result.detail))
         else:
             self.notify("Launch failed: {}".format(result.detail), severity="error")
+        self._view_store.update(
+            {
+                "launch:active_name": config.name,
+                "launch:active_tool": profile.launcher_key,
+            }
+        )
         self._sync_tmux_to_store()
 
     def on_launch_config_panel_saved(self, msg) -> None:
         """Handle LaunchConfigPanel.Saved — persist configs."""
         cc_dump.app.launch_config.save_configs(msg.configs)
         cc_dump.app.launch_config.save_active_name(msg.active_name)
+        self._sync_active_launch_config_state()
         self._close_launch_config()
         self.notify("Launch configs saved")
 
@@ -1510,14 +1523,15 @@ class CcDumpApp(App):
         """Handle LaunchConfigPanel.QuickLaunch — save, close, launch."""
         cc_dump.app.launch_config.save_configs(msg.configs)
         cc_dump.app.launch_config.save_active_name(msg.active_name)
+        self._sync_active_launch_config_state()
         self._close_launch_config()
-        self._launch_with_config(msg.config)
+        self._launch_with_config(msg.config, log_label="quick_launch")
 
     def on_launch_config_panel_activated(self, msg) -> None:
         """Handle LaunchConfigPanel.Activated — save active name, notify."""
         cc_dump.app.launch_config.save_configs(msg.configs)
         cc_dump.app.launch_config.save_active_name(msg.name)
-        self._view_store.set("launch:active_name", msg.name)
+        self._sync_active_launch_config_state()
         self.notify("Active: {}".format(msg.name))
 
     # Side channel

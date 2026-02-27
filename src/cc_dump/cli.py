@@ -351,20 +351,32 @@ def main():
     settings_store = cc_dump.app.settings_store.create()
 
     tmux_ctrl = None
+    active_launcher_label = "tool"
     TmuxState = cc_dump.app.tmux_controller.TmuxState
     if cc_dump.app.tmux_controller.is_available():
         active_config = cc_dump.app.launch_config.get_active_config()
+        active_profile = cc_dump.app.launch_config.build_launch_profile(
+            active_config,
+            provider_endpoints=provider_endpoints,
+        )
+        active_launcher_label = active_profile.launcher_label.lower()
         auto_zoom = bool(settings_store.get("auto_zoom_default"))
-        tmux_ctrl = cc_dump.app.tmux_controller.TmuxController(claude_command=active_config.claude_command, auto_zoom=auto_zoom)
+        tmux_ctrl = cc_dump.app.tmux_controller.TmuxController(
+            launch_command=active_config.resolved_command,
+            process_names=active_profile.process_names,
+            launch_env=active_profile.environment,
+            launcher_label=active_profile.launcher_label,
+            auto_zoom=auto_zoom,
+        )
         tmux_ctrl.set_port(actual_port)
-        # Subscribe for both READY and CLAUDE_RUNNING (adoption case)
-        if tmux_ctrl.state in (TmuxState.READY, TmuxState.CLAUDE_RUNNING):
+        # Subscribe for both READY and TOOL_RUNNING (adoption case)
+        if tmux_ctrl.state in (TmuxState.READY, TmuxState.TOOL_RUNNING):
             router.add_subscriber(DirectSubscriber(tmux_ctrl.on_event))
     # [LAW:dataflow-not-control-flow] Status message from state, not branching
     _TMUX_STATUS = {
         None: "disabled (not in tmux)" if not os.environ.get("TMUX") else "disabled (libtmux not installed)",
-        TmuxState.READY: "enabled (press 'c' to launch claude)",
-        TmuxState.CLAUDE_RUNNING: "enabled (claude running)",
+        TmuxState.READY: "enabled (press 'c' to launch {})".format(active_launcher_label),
+        TmuxState.TOOL_RUNNING: "enabled ({} running)".format(active_launcher_label),
         TmuxState.NOT_IN_TMUX: "disabled (not in tmux)",
         TmuxState.NO_LIBTMUX: "disabled (libtmux not installed)",
     }
