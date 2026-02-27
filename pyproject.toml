@@ -13,6 +13,7 @@ dependencies = [
     "libtmux>=0.30.0",
     "watchfiles>=1.0.0",
     "snarfx>=0.1.0",
+    "truststore>=0.10.4",
 ]
 keywords = ["claude", "anthropic", "proxy", "api", "debugging", "tui"]
 classifiers = [
