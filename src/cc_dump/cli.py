@@ -229,6 +229,8 @@ def main():
         return srv, ap, t
 
     proxy_servers: dict[str, http.server.ThreadingHTTPServer] = {}
+    # // [LAW:one-source-of-truth] Handler classes keyed by provider for shared runtime wiring.
+    proxy_handlers: dict[str, type[http.server.BaseHTTPRequestHandler]] = {}
     proxy_ports: dict[str, int] = {}
     proxy_targets: dict[str, str | None] = {}
     provider_endpoints: dict[str, dict[str, str]] = {}
@@ -241,6 +243,7 @@ def main():
     )
     server, actual_port, _ = _start_proxy_server(args.host, args.port, anthropic_handler)
     proxy_servers["anthropic"] = server
+    proxy_handlers["anthropic"] = anthropic_handler
     proxy_ports["anthropic"] = actual_port
     proxy_targets["anthropic"] = args.target.rstrip("/") if args.target else None
 
@@ -257,6 +260,7 @@ def main():
         )
         srv, port, _ = _start_proxy_server(args.host, bind_port, handler)
         proxy_servers[spec.key] = srv
+        proxy_handlers[spec.key] = handler
         proxy_ports[spec.key] = port
         proxy_targets[spec.key] = target_host.rstrip("/") if target_host else None
 
@@ -425,7 +429,9 @@ def main():
         ],
         interceptors=[cc_dump.pipeline.sentinel.make_interceptor(tmux_ctrl)],
     )
-    anthropic_handler.request_pipeline = pipeline
+    # // [LAW:single-enforcer] One shared request pipeline is applied at every provider handler boundary.
+    for handler in proxy_handlers.values():
+        handler.request_pipeline = pipeline
 
     router.start()
 

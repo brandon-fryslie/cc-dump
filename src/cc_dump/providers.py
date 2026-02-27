@@ -58,6 +58,7 @@ _PROVIDERS: dict[str, ProviderSpec] = {
         default_target="https://api.openai.com/v1",
         optional_proxy=True,
         url_markers=("api.openai.com",),
+        client_hint="openai-api",
     ),
     "copilot": ProviderSpec(
         key="copilot",
