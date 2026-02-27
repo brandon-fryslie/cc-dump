@@ -706,6 +706,17 @@ class CcDumpApp(App):
             "Export conversation to text file",
             self.action_dump_conversation,
         )
+        for config in cc_dump.app.launch_config.load_configs():
+            # [LAW:one-source-of-truth] Preset list comes from persisted launch configs.
+            title = "Launch preset: {}".format(config.name)
+            description = "{} via {}".format(config.launcher, config.resolved_command)
+            yield SystemCommand(
+                title,
+                description,
+                lambda c=config: self._launch_with_config(
+                    c, log_label="palette_launch:{}".format(c.name)
+                ),
+            )
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -1471,7 +1482,7 @@ class CcDumpApp(App):
             self.notify("Tmux not available", severity="warning")
             return
 
-        session_id = self._active_resume_session_id() if config.auto_resume else ""
+        session_id = self._active_resume_session_id()
         profile = cc_dump.app.launch_config.build_launch_profile(
             config,
             provider_endpoints=self._provider_endpoints,
