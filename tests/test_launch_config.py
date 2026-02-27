@@ -207,5 +207,5 @@ class TestBuildLaunchProfile:
         profile = build_launch_profile(config, provider_endpoints=endpoints, session_id="")
         assert profile.launcher_key == "copilot"
         assert profile.command == "copilot"
-        assert profile.environment == {"COPILOT_BASE_URL": "http://127.0.0.1:4567"}
+        assert profile.environment == {"COPILOT_PROXY_URL": "http://127.0.0.1:4567"}
         assert "copilot" in profile.process_names
