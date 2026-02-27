@@ -72,7 +72,11 @@ def build_proxy_env(
     spec: LauncherSpec,
     provider_endpoints: dict[str, dict[str, object]] | None,
 ) -> dict[str, str]:
-    """Build environment mapping for launcher from available proxy endpoints."""
+    """Build environment mapping for launcher from available proxy endpoints.
+
+    // [LAW:dataflow-not-control-flow] Forward vs reverse env is selected by
+    // endpoint mode metadata, independent of provider-specific behavior.
+    """
     if spec.provider_key is None or provider_endpoints is None:
         return {}
 
@@ -85,4 +89,14 @@ def build_proxy_env(
         return {}
 
     provider = cc_dump.providers.get_provider_spec(spec.provider_key)
+    if provider.proxy_type == "forward":
+        forward_ca_cert_path = str(endpoint.get("forward_proxy_ca_cert_path", "") or "").strip()
+        forward_env = {
+            "HTTP_PROXY": proxy_url,
+            "HTTPS_PROXY": proxy_url,
+        }
+        if forward_ca_cert_path:
+            forward_env["NODE_EXTRA_CA_CERTS"] = forward_ca_cert_path
+        return forward_env
+
     return {provider.base_url_env: proxy_url}

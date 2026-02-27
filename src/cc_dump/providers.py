@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class ProviderSpec:
     api_paths: tuple[str, ...]
     har_request_url: str
     base_url_env: str
+    proxy_type: Literal["reverse", "forward"]
     default_target: str
     optional_proxy: bool
     url_markers: tuple[str, ...]
@@ -41,6 +43,7 @@ _PROVIDERS: dict[str, ProviderSpec] = {
         api_paths=("/v1/messages",),
         har_request_url="https://api.anthropic.com/v1/messages",
         base_url_env="ANTHROPIC_BASE_URL",
+        proxy_type="reverse",
         default_target="https://api.anthropic.com",
         optional_proxy=False,
         url_markers=("api.anthropic.com",),
@@ -55,6 +58,7 @@ _PROVIDERS: dict[str, ProviderSpec] = {
         api_paths=("/v1/chat/completions", "/chat/completions"),
         har_request_url="https://api.openai.com/v1/chat/completions",
         base_url_env="OPENAI_BASE_URL",
+        proxy_type="reverse",
         default_target="https://api.openai.com/v1",
         optional_proxy=True,
         url_markers=("api.openai.com",),
@@ -69,6 +73,7 @@ _PROVIDERS: dict[str, ProviderSpec] = {
         api_paths=("/chat/completions", "/v1/chat/completions"),
         har_request_url="https://api.githubcopilot.com/chat/completions",
         base_url_env="COPILOT_PROXY_URL",
+        proxy_type="forward",
         default_target="https://api.githubcopilot.com",
         optional_proxy=True,
         url_markers=("api.githubcopilot.com", "githubcopilot.com"),

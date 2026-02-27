@@ -8,6 +8,7 @@ def test_copilot_provider_spec_registered():
     assert spec.key == "copilot"
     assert spec.protocol_family == "openai"
     assert spec.tab_title == "Copilot"
+    assert spec.proxy_type == "forward"
 
 
 def test_provider_session_key_mapping():
@@ -29,3 +30,9 @@ def test_complete_shape_validation_is_family_based():
     assert not providers.is_complete_response_for_provider("anthropic", openai_msg)
     assert providers.is_complete_response_for_provider("openai", openai_msg)
     assert providers.is_complete_response_for_provider("copilot", openai_msg)
+
+
+def test_provider_proxy_type_defaults():
+    assert providers.require_provider_spec("anthropic").proxy_type == "reverse"
+    assert providers.require_provider_spec("openai").proxy_type == "reverse"
+    assert providers.require_provider_spec("copilot").proxy_type == "forward"

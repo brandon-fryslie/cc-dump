@@ -50,6 +50,55 @@ def _safe_headers(headers):
     return {k: v for k, v in headers.items() if k.lower() not in _EXCLUDED_HEADERS}
 
 
+def _parse_connect_authority(authority: str) -> tuple[str, int] | None:
+    """Parse CONNECT authority into (host, port).
+
+    Accepts:
+    - host
+    - host:port
+    - [ipv6]
+    - [ipv6]:port
+    Returns None for malformed values.
+    """
+    value = str(authority or "").strip()
+    if not value:
+        return None
+
+    host = ""
+    port = 443
+
+    if value.startswith("["):
+        end = value.find("]")
+        if end <= 1:
+            return None
+        host = value[1:end]
+        suffix = value[end + 1:]
+        if not suffix:
+            port = 443
+        elif suffix.startswith(":"):
+            port_text = suffix[1:]
+            if not port_text.isdigit():
+                return None
+            port = int(port_text)
+        else:
+            return None
+    else:
+        if ":" in value:
+            if value.count(":") != 1:
+                return None
+            host, port_text = value.rsplit(":", 1)
+            if not port_text.isdigit():
+                return None
+            port = int(port_text)
+        else:
+            host = value
+            port = 443
+
+    if not host or port < 1 or port > 65535:
+        return None
+    return host, port
+
+
 # ─── Request Pipeline ────────────────────────────────────────────────────────
 # // [LAW:dataflow-not-control-flow] Transforms compose by chaining; interceptors compose by first-match.
 
@@ -310,6 +359,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
     event_queue = None  # set by cli.py or factory before server starts
     request_pipeline = None  # set by cli.py or factory before server starts
     provider = "anthropic"  # set by factory for multi-provider support
+    forward_proxy_ca = None  # set by factory when forward proxy CONNECT interception is enabled
 
     def log_message(self, fmt, *args):
         self.event_queue.put(LogEvent(method=self.command, path=self.path, status=args[0] if args else "", provider=self.provider))
@@ -585,6 +635,65 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         prefixes = cc_dump.providers.get_provider_spec(self.provider).api_paths
         return any(request_path.startswith(p) for p in prefixes)
 
+    def do_CONNECT(self):
+        """Handle HTTPS CONNECT tunneling with forward-proxy TLS interception."""
+        parsed_authority = _parse_connect_authority(self.path)
+        if parsed_authority is None:
+            self.send_error(400, "Malformed CONNECT authority")
+            return
+        host, port = parsed_authority
+
+        if not self.forward_proxy_ca:
+            self.send_error(501, "CONNECT not supported in reverse proxy mode")
+            return
+
+        # Tell client the tunnel is established.
+        self.send_response(200, "Connection Established")
+        self.end_headers()
+
+        # Wrap client socket in TLS with a cert generated for this host.
+        ctx = self.forward_proxy_ca.ssl_context_for_host(host)
+        try:
+            client_ssl = ctx.wrap_socket(self.connection, server_side=True)
+        except ssl.SSLError:
+            logger.debug("Forward-proxy TLS handshake failed for %s", host)
+            return
+
+        # Replace streams with the decrypted socket.
+        self.connection = client_ssl
+        self.rfile = client_ssl.makefile("rb")
+        self.wfile = client_ssl.makefile("wb")
+
+        # Route decrypted HTTP through the normal proxy pipeline.
+        authority_host = "[{}]".format(host) if ":" in host and not host.startswith("[") else host
+        self.target_host = "https://{}".format(authority_host) + (":{}".format(port) if port != 443 else "")
+        self.provider = cc_dump.providers.infer_provider_from_url(host)
+
+        try:
+            while True:
+                self.handle_one_request()
+                if self.close_connection:
+                    break
+        except Exception:
+            logger.exception(
+                "Unhandled error while processing CONNECT tunnel for %s:%s",
+                host,
+                port,
+            )
+        finally:
+            try:
+                self.wfile.close()
+            except Exception:
+                pass
+            try:
+                self.rfile.close()
+            except Exception:
+                pass
+            try:
+                client_ssl.close()
+            except Exception:
+                pass
+
     def do_POST(self):
         self._proxy()
 
@@ -604,6 +713,7 @@ def make_handler_class(
     target_host: str | None,
     event_queue,
     request_pipeline=None,
+    forward_proxy_ca=None,
 ) -> type[ProxyHandler]:
     """Create a configured ProxyHandler subclass for a specific provider.
 
@@ -619,5 +729,6 @@ def make_handler_class(
             "target_host": target_host.rstrip("/") if target_host else None,
             "event_queue": event_queue,
             "request_pipeline": request_pipeline,
+            "forward_proxy_ca": forward_proxy_ca,
         },
     )

@@ -14,6 +14,7 @@ dependencies = [
     "watchfiles>=1.0.0",
     "snarfx>=0.1.0",
     "truststore>=0.10.4",
+    "cryptography>=42.0.0",
 ]
 keywords = ["claude", "anthropic", "proxy", "api", "debugging", "tui"]
 classifiers = [

@@ -207,5 +207,37 @@ class TestBuildLaunchProfile:
         profile = build_launch_profile(config, provider_endpoints=endpoints, session_id="")
         assert profile.launcher_key == "copilot"
         assert profile.command == "copilot"
-        assert profile.environment == {"COPILOT_PROXY_URL": "http://127.0.0.1:4567"}
+        assert profile.environment == {
+            "HTTP_PROXY": "http://127.0.0.1:4567",
+            "HTTPS_PROXY": "http://127.0.0.1:4567",
+        }
         assert "copilot" in profile.process_names
+
+    def test_profile_sets_forward_proxy_env_for_copilot(self):
+        config = LaunchConfig(launcher="copilot", command="")
+        endpoints = {
+            "copilot": {
+                "proxy_url": "http://127.0.0.1:4567",
+                "target": "https://api.githubcopilot.com",
+                "forward_proxy_ca_cert_path": "/tmp/forward-ca.crt",
+            }
+        }
+        profile = build_launch_profile(config, provider_endpoints=endpoints, session_id="")
+        assert profile.environment == {
+            "HTTP_PROXY": "http://127.0.0.1:4567",
+            "HTTPS_PROXY": "http://127.0.0.1:4567",
+            "NODE_EXTRA_CA_CERTS": "/tmp/forward-ca.crt",
+        }
+
+    def test_profile_sets_reverse_proxy_env_for_claude(self):
+        config = LaunchConfig(launcher="claude", command="")
+        endpoints = {
+            "anthropic": {
+                "proxy_url": "http://127.0.0.1:3344",
+                "target": "https://api.anthropic.com",
+            }
+        }
+        profile = build_launch_profile(config, provider_endpoints=endpoints, session_id="")
+        assert profile.environment == {
+            "ANTHROPIC_BASE_URL": "http://127.0.0.1:3344",
+        }
