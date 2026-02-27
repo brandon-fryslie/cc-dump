@@ -486,7 +486,9 @@ def info_panel_rows(info: dict) -> list[tuple[str, str]]:
             name = str(provider.get("name", "") or "Provider")
             proxy_url = str(provider.get("proxy_url", "") or "--")
             target = str(provider.get("target", "") or "--")
+            mode = str(provider.get("proxy_mode", "--") or "--")
             rows.append((f"{name} Proxy", proxy_url))
+            rows.append((f"{name} Mode", mode))
             rows.append((f"{name} Target", target))
     else:
         # Backward-compat fallback when callers still pass legacy keys.
@@ -523,7 +525,7 @@ def render_info_panel(info: dict) -> Text:
     Args:
         info: Dict with server info fields:
             - proxy_url: Full proxy URL (e.g., "http://127.0.0.1:12345")
-            - proxy_mode: "reverse" or "forward"
+            - proxy_mode: "reverse", "forward", or "mixed"
             - target: Upstream target URL (or None)
             - session_name: Session name string
             - session_id: Session ID hex string (or None)
