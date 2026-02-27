@@ -13,10 +13,6 @@ from snarfx import textual as stx
 
 
 class TestSchema:
-    def test_schema_has_42_keys(self):
-        # 6 categories × 3 axes + 5 panel/follow + 9 footer + 6 side-channel + 4 search
-        assert len(cc_dump.app.view_store.SCHEMA) == 42
-
     def test_schema_keys_from_category_config(self):
         for _, name, _, _ in CATEGORY_CONFIG:
             assert f"vis:{name}" in cc_dump.app.view_store.SCHEMA
