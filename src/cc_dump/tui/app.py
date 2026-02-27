@@ -793,7 +793,7 @@ class CcDumpApp(App):
             else:
                 ca_path = str(endpoint.get("forward_proxy_ca_cert_path", "") or "")
                 suffix = f" NODE_EXTRA_CA_CERTS={ca_path}" if ca_path else ""
-                self._app_log("INFO", f"  Usage: HTTPS_PROXY={proxy_url}{suffix} {spec.client_hint}")
+                self._app_log("INFO", f"  Usage: HTTP_PROXY={proxy_url} HTTPS_PROXY={proxy_url}{suffix} {spec.client_hint}")
 
         self.run_worker(self._drain_events, thread=True, exclusive=False)
 

@@ -295,7 +295,7 @@ def main():
             print(f"     Usage: {spec.base_url_env}={proxy_url} {spec.client_hint}")
         else:
             print(
-                f"     Usage: HTTPS_PROXY={proxy_url} NODE_EXTRA_CA_CERTS={forward_proxy_ca.ca_cert_path if forward_proxy_ca else ''} {spec.client_hint}"
+                f"     Usage: HTTP_PROXY={proxy_url} HTTPS_PROXY={proxy_url} NODE_EXTRA_CA_CERTS={forward_proxy_ca.ca_cert_path if forward_proxy_ca else ''} {spec.client_hint}"
             )
 
         provider_endpoints[spec.key] = {
