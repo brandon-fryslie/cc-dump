@@ -20,7 +20,7 @@ from typing import Any
 SLOW_STAGE_THRESHOLDS_MS: dict[str, float] = {
     "conversation.rerender_affected": 250.0,
     "conversation.background_rerender_tick": 120.0,
-    "conversation.recalculate_offsets_from": 80.0,
+    "conversation.recalculate_offsets_from": 200.0,
 }
 
 _DEFAULT_THRESHOLD_MS = 250.0
