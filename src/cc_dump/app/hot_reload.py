@@ -55,6 +55,7 @@ _RELOAD_ORDER = [
 # Files to explicitly exclude from watching
 _EXCLUDED_FILES = {
     "pipeline/proxy.py",  # stable boundary, never reload
+    "pipeline/forward_proxy_tls.py",  # stable boundary, holds crypto state
     "cli.py",  # entry point, not reloadable at runtime
     "hot_reload.py",  # this file
     "pipeline/event_types.py",  # stable type definitions, never reload
@@ -80,7 +81,7 @@ _EXCLUDED_MODULES = {
 # Subset of _EXCLUDED_FILES ∪ _EXCLUDED_MODULES, minus boilerplate nobody touches.
 _STALENESS_WATCHLIST = {
     # from _EXCLUDED_FILES
-    "pipeline/proxy.py", "cli.py", "pipeline/event_types.py", "pipeline/response_assembler.py",
+    "pipeline/proxy.py", "pipeline/forward_proxy_tls.py", "cli.py", "pipeline/event_types.py", "pipeline/response_assembler.py",
     "app/tmux_controller.py", "io/stderr_tee.py", "ai/side_channel.py", "ai/data_dispatcher.py",
     # from _EXCLUDED_MODULES
     "tui/app.py", "tui/category_config.py",

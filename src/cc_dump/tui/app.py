@@ -207,10 +207,17 @@ class CcDumpApp(App):
             if not isinstance(data, dict):
                 continue
             spec = cc_dump.providers.get_provider_spec(key)
-            normalized_endpoints[spec.key] = {
+            normalized: dict[str, object] = {
                 "proxy_url": str(data.get("proxy_url", "") or ""),
                 "target": str(data.get("target", "") or ""),
             }
+            extras = {
+                extra_key: extra_value
+                for extra_key, extra_value in data.items()
+                if extra_key not in {"proxy_url", "target"}
+            }
+            normalized.update(extras)
+            normalized_endpoints[spec.key] = normalized
         self._provider_endpoints = normalized_endpoints
         self._replay_data = replay_data
         self._recording_path = recording_path
@@ -770,39 +777,23 @@ class CcDumpApp(App):
 
         self._app_log("INFO", "🚀 cc-dump proxy started")
         self._app_log("INFO", f"Listening on: http://{self._host}:{self._port}")
-        primary = self._provider_endpoints.get(cc_dump.providers.DEFAULT_PROVIDER_KEY, {})
-        primary_target = str(primary.get("target", "") or "")
-        primary_url = str(
-            primary.get("proxy_url")
-            or "http://{}:{}".format(self._host, self._port)
-        )
-        if primary_target:
-            self._app_log("INFO", f"Reverse proxy mode: {primary_target}")
-            self._app_log(
-                "INFO",
-                f"Usage: ANTHROPIC_BASE_URL={primary_url} claude",
-            )
-        else:
-            self._app_log("INFO", "Forward proxy mode (dynamic targets)")
-            self._app_log(
-                "INFO",
-                f"Usage: HTTP_PROXY={primary_url} ANTHROPIC_BASE_URL=https://api.anthropic.com claude",
-            )
         for spec in cc_dump.providers.all_provider_specs():
-            provider_key = spec.key
-            if provider_key == cc_dump.providers.DEFAULT_PROVIDER_KEY:
-                continue
-            endpoint = self._provider_endpoints.get(provider_key)
+            endpoint = self._provider_endpoints.get(spec.key)
             if endpoint is None:
                 continue
             proxy_url = str(endpoint.get("proxy_url", "") or "")
             if not proxy_url:
                 continue
-            self._app_log("INFO", f"{spec.display_name} proxy: {proxy_url}")
+            mode = str(endpoint.get("proxy_mode", spec.proxy_type) or spec.proxy_type).strip().lower()
+            self._app_log("INFO", f"{spec.display_name} endpoint ({mode}): {proxy_url}")
             target = str(endpoint.get("target", "") or "")
-            if target:
+            if mode == "reverse" and target:
                 self._app_log("INFO", f"  Target: {target}")
-            self._app_log("INFO", f"  Usage: {spec.base_url_env}={proxy_url} {spec.client_hint}")
+                self._app_log("INFO", f"  Usage: {spec.base_url_env}={proxy_url} {spec.client_hint}")
+            else:
+                ca_path = str(endpoint.get("forward_proxy_ca_cert_path", "") or "")
+                suffix = f" NODE_EXTRA_CA_CERTS={ca_path}" if ca_path else ""
+                self._app_log("INFO", f"  Usage: HTTP_PROXY={proxy_url} HTTPS_PROXY={proxy_url}{suffix} {spec.client_hint}")
 
         self.run_worker(self._drain_events, thread=True, exclusive=False)
 
@@ -970,23 +961,29 @@ class CcDumpApp(App):
         )
         primary_target_raw = anthropic_endpoint.get("target", "")
         primary_target = str(primary_target_raw or "") or None
-        proxy_mode = "forward" if not primary_target else "reverse"
+        provider_modes: list[str] = []
 
         provider_rows: list[dict[str, str]] = []
         for spec in cc_dump.providers.all_provider_specs():
             endpoint = self._provider_endpoints.get(spec.key)
             if endpoint is None:
                 continue
+            mode_hint = str(endpoint.get("proxy_mode", spec.proxy_type) or spec.proxy_type).strip().lower()
+            normalized_mode = mode_hint if mode_hint in {"forward", "reverse"} else spec.proxy_type
+            provider_modes.append(normalized_mode)
             provider_rows.append(
                 {
                     "key": spec.key,
                     "name": spec.display_name,
                     "proxy_url": str(endpoint.get("proxy_url", "") or ""),
                     "target": str(endpoint.get("target", "") or ""),
+                    "proxy_mode": normalized_mode,
                     "base_url_env": spec.base_url_env,
                     "client_hint": spec.client_hint,
                 }
             )
+        unique_modes = set(provider_modes)
+        proxy_mode = provider_modes[0] if len(unique_modes) == 1 and provider_modes else "mixed"
 
         info = {
             "proxy_url": proxy_url,
