@@ -209,3 +209,37 @@ class TestBuildLaunchProfile:
         assert profile.command == "copilot"
         assert profile.environment == {"COPILOT_PROXY_URL": "http://127.0.0.1:4567"}
         assert "copilot" in profile.process_names
+
+    def test_profile_sets_forward_proxy_env_for_copilot(self):
+        config = LaunchConfig(launcher="copilot", command="")
+        endpoints = {
+            "copilot": {
+                "proxy_url": "http://127.0.0.1:4567",
+                "target": "https://api.githubcopilot.com",
+                "proxy_mode": "forward",
+                "forward_proxy_url": "http://127.0.0.1:3344",
+                "forward_proxy_ca_cert_path": "/tmp/forward-ca.crt",
+            }
+        }
+        profile = build_launch_profile(config, provider_endpoints=endpoints, session_id="")
+        assert profile.environment == {
+            "HTTPS_PROXY": "http://127.0.0.1:3344",
+            "NODE_EXTRA_CA_CERTS": "/tmp/forward-ca.crt",
+        }
+
+    def test_profile_sets_forward_proxy_env_for_claude(self):
+        config = LaunchConfig(launcher="claude", command="")
+        endpoints = {
+            "anthropic": {
+                "proxy_url": "http://127.0.0.1:3344",
+                "target": "https://api.anthropic.com",
+                "proxy_mode": "forward",
+                "forward_proxy_url": "http://127.0.0.1:3344",
+                "forward_proxy_ca_cert_path": "/tmp/forward-ca.crt",
+            }
+        }
+        profile = build_launch_profile(config, provider_endpoints=endpoints, session_id="")
+        assert profile.environment == {
+            "HTTPS_PROXY": "http://127.0.0.1:3344",
+            "NODE_EXTRA_CA_CERTS": "/tmp/forward-ca.crt",
+        }

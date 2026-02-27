@@ -116,22 +116,16 @@ def main():
         help="Seed hue (0-360) for color palette (default: 190, cyan). Env: CC_DUMP_SEED_HUE",
     )
     parser.add_argument(
-        "--mitm",
-        action="store_true",
-        default=True,
-        help="Enable MITM TLS interception for CONNECT proxy requests (default: enabled)",
+        "--proxy-mode",
+        choices=("reverse", "forward"),
+        default="reverse",
+        help="Proxy mode for all providers: reverse (provider base URLs) or forward (HTTPS_PROXY CONNECT tunneling).",
     )
     parser.add_argument(
-        "--no-mitm",
-        action="store_false",
-        dest="mitm",
-        help="Disable MITM TLS interception",
-    )
-    parser.add_argument(
-        "--mitm-ca-dir",
+        "--forward-proxy-ca-dir",
         type=str,
         default=None,
-        help="Directory for MITM CA key/cert (default: ~/.cc-dump/mitm-ca/)",
+        help="Directory for forward proxy CA key/cert (default: ~/.cc-dump/forward-proxy-ca/)",
     )
     for spec in cc_dump.providers.optional_proxy_provider_specs():
         parser.add_argument(
@@ -253,20 +247,19 @@ def main():
     proxy_targets: dict[str, str | None] = {}
     provider_endpoints: dict[str, dict[str, str]] = {}
 
-    # MITM certificate authority for CONNECT interception.
-    mitm_ca = None
-    if args.mitm:
-        from cc_dump.pipeline.mitm import MitmCertificateAuthority
-        from pathlib import Path
-        ca_dir = Path(args.mitm_ca_dir) if args.mitm_ca_dir else None
-        mitm_ca = MitmCertificateAuthority(ca_dir=ca_dir)
+    # Forward proxy certificate authority for CONNECT interception.
+    forward_proxy_ca = None
+    if args.proxy_mode == "forward":
+        from cc_dump.pipeline.forward_proxy_tls import ForwardProxyCertificateAuthority
+        ca_dir = Path(args.forward_proxy_ca_dir) if args.forward_proxy_ca_dir else None
+        forward_proxy_ca = ForwardProxyCertificateAuthority(ca_dir=ca_dir)
 
     # Anthropic proxy (always started).
     anthropic_handler = make_handler_class(
         provider="anthropic",
         target_host=args.target,
         event_queue=event_q,
-        mitm_ca=mitm_ca,
+        forward_proxy_ca=forward_proxy_ca,
     )
     server, actual_port, _ = _start_proxy_server(args.host, args.port, anthropic_handler)
     proxy_servers["anthropic"] = server
@@ -275,22 +268,23 @@ def main():
     proxy_targets["anthropic"] = args.target.rstrip("/") if args.target else None
 
     # Optional providers (OpenAI, Copilot, ...), data-driven from provider registry.
-    for spec in cc_dump.providers.optional_proxy_provider_specs():
-        if getattr(args, f"no_{spec.key}"):
-            continue
-        target_host = str(getattr(args, f"{spec.key}_target"))
-        bind_port = int(getattr(args, f"{spec.key}_port"))
-        handler = make_handler_class(
-            provider=spec.key,
-            target_host=target_host,
-            event_queue=event_q,
-            mitm_ca=mitm_ca,
-        )
-        srv, port, _ = _start_proxy_server(args.host, bind_port, handler)
-        proxy_servers[spec.key] = srv
-        proxy_handlers[spec.key] = handler
-        proxy_ports[spec.key] = port
-        proxy_targets[spec.key] = target_host.rstrip("/") if target_host else None
+    if args.proxy_mode == "reverse":
+        for spec in cc_dump.providers.optional_proxy_provider_specs():
+            if getattr(args, f"no_{spec.key}"):
+                continue
+            target_host = str(getattr(args, f"{spec.key}_target"))
+            bind_port = int(getattr(args, f"{spec.key}_port"))
+            handler = make_handler_class(
+                provider=spec.key,
+                target_host=target_host,
+                event_queue=event_q,
+                forward_proxy_ca=forward_proxy_ca,
+            )
+            srv, port, _ = _start_proxy_server(args.host, bind_port, handler)
+            proxy_servers[spec.key] = srv
+            proxy_handlers[spec.key] = handler
+            proxy_ports[spec.key] = port
+            proxy_targets[spec.key] = target_host.rstrip("/") if target_host else None
 
     print("🚀 cc-dump proxy started")
     anthropic_target = proxy_targets.get("anthropic")
@@ -298,34 +292,55 @@ def main():
     provider_endpoints["anthropic"] = {
         "proxy_url": anthropic_proxy_url,
         "target": anthropic_target or "",
+        "proxy_mode": str(args.proxy_mode),
     }
-    if mitm_ca:
-        provider_endpoints["_mitm"] = {"ca_cert_path": str(mitm_ca.ca_cert_path)}
+    if forward_proxy_ca:
+        provider_endpoints["anthropic"]["forward_proxy_url"] = anthropic_proxy_url
+        provider_endpoints["anthropic"]["forward_proxy_ca_cert_path"] = str(forward_proxy_ca.ca_cert_path)
     print(f"   Anthropic proxy: http://{args.host}:{actual_port}")
-    if anthropic_target:
-        print(f"     Target: {anthropic_target}")
-        print(f"     Usage: ANTHROPIC_BASE_URL=http://{args.host}:{actual_port} claude")
+    if args.proxy_mode == "reverse":
+        print(f"   Proxy mode: reverse")
+        if anthropic_target:
+            print(f"     Target: {anthropic_target}")
+        print(f"     Usage: ANTHROPIC_BASE_URL={anthropic_proxy_url} claude")
     else:
-        print("     Forward proxy mode (dynamic targets)")
+        print(f"   Proxy mode: forward")
         print(
-            f"     Usage: HTTP_PROXY=http://{args.host}:{actual_port} ANTHROPIC_BASE_URL=https://api.anthropic.com claude"
+            f"     Usage: HTTPS_PROXY={anthropic_proxy_url} NODE_EXTRA_CA_CERTS={forward_proxy_ca.ca_cert_path if forward_proxy_ca else ''} claude"
         )
-    if mitm_ca:
-        print(f"   MITM CA cert:    {mitm_ca.ca_cert_path}")
-        print(f"     CONNECT proxy via HTTPS_PROXY=http://{args.host}:{actual_port}")
+    if forward_proxy_ca:
+        print(f"   Forward proxy CA cert: {forward_proxy_ca.ca_cert_path}")
+        print(f"   Forward proxy URL:     http://{args.host}:{actual_port}")
+
     for spec in cc_dump.providers.optional_proxy_provider_specs():
-        port = proxy_ports.get(spec.key)
-        if port is None:
+        if getattr(args, f"no_{spec.key}"):
             continue
-        print(f"   {spec.display_name} proxy:    http://{args.host}:{port}")
-        target = proxy_targets.get(spec.key)
+        target = str(getattr(args, f"{spec.key}_target") or "").strip()
+        reverse_proxy_url = (
+            f"http://{args.host}:{proxy_ports[spec.key]}"
+            if spec.key in proxy_ports
+            else ""
+        )
+        endpoint_proxy_url = anthropic_proxy_url if args.proxy_mode == "forward" else reverse_proxy_url
+        if not endpoint_proxy_url:
+            continue
+        print(f"   {spec.display_name} endpoint: {endpoint_proxy_url}")
         if target:
             print(f"     Target: {target}")
-        print(f"     Usage: {spec.base_url_env}=http://{args.host}:{port} {spec.client_hint}")
+        if args.proxy_mode == "reverse":
+            print(f"     Usage: {spec.base_url_env}={endpoint_proxy_url} {spec.client_hint}")
+        else:
+            print(
+                f"     Usage: HTTPS_PROXY={anthropic_proxy_url} NODE_EXTRA_CA_CERTS={forward_proxy_ca.ca_cert_path if forward_proxy_ca else ''} {spec.client_hint}"
+            )
         provider_endpoints[spec.key] = {
-            "proxy_url": f"http://{args.host}:{port}",
+            "proxy_url": endpoint_proxy_url,
             "target": target or "",
+            "proxy_mode": str(args.proxy_mode),
         }
+        if forward_proxy_ca:
+            provider_endpoints[spec.key]["forward_proxy_url"] = anthropic_proxy_url
+            provider_endpoints[spec.key]["forward_proxy_ca_cert_path"] = str(forward_proxy_ca.ca_cert_path)
 
     # State dict for content tracking (used by formatting layer)
     state = {

@@ -74,8 +74,8 @@ def build_proxy_env(
 ) -> dict[str, str]:
     """Build environment mapping for launcher from available proxy endpoints.
 
-    // [LAW:dataflow-not-control-flow] MITM vs reverse-proxy env is selected by
-    // the presence of the _mitm endpoint entry, not a mode flag.
+    // [LAW:dataflow-not-control-flow] Forward vs reverse env is selected by
+    // endpoint mode metadata, independent of provider-specific behavior.
     """
     if spec.provider_key is None or provider_endpoints is None:
         return {}
@@ -88,19 +88,18 @@ def build_proxy_env(
     if not proxy_url:
         return {}
 
-    provider = cc_dump.providers.get_provider_spec(spec.provider_key)
-
-    # MITM mode: optional-proxy providers use HTTPS_PROXY + CA cert trust
-    # instead of a provider-specific base URL env var.
-    mitm_info = (provider_endpoints.get("_mitm") or {}) if isinstance(provider_endpoints.get("_mitm"), dict) else {}
-    ca_cert_path = str(mitm_info.get("ca_cert_path", "") or "").strip()
-    if ca_cert_path and provider.optional_proxy:
-        # Route through the main (Anthropic) port via CONNECT.
-        main_url = str((provider_endpoints.get("anthropic") or {}).get("proxy_url", "") or "").strip()
-        connect_url = main_url or proxy_url
-        return {
-            "HTTPS_PROXY": connect_url,
-            "NODE_EXTRA_CA_CERTS": ca_cert_path,
+    mode = str(endpoint.get("proxy_mode", "reverse") or "reverse").strip().lower()
+    if mode == "forward":
+        forward_proxy_url = str(endpoint.get("forward_proxy_url", "") or proxy_url).strip()
+        forward_ca_cert_path = str(endpoint.get("forward_proxy_ca_cert_path", "") or "").strip()
+        if not forward_proxy_url:
+            return {}
+        forward_env = {
+            "HTTPS_PROXY": forward_proxy_url,
         }
+        if forward_ca_cert_path:
+            forward_env["NODE_EXTRA_CA_CERTS"] = forward_ca_cert_path
+        return forward_env
 
+    provider = cc_dump.providers.get_provider_spec(spec.provider_key)
     return {provider.base_url_env: proxy_url}
