@@ -45,26 +45,6 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
             "Every section key is required; use empty arrays when unknown."
         ),
     ),
-    "release_notes": PromptSpec(
-        purpose="release_notes",
-        version="v1",
-        instruction=(
-            "Generate release notes and return strict JSON only with shape "
-            "{\"sections\":{\"user_highlights\":[{\"title\":\"\",\"detail\":\"\",\"source_links\":[{\"message_index\":0}]}],"
-            "\"technical_changes\":[],\"known_issues\":[],\"upgrade_notes\":[]}}. "
-            "Every section key is required; use empty arrays when unknown."
-        ),
-    ),
-    "incident_timeline": PromptSpec(
-        purpose="incident_timeline",
-        version="v1",
-        instruction=(
-            "Create a chronological incident timeline and return strict JSON only with shape "
-            "{\"facts\":[{\"timestamp\":\"\",\"actor\":\"\",\"action\":\"\",\"outcome\":\"\","
-            "\"source_links\":[{\"message_index\":0}]}],\"hypotheses\":[]}. "
-            "Keep facts in chronological order. Include hypotheses only when requested."
-        ),
-    ),
     "conversation_qa": PromptSpec(
         purpose="conversation_qa",
         version="v1",
@@ -100,8 +80,6 @@ SIDE_CHANNEL_PURPOSES: tuple[str, ...] = (
     "block_summary",
     "action_extraction",
     "handoff_note",
-    "release_notes",
-    "incident_timeline",
     "conversation_qa",
     "checkpoint_summary",
     "compaction",

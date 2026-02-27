@@ -142,14 +142,6 @@ WORKBENCH_CONTROL_GROUPS: tuple[WorkbenchControlGroup, ...] = (
                 availability="placeholder",
                 owner_ticket="cc-dump-mjb.4",
             ),
-            WorkbenchControlSpec(
-                key="release_notes",
-                intent="draft",
-                label="Release Notes",
-                action="app.sc_preview_release_notes",
-                availability="placeholder",
-                owner_ticket="cc-dump-mjb.4",
-            ),
         ),
     ),
     WorkbenchControlGroup(
