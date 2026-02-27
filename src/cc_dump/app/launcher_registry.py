@@ -88,18 +88,15 @@ def build_proxy_env(
     if not proxy_url:
         return {}
 
-    mode = str(endpoint.get("proxy_mode", "reverse") or "reverse").strip().lower()
-    if mode == "forward":
-        forward_proxy_url = str(endpoint.get("forward_proxy_url", "") or proxy_url).strip()
+    provider = cc_dump.providers.get_provider_spec(spec.provider_key)
+    if provider.proxy_type == "forward":
         forward_ca_cert_path = str(endpoint.get("forward_proxy_ca_cert_path", "") or "").strip()
-        if not forward_proxy_url:
-            return {}
         forward_env = {
-            "HTTPS_PROXY": forward_proxy_url,
+            "HTTP_PROXY": proxy_url,
+            "HTTPS_PROXY": proxy_url,
         }
         if forward_ca_cert_path:
             forward_env["NODE_EXTRA_CA_CERTS"] = forward_ca_cert_path
         return forward_env
 
-    provider = cc_dump.providers.get_provider_spec(spec.provider_key)
     return {provider.base_url_env: proxy_url}
