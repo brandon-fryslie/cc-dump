@@ -21,6 +21,7 @@ from cc_dump.tui.panel_registry import PANEL_ORDER
 from snarfx import transaction
 import cc_dump.tui.keys_panel
 import cc_dump.tui.settings_panel
+import cc_dump.tui.debug_settings_panel
 import cc_dump.tui.launch_config_panel
 import cc_dump.tui.side_channel_panel
 import cc_dump.tui.widget_factory
@@ -191,6 +192,21 @@ def toggle_settings(app) -> None:
         app._close_settings()
     else:
         app._open_settings()
+
+
+def toggle_debug_settings(app) -> None:
+    """Toggle the debug settings panel via mount/remove."""
+    panel_class = cc_dump.tui.debug_settings_panel.DebugSettingsPanel
+    existing = app.screen.query(panel_class)
+    if existing:
+        existing.first()._apply_toggle_states()
+        existing.first().remove()
+        conv = app._get_conv()
+        if conv is not None:
+            conv.focus()
+    else:
+        panel = cc_dump.tui.debug_settings_panel.create_debug_settings_panel(app_ref=app)
+        app.screen.mount(panel)
 
 
 def toggle_launch_config(app) -> None:

@@ -108,6 +108,9 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         # Launch config panel
         "C": "toggle_launch_config",
 
+        # Debug settings panel
+        "D": "toggle_debug_settings",
+
         # Logs panel
         "ctrl+l": "toggle_logs",
 
@@ -224,9 +227,11 @@ KEY_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("{/}", "Prev/next session"),
         ("c", "Launch tool (tmux)"),
         ("C", "Run configs"),
+        ("D", "Debug"),
         ("z/Z", "Zoom (tmux)"),
         ("L", "Tail logs (tmux)"),
         ("S", "Settings"),
+        ("D", "Debug"),
         ("X", "AI Workbench"),
         ("^C ^C", "Quit"),
     ]),
