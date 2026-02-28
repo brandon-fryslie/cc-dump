@@ -1416,6 +1416,9 @@ class CcDumpApp(App):
     def action_toggle_settings(self):
         _actions.toggle_settings(self)
 
+    def action_toggle_debug_settings(self):
+        _actions.toggle_debug_settings(self)
+
     def _open_settings(self):
         """Open settings panel, populating from settings store."""
         initial_values = {}

@@ -42,6 +42,7 @@ _RELOAD_ORDER = [
     "cc_dump.tui.info_panel",  # depends on: palette, panel_renderers
     "cc_dump.tui.keys_panel",  # depends on: panel_renderers
     "cc_dump.tui.settings_panel",  # depends on: palette
+    "cc_dump.tui.debug_settings_panel",  # depends on: palette, chip, perf_logging
     "cc_dump.tui.side_channel_panel",  # depends on: palette
     "cc_dump.tui.launch_config_panel",  # depends on: palette, settings_panel
     "cc_dump.tui.session_panel",  # depends on: panel_renderers
