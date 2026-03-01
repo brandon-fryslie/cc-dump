@@ -7,6 +7,7 @@ from textual.widgets import Static
 
 import cc_dump.tui.rendering
 import cc_dump.tui.widget_factory
+import cc_dump.io.logging_setup
 from cc_dump.core.formatting import VisState, HIDDEN
 from cc_dump.tui.chip import Chip
 
@@ -33,10 +34,6 @@ class StatusFooter(Widget):
     StatusFooter Horizontal {
         height: 1;
         width: 100%;
-    }
-
-    StatusFooter #footer-streams {
-        display: block;
     }
 
     StatusFooter Chip {
@@ -105,7 +102,6 @@ class StatusFooter(Widget):
         ("5", "metadata"),
         ("6", "thinking"),
     ]
-    _MAX_STREAM_CHIPS = 8
 
     def compose(self):
         # Line 1: category chips
@@ -127,11 +123,6 @@ class StatusFooter(Widget):
                 " f FOLLOW ",
                 action="app.toggle_follow",
                 id="cmd-follow",
-            )
-            yield Chip(
-                " m focus ",
-                action="app.toggle_stream_view_mode",
-                id="cmd-stream-mode",
             )
             yield Static(" F- ", id="cmd-filterset")
             yield Chip(
@@ -158,13 +149,14 @@ class StatusFooter(Widget):
                 id="cmd-tail-log",
                 classes="tmux",
             )
-        with Horizontal(id="footer-streams"):
-            for i in range(self._MAX_STREAM_CHIPS):
-                yield Chip(
-                    f" s{i + 1} ",
-                    action=None,
-                    id=f"stream-{i}",
-                )
+        # Line 3: log file path (static — set once on mount)
+        runtime = cc_dump.io.logging_setup.get_runtime()
+        log_path = runtime.file_path if runtime is not None else ""
+        yield Chip(
+            f" log: {log_path} " if log_path else " log: (unavailable) ",
+            action="app.copy_log_path" if log_path else None,
+            id="footer-log",
+        )
 
     def update_display(self, state: dict) -> None:
         """Render footer from state dict. Called by footer_state reaction.
@@ -206,15 +198,6 @@ class StatusFooter(Widget):
         follow_chip.set_class(is_dim, "-dim")
         follow_chip.styles.background = follow_bg
         follow_chip.styles.color = follow_fg
-
-        # Stream view mode chip
-        stream_mode_chip = self.query_one("#cmd-stream-mode", Chip)
-        stream_mode = state.get("stream_view_mode", "focused")
-        is_lanes = stream_mode == "lanes"
-        stream_mode_chip.update(" m lanes " if is_lanes else " m focus ")
-        stream_mode_chip.set_class(not is_lanes, "-dim")
-        stream_mode_chip.styles.background = fg_color if is_lanes else bg_color
-        stream_mode_chip.styles.color = bg_color if is_lanes else fg_color
 
         # Filterset indicator
         # [LAW:dataflow-not-control-flow] Always update; style varies by value.
@@ -259,46 +242,3 @@ class StatusFooter(Widget):
         auto_chip.set_class(not tmux_auto, "-dim")
         auto_chip.styles.text_style = "bold reverse" if tmux_auto else None
 
-        # Active request stream chips (concurrent streaming focus control).
-        streams = state.get("active_streams", ())
-        if not isinstance(streams, tuple):
-            streams = tuple(streams) if isinstance(streams, list) else ()
-        focused_stream_id = state.get("focused_stream_id", "")
-        stream_row = self.query_one("#footer-streams", Horizontal)
-        stream_row.display = True
-
-        kind_styles = {
-            "main": (Color.parse(tc.background), Color.parse(tc.foreground)),
-            "subagent": (Color.parse(tc.surface), Color.parse(tc.accent)),
-            "unknown": (Color.parse(tc.background), Color.parse(tc.warning)),
-        }
-
-        if not streams:
-            idle_chip = self.query_one("#stream-0", Chip)
-            idle_chip.display = True
-            idle_chip.update(" streams idle ")
-            idle_chip._action = None
-            idle_chip.styles.background = bg_color
-            idle_chip.styles.color = fg_color
-            idle_chip.set_class(True, "-dim")
-            for i in range(1, self._MAX_STREAM_CHIPS):
-                chip = self.query_one(f"#stream-{i}", Chip)
-                chip.display = False
-            return
-
-        for i in range(self._MAX_STREAM_CHIPS):
-            chip = self.query_one(f"#stream-{i}", Chip)
-            if i >= len(streams):
-                chip.display = False
-                continue
-
-            request_id, label, kind = streams[i]
-            chip.display = True
-            chip.update(f" s{i + 1} {label} ")
-            # // [LAW:dataflow-not-control-flow] Action payload is derived data.
-            chip._action = f"app.focus_stream('{request_id}')"
-
-            bg, fg = kind_styles.get(kind, kind_styles["unknown"])
-            chip.styles.background = bg
-            chip.styles.color = fg
-            chip.set_class(request_id != focused_stream_id, "-dim")

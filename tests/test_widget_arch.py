@@ -1406,49 +1406,6 @@ class TestRequestScopedStreaming:
         flush_cb()
         conv._invalidate.assert_called_once_with("stream_delta", request_id="req-1")
 
-    def test_lanes_mode_coalesces_and_invalidates_with_ordered_request_ids(self):
-        conv = ConversationView()
-        conv._last_width = 120
-        conv._last_filters = {}
-        conv.call_later = MagicMock()
-
-        with self._patch_app_console(conv):
-            conv.set_stream_view_mode("lanes")
-            conv.begin_stream("req-1")
-            conv.begin_stream("req-2")
-            conv.append_stream_block("req-1", TextDeltaBlock(content="alpha"))
-            conv.append_stream_block("req-2", TextDeltaBlock(content="beta"))
-
-        conv._invalidate = MagicMock()
-        flush_cb = conv.call_later.call_args.args[0]
-        flush_cb()
-        conv._invalidate.assert_called_once_with(
-            "stream_delta",
-            request_ids=("req-1", "req-2"),
-        )
-
-    def test_lanes_mode_renders_side_by_side_stream_preview(self):
-        conv = ConversationView()
-        conv._last_width = 120
-        conv._last_filters = {}
-        conv.call_later = MagicMock()
-
-        with self._patch_app_console(conv):
-            conv.set_stream_view_mode("lanes")
-            conv.begin_stream("req-1")
-            conv.begin_stream("req-2")
-            conv.append_stream_block("req-1", TextDeltaBlock(content="alpha lane"))
-            conv.append_stream_block("req-2", TextDeltaBlock(content="beta lane"))
-            flush_cb = conv.call_later.call_args.args[0]
-            flush_cb()
-
-        assert conv._attached_stream_id == conv._multi_stream_preview_id
-        assert conv._turns
-        assert conv._turns[-1].is_streaming
-        preview_text = "\n".join(strip.text for strip in conv._turns[-1].strips)
-        assert "alpha lane" in preview_text
-        assert "beta lane" in preview_text
-
     def test_incremental_delta_text_buffer_and_version(self):
         conv = ConversationView()
         conv._last_width = 80
