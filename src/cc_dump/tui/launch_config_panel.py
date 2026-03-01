@@ -368,6 +368,11 @@ class LaunchConfigPanel(VerticalScroll):
         except NoMatches:
             pass
 
+        # Enforce unique names: auto-suffix if another config already has this name.
+        taken = {c.name for i, c in enumerate(self._configs) if i != self._selected_idx}
+        if name_value in taken:
+            name_value = self._next_config_name(name_value)
+
         try:
             command_widget = self.query_one("#lc-field-command", Input)
             command_value = command_widget.value
