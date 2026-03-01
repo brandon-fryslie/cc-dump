@@ -149,7 +149,7 @@ class StatusFooter(Widget):
                 id="cmd-tail-log",
                 classes="tmux",
             )
-        # Line 3: log file path (static — set once on mount)
+        # Line 3: log file path (computed during compose)
         runtime = cc_dump.io.logging_setup.get_runtime()
         log_path = runtime.file_path if runtime is not None else ""
         yield Chip(
@@ -241,4 +241,3 @@ class StatusFooter(Widget):
         auto_chip.update(" Z auto ")
         auto_chip.set_class(not tmux_auto, "-dim")
         auto_chip.styles.text_style = "bold reverse" if tmux_auto else None
-
