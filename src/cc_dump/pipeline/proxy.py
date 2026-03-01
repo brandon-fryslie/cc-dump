@@ -424,6 +424,11 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             except json.JSONDecodeError as e:
                 logger.warning("malformed request JSON: %s", e)
 
+        # // [LAW:single-enforcer] Only emit response/error events for API-path requests
+        # that also emitted request events. Non-API traffic (health checks, token counting)
+        # is forwarded to the client but produces no pipeline events.
+        emitted_request = body is not None
+
         # Pipeline processing — transforms modify body/url, interceptors short-circuit
         if body is not None and self.request_pipeline is not None:
             body, url, intercept_response = self.request_pipeline.process(body, url)
@@ -447,13 +452,14 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             resp = urllib.request.urlopen(req, context=ctx, timeout=300)
         except urllib.error.HTTPError as e:
-            self.event_queue.put(ErrorEvent(
-                code=e.code,
-                reason=e.reason,
-                request_id=request_id,
-                recv_ns=time.monotonic_ns(),
-                provider=self.provider,
-            ))
+            if emitted_request:
+                self.event_queue.put(ErrorEvent(
+                    code=e.code,
+                    reason=e.reason,
+                    request_id=request_id,
+                    recv_ns=time.monotonic_ns(),
+                    provider=self.provider,
+                ))
             self.send_response(e.code)
             for k, v in e.headers.items():
                 if k.lower() != "transfer-encoding":
@@ -462,12 +468,13 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(e.read())
             return
         except Exception as e:
-            self.event_queue.put(ProxyErrorEvent(
-                error=str(e),
-                request_id=request_id,
-                recv_ns=time.monotonic_ns(),
-                provider=self.provider,
-            ))
+            if emitted_request:
+                self.event_queue.put(ProxyErrorEvent(
+                    error=str(e),
+                    request_id=request_id,
+                    recv_ns=time.monotonic_ns(),
+                    provider=self.provider,
+                ))
             self.send_response(502)
             self.end_headers()
             return
@@ -483,41 +490,41 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
         if is_stream:
-            # Emit response headers before streaming
-            safe_resp_headers = _safe_headers(resp.headers)
-            self.event_queue.put(ResponseHeadersEvent(
-                status_code=resp.status,
-                headers=safe_resp_headers,
-                request_id=request_id,
-                seq=0,
-                recv_ns=time.monotonic_ns(),
-                provider=self.provider,
-            ))
-            self._stream_response(resp, request_id)
+            if emitted_request:
+                safe_resp_headers = _safe_headers(resp.headers)
+                self.event_queue.put(ResponseHeadersEvent(
+                    status_code=resp.status,
+                    headers=safe_resp_headers,
+                    request_id=request_id,
+                    seq=0,
+                    recv_ns=time.monotonic_ns(),
+                    provider=self.provider,
+                ))
+            self._stream_response(resp, request_id, emit_events=emitted_request)
         else:
             data = resp.read()
             self.wfile.write(data)
-            # Emit canonical complete-response records for non-streaming transport.
-            safe_resp_headers = _safe_headers(resp.headers)
-            try:
-                body = json.loads(data)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                body = {}
-            self.event_queue.put(ResponseHeadersEvent(
-                status_code=resp.status,
-                headers=safe_resp_headers,
-                request_id=request_id,
-                seq=0,
-                recv_ns=time.monotonic_ns(),
-                provider=self.provider,
-            ))
-            self.event_queue.put(ResponseCompleteEvent(
-                body=body,
-                request_id=request_id,
-                seq=1,
-                recv_ns=time.monotonic_ns(),
-                provider=self.provider,
-            ))
+            if emitted_request:
+                safe_resp_headers = _safe_headers(resp.headers)
+                try:
+                    resp_body = json.loads(data)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    resp_body = {}
+                self.event_queue.put(ResponseHeadersEvent(
+                    status_code=resp.status,
+                    headers=safe_resp_headers,
+                    request_id=request_id,
+                    seq=0,
+                    recv_ns=time.monotonic_ns(),
+                    provider=self.provider,
+                ))
+                self.event_queue.put(ResponseCompleteEvent(
+                    body=resp_body,
+                    request_id=request_id,
+                    seq=1,
+                    recv_ns=time.monotonic_ns(),
+                    provider=self.provider,
+                ))
 
     def _send_synthetic_response(self, response_text: str, body: dict, request_id: str) -> None:
         """Send a synthetic SSE response and emit pipeline events.
@@ -602,7 +609,12 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         "openai": OpenAIResponseAssembler,
     }
 
-    def _stream_response(self, resp, request_id: str = ""):
+    def _stream_response(self, resp, request_id: str = "", *, emit_events: bool = True):
+        if not emit_events:
+            # Forward SSE bytes to client only — no pipeline events.
+            _fan_out_sse(resp, [ClientSink(self.wfile)])
+            return
+
         family = cc_dump.providers.get_provider_spec(self.provider).protocol_family
         assembler_cls = self._ASSEMBLER_CLASSES_BY_FAMILY.get(family, OpenAIResponseAssembler)
         assembler = assembler_cls()

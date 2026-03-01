@@ -41,50 +41,6 @@ def _get_stream_registry(app_state):
     return reg
 
 
-def _stamp_block_tree(block, ctx) -> None:
-    """Stamp session/lane attribution on a block tree."""
-    block.session_id = ctx.session_id
-    block.lane_id = ctx.lane_id
-    block.agent_kind = ctx.agent_kind
-    block.agent_label = ctx.agent_label
-    for child in getattr(block, "children", []):
-        _stamp_block_tree(child, ctx)
-
-
-def _stamp_blocks(blocks, ctx) -> None:
-    for block in blocks:
-        _stamp_block_tree(block, ctx)
-
-
-def _sync_stream_footer(widgets) -> None:
-    """Push active stream chip state to view_store."""
-    view_store = widgets.get("view_store")
-    domain_store = widgets.get("domain_store")
-    if view_store is None or domain_store is None:
-        return
-    # // [LAW:one-source-of-truth] Footer stream chips derive from DomainStore.
-    view_store.set("streams:active", domain_store.get_active_stream_chips())
-    view_store.set("streams:focused", domain_store.get_focused_stream_id() or "")
-
-
-def _sync_active_stream_attribution(widgets, stream_registry) -> None:
-    """Restamp active stream blocks/meta from canonical stream registry contexts."""
-    domain_store = widgets.get("domain_store")
-    if domain_store is None:
-        return
-    # // [LAW:one-source-of-truth] request_id -> attribution mapping is owned by StreamRegistry.
-    for request_id in domain_store.get_active_stream_ids():
-        ctx = stream_registry.get(request_id)
-        if ctx is None:
-            continue
-        domain_store.restamp_stream(
-            request_id,
-            session_id=ctx.session_id,
-            lane_id=ctx.lane_id,
-            agent_kind=ctx.agent_kind,
-            agent_label=ctx.agent_label,
-        )
-
 
 def _store_response_meta(app_state, request_id: str, status_code: int, headers: dict) -> None:
     """Store response headers/status by request_id for complete-response finalization."""
@@ -128,27 +84,6 @@ def _current_turn_from_focus(app_state, domain_store):
     return usage if isinstance(usage, dict) else None
 
 
-def _fallback_session(ctx, state) -> None:
-    """Preserve legacy session stamping when stream context has no session."""
-    if ctx.session_id:
-        return
-    current_session = state.get("current_session", "")
-    if isinstance(current_session, str) and current_session:
-        ctx.session_id = current_session
-
-
-def _maybe_update_main_session(state, ctx) -> None:
-    """Persist current_session from main/seed contexts, never from subagents."""
-    if not ctx.session_id:
-        return
-    current = state.get("current_session", "")
-    if not isinstance(current, str):
-        current = ""
-    # // [LAW:one-source-of-truth] current_session tracks orchestrator session.
-    if not current or ctx.agent_kind == "main":
-        state["current_session"] = ctx.session_id
-
-
 def _clear_current_turn_usage(app_state, request_id: str) -> None:
     """Clear per-request streaming usage tracking."""
     usage_by_request = app_state.get("current_turn_usage_by_request", {})
@@ -187,7 +122,6 @@ def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool =
         cb = refresh_callbacks.get(cb_name)
         if cb:
             cb()
-    _sync_stream_footer(widgets)
 
 
 def _handle_complete_response_payload(
@@ -203,12 +137,11 @@ def _handle_complete_response_payload(
 ) -> dict[str, object]:
     """Canonical response finalization path for both streaming and non-streaming transport."""
     stream_registry = _get_stream_registry(app_state)
-    ctx = stream_registry.mark_done(
+    stream_registry.mark_done(
         request_id,
         seq=seq,
         recv_ns=recv_ns,
     )
-    _fallback_session(ctx, state)
 
     status_code, headers_dict = _pop_response_meta(app_state, request_id)
     response_blocks: list = []
@@ -217,9 +150,6 @@ def _handle_complete_response_payload(
             cc_dump.core.formatting.format_response_headers(status_code or 200, headers_dict)
         )
     response_blocks.extend(cc_dump.core.formatting.format_complete_response_for_provider(provider, complete_body))
-
-    _stamp_blocks(response_blocks, ctx)
-    _maybe_update_main_session(state, ctx)
 
     domain_store = widgets["domain_store"]
     if domain_store.get_stream_blocks(request_id):
@@ -256,7 +186,7 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
 
     try:
         stream_registry = _get_stream_registry(app_state)
-        ctx = stream_registry.register_request(
+        stream_registry.register_request(
             event.request_id,
             body if isinstance(body, dict) else {},
             seq=event.seq,
@@ -281,7 +211,6 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
         app_state["pending_request_headers"] = pending_headers_all
         provider = event.provider
         blocks = cc_dump.core.formatting.format_request_for_provider(provider, body, state, request_headers=pending_headers)
-        _stamp_blocks(blocks, ctx)
 
         domain_store = widgets["domain_store"]
         stats = widgets["stats"]
@@ -291,10 +220,6 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
 
         # Update stats (only request count and model tracking - not tokens)
         stats.update_stats(requests=state["request_counter"])
-
-        # Keep session panel semantics based on latest request context.
-        _maybe_update_main_session(state, ctx)
-        _sync_active_stream_attribution(widgets, stream_registry)
 
         log_fn("DEBUG", f"Request #{state['request_counter']} processed")
     except Exception as e:
@@ -312,36 +237,27 @@ def handle_response_headers(event: ResponseHeadersEvent, state, widgets, app_sta
     try:
         stream_registry = _get_stream_registry(app_state)
         _store_response_meta(app_state, event.request_id, status_code, headers_dict)
-        ctx = stream_registry.mark_streaming(
+        stream_registry.mark_streaming(
             event.request_id,
             seq=event.seq,
             recv_ns=event.recv_ns,
         )
-        _fallback_session(ctx, state)
 
         blocks = cc_dump.core.formatting.format_response_headers(status_code, headers_dict)
-        _stamp_blocks(blocks, ctx)
-        _maybe_update_main_session(state, ctx)
 
         domain_store = widgets["domain_store"]
 
-        domain_store.begin_stream(event.request_id, {
-            "agent_kind": ctx.agent_kind,
-            "agent_label": ctx.agent_label,
-            "lane_id": ctx.lane_id,
-        })
+        domain_store.begin_stream(event.request_id)
 
         # Append response header blocks (empty list is safe)
         for block in blocks:
             domain_store.append_stream_block(event.request_id, block)
-        _sync_active_stream_attribution(widgets, stream_registry)
 
         if blocks:  # Only log if blocks were actually produced
             log_fn(
                 "DEBUG",
                 f"Displayed response headers: HTTP {status_code}, {len(headers_dict)} headers",
             )
-        _sync_stream_footer(widgets)
     except Exception as e:
         log_fn("ERROR", f"Error handling response headers: {e}")
         raise
@@ -377,46 +293,30 @@ def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_s
     """Handle transport-normalized streaming progress hints."""
     try:
         stream_registry = _get_stream_registry(app_state)
-        ctx = stream_registry.mark_streaming(
+        stream_registry.mark_streaming(
             event.request_id,
             seq=event.seq,
             recv_ns=event.recv_ns,
         )
-        if event.task_tool_use_id:
-            ctx = stream_registry.note_task_tool_use(
-                event.request_id,
-                event.task_tool_use_id,
-                seq=event.seq,
-                recv_ns=event.recv_ns,
-            )
-        _fallback_session(ctx, state)
-
-        _maybe_update_main_session(state, ctx)
 
         domain_store = widgets["domain_store"]
         stats = widgets["stats"]
         stats_domain_store = widgets.get("stats_domain_store", domain_store)
         all_domain_stores = widgets.get("all_domain_stores")
 
-        domain_store.begin_stream(event.request_id, {
-            "agent_kind": ctx.agent_kind,
-            "agent_label": ctx.agent_label,
-            "lane_id": ctx.lane_id,
-        })
+        domain_store.begin_stream(event.request_id)
 
         if event.delta_text:
             block = cc_dump.core.formatting.TextDeltaBlock(
                 content=event.delta_text,
                 category=cc_dump.core.formatting.Category.ASSISTANT,
             )
-            _stamp_block_tree(block, ctx)
             domain_store.append_stream_block(event.request_id, block)
 
         if event.model:
             stats.update_stats(model=event.model)
 
         _upsert_current_turn_usage(app_state, event.request_id, event)
-        _sync_active_stream_attribution(widgets, stream_registry)
 
         # Refresh stats with the currently focused active stream, if any.
         analytics_store = widgets.get("analytics_store")
@@ -427,7 +327,6 @@ def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_s
                 domain_store=stats_domain_store,
                 all_domain_stores=all_domain_stores if isinstance(all_domain_stores, tuple) else None,
             )
-        _sync_stream_footer(widgets)
     except Exception as e:
         log_fn("ERROR", f"Error handling response progress: {e}")
         raise
@@ -457,14 +356,12 @@ def handle_response_done(event: ResponseDoneEvent, state, widgets, app_state, lo
     """Handle response_done event."""
     try:
         stream_registry = _get_stream_registry(app_state)
-        ctx = stream_registry.mark_done(
+        stream_registry.mark_done(
             event.request_id,
             seq=event.seq,
             recv_ns=event.recv_ns,
         )
-        _fallback_session(ctx, state)
         domain_store = widgets["domain_store"]
-        _maybe_update_main_session(state, ctx)
 
         # [LAW:single-enforcer] RESPONSE_COMPLETE is canonical finalization path.
         # RESPONSE_DONE only handles rare fallback where complete payload never arrived.
@@ -478,7 +375,6 @@ def handle_response_done(event: ResponseDoneEvent, state, widgets, app_state, lo
 
         _ = _pop_response_meta(app_state, event.request_id)
         _clear_current_turn_usage(app_state, event.request_id)
-        _sync_stream_footer(widgets)
         log_fn("DEBUG", "Response done acknowledged")
     except Exception as e:
         log_fn("ERROR", f"Error handling response done: {e}")
@@ -494,7 +390,6 @@ def handle_error(event: ErrorEvent, state, widgets, app_state, log_fn):
     log_fn("ERROR", f"HTTP Error {code}: {reason}")
 
     block = cc_dump.core.formatting.ErrorBlock(code=code, reason=reason)
-    block.session_id = state.get("current_session", "")
 
     domain_store = widgets["domain_store"]
 
@@ -511,7 +406,6 @@ def handle_proxy_error(event: ProxyErrorEvent, state, widgets, app_state, log_fn
     log_fn("ERROR", f"Proxy error: {err}")
 
     block = cc_dump.core.formatting.ProxyErrorBlock(error=err)
-    block.session_id = state.get("current_session", "")
 
     domain_store = widgets["domain_store"]
 

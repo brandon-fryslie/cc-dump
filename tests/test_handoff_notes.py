@@ -18,7 +18,7 @@ def test_parse_handoff_artifact_keeps_all_required_sections():
         """,
         purpose="handoff_note",
         prompt_version="v1",
-        source_session_id="sess-1",
+        source_provider="anthropic",
         request_id="req-1",
         source_start=0,
         source_end=5,
@@ -33,7 +33,7 @@ def test_render_handoff_markdown_includes_required_section_headers():
         '{"sections":{"changed":[{"text":"x","source_links":[{"message_index":1}]}]}}',
         purpose="handoff_note",
         prompt_version="v1",
-        source_session_id="sess-1",
+        source_provider="anthropic",
         request_id="req-1",
         source_start=0,
         source_end=2,
@@ -52,7 +52,7 @@ def test_handoff_store_latest_by_session():
         '{"sections":{"changed":[{"text":"a","source_links":[{"message_index":0}]}]}}',
         purpose="handoff_note",
         prompt_version="v1",
-        source_session_id="sess-1",
+        source_provider="anthropic",
         request_id="req-1",
         source_start=0,
         source_end=0,
@@ -61,13 +61,13 @@ def test_handoff_store_latest_by_session():
         '{"sections":{"changed":[{"text":"b","source_links":[{"message_index":1}]}]}}',
         purpose="handoff_note",
         prompt_version="v1",
-        source_session_id="sess-1",
+        source_provider="anthropic",
         request_id="req-2",
         source_start=1,
         source_end=1,
     )
     store.add(first)
     store.add(second)
-    latest = store.latest("sess-1")
+    latest = store.latest("anthropic")
     assert latest is not None
     assert latest.handoff_id == second.handoff_id

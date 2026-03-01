@@ -77,8 +77,6 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         "full_stop": "cycle_panel",
         ",": "cycle_panel_mode",
         "comma": "cycle_panel_mode",
-        "tab": "cycle_panel_mode",
-        "shift+tab": "cycle_panel_mode",
         "f": "toggle_follow",
         "alt+n": "next_special",
         "alt+p": "prev_special",
@@ -107,6 +105,9 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
 
         # Launch config panel
         "C": "toggle_launch_config",
+
+        # Debug settings panel
+        "D": "toggle_debug_settings",
 
         # Logs panel
         "ctrl+l": "toggle_logs",
@@ -158,7 +159,7 @@ FOOTER_KEYS: dict[InputMode, list[tuple[str, str]]] = {
         ("qwerty", "expand"),
         ("QWERTY", "detail"),
         (".", "panel"),
-        ("tab/,", "mode"),
+        (",", "mode"),
         ("f", "follow"),
         ("M-n/p", "special"),
         ("[]", "theme"),
@@ -207,7 +208,7 @@ KEY_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("Panels", [
         (".", "Cycle panel"),
-        ("tab/,", "Panel mode"),
+        (",", "Panel mode"),
         ("f", "Follow mode"),
         ("^L", "Debug logs"),
         ("i", "Server info"),
@@ -224,9 +225,11 @@ KEY_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("{/}", "Prev/next session"),
         ("c", "Launch tool (tmux)"),
         ("C", "Run configs"),
+        ("D", "Debug"),
         ("z/Z", "Zoom (tmux)"),
         ("L", "Tail logs (tmux)"),
         ("S", "Settings"),
+        ("D", "Debug"),
         ("X", "AI Workbench"),
         ("^C ^C", "Quit"),
     ]),

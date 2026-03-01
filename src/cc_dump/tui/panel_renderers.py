@@ -471,13 +471,14 @@ def render_session_panel(
     return result, session_id_span
 
 
-def info_panel_rows(info: dict) -> list[tuple[str, str]]:
-    """Canonical info-panel row data.
+def info_panel_rows(info: dict) -> list[tuple[str, str, str]]:
+    """Canonical info-panel row data: (label, display_value, copy_value).
 
     // [LAW:one-source-of-truth] Row definitions are centralized for rendering and click-copy mapping.
+    copy_value differs from display_value for proxy rows (ENV_VAR=url).
     """
     provider_rows = info.get("providers", [])
-    rows: list[tuple[str, str]] = []
+    rows: list[tuple[str, str, str]] = []
 
     if isinstance(provider_rows, list) and provider_rows:
         for provider in provider_rows:
@@ -485,33 +486,27 @@ def info_panel_rows(info: dict) -> list[tuple[str, str]]:
                 continue
             name = str(provider.get("name", "") or "Provider")
             proxy_url = str(provider.get("proxy_url", "") or "--")
-            target = str(provider.get("target", "") or "--")
-            mode = str(provider.get("proxy_mode", "--") or "--")
-            rows.append((f"{name} Proxy", proxy_url))
-            rows.append((f"{name} Mode", mode))
-            rows.append((f"{name} Target", target))
+            env_var = str(provider.get("base_url_env", "") or "")
+            copy_val = f"{env_var}={proxy_url}" if env_var and proxy_url != "--" else proxy_url
+            rows.append((f"{name} Proxy", proxy_url, copy_val))
     else:
         # Backward-compat fallback when callers still pass legacy keys.
         proxy_url = str(info.get("proxy_url", "--"))
         openai_proxy_url = info.get("openai_proxy_url")
-        rows.append(("Anthropic Proxy", proxy_url))
+        rows.append(("Anthropic Proxy", proxy_url, f"ANTHROPIC_BASE_URL={proxy_url}"))
         if openai_proxy_url:
-            rows.append(("OpenAI Proxy", str(openai_proxy_url)))
-        rows.append(("Anthropic Target", str(info.get("target") or "--")))
-        if openai_proxy_url:
-            rows.append(("OpenAI Target", str(info.get("openai_target") or "--")))
+            rows.append(("OpenAI Proxy", str(openai_proxy_url), f"OPENAI_BASE_URL={openai_proxy_url}"))
 
     rows.extend(
         [
-            ("Proxy Mode", str(info.get("proxy_mode", "--"))),
-            ("Session", str(info.get("session_name", "--"))),
-            ("Session ID", str(info.get("session_id") or "--")),
-            ("Recording", str(info.get("recording_path") or "disabled")),
-            ("Recordings Dir", str(info.get("recording_dir", "--"))),
-            ("Replay From", str(info.get("replay_file") or "--")),
-            ("Python", str(info.get("python_version", "--"))),
-            ("Textual", str(info.get("textual_version", "--"))),
-            ("PID", str(info.get("pid", "--"))),
+            ("Session", str(info.get("session_name", "--")), str(info.get("session_name", "--"))),
+            ("Session ID", str(info.get("session_id") or "--"), str(info.get("session_id") or "--")),
+            ("Recording", str(info.get("recording_path") or "disabled"), str(info.get("recording_path") or "disabled")),
+            ("Recordings Dir", str(info.get("recording_dir", "--")), str(info.get("recording_dir", "--"))),
+            ("Replay From", str(info.get("replay_file") or "--"), str(info.get("replay_file") or "--")),
+            ("Python", str(info.get("python_version", "--")), str(info.get("python_version", "--"))),
+            ("Textual", str(info.get("textual_version", "--")), str(info.get("textual_version", "--"))),
+            ("PID", str(info.get("pid", "--")), str(info.get("pid", "--"))),
         ]
     )
     return rows
@@ -546,9 +541,9 @@ def render_info_panel(info: dict) -> Text:
     text.append("Server Info", style=f"bold {p.info}")
     text.append("\n")
 
-    label_width = max(len(label) for label, _ in rows)
+    label_width = max(len(label) for label, _, _ in rows)
 
-    for label, value in rows:
+    for label, value, _copy in rows:
         text.append("  ")
         text.append("{:<{}}".format(label + ":", label_width + 1), style="bold")
         text.append(" ")

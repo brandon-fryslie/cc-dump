@@ -11,7 +11,7 @@ def test_encode_and_extract_marker_from_string_content():
     marker = SideChannelMarker(
         run_id="abc123",
         purpose="block_summary",
-        source_session_id="sess-1",
+        source_provider="anthropic",
     )
     body = {
         "messages": [
@@ -22,7 +22,7 @@ def test_encode_and_extract_marker_from_string_content():
     assert parsed is not None
     assert parsed.run_id == "abc123"
     assert parsed.purpose == "block_summary"
-    assert parsed.source_session_id == "sess-1"
+    assert parsed.source_provider == "anthropic"
     assert parsed.prompt_version == "v1"
     assert parsed.policy_version == ""
 
@@ -31,7 +31,7 @@ def test_strip_marker_from_body_removes_prefix_line():
     marker = SideChannelMarker(
         run_id="abc123",
         purpose="block_summary",
-        source_session_id="sess-1",
+        source_provider="anthropic",
     )
     body = {
         "messages": [
@@ -47,7 +47,7 @@ def test_extract_marker_from_block_content():
     marker = SideChannelMarker(
         run_id="abc123",
         purpose="action_extraction",
-        source_session_id="sess-2",
+        source_provider="openai",
     )
     body = {
         "messages": [
@@ -62,7 +62,7 @@ def test_extract_marker_from_block_content():
     parsed = extract_marker(body)
     assert parsed is not None
     assert parsed.purpose == "action_extraction"
-    assert parsed.source_session_id == "sess-2"
+    assert parsed.source_provider == "openai"
 
 
 def test_encode_marker_has_expected_delimiters():

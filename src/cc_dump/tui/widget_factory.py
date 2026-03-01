@@ -1102,12 +1102,6 @@ class ConversationView(ScrollView):
         lane_width = max(24, (width - separator_width) // lane_count)
         composed_width = lane_width * lane_count + separator_width
 
-        chips = dict((rid, (label, kind)) for rid, label, kind in self._domain_store.get_active_stream_chips())
-        label_styles = {
-            "main": Style(color=cc_dump.core.palette.PALETTE.accent, bold=True),
-            "subagent": Style(color=cc_dump.core.palette.PALETTE.info, bold=True),
-            "unknown": Style(color=cc_dump.core.palette.PALETTE.warning, dim=True),
-        }
         separator = Segment("│", Style(dim=True))
 
         lane_rows: list[list[Strip]] = []
@@ -1117,11 +1111,7 @@ class ConversationView(ScrollView):
                 lane_td = TurnData(turn_index=-1, blocks=[], strips=[], is_streaming=True)
                 self._stream_preview_turns[request_id] = lane_td
             self._refresh_streaming_delta(request_id, lane_td, force=True, width=lane_width)
-            label, kind = chips.get(request_id, (request_id[:8], "unknown"))
-            header_style = label_styles.get(kind, label_styles["unknown"])
-            header_text = Text(f" {label} ".ljust(lane_width), style=header_style)
-            header_strip = Strip([Segment(str(header_text), header_style)]).adjust_cell_length(lane_width)
-            lane_rows.append([header_strip, *lane_td.strips])
+            lane_rows.append(list(lane_td.strips))
 
         row_count = max(len(rows) for rows in lane_rows)
         blank_lane = Strip.blank(lane_width, self.rich_style)
@@ -1408,10 +1398,6 @@ class ConversationView(ScrollView):
         """Focus an active stream for live rendering preview."""
         return self._domain_store.set_focused_stream(request_id)
 
-    def get_active_stream_chips(self) -> tuple[tuple[str, str, str], ...]:
-        """Return active stream tuples for footer chips."""
-        return self._domain_store.get_active_stream_chips()
-
     def get_stream_view_mode(self) -> str:
         return self._stream_view_mode.value
 
@@ -1441,7 +1427,7 @@ class ConversationView(ScrollView):
         return self._domain_store.finalize_stream(request_id)
 
     def begin_streaming_turn(self):
-        self.begin_stream("__default__", {"agent_label": "main", "agent_kind": "main"})
+        self.begin_stream("__default__")
 
     def append_streaming_block(self, block, filters: dict = None):
         self.append_stream_block("__default__", block, filters)
@@ -2358,40 +2344,6 @@ class StatsPanel(Static):
 
         snapshot = store.get_dashboard_snapshot(current_turn=current_turn)
         summary = dict(snapshot.get("summary", {}))
-
-        # // [LAW:one-source-of-truth] Lane attribution comes from DomainStore stamped blocks/meta.
-        if domain_store is not None:
-            completed_lane_counts = domain_store.get_completed_lane_counts()
-            active_lane_counts = domain_store.get_active_lane_counts()
-        else:
-            completed_lane_counts = {"main": 0, "subagent": 0, "unknown": 0}
-            active_lane_counts = {"main": 0, "subagent": 0, "unknown": 0}
-
-        # // [LAW:one-source-of-truth] Aggregate multi-session lane counts derive from all_domain_stores.
-        if all_domain_stores:
-            all_completed_lane_counts = {"main": 0, "subagent": 0, "unknown": 0}
-            all_active_lane_counts = {"main": 0, "subagent": 0, "unknown": 0}
-            for ds in all_domain_stores:
-                for lane, count in ds.get_completed_lane_counts().items():
-                    all_completed_lane_counts[lane] = all_completed_lane_counts.get(lane, 0) + int(count)
-                for lane, count in ds.get_active_lane_counts().items():
-                    all_active_lane_counts[lane] = all_active_lane_counts.get(lane, 0) + int(count)
-        else:
-            all_completed_lane_counts = dict(completed_lane_counts)
-            all_active_lane_counts = dict(active_lane_counts)
-
-        summary["main_turns"] = int(completed_lane_counts.get("main", 0))
-        summary["subagent_turns"] = int(completed_lane_counts.get("subagent", 0))
-        summary["unknown_turns"] = int(completed_lane_counts.get("unknown", 0))
-        summary["active_main_streams"] = int(active_lane_counts.get("main", 0))
-        summary["active_subagent_streams"] = int(active_lane_counts.get("subagent", 0))
-        summary["active_unknown_streams"] = int(active_lane_counts.get("unknown", 0))
-        summary["all_main_turns"] = int(all_completed_lane_counts.get("main", 0))
-        summary["all_subagent_turns"] = int(all_completed_lane_counts.get("subagent", 0))
-        summary["all_unknown_turns"] = int(all_completed_lane_counts.get("unknown", 0))
-        summary["all_active_main_streams"] = int(all_active_lane_counts.get("main", 0))
-        summary["all_active_subagent_streams"] = int(all_active_lane_counts.get("subagent", 0))
-        summary["all_active_unknown_streams"] = int(all_active_lane_counts.get("unknown", 0))
 
         # Optional local capacity baseline (not provided by API).
         capacity_raw = str(os.environ.get("CC_DUMP_TOKEN_CAPACITY", "") or "").strip()

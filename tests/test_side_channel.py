@@ -130,19 +130,6 @@ class TestSideChannelManager:
         result = mgr.query("test")
         assert "kill switch" in str(result.error).lower()
 
-    def test_profile_resume_uses_resume_and_fork_flags(self):
-        mgr = SideChannelManager()
-        mock_result = MagicMock(returncode=0, stdout="ok", stderr="")
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
-            _ = mgr.run(
-                prompt="test",
-                purpose="block_summary",
-                source_session_id="123e4567-e89b-12d3-a456-426614174000",
-                profile="cache_probe_resume",
-            )
-        cmd = mock_run.call_args[0][0]
-        assert "--resume" in cmd
-        assert "--fork-session" in cmd
 
     def test_unknown_purpose_normalized_to_utility_custom(self):
         mgr = SideChannelManager()
@@ -151,7 +138,7 @@ class TestSideChannelManager:
             result = mgr.run(
                 prompt="test",
                 purpose="nonexistent_purpose",
-                source_session_id="",
+                source_provider="",
                 profile="ephemeral_default",
             )
         assert result.purpose == "utility_custom"
@@ -435,19 +422,19 @@ class TestDataDispatcher:
             messages,
             source_start=1,
             source_end=2,
-            source_session_id="sess-a",
+            source_provider="anthropic",
             request_id="req-a",
         )
         assert result.source == "ai"
         assert result.artifact.source_start == 1
         assert result.artifact.source_end == 2
-        assert result.artifact.source_session_id == "sess-a"
+        assert result.artifact.source_provider == "anthropic"
         assert result.artifact.request_id == "req-a"
         assert result.artifact.summary_text == "Checkpoint summary text"
         run_call = mgr.run.call_args
         assert run_call.kwargs["purpose"] == "checkpoint_summary"
         assert run_call.kwargs["prompt_version"] == "v1"
-        assert run_call.kwargs["profile"] == "cache_probe_resume"
+        assert run_call.kwargs["profile"] == "ephemeral_default"
 
     def test_create_checkpoint_disabled_uses_fallback_and_skips_ai(self):
         dispatcher, mgr, _cache = self._make_dispatcher(enabled=False)
@@ -456,7 +443,7 @@ class TestDataDispatcher:
             [{"role": "user", "content": "m0"}],
             source_start=0,
             source_end=0,
-            source_session_id="sess-a",
+            source_provider="anthropic",
             request_id="req-a",
         )
         assert result.source == "fallback"
@@ -476,7 +463,7 @@ class TestDataDispatcher:
             [{"role": "user", "content": "m0"}],
             source_start=0,
             source_end=0,
-            source_session_id="sess-a",
+            source_provider="anthropic",
             request_id="req-a",
         )
         assert result.source == "fallback"
@@ -490,14 +477,14 @@ class TestDataDispatcher:
             [{"role": "user", "content": "m0"}],
             source_start=0,
             source_end=0,
-            source_session_id="sess-a",
+            source_provider="anthropic",
             request_id="req-before",
         )
         after = dispatcher.create_checkpoint(
             [{"role": "assistant", "content": "m0"}, {"role": "assistant", "content": "m1"}],
             source_start=0,
             source_end=1,
-            source_session_id="sess-a",
+            source_provider="anthropic",
             request_id="req-after",
         )
         diff_text = dispatcher.checkpoint_diff(
@@ -522,7 +509,7 @@ class TestDataDispatcher:
         )
         result = dispatcher.extract_action_items(
             [{"role": "user", "content": "next steps"}],
-            source_session_id="sess-1",
+            source_provider="anthropic",
             request_id="req-1",
         )
         assert result.source == "ai"
@@ -546,7 +533,7 @@ class TestDataDispatcher:
         )
         extraction = dispatcher.extract_action_items(
             [{"role": "user", "content": "next steps"}],
-            source_session_id="sess-1",
+            source_provider="anthropic",
             request_id="req-1",
         )
         item_id = extraction.items[0].item_id
@@ -574,7 +561,7 @@ class TestDataDispatcher:
         )
         extraction = dispatcher.extract_action_items(
             [{"role": "user", "content": "next steps"}],
-            source_session_id="sess-1",
+            source_provider="anthropic",
             request_id="req-1",
         )
         item_id = extraction.items[0].item_id
@@ -605,7 +592,7 @@ class TestDataDispatcher:
             [{"role": "user", "content": "handoff context"}],
             source_start=0,
             source_end=0,
-            source_session_id="sess-1",
+            source_provider="anthropic",
             request_id="req-1",
         )
         assert result.source == "ai"
@@ -622,7 +609,7 @@ class TestDataDispatcher:
             [{"role": "assistant", "content": "worked on cache"}],
             source_start=0,
             source_end=0,
-            source_session_id="sess-1",
+            source_provider="anthropic",
             request_id="req-1",
         )
         assert result.source == "fallback"
@@ -643,10 +630,10 @@ class TestDataDispatcher:
             [{"role": "assistant", "content": "A"}],
             source_start=0,
             source_end=0,
-            source_session_id="sess-2",
+            source_provider="openai",
             request_id="req-2",
         )
-        latest = dispatcher.latest_handoff_note("sess-2")
+        latest = dispatcher.latest_handoff_note("openai")
         assert latest is not None
         assert latest.handoff_id == result.artifact.handoff_id
 
@@ -721,7 +708,7 @@ class TestDataDispatcher:
         result = dispatcher.run_utility(
             [{"role": "assistant", "content": "implemented debug lane"}],
             utility_id="turn_title",
-            source_session_id="sess-1",
+            source_provider="anthropic",
         )
         assert result.source == "ai"
         assert result.text == "Debug lane rollout"
