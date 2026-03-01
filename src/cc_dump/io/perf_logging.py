@@ -38,6 +38,10 @@ SLOW_STAGE_THRESHOLDS_MS: dict[str, float] = {
 _DEFAULT_THRESHOLD_MS = 250.0
 _STACK_LIMIT = 40
 _THREAD_STACK_LIMIT = 20
+_THREAD_DUMP_MIN_MS = 500.0
+_APP_PATH_MARKER = "/cc_dump/"
+_PERF_LOG_START = "========== PERF SLOW PATH START =========="
+_PERF_LOG_END = "========== PERF SLOW PATH END =========="
 
 
 def _threshold_for(stage: str) -> float:
@@ -64,13 +68,58 @@ def _format_context(context: Mapping[str, Any]) -> str:
     return " ".join(parts)
 
 
+def _normalize_path(path: str) -> str:
+    return path.replace("\\", "/")
+
+
+def _is_app_frame(filename: str) -> bool:
+    return _APP_PATH_MARKER in _normalize_path(filename)
+
+
+def _is_perf_logging_frame(filename: str) -> bool:
+    return _normalize_path(filename).endswith("/io/perf_logging.py")
+
+
+def _filter_app_frames(
+    frames: list[traceback.FrameSummary],
+) -> list[traceback.FrameSummary]:
+    return [
+        frame
+        for frame in frames
+        if _is_app_frame(frame.filename) and not _is_perf_logging_frame(frame.filename)
+    ]
+
+
+def _format_stack_frames(frames: list[traceback.FrameSummary]) -> str:
+    if not frames:
+        return "<no application frames captured>\n"
+    return "".join(traceback.format_list(frames))
+
+
+def _capture_app_stack() -> str:
+    frames = traceback.extract_stack(limit=_STACK_LIMIT)
+    return _format_stack_frames(_filter_app_frames(frames))
+
+
+def _trigger_reason(elapsed_ms: float, threshold_ms: float) -> str:
+    over_ms = elapsed_ms - threshold_ms
+    if threshold_ms <= 0:
+        return f"elapsed exceeded threshold by {over_ms:.2f}ms"
+    return f"elapsed exceeded threshold by {over_ms:.2f}ms ({elapsed_ms / threshold_ms:.2f}x)"
+
+
 def _thread_dump() -> str:
     frames = sys._current_frames()
     names = {thread.ident: thread.name for thread in threading.enumerate()}
     chunks: list[str] = []
     for tid, frame in frames.items():
+        app_frames = _filter_app_frames(
+            traceback.extract_stack(frame, limit=_THREAD_STACK_LIMIT)
+        )
+        if not app_frames:
+            continue
         chunks.append(f"\n--- thread={names.get(tid, 'unknown')} ident={tid} ---\n")
-        chunks.extend(traceback.format_stack(frame, limit=_THREAD_STACK_LIMIT))
+        chunks.extend(traceback.format_list(app_frames))
     return "".join(chunks)
 
 
@@ -96,18 +145,31 @@ def monitor_slow_path(
             return
 
         resolved_context = _resolve_context(context)
-        context_text = _format_context(resolved_context)
-        stack = "".join(traceback.format_stack(limit=_STACK_LIMIT))
+        context_text = _format_context(resolved_context) or "-"
+        stack = _capture_app_stack()
 
         # Collect full thread dump only for severe threshold breaches.
-        extra_threads = _thread_dump() if elapsed_ms >= (threshold * 2.0) else ""
+        extra_threads = (
+            _thread_dump()
+            if elapsed_ms >= max(threshold * 2.0, _THREAD_DUMP_MIN_MS)
+            else ""
+        )
         logger.warning(
-            "perf threshold exceeded stage=%s elapsed_ms=%.2f threshold_ms=%.2f context=%s\n"
-            "stacktrace:\n%s%s",
+            "%s\n"
+            "stage=%s\n"
+            "trigger=%s\n"
+            "elapsed_ms=%.2f threshold_ms=%.2f over_ms=%.2f\n"
+            "context=%s\n"
+            "app_stack:\n%s%s\n"
+            "%s",
+            _PERF_LOG_START,
             stage,
+            _trigger_reason(elapsed_ms, threshold),
             elapsed_ms,
             threshold,
+            elapsed_ms - threshold,
             context_text,
             stack,
-            f"\nthread_dump:{extra_threads}" if extra_threads else "",
+            f"\napp_thread_dump:{extra_threads}" if extra_threads else "",
+            _PERF_LOG_END,
         )

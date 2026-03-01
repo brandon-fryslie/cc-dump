@@ -15,7 +15,7 @@ def test_monitor_slow_path_no_log_below_threshold(caplog):
             context={"k": "v"},
         ):
             pass
-    assert "perf threshold exceeded" not in caplog.text
+    assert "PERF SLOW PATH START" not in caplog.text
 
 
 def test_monitor_slow_path_logs_context_on_threshold(caplog):
@@ -28,6 +28,11 @@ def test_monitor_slow_path_logs_context_on_threshold(caplog):
             context={"alpha": 1, "beta": "two"},
         ):
             pass
-    assert "perf threshold exceeded stage=test.stage" in caplog.text
+    assert "PERF SLOW PATH START" in caplog.text
+    assert "PERF SLOW PATH END" in caplog.text
+    assert "stage=test.stage" in caplog.text
+    assert "trigger=elapsed exceeded threshold by" in caplog.text
+    assert "app_stack:" in caplog.text
+    assert "<no application frames captured>" in caplog.text
     assert "alpha=1" in caplog.text
     assert "beta='two'" in caplog.text
