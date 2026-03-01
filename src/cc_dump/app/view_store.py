@@ -39,7 +39,6 @@ SCHEMA["tmux:zoomed"] = False               # bool — mirrored from tmux contro
 SCHEMA["launch:active_name"] = ""           # str — was load_active_name() file I/O each call
 SCHEMA["launch:active_tool"] = "claude"     # str — active launcher key for footer chip label
 SCHEMA["theme:generation"] = 0              # int — bumped on theme change to invalidate footer
-SCHEMA["streams:focused"] = ""              # request_id of focused active stream
 
 # Side-channel panel state (previously app._side_channel_* attributes)
 SCHEMA["sc:loading"] = False
