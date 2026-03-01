@@ -546,12 +546,6 @@ class CcDumpApp(App):
         self._ensure_session_surface(key)
         return key
 
-    def _sync_active_stream_footer(self) -> None:
-        """Mirror active session stream chips/focus into the view store."""
-        ds = self._get_active_domain_store()
-        self._view_store.set("streams:active", ds.get_active_stream_chips())
-        self._view_store.set("streams:focused", ds.get_focused_stream_id() or "")
-
     def _get_active_session_panel_state(self) -> tuple[str | None, float | None]:
         """Return session panel identity + last activity for active tab context."""
         active_key = self._active_session_key_from_tabs()
@@ -833,7 +827,6 @@ class CcDumpApp(App):
                     self._view_store.footer_state.get()
                 )
             )
-        self._sync_active_stream_footer()
         self._log_memory_snapshot("startup")
 
         if self._replay_data:
@@ -1121,7 +1114,6 @@ class CcDumpApp(App):
                 self._active_session_key = active_session_key
                 self._domain_store = self._get_active_domain_store()
             if restored_any:
-                self._sync_active_stream_footer()
                 return
 
         conv_state = state.get("conv", {})
@@ -1275,7 +1267,6 @@ class CcDumpApp(App):
             info = self._get_info()
             if info is not None:
                 info.update_info(self._build_server_info())
-        self._sync_active_stream_footer()
 
     def on_tabbed_content_tab_activated(
         self, event: TabbedContent.TabActivated
@@ -1290,7 +1281,6 @@ class CcDumpApp(App):
                 break
         # // [LAW:one-source-of-truth] Back-compat alias points to active session store.
         self._domain_store = self._get_active_domain_store()
-        self._sync_active_stream_footer()
 
     # ─── Delegates to extracted modules ────────────────────────────────
     # Textual requires action_* and watch_* as methods on the App class.
@@ -1415,6 +1405,9 @@ class CcDumpApp(App):
     # Settings
     def action_toggle_settings(self):
         _actions.toggle_settings(self)
+
+    def action_toggle_debug_settings(self):
+        _actions.toggle_debug_settings(self)
 
     def _open_settings(self):
         """Open settings panel, populating from settings store."""
@@ -1596,10 +1589,10 @@ class CcDumpApp(App):
 
         dispatcher = self._data_dispatcher
 
-        source_session_id = self._active_resume_session_id()
+        source_provider = cc_dump.providers.session_provider(self._active_session_key_from_tabs(), default_session_key=self._default_session_key)
 
         def _do_summarize():
-            result = dispatcher.summarize_messages(messages, source_session_id=source_session_id)
+            result = dispatcher.summarize_messages(messages, source_provider=source_provider)
             self.call_from_thread(self._on_side_channel_result, result, context_session_key)
 
         self.run_worker(_do_summarize, thread=True, exclusive=False)
@@ -1899,7 +1892,7 @@ class CcDumpApp(App):
         )
 
         dispatcher = self._data_dispatcher
-        source_session_id = self._active_resume_session_id()
+        source_provider = cc_dump.providers.session_provider(self._active_session_key_from_tabs(), default_session_key=self._default_session_key)
         request_id = f"sc-qa-{int(time.time() * 1000)}"
 
         def _do_qa() -> None:
@@ -1907,7 +1900,7 @@ class CcDumpApp(App):
                 messages,
                 question=question,
                 scope=scope,
-                source_session_id=source_session_id,
+                source_provider=source_provider,
                 request_id=request_id,
             )
             self.call_from_thread(
@@ -2025,13 +2018,13 @@ class CcDumpApp(App):
             context_session_key=context_session_key,
         )
         dispatcher = self._data_dispatcher
-        source_session_id = self._active_resume_session_id()
+        source_provider = cc_dump.providers.session_provider(self._active_session_key_from_tabs(), default_session_key=self._default_session_key)
         request_id = f"sc-action-{int(time.time() * 1000)}"
 
         def _do_action_extract() -> None:
             result = dispatcher.extract_action_items(
                 messages,
-                source_session_id=source_session_id,
+                source_provider=source_provider,
                 request_id=request_id,
             )
             self.call_from_thread(
@@ -2229,13 +2222,13 @@ class CcDumpApp(App):
             context_session_key=context_session_key,
         )
         dispatcher = self._data_dispatcher
-        source_session_id = self._active_resume_session_id()
+        source_provider = cc_dump.providers.session_provider(self._active_session_key_from_tabs(), default_session_key=self._default_session_key)
 
         def _do_utility_run() -> None:
             result = dispatcher.run_utility(
                 messages,
                 utility_id=utility_id,
-                source_session_id=source_session_id,
+                source_provider=source_provider,
             )
             self.call_from_thread(self._on_side_channel_utility_result, result, context_session_key)
 

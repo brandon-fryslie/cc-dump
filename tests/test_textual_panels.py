@@ -66,8 +66,8 @@ async def test_panel_mode_cycling_comma():
         await press_and_settle(pilot, ",")
         assert stats._view_index == 1
 
-        # Tab also advances mode
-        await press_and_settle(pilot, "tab")
+        # Second comma advances mode
+        await press_and_settle(pilot, ",")
         assert stats._view_index == 2
 
         # Wraps back to first mode

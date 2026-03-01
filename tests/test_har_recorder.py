@@ -721,7 +721,7 @@ def test_har_subscriber_side_channel_metadata_annotation(tmp_path):
     subscriber = HARRecordingSubscriber(str(har_path))
     marker = (
         '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"run-1","purpose":"block_summary",'
-        '"source_session_id":"sess-1","prompt_version":"v1","policy_version":"redaction-v1"}>>\n'
+        '"source_provider":"sess-1","prompt_version":"v1","policy_version":"redaction-v1"}>>\n'
     )
 
     subscriber.on_event(RequestHeadersEvent(headers={"content-type": "application/json"}))
@@ -748,7 +748,7 @@ def test_har_subscriber_side_channel_metadata_annotation(tmp_path):
     assert entry["_cc_dump"]["purpose"] == "block_summary"
     assert entry["_cc_dump"]["prompt_version"] == "v1"
     assert entry["_cc_dump"]["policy_version"] == "redaction-v1"
-    assert entry["_cc_dump"]["source_session_id"] == "sess-1"
+    assert entry["_cc_dump"]["source_provider"] == "sess-1"
 
 
 def test_har_subscriber_provider_filter(tmp_path):

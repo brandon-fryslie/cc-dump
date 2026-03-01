@@ -1,4 +1,4 @@
-"""Tests for request-scoped stream registry and lane classification."""
+"""Tests for request-scoped stream registry."""
 
 from cc_dump.tui.stream_registry import StreamRegistry
 
@@ -14,122 +14,45 @@ def _body_with_session(session_id: str) -> dict:
     }
 
 
-def _body_with_task_result_lineage(session_id: str, task_tool_use_id: str) -> dict:
-    body = _body_with_session(session_id)
-    body["messages"] = [
-        {
-            "role": "assistant",
-            "content": [
-                {
-                    "type": "tool_use",
-                    "id": task_tool_use_id,
-                    "name": "Task",
-                    "input": {"description": "do work", "prompt": "run"},
-                }
-            ],
-        },
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "tool_result",
-                    "tool_use_id": task_tool_use_id,
-                    "content": "task output",
-                }
-            ],
-        },
-    ]
-    return body
-
-
 class TestStreamRegistry:
-    def test_first_session_is_main(self):
+    def test_register_request_extracts_session_id(self):
         reg = StreamRegistry()
         ctx = reg.register_request("req-1", _body_with_session("11111111-2222-3333-4444-555555555555"))
-        assert ctx.agent_kind == "main"
-        assert ctx.agent_label == "main"
-        assert ctx.lane_id == "main"
+        assert ctx.session_id == "11111111-2222-3333-4444-555555555555"
 
-    def test_second_distinct_session_is_subagent(self):
+    def test_register_request_no_session_gives_empty(self):
         reg = StreamRegistry()
-        _ = reg.register_request("req-1", _body_with_session("11111111-2222-3333-4444-555555555555"))
-        ctx = reg.register_request("req-2", _body_with_session("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
-        assert ctx.agent_kind == "subagent"
-        assert ctx.agent_label == "subagent 1"
-        assert ctx.lane_id == "subagent-1"
+        ctx = reg.register_request("req-1", {"metadata": {}})
+        assert ctx.session_id == ""
 
-    def test_same_session_reuses_lane(self):
+    def test_ensure_context_creates_empty_context(self):
         reg = StreamRegistry()
-        first = reg.register_request("req-1", _body_with_session("11111111-2222-3333-4444-555555555555"))
-        second = reg.register_request("req-2", _body_with_session("11111111-2222-3333-4444-555555555555"))
-        assert second.lane_id == first.lane_id
-        assert second.agent_kind == first.agent_kind
-        assert second.agent_label == first.agent_label
+        ctx = reg.ensure_context("req-unknown")
+        assert ctx.request_id == "req-unknown"
+        assert ctx.session_id == ""
 
-    def test_missing_session_is_unknown(self):
+    def test_mark_streaming_updates_state(self):
         reg = StreamRegistry()
-        ctx = reg.register_request("deadbeefcafebabe", {"metadata": {}})
-        assert ctx.agent_kind == "unknown"
-        assert ctx.agent_label.startswith("unknown ")
-        assert ctx.lane_id.startswith("unknown-")
+        ctx = reg.mark_streaming("req-1")
+        assert ctx.state == "streaming"
 
-    def test_ensure_then_register_upgrades_unknown(self):
+    def test_mark_done_updates_state(self):
         reg = StreamRegistry()
-        unknown = reg.ensure_context("req-1")
-        assert unknown.agent_kind == "unknown"
-        updated = reg.register_request("req-1", _body_with_session("11111111-2222-3333-4444-555555555555"))
-        assert updated.agent_kind == "main"
+        ctx = reg.mark_done("req-1")
+        assert ctx.state == "done"
 
-    def test_task_tool_use_promotes_request_session_to_main(self):
+    def test_get_returns_registered_context(self):
         reg = StreamRegistry()
-        first = reg.register_request("req-sub-first", _body_with_session("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
-        assert first.agent_kind == "main"
+        reg.register_request("req-1", _body_with_session("11111111-2222-3333-4444-555555555555"))
+        ctx = reg.get("req-1")
+        assert ctx is not None
+        assert ctx.session_id == "11111111-2222-3333-4444-555555555555"
 
-        second = reg.register_request("req-main", _body_with_session("11111111-2222-3333-4444-555555555555"))
-        assert second.agent_kind == "subagent"
-
-        promoted = reg.note_task_tool_use("req-main", "toolu_task_1")
-        assert promoted.agent_kind == "main"
-        assert promoted.lane_id == "main"
-
-        relabeled_first = reg.get("req-sub-first")
-        assert relabeled_first is not None
-        assert relabeled_first.agent_kind == "subagent"
-
-    def test_task_result_lineage_promotes_main_session(self):
+    def test_get_returns_none_for_unknown(self):
         reg = StreamRegistry()
-        _ = reg.register_request("req-sub-first", _body_with_session("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
+        assert reg.get("req-unknown") is None
 
-        main = reg.register_request(
-            "req-main",
-            _body_with_task_result_lineage(
-                "11111111-2222-3333-4444-555555555555",
-                "toolu_task_1",
-            ),
-        )
-        assert main.agent_kind == "main"
-        assert main.lane_id == "main"
-
-        sub = reg.get("req-sub-first")
-        assert sub is not None
-        assert sub.agent_kind == "subagent"
-
-    def test_task_tool_use_before_request_registration_promotes_when_session_arrives(self):
+    def test_session_hint_used_when_no_inline_session(self):
         reg = StreamRegistry()
-        _ = reg.register_request(
-            "req-sub-first",
-            _body_with_session("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
-        )
-        pending = reg.note_task_tool_use("req-main", "toolu_task_1")
-        assert pending.agent_kind == "unknown"
-
-        promoted = reg.register_request(
-            "req-main",
-            _body_with_session("11111111-2222-3333-4444-555555555555"),
-        )
-        assert promoted.agent_kind == "main"
-        assert promoted.lane_id == "main"
-
-        sub = reg.get("req-sub-first")
-        assert sub is not None
-        assert sub.agent_kind == "subagent"
+        ctx = reg.register_request("req-1", {}, session_hint="hint-session-id")
+        assert ctx.session_id == "hint-session-id"

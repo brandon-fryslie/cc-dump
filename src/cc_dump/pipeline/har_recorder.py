@@ -319,7 +319,7 @@ class HARRecordingSubscriber:
                     "purpose": marker.purpose,
                     "prompt_version": marker.prompt_version,
                     "policy_version": marker.policy_version,
-                    "source_session_id": marker.source_session_id,
+                    "source_provider": marker.source_provider,
                 })
             entry["_cc_dump"] = cc_dump_meta
 

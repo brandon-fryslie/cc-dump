@@ -444,8 +444,6 @@ def test_container_blocks_keep_summary_views_bounded():
         msg_index=9,
         timestamp="11:00:00",
         category=Category.ASSISTANT,
-        agent_label="planner",
-        agent_kind="subagent",
         children=[
             TextContentBlock(content="\n".join(f"line {i}" for i in range(60)), category=Category.ASSISTANT),
             ToolUseBlock(
@@ -801,8 +799,6 @@ def test_message_block_state_matrix_is_distinct():
         msg_index=2,
         timestamp="10:45:00",
         category=Category.USER,
-        agent_label="planner",
-        agent_kind="subagent",
         children=[
             TextContentBlock(content="hello", category=Category.USER),
             ToolUseBlock(name="Read", input_size=3, msg_color_idx=0),
@@ -818,7 +814,6 @@ def test_message_block_state_matrix_is_distinct():
     assert "USER [2]" in sc_text
     assert "10:45:00" not in sc_text
     assert "10:45:00" in se_text
-    assert "planner" in se_text
     assert "summary blocks: 3" in se_text
     assert "blocks: 3" in fc_text
     assert "summary blocks: 3" not in fc_text

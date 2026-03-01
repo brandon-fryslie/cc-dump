@@ -16,11 +16,23 @@ from contextlib import contextmanager
 from typing import Any
 
 
+_enabled = True
+
+
+def is_enabled() -> bool:
+    return _enabled
+
+
+def set_enabled(val: bool) -> None:
+    global _enabled
+    _enabled = val
+
+
 # [LAW:no-mode-explosion] One central threshold map; avoid per-callsite knobs.
 SLOW_STAGE_THRESHOLDS_MS: dict[str, float] = {
     "conversation.rerender_affected": 250.0,
     "conversation.background_rerender_tick": 120.0,
-    "conversation.recalculate_offsets_from": 80.0,
+    "conversation.recalculate_offsets_from": 200.0,
 }
 
 _DEFAULT_THRESHOLD_MS = 250.0
@@ -71,6 +83,9 @@ def monitor_slow_path(
     threshold_ms: float | None = None,
 ):
     """Log stack diagnostics when a stage exceeds its latency threshold."""
+    if not _enabled:
+        yield
+        return
     started_ns = time.perf_counter_ns()
     try:
         yield

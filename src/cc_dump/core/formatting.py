@@ -242,11 +242,6 @@ class FormattedBlock:
 
     # Claude Code session ID (from user_id metadata). Stamped on all blocks.
     session_id: str = ""
-    # Stream/agent attribution stamped by stream registry at event ingress.
-    # // [LAW:one-source-of-truth] Attribution is data on canonical blocks.
-    lane_id: str = ""
-    agent_kind: str = ""  # "main" | "subagent" | "unknown"
-    agent_label: str = ""
 
     # Lazy segmentation cache populated by rendering pipeline.
     # // [LAW:one-source-of-truth] Segment cache is a declared field, not monkey-patched.

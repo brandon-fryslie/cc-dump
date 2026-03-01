@@ -35,9 +35,6 @@ class DomainStore:
         self._stream_delta_versions: dict[str, int] = {}  # incremented per appended delta
         self._stream_meta: dict[str, dict] = {}
         self._stream_order: list[str] = []
-        # Recently completed stream chips retained until a new stream begins.
-        # Item shape: (request_id, label, kind)
-        self._recent_stream_chips: list[tuple[str, str, str]] = []
         self._focused_stream_id: str | None = None
         # Session boundary index: (session_id, turn_index) pairs for within-tab navigation.
         # // [LAW:one-source-of-truth] Derived from NewSessionBlock presence in turn data.
@@ -80,8 +77,6 @@ class DomainStore:
                 self._stream_meta[request_id] = dict(meta)
             return
 
-        # [LAW:one-source-of-truth] Recent chip lifecycle is owned here.
-        self._recent_stream_chips = []
         self._stream_turns[request_id] = []
         self._stream_delta_buffers[request_id] = []
         self._stream_delta_text[request_id] = ""
@@ -205,10 +200,6 @@ class DomainStore:
 
     def _seal_stream(self, request_id: str, sealed_blocks: list, *, was_focused: bool) -> None:
         """Common stream shutdown path for both local and upstream assembly."""
-        meta = self._stream_meta.get(request_id, {})
-        recent_label = str(meta.get("agent_label") or request_id[:8])
-        recent_kind = str(meta.get("agent_kind") or "unknown")
-
         # ── Registry cleanup ──
         self._stream_turns.pop(request_id, None)
         self._stream_delta_buffers.pop(request_id, None)
@@ -221,7 +212,6 @@ class DomainStore:
 
         # Add to completed turns
         self._completed.append(sealed_blocks)
-        self._recent_stream_chips.append((request_id, f"{recent_label} \u2713", recent_kind))
 
         # Update focus
         if was_focused:
@@ -292,93 +282,6 @@ class DomainStore:
             if request_id in self._stream_turns
         )
 
-    def get_completed_lane_counts(self) -> dict[str, int]:
-        """Return completed turn counts by agent_kind.
-
-        // [LAW:one-source-of-truth] Lane counts are derived from stamped block attribution.
-        """
-        counts = {"main": 0, "subagent": 0, "unknown": 0}
-        for turn in self._completed:
-            kind = "unknown"
-            for block in turn:
-                value = str(getattr(block, "agent_kind", "") or "")
-                if value:
-                    kind = value
-                    break
-            counts[kind] = counts.get(kind, 0) + 1
-        return counts
-
-    def get_active_lane_counts(self) -> dict[str, int]:
-        """Return active stream counts by agent_kind."""
-        counts = {"main": 0, "subagent": 0, "unknown": 0}
-        for request_id in self._stream_order:
-            if request_id not in self._stream_turns:
-                continue
-            meta = self._stream_meta.get(request_id, {})
-            kind = str(meta.get("agent_kind") or "unknown")
-            counts[kind] = counts.get(kind, 0) + 1
-        return counts
-
-    def restamp_stream(
-        self,
-        request_id: str,
-        *,
-        session_id: str,
-        lane_id: str,
-        agent_kind: str,
-        agent_label: str,
-    ) -> bool:
-        """Restamp an active stream's metadata and block attribution.
-
-        Returns True if request_id is an active stream and was restamped.
-        """
-        blocks = self._stream_turns.get(request_id)
-        if blocks is None:
-            return False
-
-        # // [LAW:one-source-of-truth] Stream chip labels derive from _stream_meta.
-        meta = self._stream_meta.get(request_id)
-        if meta is None:
-            meta = {}
-            self._stream_meta[request_id] = meta
-        meta["session_id"] = session_id
-        meta["lane_id"] = lane_id
-        meta["agent_kind"] = agent_kind
-        meta["agent_label"] = agent_label
-
-        def _stamp_tree(block) -> None:
-            block.session_id = session_id
-            block.lane_id = lane_id
-            block.agent_kind = agent_kind
-            block.agent_label = agent_label
-            for child in getattr(block, "children", []):
-                _stamp_tree(child)
-
-        for block in blocks:
-            _stamp_tree(block)
-        return True
-
-    def get_active_stream_chips(self) -> tuple[tuple[str, str, str], ...]:
-        """Return active stream tuples for footer chips.
-
-        Tuple item shape: (request_id, label, kind)
-        """
-        result: list[tuple[str, str, str]] = []
-        active_ids: set[str] = set()
-        for request_id in self._stream_order:
-            if request_id not in self._stream_turns:
-                continue
-            meta = self._stream_meta.get(request_id, {})
-            label = str(meta.get("agent_label") or request_id[:8])
-            kind = str(meta.get("agent_kind") or "unknown")
-            result.append((request_id, label, kind))
-            active_ids.add(request_id)
-        for request_id, label, kind in self._recent_stream_chips:
-            if request_id in active_ids:
-                continue
-            result.append((request_id, label, kind))
-        return tuple(result)
-
     def iter_completed_blocks(self) -> list[list]:
         """Return all completed turn block lists."""
         return self._completed
@@ -409,7 +312,6 @@ class DomainStore:
             "completed": list(self._completed),
             "active_streams": active_streams,
             "stream_order": list(self._stream_order),
-            "recent_stream_chips": list(self._recent_stream_chips),
             "focused_stream_id": self._focused_stream_id,
             "session_boundaries": list(self._session_boundaries),
         }
@@ -423,7 +325,6 @@ class DomainStore:
         self._stream_delta_versions.clear()
         self._stream_meta.clear()
         self._stream_order.clear()
-        self._recent_stream_chips.clear()
         self._focused_stream_id = None
         self._session_boundaries.clear()
 
@@ -448,16 +349,6 @@ class DomainStore:
                 ]
             if not self._stream_order:
                 self._stream_order = list(self._stream_turns.keys())
-
-        recent_stream_chips = state.get("recent_stream_chips", [])
-        if isinstance(recent_stream_chips, list):
-            parsed_recent: list[tuple[str, str, str]] = []
-            for item in recent_stream_chips:
-                if not isinstance(item, (list, tuple)) or len(item) != 3:
-                    continue
-                rid, label, kind = item
-                parsed_recent.append((str(rid), str(label), str(kind)))
-            self._recent_stream_chips = parsed_recent
 
         focused = state.get("focused_stream_id")
         if isinstance(focused, str) and focused in self._stream_turns:

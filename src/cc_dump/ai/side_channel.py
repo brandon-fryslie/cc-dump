@@ -143,7 +143,7 @@ class SideChannelManager:
             prompt=prompt,
             purpose="block_summary",
             timeout=timeout,
-            source_session_id="",
+            source_provider="",
             profile="ephemeral_default",
             prompt_version="v1",
         )
@@ -154,7 +154,7 @@ class SideChannelManager:
         prompt: str,
         purpose: str,
         timeout: int | None = None,
-        source_session_id: str = "",
+        source_provider: str = "",
         profile: str = "ephemeral_default",
         prompt_version: str = "v1",
     ) -> SideChannelResult:
@@ -219,14 +219,13 @@ class SideChannelManager:
         cmd = _build_cmd(
             claude_command=self._claude_command,
             profile=profile,
-            source_session_id=source_session_id,
         )
         tagged_prompt = prepend_marker(
             boundary.prompt,
             SideChannelMarker(
                 run_id=run_id,
                 purpose=normalized_purpose,
-                source_session_id=source_session_id,
+                source_provider=source_provider,
                 prompt_version=prompt_version,
                 policy_version=boundary.policy_version,
             ),
@@ -324,7 +323,6 @@ def _build_cmd(
     *,
     claude_command: str,
     profile: str,
-    source_session_id: str,
 ) -> list[str]:
     cmd = [
         claude_command,
@@ -335,8 +333,6 @@ def _build_cmd(
         "",
     ]
 
-    if profile == "cache_probe_resume" and source_session_id:
-        return cmd + ["--resume", source_session_id, "--fork-session"]
     if profile == "isolated_fixed_id":
         return cmd + ["--session-id", str(uuid.uuid4()), "--no-session-persistence"]
     return cmd + ["--no-session-persistence"]

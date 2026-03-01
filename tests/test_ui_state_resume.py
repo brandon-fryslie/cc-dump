@@ -155,7 +155,6 @@ def test_apply_resume_ui_state_postload_restores_multi_session_state(monkeypatch
     monkeypatch.setattr(app, "_ensure_session_surface", lambda session_key: called_session_keys.append(session_key))
     monkeypatch.setattr(app, "_get_conv", lambda session_key=None: convs["__default__" if session_key is None else session_key])
     monkeypatch.setattr(app, "_get_conv_tabs", lambda: tabs)
-    monkeypatch.setattr(app, "_sync_active_stream_footer", lambda: None)
 
     app._apply_resume_ui_state_postload()
 
