@@ -272,9 +272,7 @@ class TestReconcileWithNewKeys:
         assert store.get("nav:follow") == "active"
         assert store.get("filter:active") is None
         assert store.get("tmux:available") is False
-        assert store.get("streams:active") == ()
         assert store.get("streams:focused") == ""
-        assert store.get("streams:view") == "focused"
         assert store.get("sc:loading") is False
         assert store.get("sc:active_action") == ""
         assert store.get("sc:purpose_usage") == {}
@@ -304,9 +302,6 @@ class TestFooterStateComputed:
         assert state["tmux_auto_zoom"] is False
         assert state["tmux_zoomed"] is False
         assert state["active_launch_config_name"] == ""
-        assert state["active_streams"] == ()
-        assert state["focused_stream_id"] == ""
-        assert state["stream_view_mode"] == "focused"
 
     def test_updates_on_store_change(self):
         store = cc_dump.app.view_store.create()
@@ -314,19 +309,6 @@ class TestFooterStateComputed:
         state = store.footer_state.get()
         assert state["active_filterset"] == "1"
 
-    def test_stream_chip_state_updates(self):
-        store = cc_dump.app.view_store.create()
-        store.set("streams:active", (("req-1", "main", "main"),))
-        store.set("streams:focused", "req-1")
-        state = store.footer_state.get()
-        assert state["active_streams"] == (("req-1", "main", "main"),)
-        assert state["focused_stream_id"] == "req-1"
-
-    def test_stream_view_mode_updates(self):
-        store = cc_dump.app.view_store.create()
-        store.set("streams:view", "lanes")
-        state = store.footer_state.get()
-        assert state["stream_view_mode"] == "lanes"
 
 
 class TestErrorItemsComputed:
