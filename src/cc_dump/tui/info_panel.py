@@ -32,7 +32,7 @@ class InfoPanel(Static):
     def __init__(self):
         super().__init__("")
         self._info: dict = {}
-        self._rows: list[tuple[str, str]] = []
+        self._rows: list[tuple[str, str, str]] = []
 
     def update_info(self, info: dict):
         """Update the info panel with server configuration.
@@ -60,10 +60,10 @@ class InfoPanel(Static):
         # Row 0 is the "Server Info" title, rows 1+ are data rows.
         clicked_row = int(event.y) - 1  # subtract title row
         if 0 <= clicked_row < len(self._rows):
-            label, value = self._rows[clicked_row]
-            if value:
-                self.app.copy_to_clipboard(value)
-                self.app.notify(f"Copied {label}: {value}", severity="information")
+            label, _display, copy_value = self._rows[clicked_row]
+            if copy_value:
+                self.app.copy_to_clipboard(copy_value)
+                self.app.notify(f"Copied: {copy_value}", severity="information")
 
     def get_state(self) -> dict:
         """Extract state for transfer to a new instance."""
