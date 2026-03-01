@@ -10,7 +10,7 @@ def test_checkpoint_artifact_serialization_roundtrip():
         checkpoint_id="chk_123",
         purpose="checkpoint_summary",
         prompt_version="v1",
-        source_session_id="sess-1",
+        source_provider="anthropic",
         request_id="req-1",
         source_start=3,
         source_end=8,
@@ -23,21 +23,21 @@ def test_checkpoint_artifact_serialization_roundtrip():
 
 def test_checkpoint_id_is_deterministic():
     a = make_checkpoint_id(
-        source_session_id="sess-1",
+        source_provider="anthropic",
         request_id="req-1",
         source_start=0,
         source_end=2,
         summary_text="abc",
     )
     b = make_checkpoint_id(
-        source_session_id="sess-1",
+        source_provider="anthropic",
         request_id="req-1",
         source_start=0,
         source_end=2,
         summary_text="abc",
     )
     c = make_checkpoint_id(
-        source_session_id="sess-1",
+        source_provider="anthropic",
         request_id="req-2",
         source_start=0,
         source_end=2,
@@ -53,7 +53,7 @@ def test_checkpoint_diff_is_deterministic_and_source_linked():
         checkpoint_id="chk_before",
         purpose="checkpoint_summary",
         prompt_version="v1",
-        source_session_id="sess-1",
+        source_provider="anthropic",
         request_id="req-before",
         source_start=0,
         source_end=1,
@@ -64,7 +64,7 @@ def test_checkpoint_diff_is_deterministic_and_source_linked():
         checkpoint_id="chk_after",
         purpose="checkpoint_summary",
         prompt_version="v1",
-        source_session_id="sess-1",
+        source_provider="anthropic",
         request_id="req-after",
         source_start=2,
         source_end=3,

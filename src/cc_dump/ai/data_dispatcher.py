@@ -137,7 +137,7 @@ class DataDispatcher:
     def summarize_messages(
         self,
         messages: list[dict],
-        source_session_id: str = "",
+        source_provider: str = "",
         prompt_override: str | None = None,
     ) -> EnrichedResult:
         """Summarize a list of API messages.
@@ -173,14 +173,13 @@ class DataDispatcher:
             return fallback
 
         prompt = _resolve_prompt_override(prepared.prompt, prompt_override)
-        profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
         result = self._side_channel.run(
             prompt=prompt,
             purpose=prepared.purpose,
             prompt_version=prepared.prompt_version,
             timeout=None,
-            source_session_id=source_session_id,
-            profile=profile,
+            source_provider=source_provider,
+            profile="ephemeral_default",
         )
         self._analytics.record(purpose=result.purpose)
 
@@ -220,7 +219,7 @@ class DataDispatcher:
         *,
         source_start: int,
         source_end: int,
-        source_session_id: str = "",
+        source_provider: str = "",
         request_id: str = "",
     ) -> CheckpointCreateResult:
         """Create checkpoint summary artifact for selected message range."""
@@ -232,14 +231,13 @@ class DataDispatcher:
         )
         selected_messages = _slice_messages_for_range(messages, normalized_start, normalized_end)
         fallback_text = _fallback_summary(selected_messages)
-        profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
 
         if not self._side_channel.enabled:
             artifact = self._checkpoint_store.add(
                 create_checkpoint_artifact(
                     purpose=spec.purpose,
                     prompt_version=spec.version,
-                    source_session_id=source_session_id,
+                    source_provider=source_provider,
                     request_id=request_id,
                     source_start=normalized_start,
                     source_end=normalized_end,
@@ -259,8 +257,8 @@ class DataDispatcher:
             purpose=spec.purpose,
             prompt_version=spec.version,
             timeout=None,
-            source_session_id=source_session_id,
-            profile=profile,
+            source_provider=source_provider,
+            profile="ephemeral_default",
         )
         self._analytics.record(purpose=result.purpose)
         summary_text = result.text if result.error is None else fallback_text
@@ -272,7 +270,7 @@ class DataDispatcher:
             create_checkpoint_artifact(
                 purpose=spec.purpose,
                 prompt_version=spec.version,
-                source_session_id=source_session_id,
+                source_provider=source_provider,
                 request_id=request_id,
                 source_start=normalized_start,
                 source_end=normalized_end,
@@ -308,7 +306,7 @@ class DataDispatcher:
         self,
         messages: list[dict],
         *,
-        source_session_id: str = "",
+        source_provider: str = "",
         request_id: str = "",
         prompt_override: str | None = None,
     ) -> ActionExtractionResult:
@@ -325,14 +323,13 @@ class DataDispatcher:
 
         prepared = self.prepare_action_extraction_prompt(messages)
         prompt = _resolve_prompt_override(prepared.prompt, prompt_override)
-        profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
         result = self._side_channel.run(
             prompt=prompt,
             purpose=prepared.purpose,
             prompt_version=prepared.prompt_version,
             timeout=None,
-            source_session_id=source_session_id,
-            profile=profile,
+            source_provider=source_provider,
+            profile="ephemeral_default",
         )
         self._analytics.record(purpose=result.purpose)
         if result.error is not None:
@@ -388,7 +385,7 @@ class DataDispatcher:
         *,
         source_start: int,
         source_end: int,
-        source_session_id: str = "",
+        source_provider: str = "",
         request_id: str = "",
     ) -> HandoffResult:
         """Generate structured handoff artifact for selected scope."""
@@ -402,13 +399,12 @@ class DataDispatcher:
         fallback_artifact = fallback_handoff_artifact(
             purpose=spec.purpose,
             prompt_version=spec.version,
-            source_session_id=source_session_id,
+            source_provider=source_provider,
             request_id=request_id,
             source_start=normalized_start,
             source_end=normalized_end,
             summary_text=_fallback_summary(selected_messages),
         )
-        profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
 
         if not self._side_channel.enabled:
             artifact = self._handoff_store.add(fallback_artifact)
@@ -426,8 +422,8 @@ class DataDispatcher:
             purpose=spec.purpose,
             prompt_version=spec.version,
             timeout=None,
-            source_session_id=source_session_id,
-            profile=profile,
+            source_provider=source_provider,
+            profile="ephemeral_default",
         )
         self._analytics.record(purpose=result.purpose)
         if result.error is not None:
@@ -449,7 +445,7 @@ class DataDispatcher:
                 result.text,
                 purpose=spec.purpose,
                 prompt_version=spec.version,
-                source_session_id=source_session_id,
+                source_provider=source_provider,
                 request_id=request_id,
                 source_start=normalized_start,
                 source_end=normalized_end,
@@ -462,8 +458,8 @@ class DataDispatcher:
             elapsed_ms=result.elapsed_ms,
         )
 
-    def latest_handoff_note(self, source_session_id: str = "") -> HandoffArtifact | None:
-        return self._handoff_store.latest(source_session_id=source_session_id)
+    def latest_handoff_note(self, source_provider: str = "") -> HandoffArtifact | None:
+        return self._handoff_store.latest(source_provider=source_provider)
 
     def handoff_note_snapshot(self) -> list[HandoffArtifact]:
         return self._handoff_store.snapshot()
@@ -474,7 +470,7 @@ class DataDispatcher:
         *,
         question: str,
         scope: QAScope | None = None,
-        source_session_id: str = "",
+        source_provider: str = "",
         request_id: str = "",
         prompt_override: str | None = None,
     ) -> ConversationQAResult:
@@ -512,7 +508,6 @@ class DataDispatcher:
             normalized_scope=normalized_scope,
             fallback_answer=f"Fallback answer based on selected scope: {fallback_text}",
         )
-        profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
 
         if not self._side_channel.enabled:
             return ConversationQAResult(
@@ -534,8 +529,8 @@ class DataDispatcher:
             purpose=prepared.purpose,
             prompt_version=prepared.prompt_version,
             timeout=None,
-            source_session_id=source_session_id,
-            profile=profile,
+            source_provider=source_provider,
+            profile="ephemeral_default",
         )
         self._analytics.record(purpose=result.purpose)
         if result.error is not None:
@@ -575,7 +570,7 @@ class DataDispatcher:
         messages: list[dict],
         *,
         utility_id: str,
-        source_session_id: str = "",
+        source_provider: str = "",
         prompt_override: str | None = None,
     ) -> UtilityResult:
         """Run registered lightweight utility with fallback behavior."""
@@ -608,14 +603,13 @@ class DataDispatcher:
                 error=prepared.error,
             )
         prompt = _resolve_prompt_override(prepared.prompt, prompt_override)
-        profile = "cache_probe_resume" if source_session_id else "ephemeral_default"
         result = self._side_channel.run(
             prompt=prompt,
             purpose=prepared.purpose,
             prompt_version=prepared.prompt_version,
             timeout=None,
-            source_session_id=source_session_id,
-            profile=profile,
+            source_provider=source_provider,
+            profile="ephemeral_default",
         )
         self._analytics.record(purpose=result.purpose)
         if result.error is not None:

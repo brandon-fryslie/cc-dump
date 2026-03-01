@@ -2739,13 +2739,11 @@ def _render_message_header(
     block: FormattedBlock,
     *,
     include_timestamp: bool,
-    include_agent: bool,
 ) -> Text:
-    """Build MessageBlock header text with optional timestamp/agent details.
+    """Build MessageBlock header text with optional timestamp details.
 
     // [LAW:one-source-of-truth] Shared header builder for all MessageBlock state renderers.
     """
-    tc = get_theme_colors()
     role = getattr(block, "role", "")
     idx = getattr(block, "msg_index", 0)
     timestamp = getattr(block, "timestamp", "")
@@ -2755,33 +2753,12 @@ def _render_message_header(
     t = Text(f"{label} [{idx}]", style=style)
     if include_timestamp and timestamp:
         t.append(f"  {timestamp}", style="dim")
-
-    agent_kind = getattr(block, "agent_kind", "") or "main"
-    agent_label = getattr(block, "agent_label", "")
-    if include_agent and agent_label:
-        badge_styles = {
-            "main": f"bold {tc.foreground} on {tc.background}",
-            "subagent": f"bold {tc.background} on {tc.accent}",
-            "unknown": f"bold {tc.background} on {tc.warning}",
-        }
-        badge_style = badge_styles.get(agent_kind, badge_styles["unknown"])
-        t.append(f" [{agent_label}]", style=badge_style)
-        # Subagent/unknown turns get a subtle header tint to stay visually distinct.
-        # // [LAW:dataflow-not-control-flow] Tint selection is table-driven by agent_kind.
-        tint_by_kind = {
-            "main": None,
-            "subagent": tc.surface,
-            "unknown": tc.surface,
-        }
-        tint = tint_by_kind.get(agent_kind)
-        if tint:
-            t.stylize(f"on {tint}", 0, len(t))
     return t
 
 
 def _render_message_block(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render MessageBlock full-expanded header."""
-    return _render_message_header(block, include_timestamp=True, include_agent=True)
+    return _render_message_header(block, include_timestamp=True)
 
 
 def _message_child_counts(children: list[FormattedBlock]) -> Counter[str]:
@@ -2805,12 +2782,12 @@ def _message_content_count(counts: Counter[str]) -> int:
 
 def _render_message_block_summary_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render MessageBlock summary-collapsed header."""
-    return _render_message_header(block, include_timestamp=False, include_agent=False)
+    return _render_message_header(block, include_timestamp=False)
 
 
 def _render_message_block_summary_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render MessageBlock summary-expanded header with compact composition stats."""
-    header = _render_message_header(block, include_timestamp=True, include_agent=True)
+    header = _render_message_header(block, include_timestamp=True)
     children = getattr(block, "children", None) or []
     total = len(children)
     if total == 0:
@@ -2830,7 +2807,7 @@ def _render_message_block_summary_expanded(block: FormattedBlock) -> ConsoleRend
 
 def _render_message_block_full_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render MessageBlock full-collapsed header with child composition counts."""
-    header = _render_message_header(block, include_timestamp=True, include_agent=True)
+    header = _render_message_header(block, include_timestamp=True)
     children = getattr(block, "children", None) or []
     total = len(children)
     if total == 0:

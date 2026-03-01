@@ -120,9 +120,13 @@ async def start_file_watcher(app) -> None:
     _watcher_stream = stream
 
     # Wire: reloadable file events → debounce → reload + replace widgets
+    def _on_debounce_fire(_):
+        app._app_log("DEBUG", "Hot-reload: debounce fired, scheduling reload")
+        app.call_later(_do_hot_reload, app)
+
     stream.filter(_has_reloadable_changes) \
           .debounce(_DEBOUNCE_S) \
-          .subscribe(lambda _: app.call_later(_do_hot_reload, app))
+          .subscribe(_on_debounce_fire)
 
     # Wire: all events → update staleness state (immediate, no debounce)
     # call_later (not call_from_thread) — subscriber runs on event loop via async for
@@ -137,14 +141,16 @@ async def start_file_watcher(app) -> None:
 
 async def _do_hot_reload(app) -> None:
     """Execute the actual reload after debounce settles."""
+    app._app_log("DEBUG", "Hot-reload: _do_hot_reload entered")
     try:
         reloaded_modules = cc_dump.app.hot_reload.check_and_get_reloaded()
     except Exception as e:
-        app.notify(f"[hot-reload] error reloading: {e}", severity="error")
+        app.notify(f"\\[hot-reload] error reloading: {e}", severity="error")
         app._app_log("ERROR", f"Hot-reload error reloading: {e}")
         return
 
     if not reloaded_modules:
+        app._app_log("DEBUG", "Hot-reload: no modules to reload, skipping")
         return
 
     app._app_log("INFO", f"Hot-reload: {', '.join(reloaded_modules)}")
@@ -207,11 +213,11 @@ async def _do_hot_reload(app) -> None:
         await replace_all_widgets(app)
         # Single consolidated notification
         app.notify(
-            f"[hot-reload] {len(reloaded_modules)} modules updated",
+            f"\\[hot-reload] {len(reloaded_modules)} modules updated",
             severity="information",
         )
     except Exception as e:
-        app.notify(f"[hot-reload] error applying: {e}", severity="error")
+        app.notify(f"\\[hot-reload] error applying: {e}", severity="error")
         app._app_log("ERROR", f"Hot-reload error applying: {e}")
         return
 
@@ -449,8 +455,6 @@ async def _replace_all_widgets_inner(app) -> None:
     if hasattr(app, "_get_active_domain_store"):
         # // [LAW:one-source-of-truth] Back-compat alias points at active session store.
         app._domain_store = app._get_active_domain_store()
-    if hasattr(app, "_sync_active_stream_footer"):
-        app._sync_active_stream_footer()
     _rehydrate_panels_from_store(app, new_panels)
 
 

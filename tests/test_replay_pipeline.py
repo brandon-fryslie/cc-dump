@@ -187,12 +187,7 @@ def _project_response_turn(blocks):
     attribution = tuple(
         sorted(
             {
-                (
-                    str(getattr(block, "session_id", "")),
-                    str(getattr(block, "lane_id", "")),
-                    str(getattr(block, "agent_kind", "")),
-                    str(getattr(block, "agent_label", "")),
-                )
+                str(getattr(block, "session_id", ""))
                 for block in _walk_blocks(blocks)
             }
         )
@@ -318,29 +313,6 @@ class TestCompleteResponseEventHandler:
         blocks = completed[0]
         assert len(blocks) > 0
         assert all(isinstance(b, FormattedBlock) for b in blocks)
-
-    def test_stamps_session_id_on_blocks(self):
-        widgets = _mock_widgets()
-        state = {"current_session": "sess_xyz"}
-        app_state = {}
-
-        headers_event = ResponseHeadersEvent(
-            status_code=200,
-            headers={},
-            request_id="req-1",
-        )
-        complete_event = ResponseCompleteEvent(
-            body=_make_complete_message(),
-            request_id="req-1",
-        )
-
-        handle_response_headers(headers_event, state, widgets, app_state, lambda *a: None)
-        handle_response_complete(complete_event, state, widgets, app_state, lambda *a: None)
-
-        ds = widgets["domain_store"]
-        blocks = ds.iter_completed_blocks()[0]
-        for block in blocks:
-            assert block.session_id == "sess_xyz"
 
     def test_response_blocks_contain_text_content(self):
         widgets = _mock_widgets()
@@ -516,10 +488,9 @@ class TestReplayEndToEnd:
                 app_state = handle_response_complete(event, state, widgets, app_state, lambda *a: None)
 
         assert state["current_session"] == session_uuid
-        # Response blocks are lane-attributed from in-band session metadata.
         ds = widgets["domain_store"]
         response_blocks = ds.iter_completed_blocks()[1]
-        assert all(getattr(block, "agent_kind", "") in {"main", "subagent", "unknown"} for block in response_blocks)
+        assert len(response_blocks) > 0
 
     def test_multi_turn_replay(self, tmp_path):
         """Multiple HAR entries produce multiple turns."""

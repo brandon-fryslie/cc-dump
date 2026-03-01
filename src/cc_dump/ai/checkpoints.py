@@ -17,7 +17,7 @@ class CheckpointArtifact:
     checkpoint_id: str
     purpose: str
     prompt_version: str
-    source_session_id: str
+    source_provider: str
     request_id: str
     source_start: int
     source_end: int
@@ -33,7 +33,7 @@ class CheckpointArtifact:
             checkpoint_id=str(raw.get("checkpoint_id", "")),
             purpose=str(raw.get("purpose", "checkpoint_summary")),
             prompt_version=str(raw.get("prompt_version", "v1")),
-            source_session_id=str(raw.get("source_session_id", "")),
+            source_provider=str(raw.get("source_provider", "")),
             request_id=str(raw.get("request_id", "")),
             source_start=int(raw.get("source_start", 0)),
             source_end=int(raw.get("source_end", -1)),
@@ -44,7 +44,7 @@ class CheckpointArtifact:
 
 def make_checkpoint_id(
     *,
-    source_session_id: str,
+    source_provider: str,
     request_id: str,
     source_start: int,
     source_end: int,
@@ -52,7 +52,7 @@ def make_checkpoint_id(
 ) -> str:
     basis = "|".join(
         [
-            source_session_id,
+            source_provider,
             request_id,
             str(source_start),
             str(source_end),
@@ -86,7 +86,7 @@ def create_checkpoint_artifact(
     *,
     purpose: str,
     prompt_version: str,
-    source_session_id: str,
+    source_provider: str,
     request_id: str,
     source_start: int,
     source_end: int,
@@ -94,7 +94,7 @@ def create_checkpoint_artifact(
 ) -> CheckpointArtifact:
     return CheckpointArtifact(
         checkpoint_id=make_checkpoint_id(
-            source_session_id=source_session_id,
+            source_provider=source_provider,
             request_id=request_id,
             source_start=source_start,
             source_end=source_end,
@@ -102,7 +102,7 @@ def create_checkpoint_artifact(
         ),
         purpose=purpose,
         prompt_version=prompt_version,
-        source_session_id=source_session_id,
+        source_provider=source_provider,
         request_id=request_id,
         source_start=source_start,
         source_end=source_end,

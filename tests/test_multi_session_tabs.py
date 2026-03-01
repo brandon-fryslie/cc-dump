@@ -41,11 +41,11 @@ def _make_replay_entry(*, session_id: str, content: str, response_text: str):
 
 
 def _make_side_channel_replay_entry(
-    *, session_id: str, purpose: str, source_session_id: str, content: str, response_text: str
+    *, session_id: str, purpose: str, source_provider: str, content: str, response_text: str
 ):
     marker = (
         "<<CC_DUMP_SIDE_CHANNEL:"
-        f'{{"run_id":"run-{session_id[:4]}","purpose":"{purpose}","source_session_id":"{source_session_id}"}}'
+        f'{{"run_id":"run-{session_id[:4]}","purpose":"{purpose}","source_provider":"{source_provider}"}}'
         ">>\n"
     )
     return _make_replay_entry(
@@ -189,7 +189,7 @@ async def test_side_channel_replay_routes_to_separate_lane_without_primary_conta
         _make_side_channel_replay_entry(
             session_id=session_a,
             purpose="block_summary",
-            source_session_id=session_a,
+            source_provider=session_a,
             content="side-request",
             response_text="side-response",
         ),
@@ -234,14 +234,14 @@ async def test_side_channel_replay_uses_single_workbench_session_tab():
         _make_side_channel_replay_entry(
             session_id=session_a,
             purpose="block_summary",
-            source_session_id=session_a,
+            source_provider=session_a,
             content="side-request-one",
             response_text="side-response-one",
         ),
         _make_side_channel_replay_entry(
             session_id=session_a,
             purpose="conversation_qa",
-            source_session_id=session_a,
+            source_provider=session_a,
             content="side-request-two",
             response_text="side-response-two",
         ),
@@ -266,7 +266,7 @@ async def test_side_channel_stream_progress_routes_to_side_lane_without_primary_
     main_request_id = "req-main-progress"
     side_marker = (
         "<<CC_DUMP_SIDE_CHANNEL:"
-        f'{{"run_id":"run-{session_a[:4]}","purpose":"block_summary","source_session_id":"{session_a}"}}'
+        f'{{"run_id":"run-{session_a[:4]}","purpose":"block_summary","source_provider":"{session_a}"}}'
         ">>\n"
     )
 
