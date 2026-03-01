@@ -19,6 +19,9 @@ from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Input, Label, Static
 
+from snarfx import Observable
+from snarfx import textual as stx
+
 import cc_dump.app.launch_config
 import cc_dump.app.launcher_registry
 import cc_dump.core.palette
@@ -101,6 +104,52 @@ def _make_base_widget(field: BaseFieldDef, value: object) -> Input | CycleSelect
     if selected not in field.options:
         selected = field.default if field.default in field.options else field.options[0]
     return CycleSelector(field.options, value=selected, id=widget_id)
+
+
+class ToolOptionsFields(Vertical):
+    """Tool-specific option fields. Recomposes when config changes via snarfx Observable."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._config_obs: Observable = Observable(None)
+        self._disposer = None
+
+    def on_mount(self) -> None:
+        self._disposer = stx.reaction(
+            self.app,
+            lambda: self._config_obs.get(),
+            lambda _config: self.call_later(self.recompose),
+        )
+
+    def on_unmount(self) -> None:
+        if self._disposer:
+            self._disposer()
+
+    def set_config(self, config) -> None:
+        """Set the config — triggers deferred recompose via reaction."""
+        self._config_obs.set(config)
+
+    def compose(self) -> ComposeResult:
+        config = self._config_obs._value  # direct read — not inside tracking context
+        if config is None:
+            return
+        option_values = cc_dump.app.launch_config.normalize_options(config.options)
+        for option in cc_dump.app.launch_config.launcher_option_defs(config.launcher):
+            value = option_values.get(option.key, option.default)
+            if option.kind == "bool":
+                yield ToggleChip(
+                    option.label,
+                    value=bool(value),
+                    id="lc-option-{}".format(option.key),
+                )
+            else:
+                with Horizontal(classes="field-row"):
+                    yield Label(option.label, classes="field-label")
+                    yield Input(
+                        value=str(value or ""),
+                        id="lc-option-{}".format(option.key),
+                    )
+            yield Static(option.description, classes="field-desc")
 
 
 class LaunchActionChip(Chip):
@@ -273,7 +322,7 @@ class LaunchConfigPanel(VerticalScroll):
                 yield Static(field.description, classes="field-desc")
 
             yield Static("Tool Options", classes="section-title")
-            yield Vertical(id="lc-tool-fields")
+            yield ToolOptionsFields(id="lc-tool-fields")
 
         yield Static(
             "[bold {info}]Tab[/] next  [bold {info}]Shift+Tab[/] prev\n"
@@ -398,38 +447,6 @@ class LaunchConfigPanel(VerticalScroll):
         config.shell = self._read_shell_value()
         config.options = merged_options
 
-    def _rebuild_tool_option_fields(self, config) -> None:
-        try:
-            container = self.query_one("#lc-tool-fields", Vertical)
-        except NoMatches:
-            return
-
-        for child in tuple(container.children):
-            child.remove()
-
-        option_values = cc_dump.app.launch_config.normalize_options(config.options)
-        for option in cc_dump.app.launch_config.launcher_option_defs(config.launcher):
-            value = option_values.get(option.key, option.default)
-            if option.kind == "bool":
-                container.mount(
-                    ToggleChip(
-                        option.label,
-                        value=bool(value),
-                        id="lc-option-{}".format(option.key),
-                    )
-                )
-            else:
-                row = Horizontal(
-                    Label(option.label, classes="field-label"),
-                    Input(
-                        value=str(value or ""),
-                        id="lc-option-{}".format(option.key),
-                    ),
-                    classes="field-row",
-                )
-                container.mount(row)
-            container.mount(Static(option.description, classes="field-desc"))
-
     def _populate_form(self, config) -> None:
         if config is None:
             return
@@ -452,7 +469,7 @@ class LaunchConfigPanel(VerticalScroll):
             elif field.key == "shell":
                 widget.value = _shell_to_display(config.shell)
 
-        self._rebuild_tool_option_fields(config)
+        self.query_one(ToolOptionsFields).set_config(config)
 
     def _switch_to_config(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._configs):
@@ -558,7 +575,7 @@ class LaunchConfigPanel(VerticalScroll):
                 option_launcher=old_launcher,
                 launcher_value=new_launcher,
             )
-            self._rebuild_tool_option_fields(selected)
+            self.query_one(ToolOptionsFields).set_config(selected)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()

@@ -12,6 +12,8 @@ cc-dump is a transparent HTTP proxy for monitoring Claude Code API traffic. It i
 
 SnarfX (`snarfx/`) is a **separate git repository** developed alongside cc-dump. It is a MobX-inspired reactive state management library for Python. **Do not `git add` snarfx files to the cc-dump repo** — commit them in the snarfx repo directly using `git -C snarfx`.
 
+Reference docs for SnarfX: @reference/SNARFX.md
+
 Key modules:
 - `snarfx` core: `Observable`, `Computed`, `Reaction`, `Store`, `HotReloadStore`
 - `snarfx.textual`: Textual integration — `reaction()`, `autorun()`, `pause()`, `is_safe()`. Guards, NoMatches catching, and thread marshaling built in. Pause state owned by the module, never set on external objects.
