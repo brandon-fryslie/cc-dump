@@ -134,12 +134,14 @@ async def test_ai_workbench_panel_opens_and_qa_action_dispatches():
 
 async def test_command_palette_includes_launch_presets():
     """System commands include one launch command per configured preset."""
+    import cc_dump.app.launcher_registry
+
     async with run_app() as (pilot, app):
         await pilot.pause()
         commands = list(app.get_system_commands(app.screen))
         titles = {command.title for command in commands}
-        assert "Launch preset: claude" in titles
-        assert "Launch preset: copilot" in titles
+        for key in cc_dump.app.launcher_registry.launcher_keys():
+            assert f"Launch preset: {key}" in titles
 
 
 async def test_launch_config_panel_uses_cycle_and_chip_controls():
