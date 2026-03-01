@@ -253,6 +253,7 @@ class CcDumpApp(App):
             "last_message_time_by_session": {},
         }
 
+        self._launch_configs_cache: list | None = None
         self._search_state = cc_dump.tui.search.SearchState(self._view_store)
 
         # Buffered error log — dumped to stderr after TUI exits
@@ -706,7 +707,9 @@ class CcDumpApp(App):
             "Export conversation to text file",
             self.action_dump_conversation,
         )
-        for config in cc_dump.app.launch_config.load_configs():
+        if self._launch_configs_cache is None:
+            self._launch_configs_cache = cc_dump.app.launch_config.load_configs()
+        for config in self._launch_configs_cache:
             # [LAW:one-source-of-truth] Preset list comes from persisted launch configs.
             title = "Launch preset: {}".format(config.name)
             description = "{} via {}".format(config.launcher, config.resolved_command)
@@ -1508,10 +1511,20 @@ class CcDumpApp(App):
         )
         self._sync_tmux_to_store()
 
+    def _save_launch_configs(self, configs: list, active_name: str) -> None:
+        """Persist configs and active name, invalidating the command palette cache."""
+        normalized = cc_dump.app.launch_config.save_configs(configs)
+        # Reconcile active name against post-normalization names.
+        normalized_names = {c.name for c in normalized}
+        safe_name = active_name if active_name in normalized_names else (
+            normalized[0].name if normalized else active_name
+        )
+        cc_dump.app.launch_config.save_active_name(safe_name)
+        self._launch_configs_cache = normalized
+
     def on_launch_config_panel_saved(self, msg) -> None:
         """Handle LaunchConfigPanel.Saved — persist configs."""
-        cc_dump.app.launch_config.save_configs(msg.configs)
-        cc_dump.app.launch_config.save_active_name(msg.active_name)
+        self._save_launch_configs(msg.configs, msg.active_name)
         self._sync_active_launch_config_state()
         self._close_launch_config()
         self.notify("Launch configs saved")
@@ -1522,16 +1535,14 @@ class CcDumpApp(App):
 
     def on_launch_config_panel_quick_launch(self, msg) -> None:
         """Handle LaunchConfigPanel.QuickLaunch — save, close, launch."""
-        cc_dump.app.launch_config.save_configs(msg.configs)
-        cc_dump.app.launch_config.save_active_name(msg.active_name)
+        self._save_launch_configs(msg.configs, msg.active_name)
         self._sync_active_launch_config_state()
         self._close_launch_config()
         self._launch_with_config(msg.config, log_label="quick_launch")
 
     def on_launch_config_panel_activated(self, msg) -> None:
         """Handle LaunchConfigPanel.Activated — save active name, notify."""
-        cc_dump.app.launch_config.save_configs(msg.configs)
-        cc_dump.app.launch_config.save_active_name(msg.name)
+        self._save_launch_configs(msg.configs, msg.name)
         self._sync_active_launch_config_state()
         self.notify("Active: {}".format(msg.name))
 

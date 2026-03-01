@@ -280,12 +280,17 @@ def load_configs() -> list[LaunchConfig]:
     return normalized or default_configs()
 
 
-def save_configs(configs: list[LaunchConfig]) -> None:
-    """Serialize configs to settings.json."""
+def save_configs(configs: list[LaunchConfig]) -> list[LaunchConfig]:
+    """Serialize configs to settings.json and return the normalized list.
+
+    Returns the post-normalization list so callers can reconcile names
+    (e.g. active_name) against possibly-deduped config names.
+    """
     normalized = _normalize_configs(configs)
     cc_dump.io.settings.save_setting(
         "launch_configs", [_config_to_dict(c) for c in normalized]
     )
+    return normalized
 
 
 def load_active_name() -> str:
