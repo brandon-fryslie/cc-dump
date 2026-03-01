@@ -1354,8 +1354,8 @@ class TestRequestScopedStreaming:
         conv._last_filters = {}
 
         with self._patch_app_console(conv):
-            conv.begin_stream("req-1", {"agent_kind": "main", "agent_label": "main"})
-            conv.begin_stream("req-2", {"agent_kind": "subagent", "agent_label": "subagent 1"})
+            conv.begin_stream("req-1")
+            conv.begin_stream("req-2")
 
             conv.append_stream_block("req-1", TextDeltaBlock(content="hello "))
             conv.append_stream_block("req-2", TextDeltaBlock(content="world "))
@@ -1376,8 +1376,8 @@ class TestRequestScopedStreaming:
         conv._last_filters = {}
 
         with self._patch_app_console(conv):
-            conv.begin_stream("req-1", {"agent_kind": "main", "agent_label": "main"})
-            conv.begin_stream("req-2", {"agent_kind": "subagent", "agent_label": "subagent 1"})
+            conv.begin_stream("req-1")
+            conv.begin_stream("req-2")
             conv.append_stream_block("req-1", TextDeltaBlock(content="alpha"))
             conv.append_stream_block("req-2", TextDeltaBlock(content="beta"))
 
@@ -1393,7 +1393,7 @@ class TestRequestScopedStreaming:
         conv.call_later = MagicMock()
 
         with self._patch_app_console(conv):
-            conv.begin_stream("req-1", {"agent_kind": "main", "agent_label": "main"})
+            conv.begin_stream("req-1")
             conv.append_stream_block("req-1", TextDeltaBlock(content="a"))
             conv.append_stream_block("req-1", TextDeltaBlock(content="b"))
             conv.append_stream_block("req-1", TextDeltaBlock(content="c"))
@@ -1414,8 +1414,8 @@ class TestRequestScopedStreaming:
 
         with self._patch_app_console(conv):
             conv.set_stream_view_mode("lanes")
-            conv.begin_stream("req-1", {"agent_kind": "main", "agent_label": "main"})
-            conv.begin_stream("req-2", {"agent_kind": "subagent", "agent_label": "subagent 1"})
+            conv.begin_stream("req-1")
+            conv.begin_stream("req-2")
             conv.append_stream_block("req-1", TextDeltaBlock(content="alpha"))
             conv.append_stream_block("req-2", TextDeltaBlock(content="beta"))
 
@@ -1435,8 +1435,8 @@ class TestRequestScopedStreaming:
 
         with self._patch_app_console(conv):
             conv.set_stream_view_mode("lanes")
-            conv.begin_stream("req-1", {"agent_kind": "main", "agent_label": "main"})
-            conv.begin_stream("req-2", {"agent_kind": "subagent", "agent_label": "subagent 1"})
+            conv.begin_stream("req-1")
+            conv.begin_stream("req-2")
             conv.append_stream_block("req-1", TextDeltaBlock(content="alpha lane"))
             conv.append_stream_block("req-2", TextDeltaBlock(content="beta lane"))
             flush_cb = conv.call_later.call_args.args[0]
@@ -1446,8 +1446,6 @@ class TestRequestScopedStreaming:
         assert conv._turns
         assert conv._turns[-1].is_streaming
         preview_text = "\n".join(strip.text for strip in conv._turns[-1].strips)
-        assert "main" in preview_text
-        assert "subagent 1" in preview_text
         assert "alpha lane" in preview_text
         assert "beta lane" in preview_text
 
@@ -1457,7 +1455,7 @@ class TestRequestScopedStreaming:
         conv._last_filters = {}
 
         with self._patch_app_console(conv):
-            conv.begin_stream("req-1", {"agent_kind": "main", "agent_label": "main"})
+            conv.begin_stream("req-1")
             conv.append_stream_block("req-1", TextDeltaBlock(content="hello "))
             conv.append_stream_block("req-1", TextDeltaBlock(content="world"))
 
@@ -1470,7 +1468,7 @@ class TestRequestScopedStreaming:
         conv._last_filters = {}
 
         with self._patch_app_console(conv):
-            conv.begin_stream("req-1", {"agent_kind": "main", "agent_label": "main"})
+            conv.begin_stream("req-1")
             conv.append_stream_block("req-1", TextDeltaBlock(content="alpha"))
             conv._pending_stream_delta_request_ids.clear()
             conv._stream_delta_flush_scheduled = False

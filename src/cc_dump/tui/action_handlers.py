@@ -290,7 +290,6 @@ def focus_stream(app, request_id: str) -> None:
         return
     if not ds.set_focused_stream(request_id):
         return
-    app._view_store.set("streams:active", ds.get_active_stream_chips())
     app._view_store.set("streams:focused", ds.get_focused_stream_id() or "")
 
 

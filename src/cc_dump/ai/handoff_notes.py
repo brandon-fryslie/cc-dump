@@ -50,7 +50,7 @@ class HandoffArtifact:
     handoff_id: str
     purpose: str
     prompt_version: str
-    source_session_id: str
+    source_provider: str
     request_id: str
     source_start: int
     source_end: int
@@ -62,7 +62,7 @@ class HandoffArtifact:
             "handoff_id": self.handoff_id,
             "purpose": self.purpose,
             "prompt_version": self.prompt_version,
-            "source_session_id": self.source_session_id,
+            "source_provider": self.source_provider,
             "request_id": self.request_id,
             "source_start": self.source_start,
             "source_end": self.source_end,
@@ -79,7 +79,7 @@ def parse_handoff_artifact(
     *,
     purpose: str,
     prompt_version: str,
-    source_session_id: str,
+    source_provider: str,
     request_id: str,
     source_start: int,
     source_end: int,
@@ -92,7 +92,7 @@ def parse_handoff_artifact(
     raw_sections = raw.get("sections", {})
     sections = _normalize_sections(raw_sections, request_id=request_id)
     handoff_id = _make_handoff_id(
-        source_session_id=source_session_id,
+        source_provider=source_provider,
         request_id=request_id,
         source_start=source_start,
         source_end=source_end,
@@ -102,7 +102,7 @@ def parse_handoff_artifact(
         handoff_id=handoff_id,
         purpose=purpose,
         prompt_version=prompt_version,
-        source_session_id=source_session_id,
+        source_provider=source_provider,
         request_id=request_id,
         source_start=source_start,
         source_end=source_end,
@@ -115,7 +115,7 @@ def fallback_handoff_artifact(
     *,
     purpose: str,
     prompt_version: str,
-    source_session_id: str,
+    source_provider: str,
     request_id: str,
     source_start: int,
     source_end: int,
@@ -125,7 +125,7 @@ def fallback_handoff_artifact(
     sections = _empty_sections()
     sections["changed"] = [HandoffEntry(text=summary_text, source_links=[])]
     handoff_id = _make_handoff_id(
-        source_session_id=source_session_id,
+        source_provider=source_provider,
         request_id=request_id,
         source_start=source_start,
         source_end=source_end,
@@ -135,7 +135,7 @@ def fallback_handoff_artifact(
         handoff_id=handoff_id,
         purpose=purpose,
         prompt_version=prompt_version,
-        source_session_id=source_session_id,
+        source_provider=source_provider,
         request_id=request_id,
         source_start=source_start,
         source_end=source_end,
@@ -170,19 +170,19 @@ class HandoffStore:
 
     def __init__(self) -> None:
         self._artifacts: dict[str, HandoffArtifact] = {}
-        self._latest_by_session: dict[str, str] = {}
+        self._by_provider: dict[str, str] = {}
         self._latest_global_id: str = ""
 
     def add(self, artifact: HandoffArtifact) -> HandoffArtifact:
         self._artifacts[artifact.handoff_id] = artifact
-        session_key = artifact.source_session_id or "__global__"
-        self._latest_by_session[session_key] = artifact.handoff_id
+        provider_key = artifact.source_provider or "__global__"
+        self._by_provider[provider_key] = artifact.handoff_id
         self._latest_global_id = artifact.handoff_id
         return artifact
 
-    def latest(self, source_session_id: str = "") -> HandoffArtifact | None:
-        session_key = source_session_id or "__global__"
-        handoff_id = self._latest_by_session.get(session_key, self._latest_global_id)
+    def latest(self, source_provider: str = "") -> HandoffArtifact | None:
+        provider_key = source_provider or "__global__"
+        handoff_id = self._by_provider.get(provider_key, self._latest_global_id)
         if not handoff_id:
             return None
         return self._artifacts.get(handoff_id)
@@ -242,14 +242,14 @@ def _empty_sections() -> dict[str, list[HandoffEntry]]:
 
 def _make_handoff_id(
     *,
-    source_session_id: str,
+    source_provider: str,
     request_id: str,
     source_start: int,
     source_end: int,
     sections: dict[str, list[HandoffEntry]],
 ) -> str:
     basis_parts: list[str] = [
-        source_session_id,
+        source_provider,
         request_id,
         str(source_start),
         str(source_end),
