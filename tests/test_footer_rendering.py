@@ -109,7 +109,7 @@ class TestFooterMarkupRendering:
             f"Footer should show full binding words, not just letters. Found: {found_words}\nContent:\n{content}"
 
     def test_footer_shows_log_path_when_idle(self, class_proc):
-        """Stream row shows log file path when no streams are active."""
+        """Log-path row shows log file path when no streams are active."""
         proc = class_proc
         content = _get_footer_content(proc)
         assert "log:" in content.lower(), f"Expected 'log:' row. Content:\n{content}"

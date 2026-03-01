@@ -38,7 +38,10 @@ class BaseFieldDef:
 
 
 _SHELL_NONE_LABEL = "(none)"
-_SHELL_DISPLAY_VALUES: tuple[str, ...] = (_SHELL_NONE_LABEL, "bash", "zsh")
+_SHELL_DISPLAY_VALUES: tuple[str, ...] = (
+    _SHELL_NONE_LABEL,
+    *tuple(shell for shell in SHELL_OPTIONS if shell),
+)
 
 
 def _shell_to_display(value: object) -> str:

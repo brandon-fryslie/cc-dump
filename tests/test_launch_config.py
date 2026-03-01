@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+import cc_dump.app.launcher_registry
 from cc_dump.app.launch_config import (
     LaunchConfig,
     build_full_command,
@@ -36,7 +37,7 @@ class TestSerialization:
         """Missing settings file returns one default config per launcher."""
         configs = load_configs()
         names = [config.name for config in configs]
-        assert names == ["claude", "copilot"]
+        assert names == list(cc_dump.app.launcher_registry.launcher_keys())
 
         claude = configs[0]
         copilot = configs[1]
@@ -99,7 +100,9 @@ class TestSerialization:
         """Saving empty list, reloading gives default tool presets."""
         save_configs([])
         loaded = load_configs()
-        assert [config.name for config in loaded] == ["claude", "copilot"]
+        assert [config.name for config in loaded] == list(
+            cc_dump.app.launcher_registry.launcher_keys()
+        )
 
     def test_corrupt_data_falls_back_to_tool_defaults(self, settings_file):
         """Non-list data in settings falls back to defaults."""
@@ -107,7 +110,9 @@ class TestSerialization:
         settings_file.write_text(json.dumps({"launch_configs": "bad"}))
 
         loaded = load_configs()
-        assert [config.name for config in loaded] == ["claude", "copilot"]
+        assert [config.name for config in loaded] == list(
+            cc_dump.app.launcher_registry.launcher_keys()
+        )
 
     def test_missing_tool_default_is_auto_added(self, settings_file):
         """Persisted configs always include canonical tool-named presets."""
@@ -288,4 +293,6 @@ class TestBuildLaunchProfile:
 class TestDefaultsFactory:
     def test_default_configs_match_registered_launchers(self):
         configs = default_configs()
-        assert [config.name for config in configs] == ["claude", "copilot"]
+        assert [config.name for config in configs] == list(
+            cc_dump.app.launcher_registry.launcher_keys()
+        )
