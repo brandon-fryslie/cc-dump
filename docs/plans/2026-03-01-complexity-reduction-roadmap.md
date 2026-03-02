@@ -139,13 +139,13 @@ This program is intentionally split into four parallel streams with clear owners
 
 - Land module/interface seams for all four streams.
 - Add CI complexity reporting script (radon snapshot + LOC snapshot).
+- Update CI test workflow to run the full pytest suite.
 - Freeze baseline behavior tests for touched features.
 
 **Exit criteria**
 - Seams merged with no functional behavior changes.
 - Metrics report generated in CI artifact.
-- Curated CI test subset passes (current `.github/workflows/test.yml`).
-- Local full-suite run (`uv run pytest`) passes before milestone sign-off.
+- Full test suite passes in CI (`uv run pytest`).
 
 ### Milestone M2: Monolith Extraction Pass (Weeks 2-3)
 
@@ -197,13 +197,8 @@ This program is intentionally split into four parallel streams with clear owners
 Run on every stream PR and at every milestone checkpoint:
 
 ```bash
-# Local full regression gate (not currently CI-enforced)
+# Full regression gate (CI-enforced)
 uv run pytest
-
-# CI-enforced subset gate (current workflow)
-uv run pytest tests/test_analysis.py tests/test_formatting.py tests/test_router.py tests/test_event_types.py tests/test_event_handlers.py -v
-uv run pytest tests/test_visual_indicators.py tests/test_render_block_transforms.py tests/test_render_coalescing.py tests/test_render_state_matrix.py tests/test_special_rendering.py tests/test_tool_rendering.py -v --tb=short
-uv run pytest tests/test_textual_panels.py tests/test_textual_visibility.py tests/test_textual_content.py tests/test_textual_navigation.py -v --tb=short
 
 # Complexity + LOC snapshots
 uv run --with radon radon cc -s -a src/cc_dump
@@ -224,7 +219,7 @@ Program is complete only when all are true:
 
 1. Stream A/B/C/D target outcomes are met (or documented waivers approved).
 2. Top hotspot functions are reduced to agreed thresholds.
-3. Curated CI test subset passes and local full-suite run (`uv run pytest`) passes on latest `master`.
+3. Full test suite passes in CI on latest `master`.
 4. Architecture docs reflect new seams and ownership boundaries.
 5. No temporary refactor shims remain.
 
