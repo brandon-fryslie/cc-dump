@@ -123,6 +123,16 @@ class DashboardSummary(TypedDict):
     latest_model_label: str
 
 
+class SideChannelPurposeSummaryRow(TypedDict):
+    turns: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_creation_tokens: int
+    prompt_versions: dict[str, int]
+    policy_versions: dict[str, int]
+
+
 class AnalyticsStore:
     """In-memory event subscriber that accumulates analytics data.
 
@@ -487,9 +497,9 @@ class AnalyticsStore:
             "models": model_rows,
         }
 
-    def get_side_channel_purpose_summary(self) -> dict[str, dict[str, object]]:
+    def get_side_channel_purpose_summary(self) -> dict[str, SideChannelPurposeSummaryRow]:
         """Aggregate side-channel token usage by purpose."""
-        summary: dict[str, dict[str, object]] = {}
+        summary: dict[str, SideChannelPurposeSummaryRow] = {}
         for turn in self._turns:
             if not turn.is_side_channel:
                 continue
@@ -512,14 +522,12 @@ class AnalyticsStore:
             row["cache_creation_tokens"] += turn.cache_creation_tokens
             if turn.prompt_version:
                 versions = row["prompt_versions"]
-                if isinstance(versions, dict):
-                    versions[turn.prompt_version] = int(versions.get(turn.prompt_version, 0)) + 1
+                versions[turn.prompt_version] = versions.get(turn.prompt_version, 0) + 1
             if turn.policy_version:
                 policy_versions = row["policy_versions"]
-                if isinstance(policy_versions, dict):
-                    policy_versions[turn.policy_version] = int(
-                        policy_versions.get(turn.policy_version, 0)
-                    ) + 1
+                policy_versions[turn.policy_version] = (
+                    policy_versions.get(turn.policy_version, 0) + 1
+                )
         return summary
 
     def get_tool_economics(self, group_by_model: bool = False) -> list[ToolEconomicsRow]:

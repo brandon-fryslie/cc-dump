@@ -38,6 +38,18 @@ DEFAULT_TIMEOUT_BY_PURPOSE.update({
 })
 
 
+def _coerce_int(value: object) -> int | None:
+    """Best-effort integer conversion for settings payload values."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float, str, bytes, bytearray)):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 @dataclass
 class SideChannelResult:
     """Result from a side-channel query.
@@ -106,9 +118,8 @@ class SideChannelManager:
         """Set per-purpose timeout overrides (seconds)."""
         normalized: dict[str, int] = {}
         for key, val in values.items():
-            try:
-                timeout = int(val)
-            except (TypeError, ValueError):
+            timeout = _coerce_int(val)
+            if timeout is None:
                 continue
             normalized[normalize_purpose(str(key))] = max(1, min(MAX_TIMEOUT_SECONDS, timeout))
         self._timeout_overrides = normalized
@@ -117,9 +128,8 @@ class SideChannelManager:
         """Set per-purpose token caps; <=0 removes cap."""
         normalized: dict[str, int] = {}
         for key, val in values.items():
-            try:
-                cap = int(val)
-            except (TypeError, ValueError):
+            cap = _coerce_int(val)
+            if cap is None:
                 continue
             if cap > 0:
                 normalized[normalize_purpose(str(key))] = cap

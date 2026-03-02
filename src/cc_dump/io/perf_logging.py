@@ -13,7 +13,6 @@ import time
 import traceback
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
-from typing import Any
 
 
 _enabled = True
@@ -45,8 +44,8 @@ def _threshold_for(stage: str) -> float:
 
 
 def _resolve_context(
-    context: Mapping[str, Any] | Callable[[], Mapping[str, Any]] | None,
-) -> Mapping[str, Any]:
+    context: Mapping[str, object] | Callable[[], Mapping[str, object]] | None,
+) -> Mapping[str, object]:
     if context is None:
         return {}
     if callable(context):
@@ -58,7 +57,7 @@ def _resolve_context(
     return context
 
 
-def _format_context(context: Mapping[str, Any]) -> str:
+def _format_context(context: Mapping[str, object]) -> str:
     # [LAW:dataflow-not-control-flow] Context serialization is data-driven (sorted keys).
     parts = [f"{k}={context[k]!r}" for k in sorted(context.keys())]
     return " ".join(parts)
@@ -79,7 +78,7 @@ def monitor_slow_path(
     stage: str,
     *,
     logger: logging.Logger,
-    context: Mapping[str, Any] | Callable[[], Mapping[str, Any]] | None = None,
+    context: Mapping[str, object] | Callable[[], Mapping[str, object]] | None = None,
     threshold_ms: float | None = None,
 ):
     """Log stack diagnostics when a stage exceeds its latency threshold."""
