@@ -43,6 +43,9 @@ from cc_dump.core.formatting import (
     track_content,
     _tool_detail,
     _front_ellipse_path,
+    format_openai_request,
+    format_openai_complete_response,
+    format_request_for_provider,
 )
 from cc_dump.pipeline.event_types import parse_sse_event
 

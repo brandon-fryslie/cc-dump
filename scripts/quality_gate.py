@@ -77,6 +77,8 @@ def collect_lint_counts() -> dict[str, int]:
         [
             "uv",
             "run",
+            "--with",
+            "ruff",
             "ruff",
             "check",
             "src",
