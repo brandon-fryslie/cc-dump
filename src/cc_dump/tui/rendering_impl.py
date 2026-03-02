@@ -848,7 +848,7 @@ def _render_metadata_summary_expanded(block: MetadataBlock) -> Text | None:
     return t
 
 
-def _render_metadata_full_expanded(block: MetadataBlock) -> Text | None:
+def _render_metadata_full_expanded(block: MetadataBlock) -> ConsoleRenderable | None:
     """Full-expanded metadata renderer with full identity values."""
     base = _render_metadata(block)
     if base is None:
@@ -3927,7 +3927,7 @@ def _render_standard_block_strips(
     cache = _block_cache(ctx)
     if cache is not None and cache_key in cache:
         cached = cache[cache_key]
-        return cached[0] if isinstance(cached, tuple) else cached
+        return cached if isinstance(cached, list) else []
 
     segments = ctx.console.render(renderable, ctx.render_options)
     lines = list(Segment.split_lines(segments))

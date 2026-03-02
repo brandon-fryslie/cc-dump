@@ -7,16 +7,16 @@ Hot-reloadable: this module has zero app/widget dependencies.
 """
 
 from collections.abc import Callable
-from typing import Any, TextIO
+from typing import TextIO
 
 import cc_dump.core.formatting as fmt
 from cc_dump.core.analysis import fmt_tokens
 
 
-BlockWriter = Callable[[TextIO, Any], None]
+BlockWriter = Callable[[TextIO, object], None]
 
 
-def _write_header(f: TextIO, block: Any, block_idx: int) -> None:
+def _write_header(f: TextIO, block: object, block_idx: int) -> None:
     block_type = type(block).__name__
     f.write(f"  [{block_idx}] {block_type}\n")
     f.write(f"  {'-' * 76}\n")
@@ -195,7 +195,7 @@ def _write_newline_block(f: TextIO, block: fmt.NewlineBlock) -> None:
 
 
 # // [LAW:one-source-of-truth] Block type dispatch is defined exactly once.
-BLOCK_WRITERS: dict[type[Any], BlockWriter] = {
+BLOCK_WRITERS: dict[type[object], BlockWriter] = {
     fmt.HeaderBlock: _write_header_block,
     fmt.HttpHeadersBlock: _write_http_headers_block,
     fmt.MetadataBlock: _write_metadata_block,

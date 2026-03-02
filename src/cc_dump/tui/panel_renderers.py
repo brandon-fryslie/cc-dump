@@ -7,8 +7,8 @@ so it can be hot-reloaded without affecting the live widget instances.
 import cc_dump.core.analysis
 import cc_dump.core.palette
 import cc_dump.tui.input_modes
-from rich.text import Text
 from collections.abc import Callable
+from rich.text import Text
 
 # [LAW:one-source-of-truth] Shared compact token formatter lives in analysis.py.
 _fmt_tokens = cc_dump.core.analysis.fmt_tokens
@@ -183,11 +183,11 @@ def render_analytics_models(snapshot: dict) -> str:
 
 
 # [LAW:dataflow-not-control-flow] Mode-to-renderer dispatch for unified analytics dashboard.
-_ANALYTICS_VIEW_RENDERERS = {
+_ANALYTICS_VIEW_RENDERERS: dict[str, Callable[[dict], str]] = {
     "summary": render_analytics_summary,
     "timeline": render_analytics_timeline,
     "models": render_analytics_models,
-}  # type: dict[str, Callable[[dict], str]]
+}
 
 
 def render_analytics_panel(snapshot: dict, view_mode: str) -> str:
