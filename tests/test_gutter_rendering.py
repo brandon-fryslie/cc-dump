@@ -432,7 +432,7 @@ def _perceptual_lightness(hex_color: str) -> float:
 
 
 def test_filter_indicators_adapt_to_theme():
-    """FILTER_INDICATORS should adapt per-theme, not just dark/light.
+    """Filter indicators should adapt per-theme, not just dark/light.
 
     Verifies across multiple themes that:
     1. Gutter colors differ between themes
@@ -452,7 +452,7 @@ def test_filter_indicators_adapt_to_theme():
     for theme_name in available_themes:
         theme = BUILTIN_THEMES[theme_name]
         rendering_mod.set_theme(theme)
-        theme_indicators[theme_name] = dict(rendering_mod.FILTER_INDICATORS)
+        theme_indicators[theme_name] = rendering_mod.get_filter_indicators()
         tc = rendering_mod.get_theme_colors()
         theme_filter_colors[theme_name] = dict(tc.filter_colors)
         theme_surfaces[theme_name] = tc.surface

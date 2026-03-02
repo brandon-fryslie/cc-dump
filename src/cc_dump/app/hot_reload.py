@@ -21,7 +21,8 @@ _RELOAD_ORDER = [
     "cc_dump.core.palette",  # no deps within project, base for all colors
     "cc_dump.tui.input_modes",  # no deps within project, pure data
     "cc_dump.core.analysis",  # no deps within project
-    "cc_dump.core.formatting",  # depends on: palette, analysis
+    "cc_dump.core.formatting_impl",  # depends on: palette, analysis
+    "cc_dump.core.formatting",  # facade depends on: formatting_impl
     "cc_dump.tui.action_config",  # depends on: formatting (VisState), pure data
     "cc_dump.app.launch_config",  # depends on: settings (pure data + persistence)
     "cc_dump.app.settings_store",  # depends on: settings (schema + reactions)
@@ -29,7 +30,8 @@ _RELOAD_ORDER = [
     "cc_dump.core.segmentation",  # depends on: nothing (pure parser, before rendering)
     "cc_dump.pipeline.router",  # depends on: nothing within reloadable set
     "cc_dump.tui.search",  # depends on: palette
-    "cc_dump.tui.rendering",  # depends on: formatting, palette
+    "cc_dump.tui.rendering_impl",  # depends on: formatting, palette
+    "cc_dump.tui.rendering",  # facade depends on: rendering_impl
     "cc_dump.tui.dump_formatting",  # depends on: formatting
     "cc_dump.tui.chip",  # depends on: nothing (pure widget)
     "cc_dump.tui.cycle_selector",  # depends on: nothing (pure widget)

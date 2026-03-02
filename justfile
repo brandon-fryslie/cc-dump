@@ -23,6 +23,14 @@ run-module *args:
 lint: check
     uv run ruff check src/
 
+# Quality gate: fail on new lint/complexity regressions vs baseline
+quality-gate:
+    uv run python scripts/quality_gate.py check
+
+# Refresh quality gate baselines intentionally
+quality-gate-refresh:
+    uv run python scripts/quality_gate.py refresh
+
 # Type-check with mypy
 check:
     uv run mypy src/
