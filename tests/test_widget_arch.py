@@ -183,7 +183,6 @@ class TestTurnDataReRender:
             ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
             MetadataBlock(model="claude-3", max_tokens=100, stream=True, tool_count=0),
         ]
-        Console()
         td = TurnData(turn_index=0, blocks=blocks, strips=[])
         td.compute_relevant_keys()
 
@@ -1276,8 +1275,6 @@ class TestLazyRerenderInRenderLine:
 
         # Simulate pending filter (tools toggled off while off-viewport)
         td._pending_filter_snapshot = {"tools": HIDDEN}
-
-        list(td.strips)
 
         with self._patch_scroll(conv, scroll_y=0, height=50):
             # render_line at y=0 should trigger lazy re-render
