@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock
 
-import pytest
-from textual.css.query import NoMatches
 
 import cc_dump.app.view_store
 from cc_dump.core.formatting import VisState
@@ -209,7 +207,7 @@ class TestPanelActiveReaction:
         push_panel = MagicMock()
         context = {"app": app, "push_panel_change": push_panel}
 
-        disposers = cc_dump.app.view_store.setup_reactions(store, context)
+        cc_dump.app.view_store.setup_reactions(store, context)
 
         push_panel.reset_mock()
 
@@ -225,7 +223,7 @@ class TestPanelActiveReaction:
         push_panel = MagicMock()
         context = {"app": app, "push_panel_change": push_panel}
 
-        disposers = cc_dump.app.view_store.setup_reactions(store, context)
+        cc_dump.app.view_store.setup_reactions(store, context)
         push_panel.reset_mock()
 
         with stx.pause(app):
@@ -241,7 +239,7 @@ class TestPanelActiveReaction:
         push_panel = MagicMock()
         context = {"app": app, "push_panel_change": push_panel}
 
-        disposers = cc_dump.app.view_store.setup_reactions(store, context)
+        cc_dump.app.view_store.setup_reactions(store, context)
         push_panel.reset_mock()
 
         store.set("panel:active", "economics")
@@ -382,7 +380,7 @@ class TestFooterReaction:
         push_footer = MagicMock()
         context = {"app": app, "push_footer": push_footer}
 
-        disposers = cc_dump.app.view_store.setup_reactions(store, context)
+        cc_dump.app.view_store.setup_reactions(store, context)
 
         push_footer.reset_mock()
         store.set("filter:active", "2")
@@ -403,7 +401,7 @@ class TestErrorReaction:
         push_errors = MagicMock()
         context = {"app": app, "push_errors": push_errors}
 
-        disposers = cc_dump.app.view_store.setup_reactions(store, context)
+        cc_dump.app.view_store.setup_reactions(store, context)
         push_errors.reset_mock()
 
         store.exception_items.append(ErrorItem("exc-1", "\U0001f4a5", "RuntimeError: boom"))

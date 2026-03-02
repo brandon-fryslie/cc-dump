@@ -1,18 +1,14 @@
 """Unit tests for response_assembler.py — proxy-boundary SSE assembly."""
 
-import json
 
 from cc_dump.pipeline.response_assembler import (
     OpenAIResponseAssembler,
     ResponseAssembler,
     reconstruct_message_from_events,
     sse_event_to_dict,
-    ReconstructedMessage,
 )
 from cc_dump.pipeline.event_types import (
     parse_sse_event,
-    MessageRole,
-    StopReason,
 )
 
 

@@ -536,7 +536,7 @@ class TestToolUseFullBash:
 
     def test_bash_full_shows_header_and_command(self):
         """Bash full renders header + $ command."""
-        from rich.console import Console, Group
+        from rich.console import Group
 
         block = ToolUseBlock(
             name="Bash",
