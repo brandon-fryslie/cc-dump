@@ -712,7 +712,7 @@ class TestAutoResume:
         )
 
         session_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-        config = LaunchConfig(auto_resume=True)
+        config = LaunchConfig(options={"auto_resume": True})
         full_command = build_full_command(config, session_id)
 
         result = ctrl.launch_tool(command=full_command)
@@ -740,7 +740,7 @@ class TestAutoResume:
             _port=3344,
         )
 
-        config = LaunchConfig(auto_resume=True)
+        config = LaunchConfig(options={"auto_resume": True})
         full_command = build_full_command(config, "")
 
         result = ctrl.launch_tool(command=full_command)
@@ -766,7 +766,7 @@ class TestAutoResume:
             _port=3344,
         )
 
-        config = LaunchConfig(auto_resume=False)
+        config = LaunchConfig(options={"auto_resume": False})
         full_command = build_full_command(config, "some-session-id")
 
         result = ctrl.launch_tool(command=full_command)
@@ -800,7 +800,7 @@ class TestAutoResume:
         session_id = state["current_session"]
         assert session_id == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
-        config = LaunchConfig(auto_resume=True)
+        config = LaunchConfig(options={"auto_resume": True})
         cmd = build_full_command(config, session_id)
         assert cmd == "claude --resume aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
