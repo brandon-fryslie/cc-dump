@@ -6,6 +6,7 @@
 Hot-reloadable — imported as module object in app.py, delegates to dump_formatting.
 """
 
+import io
 import os
 import platform
 import subprocess
@@ -17,6 +18,36 @@ import cc_dump.tui.dump_formatting
 def write_block_text(f, block, block_idx: int, log_fn=None) -> None:
     """Delegate to hot-reloadable dump_formatting module."""
     cc_dump.tui.dump_formatting.write_block_text(f, block, block_idx, log_fn)
+
+
+def format_conversation_text(conv, log_fn=None) -> str:
+    """Build conversation dump text from a conversation object."""
+    buffer = io.StringIO()
+    _write_conversation_dump(buffer, conv, log_fn=log_fn)
+    return buffer.getvalue()
+
+
+def _write_conversation_dump(f, conv, log_fn=None) -> None:
+    """Write conversation dump text to a file-like object."""
+    f.write("=" * 80 + "\n")
+    f.write("CC-DUMP CONVERSATION EXPORT\n")
+    f.write("=" * 80 + "\n\n")
+
+    for turn_idx, turn_data in enumerate(conv._turns):
+        f.write(f"\n{'─' * 80}\n")
+        f.write(f"TURN {turn_idx + 1}\n")
+        f.write(f"{'─' * 80}\n\n")
+
+        block_counter = [0]  # mutable counter for nested blocks
+
+        def _dump_blocks(blocks):
+            for block in blocks:
+                write_block_text(f, block, block_counter[0], log_fn=log_fn)
+                f.write("\n")
+                block_counter[0] += 1
+                _dump_blocks(getattr(block, "children", []))
+
+        _dump_blocks(turn_data.blocks)
 
 
 def dump_conversation(app) -> None:
@@ -33,24 +64,9 @@ def dump_conversation(app) -> None:
     try:
         fd, tmp_path = tempfile.mkstemp(suffix=".txt", prefix="cc-dump-")
 
+        dump_text = format_conversation_text(conv, log_fn=app._app_log)
         with os.fdopen(fd, "w") as f:
-            f.write("=" * 80 + "\n")
-            f.write("CC-DUMP CONVERSATION EXPORT\n")
-            f.write("=" * 80 + "\n\n")
-
-            for turn_idx, turn_data in enumerate(conv._turns):
-                f.write(f"\n{'─' * 80}\n")
-                f.write(f"TURN {turn_idx + 1}\n")
-                f.write(f"{'─' * 80}\n\n")
-
-                block_counter = [0]  # mutable counter for nested blocks
-                def _dump_blocks(blocks):
-                    for block in blocks:
-                        write_block_text(f, block, block_counter[0], log_fn=app._app_log)
-                        f.write("\n")
-                        block_counter[0] += 1
-                        _dump_blocks(getattr(block, "children", []))
-                _dump_blocks(turn_data.blocks)
+            f.write(dump_text)
 
         app._app_log("INFO", f"Conversation dumped to: {tmp_path}")
         app.notify(f"Exported to: {tmp_path}")
