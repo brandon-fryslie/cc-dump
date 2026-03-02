@@ -1,6 +1,5 @@
 """Tests for tool economics rendering."""
 
-import pytest
 
 from cc_dump.core.analysis import ToolEconomicsRow
 from cc_dump.tui.panel_renderers import render_economics_panel
@@ -141,5 +140,5 @@ def test_render_economics_panel_column_alignment():
     assert len(lines) >= 3
 
     # Tool names should be left-aligned (at start of line after indent)
-    data_lines = [l for l in lines if "Read" in l or "Bash" in l]
+    data_lines = [line for line in lines if "Read" in line or "Bash" in line]
     assert len(data_lines) == 2
