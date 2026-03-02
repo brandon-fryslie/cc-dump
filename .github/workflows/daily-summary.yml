@@ -1,0 +1,65 @@
+name: Daily summary
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "25 8 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  daily-summary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Copilot CLI
+        run: npm install -g @github/copilot
+
+      - name: Generate recap and CV SVG
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          TODAY=$(date -u +%Y-%m-%d)
+          echo "TODAY=$TODAY" >> "$GITHUB_ENV"
+          LOG=$(git log --since="$TODAY 00:00:00" --pretty=format:"%h %s" --no-merges)
+          if [ -z "$LOG" ]; then
+            LOG="No commits found for today."
+          fi
+
+          mkdir -p daily-summary
+
+          RECAP_PROMPT=$(cat <<EOF
+Review the git log entries for today ($TODAY) and write a concise bullet point recap of the work completed.
+Focus on code changes, refactors, tests, and documentation updates.
+Git log:
+$LOG
+EOF
+)
+          copilot -p "$RECAP_PROMPT" > daily-summary/recap.md
+
+          cat > /tmp/cv_prompt.txt <<EOF
+Using the recap below, generate a professional one-page CV in SVG format that highlights today's contributions.
+Requirements:
+- Output a valid standalone SVG only (start with <svg ...> and no surrounding markdown).
+- Use clean typography with section headers and bullet points.
+- Include sections: Summary, Key Changes, Skills Demonstrated, Tools & Technologies, and Date.
+Date: $TODAY
+Recap:
+EOF
+          cat daily-summary/recap.md >> /tmp/cv_prompt.txt
+          copilot -p "$(cat /tmp/cv_prompt.txt)" > daily-summary/cv.svg
+
+      - name: Upload daily recap and CV
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-summary-${{ env.TODAY }}
+          path: daily-summary
