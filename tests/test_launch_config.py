@@ -340,3 +340,13 @@ class TestConfigWithExtraArgs:
         config = LaunchConfig(name="test", options={})
         result = config_with_extra_args(config, ["--flag"])
         assert result.options["extra_args"] == "--flag"
+
+    def test_args_with_spaces_are_shell_quoted(self):
+        config = LaunchConfig(name="test", options={"extra_args": ""})
+        result = config_with_extra_args(config, ["--msg=hello world"])
+        assert result.options["extra_args"] == "'--msg=hello world'"
+
+    def test_merges_with_existing_when_arg_has_spaces(self):
+        config = LaunchConfig(name="test", options={"extra_args": "--existing"})
+        result = config_with_extra_args(config, ["--msg=hello world"])
+        assert result.options["extra_args"] == "--existing '--msg=hello world'"
