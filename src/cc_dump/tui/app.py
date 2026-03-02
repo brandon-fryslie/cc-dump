@@ -428,7 +428,7 @@ class CcDumpApp(App):
         conv = cc_dump.tui.widget_factory.create_conversation_view(
             view_store=self._view_store,
             domain_store=domain_store,
-            render_runtime=self._render_runtime,
+            runtime=self._render_runtime,
         )
         conv.id = conv_id
 
@@ -743,7 +743,7 @@ class CcDumpApp(App):
                 conv = cc_dump.tui.widget_factory.create_conversation_view(
                     view_store=self._view_store,
                     domain_store=self._domain_store,
-                    render_runtime=self._render_runtime,
+                    runtime=self._render_runtime,
                 )
                 conv.id = self._conv_id
                 yield conv

@@ -163,7 +163,7 @@ class StatusFooter(Widget):
 
         // [LAW:dataflow-not-control-flow] State values determine rendering, no branching.
         """
-        runtime = getattr(getattr(self, "app", None), "_render_runtime", None)
+        runtime = cc_dump.tui.rendering.get_runtime_from_owner(self)
         tc = cc_dump.tui.rendering.get_theme_colors(runtime=runtime)
 
         # Line 1: category chips — icon + color from state

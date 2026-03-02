@@ -410,7 +410,7 @@ def _build_replacement_conversations(
         new_conv = cc_dump.tui.widget_factory.create_conversation_view(
             view_store=app._view_store,
             domain_store=payload.domain_store,
-            render_runtime=app._render_runtime,
+            runtime=app._render_runtime,
         )
         _validate_and_restore_widget_state(
             new_conv,

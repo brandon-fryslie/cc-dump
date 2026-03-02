@@ -296,6 +296,20 @@ def create_render_runtime() -> RenderRuntime:
     return RenderRuntime()
 
 
+def get_runtime_from_owner(owner: object | None) -> RenderRuntime | None:
+    """Resolve render runtime from an app/widget-like owner.
+
+    // [LAW:single-enforcer] Runtime ownership lookup is centralized here.
+    """
+    if owner is None:
+        return None
+    runtime = getattr(owner, "_render_runtime", None)
+    if runtime is not None:
+        return cast(RenderRuntime | None, runtime)
+    app = getattr(owner, "app", None)
+    return cast(RenderRuntime | None, getattr(app, "_render_runtime", None))
+
+
 def _active_runtime() -> RenderRuntime:
     runtime = _active_runtime_override.get()
     return runtime if runtime is not None else _default_render_runtime
