@@ -56,8 +56,11 @@ def _changed_python_files(base_ref: str) -> list[str]:
         ).stdout.splitlines()
     else:
         # Fallback for CI checkouts where base refs may not be available.
+        # Be conservative so we never under-report potentially changed files:
+        # consider all tracked Python sources under src/.
         changed = _run(
-            ["git", "show", "--name-only", "--pretty=format:", "HEAD"]
+            ["git", "ls-files", "src/**/*.py"],
+            check=False,
         ).stdout.splitlines()
     # // [LAW:locality-or-seam] Restrict to product Python sources for stable mypy scope.
     return sorted(
