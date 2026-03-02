@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import shlex
 import os
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict, field, replace
 from typing import Literal
 
 import cc_dump.app.launcher_registry
@@ -398,3 +398,20 @@ def build_launch_profile(
             spec, provider_endpoints
         ),
     )
+
+
+def config_with_extra_args(config: LaunchConfig, extra_args: list[str]) -> LaunchConfig:
+    """Create a transient config copy with CLI extra args appended.
+
+    // [LAW:dataflow-not-control-flow] Merging is a value transformation, not mutation.
+    // [LAW:one-source-of-truth] The extra_args option is the canonical place for
+    // appended arguments; CLI args are merged into it, not a parallel field.
+
+    The returned config is transient — never persisted to settings.
+    """
+    existing_extra = str(config.options.get("extra_args", "") or "").strip()
+    cli_extra = " ".join(extra_args)
+    merged = " ".join(filter(None, [existing_extra, cli_extra]))
+    new_options = dict(config.options)
+    new_options["extra_args"] = merged
+    return replace(config, options=new_options)
