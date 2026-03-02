@@ -5,6 +5,7 @@
 """
 
 import logging
+from typing import cast
 
 import cc_dump.io.settings
 from snarfx.hot_reload import HotReloadStore
@@ -35,6 +36,23 @@ def create(initial_overrides: dict | None = None):
     return HotReloadStore(SCHEMA, initial=merged)
 
 
+def _coerce_int(value: object, default: int) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float, str, bytes, bytearray)):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+    return default
+
+
+def _coerce_str_object_dict(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    return cast(dict[str, object], value)
+
+
 def setup_reactions(store, context=None):
     """Register all reactions. Returns list of disposers.
 
@@ -53,50 +71,105 @@ def setup_reactions(store, context=None):
     if context:
         mgr = context.get("side_channel_manager")
         if mgr is not None:
-            disposers.append(reaction(
-                lambda: store.get("side_channel_enabled"),
-                lambda val, m=mgr: setattr(m, "enabled", val),
-                fire_immediately=True,
-            ))
-            disposers.append(reaction(
-                lambda: store.get("side_channel_global_kill"),
-                lambda val, m=mgr: setattr(m, "global_kill", bool(val)),
-                fire_immediately=True,
-            ))
-            disposers.append(reaction(
-                lambda: int(store.get("side_channel_max_concurrent") or 1),
-                lambda val, m=mgr: m.set_max_concurrent(int(val)),
-                fire_immediately=True,
-            ))
-            disposers.append(reaction(
-                lambda: store.get("side_channel_purpose_enabled"),
-                lambda val, m=mgr: m.set_purpose_enabled_map(
-                    val if isinstance(val, dict) else {}
-                ),
-                fire_immediately=True,
-            ))
-            disposers.append(reaction(
-                lambda: store.get("side_channel_timeout_by_purpose"),
-                lambda val, m=mgr: m.set_timeout_overrides(
-                    val if isinstance(val, dict) else {}
-                ),
-                fire_immediately=True,
-            ))
-            disposers.append(reaction(
-                lambda: store.get("side_channel_budget_caps"),
-                lambda val, m=mgr: m.set_budget_caps(
-                    val if isinstance(val, dict) else {}
-                ),
-                fire_immediately=True,
-            ))
+            def _select_side_channel_enabled() -> bool:
+                return bool(store.get("side_channel_enabled"))
+
+            def _apply_side_channel_enabled(val: bool) -> None:
+                mgr.enabled = val
+
+            disposers.append(
+                reaction(
+                    _select_side_channel_enabled,
+                    _apply_side_channel_enabled,
+                    fire_immediately=True,
+                )
+            )
+
+            def _select_side_channel_global_kill() -> bool:
+                return bool(store.get("side_channel_global_kill"))
+
+            def _apply_side_channel_global_kill(val: bool) -> None:
+                mgr.global_kill = val
+
+            disposers.append(
+                reaction(
+                    _select_side_channel_global_kill,
+                    _apply_side_channel_global_kill,
+                    fire_immediately=True,
+                )
+            )
+
+            def _select_side_channel_max_concurrent() -> int:
+                return _coerce_int(store.get("side_channel_max_concurrent"), 1)
+
+            def _apply_side_channel_max_concurrent(val: int) -> None:
+                mgr.set_max_concurrent(val)
+
+            disposers.append(
+                reaction(
+                    _select_side_channel_max_concurrent,
+                    _apply_side_channel_max_concurrent,
+                    fire_immediately=True,
+                )
+            )
+
+            def _select_side_channel_purpose_enabled() -> dict[str, object]:
+                return _coerce_str_object_dict(store.get("side_channel_purpose_enabled"))
+
+            def _apply_side_channel_purpose_enabled(val: dict[str, object]) -> None:
+                mgr.set_purpose_enabled_map(val)
+
+            disposers.append(
+                reaction(
+                    _select_side_channel_purpose_enabled,
+                    _apply_side_channel_purpose_enabled,
+                    fire_immediately=True,
+                )
+            )
+
+            def _select_side_channel_timeout_by_purpose() -> dict[str, object]:
+                return _coerce_str_object_dict(store.get("side_channel_timeout_by_purpose"))
+
+            def _apply_side_channel_timeout_by_purpose(val: dict[str, object]) -> None:
+                mgr.set_timeout_overrides(val)
+
+            disposers.append(
+                reaction(
+                    _select_side_channel_timeout_by_purpose,
+                    _apply_side_channel_timeout_by_purpose,
+                    fire_immediately=True,
+                )
+            )
+
+            def _select_side_channel_budget_caps() -> dict[str, object]:
+                return _coerce_str_object_dict(store.get("side_channel_budget_caps"))
+
+            def _apply_side_channel_budget_caps(val: dict[str, object]) -> None:
+                mgr.set_budget_caps(val)
+
+            disposers.append(
+                reaction(
+                    _select_side_channel_budget_caps,
+                    _apply_side_channel_budget_caps,
+                    fire_immediately=True,
+                )
+            )
 
         tmux = context.get("tmux_controller")
         if tmux is not None:
-            disposers.append(reaction(
-                lambda: store.get("auto_zoom_default"),
-                lambda val, t=tmux: setattr(t, "auto_zoom", val),
-                fire_immediately=True,
-            ))
+            def _select_auto_zoom_default() -> bool:
+                return bool(store.get("auto_zoom_default"))
+
+            def _apply_auto_zoom_default(val: bool) -> None:
+                tmux.auto_zoom = val
+
+            disposers.append(
+                reaction(
+                    _select_auto_zoom_default,
+                    _apply_auto_zoom_default,
+                    fire_immediately=True,
+                )
+            )
 
     return disposers
 

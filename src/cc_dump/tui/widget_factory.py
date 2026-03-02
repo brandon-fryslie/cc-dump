@@ -9,8 +9,6 @@ import hashlib
 import json
 import logging
 import os
-import sys
-import traceback
 from contextlib import contextmanager
 from collections import deque
 from dataclasses import dataclass, field
@@ -23,7 +21,6 @@ from textual.strip import Strip
 from textual.cache import LRUCache
 from textual.geometry import Size, Offset
 from rich.segment import Segment
-from rich.style import Style
 from rich.text import Text
 
 # Use module-level imports for hot-reload

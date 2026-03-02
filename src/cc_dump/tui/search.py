@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from collections import OrderedDict
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, IntFlag
 from typing import Callable
 

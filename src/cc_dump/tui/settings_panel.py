@@ -20,6 +20,7 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.message import Message
 from textual.widgets import Input, Label, Select, Static
 
+import cc_dump.app.settings_store
 from cc_dump.tui.chip import ToggleChip
 
 import cc_dump.core.palette
@@ -41,8 +42,6 @@ class FieldDef:
 
 # ─── Field registry ──────────────────────────────────────────────────────────
 # // [LAW:one-source-of-truth] Defaults from settings_store.SCHEMA.
-
-import cc_dump.app.settings_store
 
 SETTINGS_FIELDS: list[FieldDef] = [
     FieldDef(
