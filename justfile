@@ -27,6 +27,10 @@ lint: check
 check:
     uv run mypy src/
 
+# Type-check only Python files changed from merge base with master/main
+mypy-changed:
+    uv run python .github/scripts/mypy_changed_files.py
+
 # Run tests in parallel
 test *args:
     uv run pytest -n auto --dist loadgroup {{args}}
