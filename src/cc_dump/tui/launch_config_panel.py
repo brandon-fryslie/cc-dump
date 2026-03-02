@@ -353,6 +353,50 @@ class LaunchConfigPanel(VerticalScroll):
                 values[option.key] = str(widget.value)
         return values
 
+    def _read_input_with_fallback(self, widget_id: str, fallback: str) -> str:
+        """Read input value or return fallback when widget is absent."""
+        try:
+            widget = self.query_one(widget_id, Input)
+        except NoMatches:
+            return fallback
+        return widget.value
+
+    def _resolve_name_field(self, fallback_name: str) -> tuple[str, Input | None]:
+        """Resolve current config name from form field, falling back to existing name."""
+        try:
+            name_widget = self.query_one("#lc-field-name", Input)
+        except NoMatches:
+            return fallback_name, None
+        typed_name = name_widget.value.strip()
+        return typed_name or fallback_name, name_widget
+
+    def _dedupe_name_for_selected(self, name_value: str, name_widget: Input | None) -> str:
+        """Ensure selected config name is unique across all other configs."""
+        taken = {c.name for i, c in enumerate(self._configs) if i != self._selected_idx}
+        if name_value not in taken:
+            return name_value
+        deduped_name = self._next_config_name(name_value)
+        if deduped_name != name_value and name_widget is not None:
+            name_widget.value = deduped_name
+        return deduped_name
+
+    def _resolve_launchers(
+        self,
+        *,
+        option_launcher: str | None,
+        launcher_value: str | None,
+    ) -> tuple[str, str]:
+        """Resolve launcher values used for config + option widgets."""
+        launcher = launcher_value or self._read_launcher_value()
+        options_launcher = option_launcher or launcher
+        return launcher, options_launcher
+
+    def _resolve_merged_options(self, config, options_launcher: str) -> dict[str, str | bool]:
+        """Merge current persisted options with values from option widgets."""
+        merged_options = cc_dump.app.launch_config.normalize_options(config.options)
+        merged_options.update(self._collect_option_values(options_launcher))
+        return merged_options
+
     def _apply_form_to_selected(
         self,
         *,
@@ -363,41 +407,15 @@ class LaunchConfigPanel(VerticalScroll):
         if config is None:
             return
 
-        name_value = config.name
-        name_widget: Input | None = None
-        try:
-            name_widget = self.query_one("#lc-field-name", Input)
-            typed_name = name_widget.value.strip()
-            name_value = typed_name or name_value
-        except NoMatches:
-            name_widget = None
-
-        # Enforce unique names: auto-suffix if another config already has this name.
-        taken = {c.name for i, c in enumerate(self._configs) if i != self._selected_idx}
-        if name_value in taken:
-            deduped_name = self._next_config_name(name_value)
-            if deduped_name != name_value:
-                name_value = deduped_name
-                if name_widget is not None:
-                    name_widget.value = deduped_name
-
-        try:
-            command_widget = self.query_one("#lc-field-command", Input)
-            command_value = command_widget.value
-        except NoMatches:
-            command_value = config.command
-
-        try:
-            model_widget = self.query_one("#lc-field-model", Input)
-            model_value = model_widget.value
-        except NoMatches:
-            model_value = config.model
-
-        launcher = launcher_value or self._read_launcher_value()
-        options_launcher = option_launcher or launcher
-
-        merged_options = cc_dump.app.launch_config.normalize_options(config.options)
-        merged_options.update(self._collect_option_values(options_launcher))
+        name_value, name_widget = self._resolve_name_field(config.name)
+        name_value = self._dedupe_name_for_selected(name_value, name_widget)
+        command_value = self._read_input_with_fallback("#lc-field-command", config.command)
+        model_value = self._read_input_with_fallback("#lc-field-model", config.model)
+        launcher, options_launcher = self._resolve_launchers(
+            option_launcher=option_launcher,
+            launcher_value=launcher_value,
+        )
+        merged_options = self._resolve_merged_options(config, options_launcher)
 
         config.name = name_value
         config.launcher = cc_dump.app.launcher_registry.normalize_launcher_key(launcher)
