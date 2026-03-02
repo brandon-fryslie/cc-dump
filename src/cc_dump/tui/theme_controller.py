@@ -43,7 +43,8 @@ def apply_markdown_theme(app) -> None:
             app._markdown_theme_pushed = False
         return
 
-    tc = cc_dump.tui.rendering.get_theme_colors()
+    runtime = getattr(app, "_render_runtime", None)
+    tc = cc_dump.tui.rendering.get_theme_colors(runtime=runtime)
 
     # Pop old markdown theme if we pushed one before
     if app._markdown_theme_pushed:

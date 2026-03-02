@@ -4086,7 +4086,12 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
 # ─── Core rendering ───────────────────────────────────────────────────────────
 
 
-def render_streaming_preview(text: str, console, width: int) -> list:
+def render_streaming_preview(
+    text: str,
+    console,
+    width: int,
+    runtime: RenderRuntime | None = None,
+) -> list:
     """Lightweight streaming renderer — Markdown + gutter, nothing else.
 
     Bypasses: visibility resolution, _render_block_tree(), renderer dispatch,
@@ -4095,7 +4100,7 @@ def render_streaming_preview(text: str, console, width: int) -> list:
     Used by _refresh_streaming_delta() for O(n) rendering of accumulated text,
     replacing the O(n^2) full pipeline that re-ran all visibility/dispatch logic.
     """
-    return render_streaming_preview_with_runtime(text, console, width, runtime=None)
+    return render_streaming_preview_with_runtime(text, console, width, runtime=runtime)
 
 
 def render_streaming_preview_with_runtime(
