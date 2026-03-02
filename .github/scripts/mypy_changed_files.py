@@ -48,10 +48,17 @@ def _resolve_base_ref() -> str:
 
 
 def _changed_python_files(base_ref: str) -> list[str]:
-    merge_base = _run(["git", "merge-base", base_ref, "HEAD"]).stdout.strip()
-    if not merge_base:
-        raise RuntimeError("unable to compute merge base against {}".format(base_ref))
-    changed = _run(["git", "diff", "--name-only", "{}..HEAD".format(merge_base)]).stdout.splitlines()
+    merge_base_proc = _run(["git", "merge-base", base_ref, "HEAD"], check=False)
+    if merge_base_proc.returncode == 0 and merge_base_proc.stdout.strip():
+        merge_base = merge_base_proc.stdout.strip()
+        changed = _run(
+            ["git", "diff", "--name-only", "{}..HEAD".format(merge_base)]
+        ).stdout.splitlines()
+    else:
+        # Fallback for CI checkouts where base refs may not be available.
+        changed = _run(
+            ["git", "show", "--name-only", "--pretty=format:", "HEAD"]
+        ).stdout.splitlines()
     # // [LAW:locality-or-seam] Restrict to product Python sources for stable mypy scope.
     return sorted(
         path
