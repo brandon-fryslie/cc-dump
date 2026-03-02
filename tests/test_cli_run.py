@@ -45,16 +45,19 @@ class TestDetectRunSubcommand:
         assert extra == ["--continue", "--verbose"]
 
     def test_run_no_config_name_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as exc:
             _detect_run_subcommand(["run"])
+        assert exc.value.code == 0
 
     def test_run_help_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as exc:
             _detect_run_subcommand(["run", "--help"])
+        assert exc.value.code == 0
 
     def test_run_short_help_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as exc:
             _detect_run_subcommand(["run", "-h"])
+        assert exc.value.code == 0
 
     def test_separator_only_no_extra(self):
         name, flags, extra = _detect_run_subcommand(["run", "claude", "--"])
