@@ -62,7 +62,8 @@ def launch_with_config(app, config, *, log_label: str = "launch_with_config") ->
         app.notify("Tmux not available", severity="warning")
         return
 
-    session_id = app._active_resume_session_id() if config.auto_resume else ""
+    auto_resume = cc_dump.app.launch_config.option_value(config, "auto_resume")
+    session_id = app._active_resume_session_id() if auto_resume else ""
     profile = cc_dump.app.launch_config.build_launch_profile(
         config,
         provider_endpoints=app._provider_endpoints,
