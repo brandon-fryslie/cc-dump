@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import cc_dump.app.launch_config
-import cc_dump.tui.launch_config_panel
 import cc_dump.tui.settings_panel
 
 
