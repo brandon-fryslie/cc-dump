@@ -44,7 +44,9 @@ _RELOAD_ORDER = [
     "cc_dump.tui.settings_panel",  # depends on: palette
     "cc_dump.tui.debug_settings_panel",  # depends on: palette, chip, perf_logging
     "cc_dump.tui.side_channel_panel",  # depends on: palette
+    "cc_dump.tui.side_channel_controller",  # depends on: side_channel_panel
     "cc_dump.tui.launch_config_panel",  # depends on: palette, settings_panel
+    "cc_dump.tui.settings_launch_controller",  # depends on: launch_config_panel, settings_panel
     "cc_dump.tui.session_panel",  # depends on: panel_renderers
     "cc_dump.tui.widget_factory",  # depends on: analysis, rendering, panel_renderers, error_indicator
     "cc_dump.tui.dump_export",  # depends on: dump_formatting
@@ -52,8 +54,6 @@ _RELOAD_ORDER = [
     "cc_dump.tui.action_handlers",  # depends on: formatting, action_config, rendering, widget_factory
     "cc_dump.tui.view_store_bridge",  # depends on: widget_factory, custom_footer, side_channel_panel, action_handlers
     "cc_dump.tui.lifecycle_controller",  # depends on: rendering, view_store_bridge
-    "cc_dump.tui.settings_launch_controller",  # depends on: settings_panel, launch_config
-    "cc_dump.tui.side_channel_controller",  # depends on: side_channel_panel, providers
 ]
 
 # Files to explicitly exclude from watching
