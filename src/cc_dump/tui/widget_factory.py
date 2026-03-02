@@ -797,14 +797,73 @@ class ConversationView(ScrollView):
         self._background_rerender_scheduled = True
         self.call_later(lambda: self._background_rerender(generation))
 
+    def _background_rerender_generation_for(self, generation: int | None) -> int:
+        return self._background_rerender_generation if generation is None else generation
+
+    def _process_background_rerender_turn(
+        self,
+        idx: int,
+        *,
+        width: int,
+        console,
+        render_key: tuple[int, int, int, int],
+    ) -> int | None:
+        if idx < 0 or idx >= len(self._turns):
+            return None
+        td = self._turns[idx]
+        if td.is_streaming or td._pending_filter_snapshot is None:
+            return None
+        changed = td.re_render(
+            self._last_filters,
+            console,
+            width,
+            block_cache=self._block_strip_cache,
+            search_ctx=self._last_search_ctx,
+            overrides=self._view_overrides,
+            render_key=render_key,
+            render_runtime=self._render_runtime,
+        )
+        td._filter_revision = self._active_filter_revision
+        return idx if changed else -1
+
+    def _process_background_rerender_chunk(
+        self,
+        *,
+        width: int,
+        console,
+        render_key: tuple[int, int, int, int],
+    ) -> tuple[int | None, int]:
+        first_changed: int | None = None
+        processed = 0
+        while processed < self._background_rerender_chunk_size and self._pending_rerender_indices:
+            idx = self._pending_rerender_indices.popleft()
+            result = self._process_background_rerender_turn(
+                idx,
+                width=width,
+                console=console,
+                render_key=render_key,
+            )
+            if result is None:
+                continue
+            processed += 1
+            if result >= 0 and (first_changed is None or result < first_changed):
+                first_changed = result
+        return (first_changed, processed)
+
+    def _apply_background_rerender_changes(self, first_changed: int | None) -> None:
+        if first_changed is None:
+            return
+        self._recalculate_offsets_from(first_changed)
+        if not self._is_following:
+            self._resolve_anchor()
+        self.refresh()
+
     def _background_rerender(self, generation: int | None = None) -> None:
         """Incrementally rerender deferred turns in background.
 
         Processes a bounded number of turns per tick to keep UI responsive.
         """
-        active_generation = (
-            self._background_rerender_generation if generation is None else generation
-        )
+        active_generation = self._background_rerender_generation_for(generation)
         if active_generation != self._background_rerender_generation:
             return
         self._background_rerender_scheduled = False
@@ -828,34 +887,12 @@ class ConversationView(ScrollView):
                 "first_changed": first_changed,
             },
         ):
-            while processed < self._background_rerender_chunk_size and self._pending_rerender_indices:
-                idx = self._pending_rerender_indices.popleft()
-                if idx < 0 or idx >= len(self._turns):
-                    continue
-                td = self._turns[idx]
-                if td.is_streaming or td._pending_filter_snapshot is None:
-                    continue
-                if td.re_render(
-                    self._last_filters,
-                    console,
-                    width,
-                    block_cache=self._block_strip_cache,
-                    search_ctx=self._last_search_ctx,
-                    overrides=self._view_overrides,
-                    render_key=render_key,
-                ):
-                    if first_changed is None:
-                        first_changed = idx
-                    elif idx < first_changed:
-                        first_changed = idx
-                td._filter_revision = self._active_filter_revision
-                processed += 1
-
-            if first_changed is not None:
-                self._recalculate_offsets_from(first_changed)
-                if not self._is_following:
-                    self._resolve_anchor()
-                self.refresh()
+            first_changed, processed = self._process_background_rerender_chunk(
+                width=width,
+                console=console,
+                render_key=render_key,
+            )
+            self._apply_background_rerender_changes(first_changed)
 
             pending_after = len(self._pending_rerender_indices)
             if pending_after > 0:
@@ -1012,6 +1049,41 @@ class ConversationView(ScrollView):
             return
         self._invalidate("new_turn", blocks=blocks)
 
+    def _prune_all_turns(self) -> None:
+        self._turns.clear()
+        self._scroll_anchor = None
+        self._reset_background_rerender_state()
+        self._clear_line_cache()
+        self._recalculate_offsets()
+        if self.is_attached:
+            self.refresh()
+
+    def _reindex_turns(self) -> None:
+        for idx, td in enumerate(self._turns):
+            td.turn_index = idx
+
+    def _rebase_scroll_anchor_after_prune(self, pruned_count: int) -> None:
+        anchor = self._scroll_anchor
+        if anchor is None:
+            return
+        self._scroll_anchor = ScrollAnchor(
+            turn_index=max(0, anchor.turn_index - pruned_count),
+            block_index=anchor.block_index,
+            line_in_block=anchor.line_in_block,
+        )
+
+    def _clear_pending_filter_snapshots(self) -> None:
+        for td in self._turns:
+            td._pending_filter_snapshot = None
+
+    def _refresh_after_turn_prune(self) -> None:
+        self._clear_line_cache()
+        self._recalculate_offsets()
+        if not self._is_following and self.is_attached:
+            self._resolve_anchor()
+        if self.is_attached:
+            self.refresh()
+
     def _on_turns_pruned(self, pruned_count: int) -> None:
         """Domain store callback: oldest completed turns were pruned."""
         if not self.is_attached:
@@ -1019,39 +1091,15 @@ class ConversationView(ScrollView):
         if pruned_count <= 0:
             return
         if pruned_count >= len(self._turns):
-            self._turns.clear()
-            self._scroll_anchor = None
-            self._reset_background_rerender_state()
-            self._clear_line_cache()
-            self._recalculate_offsets()
-            if self.is_attached:
-                self.refresh()
+            self._prune_all_turns()
             return
 
         del self._turns[:pruned_count]
-        for idx, td in enumerate(self._turns):
-            td.turn_index = idx
-
-        if self._scroll_anchor is not None:
-            new_turn_index = self._scroll_anchor.turn_index - pruned_count
-            if new_turn_index < 0:
-                new_turn_index = 0
-            self._scroll_anchor = ScrollAnchor(
-                turn_index=new_turn_index,
-                block_index=self._scroll_anchor.block_index,
-                line_in_block=self._scroll_anchor.line_in_block,
-            )
-
+        self._reindex_turns()
+        self._rebase_scroll_anchor_after_prune(pruned_count)
         self._reset_background_rerender_state()
-        for td in self._turns:
-            td._pending_filter_snapshot = None
-
-        self._clear_line_cache()
-        self._recalculate_offsets()
-        if not self._is_following and self.is_attached:
-            self._resolve_anchor()
-        if self.is_attached:
-            self.refresh()
+        self._clear_pending_filter_snapshots()
+        self._refresh_after_turn_prune()
 
     def _render_new_turn(self, blocks: list, filters: dict = None) -> None:
         """Render blocks to TurnData and append as completed turn.
