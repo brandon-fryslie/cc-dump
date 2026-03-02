@@ -1,8 +1,9 @@
 # Complexity Reduction Roadmap (Top Priority)
 
-**Date:** 2026-03-01  
-**Branch baseline:** `origin/master` (fresh branch from latest master)  
-**Priority:** P0 until completion
+**Date**: 2026-03-01  
+**Status**: Active  
+**Branch baseline**: `origin/master` (fresh branch from latest master)  
+**Priority**: P0 until completion
 
 ## 1) Objective
 
@@ -17,6 +18,9 @@ Reduce architectural and implementation complexity without product regressions, 
   - `app`: `2,559` LOC
   - `pipeline`: `2,553` LOC
   - `ai`: `2,702` LOC
+  - `io`: `842` LOC
+  - `experiments`: `696` LOC
+  - `root_modules` (`src/cc_dump/*.py`): `781` LOC
 - Highest complexity hotspots (radon cc):
   - `cli.main`: 69
   - `tui.dump_formatting.write_block_text`: 54
@@ -140,7 +144,8 @@ This program is intentionally split into four parallel streams with clear owners
 **Exit criteria**
 - Seams merged with no functional behavior changes.
 - Metrics report generated in CI artifact.
-- Full test suite passes.
+- Curated CI test subset passes (current `.github/workflows/test.yml`).
+- Local full-suite run (`uv run pytest`) passes before milestone sign-off.
 
 ### Milestone M2: Monolith Extraction Pass (Weeks 2-3)
 
@@ -192,7 +197,15 @@ This program is intentionally split into four parallel streams with clear owners
 Run on every stream PR and at every milestone checkpoint:
 
 ```bash
+# Local full regression gate (not currently CI-enforced)
 uv run pytest
+
+# CI-enforced subset gate (current workflow)
+uv run pytest tests/test_analysis.py tests/test_formatting.py tests/test_router.py tests/test_event_types.py tests/test_event_handlers.py -v
+uv run pytest tests/test_visual_indicators.py tests/test_render_block_transforms.py tests/test_render_coalescing.py tests/test_render_state_matrix.py tests/test_special_rendering.py tests/test_tool_rendering.py -v --tb=short
+uv run pytest tests/test_textual_panels.py tests/test_textual_visibility.py tests/test_textual_content.py tests/test_textual_navigation.py -v --tb=short
+
+# Complexity + LOC snapshots
 uv run --with radon radon cc -s -a src/cc_dump
 uv run --with radon radon cc -s src/cc_dump > /tmp/radon-cc.txt
 find src/cc_dump -name '*.py' -print0 | xargs -0 wc -l | sort -nr > /tmp/loc.txt
@@ -211,7 +224,7 @@ Program is complete only when all are true:
 
 1. Stream A/B/C/D target outcomes are met (or documented waivers approved).
 2. Top hotspot functions are reduced to agreed thresholds.
-3. Full test suite passes on latest `master`.
+3. Curated CI test subset passes and local full-suite run (`uv run pytest`) passes on latest `master`.
 4. Architecture docs reflect new seams and ownership boundaries.
 5. No temporary refactor shims remain.
 
