@@ -1336,6 +1336,39 @@ class TestLazyRerenderInRenderLine:
         # call_later should NOT have been called
         conv.call_later.assert_not_called()
 
+    def test_selection_render_does_not_cache_transient_line(self):
+        """Selection-active renders bypass cache writes to avoid stale highlighted cache."""
+        console = Console()
+        blocks = [TextContentBlock(content="Hello world", indent="")]
+        filters = {}
+
+        strips, block_strip_map, _ = render_turn_to_strips(blocks, filters, console, width=80)
+        td = TurnData(
+            turn_index=0,
+            blocks=blocks,
+            strips=strips,
+            block_strip_map=block_strip_map,
+            _widest_strip=max((s.cell_length for s in strips), default=0),
+        )
+        td.compute_relevant_keys()
+        td._last_filter_snapshot = {}
+
+        conv = ConversationView()
+        conv._turns.append(td)
+        conv._last_filters = {}
+        conv._last_width = 80
+        conv._recalculate_offsets()
+
+        selection = MagicMock()
+        selection.get_span.return_value = None
+
+        cls = type(conv)
+        with self._patch_scroll(conv, scroll_y=0, height=50), \
+             patch.object(cls, "text_selection", new_callable=PropertyMock, return_value=selection):
+            conv.render_line(0)
+
+        assert len(conv._line_cache) == 0
+
 
 class TestRequestScopedStreaming:
     """Request-scoped streaming turns should not interleave."""
