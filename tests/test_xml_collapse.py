@@ -2,7 +2,6 @@
 
 from cc_dump.core.formatting import (
     TextContentBlock,
-    ContentRegion,
     Category,
     ALWAYS_VISIBLE,
     VisState,

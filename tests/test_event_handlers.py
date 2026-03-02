@@ -127,6 +127,10 @@ def _turn_text(blocks) -> str:
     )
 
 
+def _noop_log(*_args, **_kwargs) -> None:
+    pass
+
+
 class TestEventHandlersRequestScopedStreaming:
     def test_interleaved_stream_events_are_partitioned_by_request_id(self):
         state = {
@@ -143,7 +147,7 @@ class TestEventHandlersRequestScopedStreaming:
         view_store = _FakeViewStore()
         domain_store = DomainStore()
         widgets = _mk_widgets(conv, stats, view_store, domain_store)
-        log_fn = lambda *args, **kwargs: None
+        log_fn = _noop_log
 
         r1 = "req-111"
         r2 = "req-222"
@@ -293,7 +297,7 @@ class TestEventHandlersRequestScopedStreaming:
         }
         app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
         widgets = _mk_widgets(_FakeConv(), _FakeStats(), _FakeViewStore(), DomainStore())
-        log_fn = lambda *args, **kwargs: None
+        log_fn = _noop_log
 
         rid = "req-1"
         event_handlers.handle_request(
@@ -381,7 +385,7 @@ class TestEventHandlersRequestScopedStreaming:
         app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
         widgets = _mk_widgets(_FakeConv(), _FakeStats(), _FakeViewStore(), DomainStore())
         domain_store = widgets["domain_store"]
-        log_fn = lambda *args, **kwargs: None
+        log_fn = _noop_log
 
         requests = [
             ("req-a", "11111111-2222-3333-4444-555555555555"),

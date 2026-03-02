@@ -10,7 +10,6 @@ from cc_dump.tui.rendering import (
     GUTTER_WIDTH,
     RIGHT_GUTTER_WIDTH,
     MIN_WIDTH_FOR_RIGHT_GUTTER,
-    GUTTER_ARROWS,
     set_theme,
 )
 from rich.console import Console
@@ -427,8 +426,8 @@ def _perceptual_lightness(hex_color: str) -> float:
     import colorsys
     h = hex_color.lstrip("#")
     r, g, b = int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0
-    _, l, _ = colorsys.rgb_to_hls(r, g, b)
-    return l
+    _, lightness, _ = colorsys.rgb_to_hls(r, g, b)
+    return lightness
 
 
 def test_filter_indicators_adapt_to_theme():

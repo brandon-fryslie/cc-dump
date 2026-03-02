@@ -1,15 +1,11 @@
 """Tests for cc_dump.core.segmentation — SubBlock segmentation pipeline."""
 
-import pytest
 
 from cc_dump.core.segmentation import (
-    FenceMeta,
-    ParseErrorKind,
     SegmentResult,
     Span,
     SubBlock,
     SubBlockKind,
-    XmlBlockMeta,
     segment,
     wrap_tags_in_backticks,
     wrap_tags_outside_fences,

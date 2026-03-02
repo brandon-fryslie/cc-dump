@@ -606,7 +606,6 @@ class TestWidgetStatePreservation:
         """Restoring from empty state produces valid defaults."""
         from cc_dump.tui.widget_factory import StatsPanel
 
-        widget = StatsPanel()
         new_widget = StatsPanel()
         new_widget.restore_state({})
 
@@ -620,7 +619,6 @@ class TestWidgetStatePreservation:
         // ConversationView.get_state() returns only view state (follow, anchor, overrides).
         """
         from cc_dump.core.formatting import TextContentBlock, ContentRegion
-        from cc_dump.app.domain_store import DomainStore
         from cc_dump.tui.widget_factory import ConversationView
 
         block = TextContentBlock(content="test")

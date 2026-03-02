@@ -9,7 +9,6 @@ Tests the new widget architecture components:
 """
 
 import contextlib
-import pytest
 from unittest.mock import patch, PropertyMock, MagicMock
 from rich.console import Console
 from rich.style import Style
@@ -21,24 +20,12 @@ from cc_dump.core.formatting import (
     SeparatorBlock,
     HeaderBlock,
     MetadataBlock,
-    MessageBlock,
-    TurnBudgetBlock,
     SystemSection,
     TrackedContentBlock,
     TextContentBlock,
     ToolUseBlock,
-    ToolResultBlock,
-    ImageBlock,
-    UnknownTypeBlock,
-    StreamInfoBlock,
-    StreamToolUseBlock,
     TextDeltaBlock,
-    StopReasonBlock,
-    ErrorBlock,
-    ProxyErrorBlock,
-    NewlineBlock,
     Category,
-    VisState,
     HIDDEN,
     ALWAYS_VISIBLE,
 )
@@ -196,7 +183,6 @@ class TestTurnDataReRender:
             ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
             MetadataBlock(model="claude-3", max_tokens=100, stream=True, tool_count=0),
         ]
-        console = Console()
         td = TurnData(turn_index=0, blocks=blocks, strips=[])
         td.compute_relevant_keys()
 
@@ -793,8 +779,6 @@ class TestIncrementalOffsets:
         # Full recalc to establish baseline
         conv._recalculate_offsets()
         baseline_offsets = [t.line_offset for t in conv._turns]
-        baseline_total = conv._total_lines
-        baseline_widest = conv._widest_line
 
         # Modify turn 2 (change strip count)
         conv._turns[2].strips = [Strip.blank(90)] * 3  # was 6 strips, now 3
@@ -1291,8 +1275,6 @@ class TestLazyRerenderInRenderLine:
 
         # Simulate pending filter (tools toggled off while off-viewport)
         td._pending_filter_snapshot = {"tools": HIDDEN}
-
-        strips_before = list(td.strips)
 
         with self._patch_scroll(conv, scroll_y=0, height=50):
             # render_line at y=0 should trigger lazy re-render

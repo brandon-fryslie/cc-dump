@@ -56,7 +56,7 @@ async def test_filter_hides_content():
 
         # Toggle user off (visible -> hidden)
         await press_and_settle(pilot, "1")
-        assert get_vis_state(app, "user").visible == False
+        assert not get_vis_state(app, "user").visible
 
         text_after = all_turns_text(app)
         assert "Hello world test message" not in text_after
@@ -67,7 +67,7 @@ async def test_filter_restore_shows_content():
     async with run_app(replay_data=_REPLAY_DATA) as (pilot, app):
         # Toggle user off then back on
         await press_and_settle(pilot, "1")
-        assert get_vis_state(app, "user").visible == False
+        assert not get_vis_state(app, "user").visible
 
         await press_and_settle(pilot, "1")
         assert get_vis_state(app, "user") == FULL_EXPANDED

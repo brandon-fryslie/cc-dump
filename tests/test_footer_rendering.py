@@ -2,7 +2,7 @@
 
 import pytest
 
-from tests.conftest import settle, wait_for_content
+from tests.conftest import wait_for_content
 
 pytestmark = pytest.mark.pty
 
@@ -42,7 +42,7 @@ class TestFooterMarkupRendering:
         ]
 
         assert len(footer_lines) > 0, \
-            f"Could not find footer in output.\nAll lines:\n" + "\n".join(lines[-5:])
+            "Could not find footer in output.\nAll lines:\n" + "\n".join(lines[-5:])
 
         footer_text = ' '.join(footer_lines).lower()
 
