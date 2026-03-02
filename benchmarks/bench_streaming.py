@@ -27,7 +27,6 @@ from cc_dump.pipeline.event_types import (
     MessageStopEvent,
     StopReason,
     ResponseSSEEvent,
-    ResponseDoneEvent,
     TextBlockStartEvent,
 )
 from cc_dump.core.formatting import format_response_event
@@ -142,7 +141,7 @@ def run_benchmark(n_deltas: int) -> dict:
 def print_report(results: dict) -> None:
     """Print a human-readable benchmark report."""
     print(f"\n{'='*60}")
-    print(f"  Streaming Format Benchmark")
+    print("  Streaming Format Benchmark")
     print(f"{'='*60}")
     print(f"  Events:     {results['n_events']} ({results['n_deltas']} text deltas)")
     print(f"  Wall time:  {results['wall_time_ms']:.1f} ms")
