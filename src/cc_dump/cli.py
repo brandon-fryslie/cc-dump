@@ -41,8 +41,51 @@ from cc_dump.tui.app import CcDumpApp
 logger = logging.getLogger(__name__)
 
 
+def _detect_run_subcommand(
+    argv: list[str],
+) -> tuple[str | None, list[str], list[str]]:
+    """Parse 'run' subcommand from argv (without program name).
+
+    Returns (config_name_or_None, cc_dump_flags, tool_extra_args).
+    When no 'run' subcommand, returns (None, original_argv, []).
+
+    Usage: cc-dump run <config-name> [cc-dump-flags...] [-- tool-extra-args...]
+    """
+    if not argv or argv[0] != "run":
+        return None, argv, []
+    rest = argv[1:]
+    if not rest or rest[0] in ("-h", "--help"):
+        print(
+            "Usage: cc-dump run <config-name> [cc-dump-flags...] [-- tool-extra-args...]"
+            "\n\nStart cc-dump and immediately auto-launch the named config."
+            "\ncc-dump flags (--port, --host, etc.) are accepted before '--'."
+            "\nArguments after '--' are passed directly to the launched tool."
+            "\n\nExamples:"
+            "\n  cc-dump run claude"
+            "\n  cc-dump run claude --port 5000"
+            "\n  cc-dump run claude -- --dangerously-bypass-permissions"
+            "\n  cc-dump run haiku --port 5000 -- --continue"
+        )
+        sys.exit(0)
+    config_name = rest[0]
+    remaining = rest[1:]
+    separator_idx = remaining.index("--") if "--" in remaining else len(remaining)
+    cc_dump_flags = remaining[:separator_idx]
+    tool_extra_args = remaining[separator_idx + 1 :] if separator_idx < len(remaining) else []
+    return config_name, cc_dump_flags, tool_extra_args
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Claude Code API monitor proxy")
+    auto_launch_config, _argv, auto_launch_extra_args = _detect_run_subcommand(sys.argv[1:])
+
+    parser = argparse.ArgumentParser(
+        description="Claude Code API monitor proxy",
+        epilog=(
+            "Subcommands:\n"
+            "  run <config-name> [-- tool-args...]  Start cc-dump and auto-launch a config"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     target = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
     parser.add_argument(
         "--host",
@@ -147,7 +190,7 @@ def main():
             default=False,
             help=f"Disable the {spec.display_name} proxy server",
         )
-    args = parser.parse_args()
+    args = parser.parse_args(_argv)
 
     # Install stderr tee before anything else writes to stderr
     cc_dump.io.stderr_tee.install()
@@ -490,6 +533,8 @@ def main():
         domain_store=domain_store,
         store_context=store_context,
         provider_endpoints=provider_endpoints,
+        auto_launch_config=auto_launch_config,
+        auto_launch_extra_args=auto_launch_extra_args,
     )
 
     # Store context is finalized here; view-store reactions are bound on app mount.
