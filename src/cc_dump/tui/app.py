@@ -1043,7 +1043,6 @@ class CcDumpApp(App):
             "panel:launch_config",
             "nav:follow",
             "filter:active",
-            "streams:view",
             "search:phase",
             "search:query",
             "search:modes",
@@ -1415,6 +1414,15 @@ class CcDumpApp(App):
             self.notify("{}: {}".format(result.action.value, result.detail))
         else:
             self.notify("Tail failed: {}".format(result.detail), severity="error")
+
+    def action_copy_log_path(self):
+        runtime_log = cc_dump.io.logging_setup.get_runtime()
+        log_path = runtime_log.file_path if runtime_log is not None else ""
+        if not log_path:
+            self.notify("Log file unavailable", severity="error")
+            return
+        self.copy_to_clipboard(log_path)
+        self.notify(f"Copied: {log_path}")
 
     # Settings
     def action_toggle_settings(self):
@@ -2291,12 +2299,6 @@ class CcDumpApp(App):
     # Navigation
     def action_toggle_follow(self):
         _actions.toggle_follow(self)
-
-    def action_focus_stream(self, request_id: str):
-        _actions.focus_stream(self, request_id)
-
-    def action_toggle_stream_view_mode(self):
-        _actions.toggle_stream_view_mode(self)
 
     def action_next_special(self, marker_key: str = "all"):
         _actions.next_special(self, marker_key)

@@ -283,26 +283,6 @@ def toggle_follow(app) -> None:
     _conv_action(app, lambda c: c.toggle_follow())
 
 
-def focus_stream(app, request_id: str) -> None:
-    """Focus a live request stream from footer chips."""
-    ds = _active_domain_store(app)
-    if ds is None:
-        return
-    if not ds.set_focused_stream(request_id):
-        return
-    app._view_store.set("streams:focused", ds.get_focused_stream_id() or "")
-
-
-def toggle_stream_view_mode(app) -> None:
-    """Toggle live stream viewport mode between focused and side-by-side lanes."""
-    current = app._view_store.get("streams:view")
-    next_mode = "lanes" if current == "focused" else "focused"
-    app._view_store.set("streams:view", next_mode)
-    conv = app._get_conv()
-    if conv is not None:
-        conv.set_stream_view_mode(next_mode)
-
-
 def _special_nav_cursor_map(app) -> dict[str, int]:
     """Return mutable cursor map for special-navigation markers."""
     cursor_map = app._app_state.get("special_nav_cursor")

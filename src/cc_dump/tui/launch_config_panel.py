@@ -38,7 +38,10 @@ class BaseFieldDef:
 
 
 _SHELL_NONE_LABEL = "(none)"
-_SHELL_DISPLAY_VALUES: tuple[str, ...] = (_SHELL_NONE_LABEL, "bash", "zsh")
+_SHELL_DISPLAY_VALUES: tuple[str, ...] = (
+    _SHELL_NONE_LABEL,
+    *tuple(shell for shell in SHELL_OPTIONS if shell),
+)
 
 
 def _shell_to_display(value: object) -> str:
@@ -361,17 +364,22 @@ class LaunchConfigPanel(VerticalScroll):
             return
 
         name_value = config.name
+        name_widget: Input | None = None
         try:
             name_widget = self.query_one("#lc-field-name", Input)
             typed_name = name_widget.value.strip()
             name_value = typed_name or name_value
         except NoMatches:
-            pass
+            name_widget = None
 
         # Enforce unique names: auto-suffix if another config already has this name.
         taken = {c.name for i, c in enumerate(self._configs) if i != self._selected_idx}
         if name_value in taken:
-            name_value = self._next_config_name(name_value)
+            deduped_name = self._next_config_name(name_value)
+            if deduped_name != name_value:
+                name_value = deduped_name
+                if name_widget is not None:
+                    name_widget.value = deduped_name
 
         try:
             command_widget = self.query_one("#lc-field-command", Input)
