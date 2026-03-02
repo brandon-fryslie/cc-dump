@@ -1469,7 +1469,7 @@ class CcDumpApp(App):
         return _side_channel.get_side_channel_panel_widget(self)
 
     def _parse_qa_scope(self, draft, *, total_messages: int) -> tuple[cc_dump.ai.conversation_qa.QAScope, str]:
-        return _side_channel.parse_qa_scope(self, draft, total_messages=total_messages)
+        return _side_channel.parse_qa_scope(draft, total_messages=total_messages)
 
     def _render_qa_result_text(
         self,
