@@ -318,6 +318,60 @@ def get_active_config() -> LaunchConfig:
     return by_name.get(active_name, configs[0])
 
 
+def _model_args(config: LaunchConfig, spec: cc_dump.app.launcher_registry.LauncherSpec) -> list[str]:
+    """Derive model CLI args from config + launcher capability."""
+    # // [LAW:dataflow-not-control-flow] Model flag emission is value-derived data.
+    return ["--model", config.model] if config.model and spec.supports_model_flag else []
+
+
+def _option_cli_args(
+    option: LaunchOptionDef,
+    value: str | bool,
+    *,
+    session_id: str,
+    supports_resume_flag: bool,
+) -> list[str]:
+    """Derive CLI args for one option definition."""
+    if option.cli_mode == "raw":
+        text = str(value or "").strip()
+        return [text] if text else []
+    if option.cli_mode == "resume":
+        should_resume = bool(value) and bool(session_id) and supports_resume_flag
+        return [option.cli_flag, session_id] if should_resume else []
+    return [option.cli_flag] if bool(value) else []
+
+
+def _collect_option_args(
+    config: LaunchConfig,
+    *,
+    session_id: str,
+    supports_resume_flag: bool,
+) -> list[str]:
+    """Collect option-derived CLI args in launcher option schema order."""
+    normalized_options = normalize_options(config.options)
+    args: list[str] = []
+    for option in launcher_option_defs(config.launcher):
+        value = normalized_options.get(option.key, option.default)
+        args.extend(
+            _option_cli_args(
+                option,
+                value,
+                session_id=session_id,
+                supports_resume_flag=supports_resume_flag,
+            )
+        )
+    return args
+
+
+def _wrap_with_shell(shell: str, inner_command: str) -> str:
+    """Wrap command in shell startup script when shell is configured."""
+    if not shell:
+        return inner_command
+    rc_file = "~/.{}rc".format(shell)
+    inner_script = "source {}; {}".format(rc_file, inner_command)
+    return "{} -c {}".format(shell, shlex.quote(inner_script))
+
+
 def build_full_command(config: LaunchConfig, session_id: str = "") -> str:
     """Build the complete command string including shell wrapper if configured.
 
@@ -334,36 +388,14 @@ def build_full_command(config: LaunchConfig, session_id: str = "") -> str:
     """
     spec = cc_dump.app.launcher_registry.get_launcher_spec(config.launcher)
 
-    # Build the arg list
-    args: list[str] = []
-    if config.model and spec.supports_model_flag:
-        args.extend(["--model", config.model])
-
-    normalized_options = normalize_options(config.options)
-    for option in launcher_option_defs(config.launcher):
-        value = normalized_options.get(option.key, option.default)
-        if option.cli_mode == "raw":
-            text = str(value or "").strip()
-            if text:
-                args.append(text)
-            continue
-        if option.cli_mode == "resume":
-            if bool(value) and session_id and spec.supports_resume_flag:
-                args.extend([option.cli_flag, session_id])
-            continue
-        if bool(value):
-            args.append(option.cli_flag)
-
-    inner_command = " ".join([config.resolved_command] + args)
-
-    # // [LAW:dataflow-not-control-flow] shell wrapping is a transformation of the
-    # command value, not a branch that skips assembly.
-    if not config.shell:
-        return inner_command
-
-    rc_file = "~/.{}rc".format(config.shell)
-    inner_script = "source {}; {}".format(rc_file, inner_command)
-    return "{} -c {}".format(config.shell, shlex.quote(inner_script))
+    args = _model_args(config, spec) + _collect_option_args(
+        config,
+        session_id=session_id,
+        supports_resume_flag=spec.supports_resume_flag,
+    )
+    inner_command = " ".join([config.resolved_command, *args])
+    # // [LAW:dataflow-not-control-flow] shell wrapping is a value transformation.
+    return _wrap_with_shell(config.shell, inner_command)
 
 
 def _derive_process_names(config: LaunchConfig) -> tuple[str, ...]:

@@ -419,97 +419,183 @@ class ConversationView(ScrollView):
         """Public accessor for ViewOverrides — used by search_controller and action_handlers."""
         return self._view_overrides
 
+    def _blank_line(self, width: int) -> Strip:
+        return Strip.blank(width, self.rich_style)
+
+    def _safe_text_selection(self) -> Selection | None:
+        try:
+            return self.text_selection
+        except NoScreen:
+            return None
+
+    def _should_lazy_refresh_turn(self, turn: TurnData) -> bool:
+        needs_filter_refresh = (
+            not turn.is_streaming
+            and turn._filter_revision != self._active_filter_revision
+        )
+        return turn._pending_filter_snapshot is not None or needs_filter_refresh
+
+    def _line_cache_key(
+        self,
+        *,
+        turn: TurnData,
+        local_y: int,
+        scroll_x: int,
+        width: int,
+    ) -> tuple[int, int, int, int, int, int]:
+        return (
+            turn.turn_index,
+            turn.line_offset,
+            local_y,
+            scroll_x,
+            width,
+            self._widest_line,
+        )
+
+    def _cached_line_strip(
+        self,
+        *,
+        cache_key: tuple[int, int, int, int, int, int],
+        selection: Selection | None,
+    ) -> Strip | None:
+        if selection is not None or cache_key not in self._line_cache:
+            return None
+        return self._line_cache[cache_key].apply_style(self.rich_style)
+
+    def _strip_for_turn_line(
+        self,
+        *,
+        turn: TurnData,
+        local_y: int,
+        scroll_x: int,
+        width: int,
+    ) -> Strip:
+        if local_y < len(turn.strips):
+            return turn.strips[local_y].crop_extend(
+                scroll_x, scroll_x + width, self.rich_style
+            )
+        return self._blank_line(width)
+
+    def _styled_line_strip(
+        self,
+        *,
+        strip: Strip,
+        selection: Selection | None,
+        actual_y: int,
+        scroll_x: int,
+    ) -> Strip:
+        if selection is not None:
+            span = selection.get_span(actual_y)
+            if span is not None:
+                strip = self._apply_selection_to_strip(strip, span)
+        strip = strip.apply_style(self.rich_style)
+        return strip.apply_offsets(scroll_x, actual_y)
+
+    def _record_line_cache_key(
+        self,
+        *,
+        turn_idx: int,
+        cache_key: tuple[int, int, int, int, int, int],
+        strip: Strip,
+        selection: Selection | None,
+    ) -> None:
+        # [LAW:dataflow-not-control-flow] Selection value decides cache write payload; cache path always executes.
+        if selection is not None:
+            return
+        self._line_cache[cache_key] = strip
+        if turn_idx not in self._cache_keys_by_turn:
+            self._cache_keys_by_turn[turn_idx] = set()
+        self._cache_keys_by_turn[turn_idx].add(cache_key)
+        self._line_cache_index_write_count += 1
+        if self._line_cache_index_write_count >= self._line_cache_index_prune_interval:
+            self._line_cache_index_write_count = 0
+            self._prune_line_cache_index()
+
+    def _overlay_line(self, strip: Strip, *, y: int, width: int) -> Strip:
+        # [LAW:single-enforcer] Error indicator overlay is applied from a single boundary.
+        return cc_dump.tui.error_indicator.composite_overlay(
+            strip, y, width, self._indicator
+        )
+
+    def _render_line_core(
+        self,
+        *,
+        y: int,
+        actual_y: int,
+        width: int,
+        scroll_x: int,
+        selection: Selection | None,
+    ) -> Strip:
+        if actual_y >= self._total_lines:
+            return self._blank_line(width)
+
+        turn = self._find_turn_for_line(actual_y)
+        if turn is None:
+            return self._blank_line(width)
+        if self._should_lazy_refresh_turn(turn):
+            self._lazy_rerender_turn(turn)
+
+        local_y = actual_y - turn.line_offset
+        cache_key = self._line_cache_key(
+            turn=turn,
+            local_y=local_y,
+            scroll_x=scroll_x,
+            width=width,
+        )
+        cached_strip = self._cached_line_strip(
+            cache_key=cache_key,
+            selection=selection,
+        )
+        if cached_strip is not None:
+            return self._overlay_line(cached_strip, y=y, width=width)
+
+        strip = self._strip_for_turn_line(
+            turn=turn,
+            local_y=local_y,
+            scroll_x=scroll_x,
+            width=width,
+        )
+        strip = self._styled_line_strip(
+            strip=strip,
+            selection=selection,
+            actual_y=actual_y,
+            scroll_x=scroll_x,
+        )
+        self._record_line_cache_key(
+            turn_idx=turn.turn_index,
+            cache_key=cache_key,
+            strip=strip,
+            selection=selection,
+        )
+        return self._overlay_line(strip, y=y, width=width)
+
+    def _report_render_line_exception(self, exc: Exception) -> None:
+        logger.exception("render_line failed")
+        err_key = f"render:{type(exc).__name__}"
+        if not any(item.id == err_key for item in self._indicator.items):
+            self._indicator.items.append(
+                cc_dump.tui.error_indicator.ErrorItem(
+                    err_key, "\u26a0\ufe0f", f"{type(exc).__name__}: {exc}"
+                )
+            )
+
     def render_line(self, y: int) -> Strip:
         """Line API: render a single line at virtual position y."""
         scroll_x, scroll_y = self.scroll_offset
         actual_y = scroll_y + y
         width = self._content_width
+        selection = self._safe_text_selection()
         try:
-            selection = self.text_selection
-        except NoScreen:
-            selection = None
-
-        try:
-            if actual_y >= self._total_lines:
-                return Strip.blank(width, self.rich_style)
-
-            # Binary search for the turn containing this line
-            turn = self._find_turn_for_line(actual_y)
-            if turn is None:
-                return Strip.blank(width, self.rich_style)
-
-            # Lazy re-render: refresh turns with deferred snapshots OR stale filter revision.
-            needs_filter_refresh = (
-                not turn.is_streaming
-                and turn._filter_revision != self._active_filter_revision
+            return self._render_line_core(
+                y=y,
+                actual_y=actual_y,
+                width=width,
+                scroll_x=scroll_x,
+                selection=selection,
             )
-            if turn._pending_filter_snapshot is not None or needs_filter_refresh:
-                self._lazy_rerender_turn(turn)
-
-            local_y = actual_y - turn.line_offset
-            key = (
-                turn.turn_index,
-                turn.line_offset,
-                local_y,
-                scroll_x,
-                width,
-                self._widest_line,
-            )
-            # Bypass cache when selection is active (selection is transient)
-            if selection is None and key in self._line_cache:
-                strip = self._line_cache[key].apply_style(self.rich_style)
-                # Apply overlay AFTER cache (viewport-relative, must not be cached)
-                return cc_dump.tui.error_indicator.composite_overlay(
-                    strip, y, width, self._indicator
-                )
-
-            if local_y < len(turn.strips):
-                strip = turn.strips[local_y].crop_extend(
-                    scroll_x, scroll_x + width, self.rich_style
-                )
-            else:
-                strip = Strip.blank(width, self.rich_style)
-
-            # Apply selection highlight
-            if selection is not None:
-                span = selection.get_span(actual_y)
-                if span is not None:
-                    strip = self._apply_selection_to_strip(strip, span)
-
-            # Apply base style
-            strip = strip.apply_style(self.rich_style)
-
-            # Apply offsets for text selection coordinate mapping
-            strip = strip.apply_offsets(scroll_x, actual_y)
-
-            self._line_cache[key] = strip
-
-            # Track which turn this cache key belongs to (for selective invalidation)
-            turn_idx = turn.turn_index
-            if turn_idx not in self._cache_keys_by_turn:
-                self._cache_keys_by_turn[turn_idx] = set()
-            self._cache_keys_by_turn[turn_idx].add(key)
-            self._line_cache_index_write_count += 1
-            if self._line_cache_index_write_count >= self._line_cache_index_prune_interval:
-                self._line_cache_index_write_count = 0
-                self._prune_line_cache_index()
-
-            # Apply overlay AFTER cache (viewport-relative, must not be cached)
-            strip = cc_dump.tui.error_indicator.composite_overlay(
-                strip, y, width, self._indicator
-            )
-            return strip
         except Exception as exc:
-            logger.exception("render_line failed")
-            # Show in error indicator overlay (deduplicate by exception type+message)
-            err_key = f"render:{type(exc).__name__}"
-            if not any(item.id == err_key for item in self._indicator.items):
-                self._indicator.items.append(
-                    cc_dump.tui.error_indicator.ErrorItem(
-                        err_key, "\u26a0\ufe0f", f"{type(exc).__name__}: {exc}"
-                    )
-                )
-            return Strip.blank(width, self.rich_style)
+            self._report_render_line_exception(exc)
+            return self._blank_line(width)
 
     def _apply_selection_to_strip(
         self, strip: Strip, span: tuple[int, int]
@@ -711,14 +797,72 @@ class ConversationView(ScrollView):
         self._background_rerender_scheduled = True
         self.call_later(lambda: self._background_rerender(generation))
 
+    def _background_rerender_generation_for(self, generation: int | None) -> int:
+        return self._background_rerender_generation if generation is None else generation
+
+    def _process_background_rerender_turn(
+        self,
+        idx: int,
+        *,
+        width: int,
+        console,
+        render_key: tuple[int, int, int, int],
+    ) -> int | None:
+        if idx < 0 or idx >= len(self._turns):
+            return None
+        td = self._turns[idx]
+        if td.is_streaming or td._pending_filter_snapshot is None:
+            return None
+        changed = td.re_render(
+            self._last_filters,
+            console,
+            width,
+            block_cache=self._block_strip_cache,
+            search_ctx=self._last_search_ctx,
+            overrides=self._view_overrides,
+            render_key=render_key,
+        )
+        td._filter_revision = self._active_filter_revision
+        return idx if changed else -1
+
+    def _process_background_rerender_chunk(
+        self,
+        *,
+        width: int,
+        console,
+        render_key: tuple[int, int, int, int],
+    ) -> tuple[int | None, int]:
+        first_changed: int | None = None
+        processed = 0
+        while processed < self._background_rerender_chunk_size and self._pending_rerender_indices:
+            idx = self._pending_rerender_indices.popleft()
+            result = self._process_background_rerender_turn(
+                idx,
+                width=width,
+                console=console,
+                render_key=render_key,
+            )
+            if result is None:
+                continue
+            processed += 1
+            if result >= 0 and (first_changed is None or result < first_changed):
+                first_changed = result
+        return (first_changed, processed)
+
+    def _apply_background_rerender_changes(self, first_changed: int | None) -> None:
+        if first_changed is None:
+            return
+        self._recalculate_offsets_from(first_changed)
+        if not self._is_following:
+            self._resolve_anchor()
+        self.refresh()
+
     def _background_rerender(self, generation: int | None = None) -> None:
         """Incrementally rerender deferred turns in background.
 
         Processes a bounded number of turns per tick to keep UI responsive.
         """
-        active_generation = (
-            self._background_rerender_generation if generation is None else generation
-        )
+        active_generation = self._background_rerender_generation_for(generation)
         if active_generation != self._background_rerender_generation:
             return
         self._background_rerender_scheduled = False
@@ -742,34 +886,12 @@ class ConversationView(ScrollView):
                 "first_changed": first_changed,
             },
         ):
-            while processed < self._background_rerender_chunk_size and self._pending_rerender_indices:
-                idx = self._pending_rerender_indices.popleft()
-                if idx < 0 or idx >= len(self._turns):
-                    continue
-                td = self._turns[idx]
-                if td.is_streaming or td._pending_filter_snapshot is None:
-                    continue
-                if td.re_render(
-                    self._last_filters,
-                    console,
-                    width,
-                    block_cache=self._block_strip_cache,
-                    search_ctx=self._last_search_ctx,
-                    overrides=self._view_overrides,
-                    render_key=render_key,
-                ):
-                    if first_changed is None:
-                        first_changed = idx
-                    elif idx < first_changed:
-                        first_changed = idx
-                td._filter_revision = self._active_filter_revision
-                processed += 1
-
-            if first_changed is not None:
-                self._recalculate_offsets_from(first_changed)
-                if not self._is_following:
-                    self._resolve_anchor()
-                self.refresh()
+            first_changed, processed = self._process_background_rerender_chunk(
+                width=width,
+                console=console,
+                render_key=render_key,
+            )
+            self._apply_background_rerender_changes(first_changed)
 
             pending_after = len(self._pending_rerender_indices)
             if pending_after > 0:
@@ -926,6 +1048,41 @@ class ConversationView(ScrollView):
             return
         self._invalidate("new_turn", blocks=blocks)
 
+    def _prune_all_turns(self) -> None:
+        self._turns.clear()
+        self._scroll_anchor = None
+        self._reset_background_rerender_state()
+        self._clear_line_cache()
+        self._recalculate_offsets()
+        if self.is_attached:
+            self.refresh()
+
+    def _reindex_turns(self) -> None:
+        for idx, td in enumerate(self._turns):
+            td.turn_index = idx
+
+    def _rebase_scroll_anchor_after_prune(self, pruned_count: int) -> None:
+        anchor = self._scroll_anchor
+        if anchor is None:
+            return
+        self._scroll_anchor = ScrollAnchor(
+            turn_index=max(0, anchor.turn_index - pruned_count),
+            block_index=anchor.block_index,
+            line_in_block=anchor.line_in_block,
+        )
+
+    def _clear_pending_filter_snapshots(self) -> None:
+        for td in self._turns:
+            td._pending_filter_snapshot = None
+
+    def _refresh_after_turn_prune(self) -> None:
+        self._clear_line_cache()
+        self._recalculate_offsets()
+        if not self._is_following and self.is_attached:
+            self._resolve_anchor()
+        if self.is_attached:
+            self.refresh()
+
     def _on_turns_pruned(self, pruned_count: int) -> None:
         """Domain store callback: oldest completed turns were pruned."""
         if not self.is_attached:
@@ -933,39 +1090,15 @@ class ConversationView(ScrollView):
         if pruned_count <= 0:
             return
         if pruned_count >= len(self._turns):
-            self._turns.clear()
-            self._scroll_anchor = None
-            self._reset_background_rerender_state()
-            self._clear_line_cache()
-            self._recalculate_offsets()
-            if self.is_attached:
-                self.refresh()
+            self._prune_all_turns()
             return
 
         del self._turns[:pruned_count]
-        for idx, td in enumerate(self._turns):
-            td.turn_index = idx
-
-        if self._scroll_anchor is not None:
-            new_turn_index = self._scroll_anchor.turn_index - pruned_count
-            if new_turn_index < 0:
-                new_turn_index = 0
-            self._scroll_anchor = ScrollAnchor(
-                turn_index=new_turn_index,
-                block_index=self._scroll_anchor.block_index,
-                line_in_block=self._scroll_anchor.line_in_block,
-            )
-
+        self._reindex_turns()
+        self._rebase_scroll_anchor_after_prune(pruned_count)
         self._reset_background_rerender_state()
-        for td in self._turns:
-            td._pending_filter_snapshot = None
-
-        self._clear_line_cache()
-        self._recalculate_offsets()
-        if not self._is_following and self.is_attached:
-            self._resolve_anchor()
-        if self.is_attached:
-            self.refresh()
+        self._clear_pending_filter_snapshots()
+        self._refresh_after_turn_prune()
 
     def _render_new_turn(self, blocks: list, filters: dict = None) -> None:
         """Render blocks to TurnData and append as completed turn.
@@ -1348,6 +1481,70 @@ class ConversationView(ScrollView):
             render_key=render_key,
         )
 
+    def _rerender_viewport_turn(
+        self,
+        td: TurnData,
+        *,
+        filters: dict,
+        console,
+        width: int,
+        force: bool,
+        target_revision: int,
+        render_key: tuple[int, int, int, int],
+    ) -> tuple[bool, bool]:
+        if td.is_streaming:
+            return (False, False)
+        changed = td.re_render(
+            filters,
+            console,
+            width,
+            force=force,
+            block_cache=self._block_strip_cache,
+            search_ctx=None,
+            overrides=self._view_overrides,
+            render_key=render_key,
+        )
+        td._pending_filter_snapshot = None
+        td._filter_revision = target_revision
+        return (True, changed)
+
+    def _prefetch_indices(
+        self,
+        *,
+        prefetch_start: int,
+        prefetch_end: int,
+        vp_start: int,
+        vp_end: int,
+    ) -> list[int]:
+        # [LAW:dataflow-not-control-flow] Index list computes inclusion once, then runs fixed staging.
+        return [idx for idx in range(prefetch_start, prefetch_end) if idx < vp_start or idx >= vp_end]
+
+    def _stage_prefetch_turn(
+        self,
+        td: TurnData,
+        *,
+        idx: int,
+        filters: dict,
+        force: bool,
+        target_revision: int,
+        render_key: tuple[int, int, int, int],
+    ) -> tuple[bool, bool]:
+        if td.is_streaming:
+            return (False, False)
+        snapshot = {
+            k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE)
+            for k in td.relevant_filter_keys
+        }
+        needs_render_key = render_key != td._last_render_key
+        if force or snapshot != td._last_filter_snapshot or needs_render_key:
+            td._pending_filter_snapshot = snapshot
+            # // [LAW:dataflow-not-control-flow] Queue index value drives background work.
+            self._pending_rerender_indices.append(idx)
+            return (True, True)
+        td._pending_filter_snapshot = None
+        td._filter_revision = target_revision
+        return (True, False)
+
     def _rerender_affected_bounded(
         self,
         *,
@@ -1388,45 +1585,40 @@ class ConversationView(ScrollView):
             },
         ):
             for idx in range(vp_start, min(vp_end, len(self._turns))):
-                td = self._turns[idx]
-                if td.is_streaming:
+                is_viewport_turn, changed = self._rerender_viewport_turn(
+                    self._turns[idx],
+                    filters=filters,
+                    console=console,
+                    width=width,
+                    force=force,
+                    target_revision=target_revision,
+                    render_key=render_key,
+                )
+                if not is_viewport_turn:
                     continue
                 viewport_count += 1
-                if td.re_render(
-                    filters,
-                    console,
-                    width,
-                    force=force,
-                    block_cache=self._block_strip_cache,
-                    search_ctx=None,
-                    overrides=self._view_overrides,
-                    render_key=render_key,
-                ):
-                    if first_changed is None:
-                        first_changed = idx
-                td._pending_filter_snapshot = None
-                td._filter_revision = target_revision
+                if changed and first_changed is None:
+                    first_changed = idx
 
-            for idx in range(prefetch_start, prefetch_end):
-                if vp_start <= idx < vp_end:
+            for idx in self._prefetch_indices(
+                prefetch_start=prefetch_start,
+                prefetch_end=prefetch_end,
+                vp_start=vp_start,
+                vp_end=vp_end,
+            ):
+                considered, deferred = self._stage_prefetch_turn(
+                    self._turns[idx],
+                    idx=idx,
+                    filters=filters,
+                    force=force,
+                    target_revision=target_revision,
+                    render_key=render_key,
+                )
+                if not considered:
                     continue
-                td = self._turns[idx]
-                if td.is_streaming:
-                    continue
-                snapshot = {
-                    k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE)
-                    for k in td.relevant_filter_keys
-                }
-                needs_render_key = render_key != td._last_render_key
-                if force or snapshot != td._last_filter_snapshot or needs_render_key:
-                    td._pending_filter_snapshot = snapshot
-                    # // [LAW:dataflow-not-control-flow] Queue index value drives background work.
-                    self._pending_rerender_indices.append(idx)
+                if deferred:
                     has_deferred = True
                     deferred_count += 1
-                else:
-                    td._pending_filter_snapshot = None
-                    td._filter_revision = target_revision
 
             if first_changed is not None:
                 self._recalculate_offsets_from(first_changed)
@@ -1717,74 +1909,96 @@ class ConversationView(ScrollView):
 
         return ScrollAnchor(turn.turn_index, block_idx, line_in_block)
 
+    def _scroll_programmatically_to(self, *, y: int) -> None:
+        with self._programmatic_scroll():
+            self.scroll_to(y=y, animate=False)
+
+    def _scroll_to_last_visible_turn(self) -> None:
+        if not self._turns:
+            return
+        last_turn = self._turns[-1]
+        if last_turn.line_count > 0:
+            self._scroll_programmatically_to(y=last_turn.line_offset)
+
+    def _nearest_visible_turn_index(self, *, anchor_turn_index: int) -> int | None:
+        for delta in range(1, len(self._turns)):
+            for idx in (anchor_turn_index + delta, anchor_turn_index - delta):
+                if 0 <= idx < len(self._turns) and self._turns[idx].line_count > 0:
+                    return idx
+        return None
+
+    def _resolve_anchor_block(
+        self,
+        *,
+        turn: TurnData,
+        anchor_block_index: int,
+    ) -> tuple[int, int]:
+        block_start = turn.block_strip_map.get(anchor_block_index)
+        actual_block_idx = anchor_block_index
+        if block_start is None:
+            block_start = self._nearest_visible_block_offset(turn, anchor_block_index)
+            for idx, offset in turn.block_strip_map.items():
+                if offset == block_start:
+                    actual_block_idx = idx
+                    break
+        return (block_start, actual_block_idx)
+
+    def _clamp_anchor_line(
+        self,
+        *,
+        turn: TurnData,
+        anchor: ScrollAnchor,
+        actual_block_idx: int,
+    ) -> int:
+        block_size = self._block_strip_count(turn, actual_block_idx)
+        if block_size == 0:
+            return 0
+        if actual_block_idx != anchor.block_index:
+            return block_size - 1
+        return min(anchor.line_in_block, block_size - 1)
+
     def _resolve_anchor(self):
         """Resolve stored anchor to scroll_y after content changes.
 
         Scrolls to the position that matches the stored anchor.
         Uses _scrolling_programmatically guard to prevent anchor corruption.
         """
-        if self._scroll_anchor is None:
-            return
-
         anchor = self._scroll_anchor
+        if anchor is None:
+            return
 
         # Find anchor turn (or nearest visible)
         if anchor.turn_index >= len(self._turns):
             # Anchor turn no longer exists, scroll to last turn
-            if self._turns:
-                last_turn = self._turns[-1]
-                if last_turn.line_count > 0:
-                    with self._programmatic_scroll():
-                        self.scroll_to(y=last_turn.line_offset, animate=False)
+            self._scroll_to_last_visible_turn()
             return
 
         turn = self._turns[anchor.turn_index]
 
         # If turn is hidden (0 lines), find nearest visible turn
         if turn.line_count == 0:
-            # Walk forward/backward to find nearest visible
-            for delta in range(1, len(self._turns)):
-                for idx in [anchor.turn_index + delta, anchor.turn_index - delta]:
-                    if 0 <= idx < len(self._turns) and self._turns[idx].line_count > 0:
-                        turn = self._turns[idx]
-                        target_y = turn.line_offset
-                        with self._programmatic_scroll():
-                            self.scroll_to(y=target_y, animate=False)
-                        return
-            # No visible turns
+            nearest_turn_index = self._nearest_visible_turn_index(
+                anchor_turn_index=anchor.turn_index
+            )
+            if nearest_turn_index is None:
+                return
+            self._scroll_programmatically_to(
+                y=self._turns[nearest_turn_index].line_offset
+            )
             return
 
         # Find anchor block (or nearest visible)
-        block_start = turn.block_strip_map.get(anchor.block_index)
-        actual_block_idx = anchor.block_index
-
-        if block_start is None:
-            # Block is hidden, find nearest visible block
-            block_start = self._nearest_visible_block_offset(turn, anchor.block_index)
-            # Find which block this offset corresponds to
-            for idx, offset in turn.block_strip_map.items():
-                if offset == block_start:
-                    actual_block_idx = idx
-                    break
-
-        # Compute block size and clamp line_in_block
-        block_size = self._block_strip_count(turn, actual_block_idx)
-        if block_size == 0:
-            # Block has no strips, use block_start directly
-            clamped_line = 0
-        else:
-            # When anchor block was hidden, clamp to end of nearest visible block
-            if actual_block_idx != anchor.block_index:
-                # Use last line of the found block
-                clamped_line = block_size - 1
-            else:
-                # Use original anchor position, clamped to block size
-                clamped_line = min(anchor.line_in_block, block_size - 1)
-
+        block_start, actual_block_idx = self._resolve_anchor_block(
+            turn=turn,
+            anchor_block_index=anchor.block_index,
+        )
+        clamped_line = self._clamp_anchor_line(
+            turn=turn,
+            anchor=anchor,
+            actual_block_idx=actual_block_idx,
+        )
         target_y = turn.line_offset + block_start + clamped_line
-
-        with self._programmatic_scroll():
-            self.scroll_to(y=target_y, animate=False)
+        self._scroll_programmatically_to(y=target_y)
 
     def _resolve_click_target(self, event):
         """Pure coordinate/meta resolution for a click event.
