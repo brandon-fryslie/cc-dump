@@ -58,8 +58,8 @@ def _detect_run_subcommand(
         print(
             "Usage: cc-dump run <config-name> [cc-dump-flags...] [-- tool-extra-args...]"
             "\n\nStart cc-dump and immediately auto-launch the named config."
-            "\ncc-dump flags (--port, --host, etc.) are accepted before '--'."
-            "\nArguments after '--' are passed directly to the launched tool."
+            "\nLaunch settings come from the saved launch config."
+            "\nArguments after '--' are appended to the config's extra args."
             "\n\nExamples:"
             "\n  cc-dump run claude"
             "\n  cc-dump run claude --port 5000"
@@ -75,6 +75,22 @@ def _detect_run_subcommand(
     return config_name, cc_dump_flags, tool_extra_args
 
 
+def _resolve_auto_launch_config_name(config_name: str | None) -> str | None:
+    """Validate requested run config before booting the app."""
+    if config_name is None:
+        return None
+    configs = cc_dump.app.launch_config.load_configs()
+    by_name = {c.name: c for c in configs}
+    if config_name in by_name:
+        return config_name
+    available = ", ".join(c.name for c in configs)
+    print(
+        "Error: unknown launch config '{}'. Available: {}".format(config_name, available),
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+
 def main():
     auto_launch_config, _argv, auto_launch_extra_args = _detect_run_subcommand(sys.argv[1:])
 
@@ -82,7 +98,7 @@ def main():
         description="Claude Code API monitor proxy",
         epilog=(
             "Subcommands:\n"
-            "  run <config-name> [-- tool-args...]  Start cc-dump and auto-launch a config"
+            "  run <config-name> [-- tool-args...]  Start cc-dump and auto-launch a saved launch config"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -191,6 +207,7 @@ def main():
             help=f"Disable the {spec.display_name} proxy server",
         )
     args = parser.parse_args(_argv)
+    auto_launch_config = _resolve_auto_launch_config_name(auto_launch_config)
 
     # Install stderr tee before anything else writes to stderr
     cc_dump.io.stderr_tee.install()

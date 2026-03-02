@@ -1397,7 +1397,9 @@ class CcDumpApp(App):
             )
             self._app_log("ERROR", "auto-launch: config '{}' not found".format(config_name))
             return
-        merged = cc_dump.app.launch_config.config_with_extra_args(config, self._auto_launch_extra_args)
+        merged = cc_dump.app.launch_config.config_with_extra_args(
+            config, self._auto_launch_extra_args
+        )
         extra_desc = " + {}".format(" ".join(self._auto_launch_extra_args)) if self._auto_launch_extra_args else ""
         self._app_log("INFO", "auto-launching '{}'{}".format(config_name, extra_desc))
         self._launch_with_config(merged, log_label="auto_launch:{}".format(config_name))
