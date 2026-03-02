@@ -606,7 +606,6 @@ class TestWidgetStatePreservation:
         """Restoring from empty state produces valid defaults."""
         from cc_dump.tui.widget_factory import StatsPanel
 
-        StatsPanel()
         new_widget = StatsPanel()
         new_widget.restore_state({})
 
