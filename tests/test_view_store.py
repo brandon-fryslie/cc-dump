@@ -272,7 +272,6 @@ class TestReconcileWithNewKeys:
         assert store.get("nav:follow") == "active"
         assert store.get("filter:active") is None
         assert store.get("tmux:available") is False
-        assert store.get("streams:focused") == ""
         assert store.get("sc:loading") is False
         assert store.get("sc:active_action") == ""
         assert store.get("sc:purpose_usage") == {}
