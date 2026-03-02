@@ -253,6 +253,7 @@ class CcDumpApp(App):
             "last_message_time_by_session": {},
         }
 
+        self._launch_configs_cache: list | None = None
         self._search_state = cc_dump.tui.search.SearchState(self._view_store)
 
         # Buffered error log — dumped to stderr after TUI exits
@@ -706,6 +707,19 @@ class CcDumpApp(App):
             "Export conversation to text file",
             self.action_dump_conversation,
         )
+        if self._launch_configs_cache is None:
+            self._launch_configs_cache = cc_dump.app.launch_config.load_configs()
+        for config in self._launch_configs_cache:
+            # [LAW:one-source-of-truth] Preset list comes from persisted launch configs.
+            title = "Launch preset: {}".format(config.name)
+            description = "{} via {}".format(config.launcher, config.resolved_command)
+            yield SystemCommand(
+                title,
+                description,
+                lambda c=config: self._launch_with_config(
+                    c, log_label="palette_launch:{}".format(c.name)
+                ),
+            )
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -1029,7 +1043,6 @@ class CcDumpApp(App):
             "panel:launch_config",
             "nav:follow",
             "filter:active",
-            "streams:view",
             "search:phase",
             "search:query",
             "search:modes",
@@ -1402,6 +1415,15 @@ class CcDumpApp(App):
         else:
             self.notify("Tail failed: {}".format(result.detail), severity="error")
 
+    def action_copy_log_path(self):
+        runtime_log = cc_dump.io.logging_setup.get_runtime()
+        log_path = runtime_log.file_path if runtime_log is not None else ""
+        if not log_path:
+            self.notify("Log file unavailable", severity="error")
+            return
+        self.copy_to_clipboard(log_path)
+        self.notify(f"Copied: {log_path}")
+
     # Settings
     def action_toggle_settings(self):
         _actions.toggle_settings(self)
@@ -1471,7 +1493,7 @@ class CcDumpApp(App):
             self.notify("Tmux not available", severity="warning")
             return
 
-        session_id = self._active_resume_session_id() if config.auto_resume else ""
+        session_id = self._active_resume_session_id()
         profile = cc_dump.app.launch_config.build_launch_profile(
             config,
             provider_endpoints=self._provider_endpoints,
@@ -1497,10 +1519,20 @@ class CcDumpApp(App):
         )
         self._sync_tmux_to_store()
 
+    def _save_launch_configs(self, configs: list, active_name: str) -> None:
+        """Persist configs and active name, invalidating the command palette cache."""
+        normalized = cc_dump.app.launch_config.save_configs(configs)
+        # Reconcile active name against post-normalization names.
+        normalized_names = {c.name for c in normalized}
+        safe_name = active_name if active_name in normalized_names else (
+            normalized[0].name if normalized else active_name
+        )
+        cc_dump.app.launch_config.save_active_name(safe_name)
+        self._launch_configs_cache = normalized
+
     def on_launch_config_panel_saved(self, msg) -> None:
         """Handle LaunchConfigPanel.Saved — persist configs."""
-        cc_dump.app.launch_config.save_configs(msg.configs)
-        cc_dump.app.launch_config.save_active_name(msg.active_name)
+        self._save_launch_configs(msg.configs, msg.active_name)
         self._sync_active_launch_config_state()
         self._close_launch_config()
         self.notify("Launch configs saved")
@@ -1511,16 +1543,14 @@ class CcDumpApp(App):
 
     def on_launch_config_panel_quick_launch(self, msg) -> None:
         """Handle LaunchConfigPanel.QuickLaunch — save, close, launch."""
-        cc_dump.app.launch_config.save_configs(msg.configs)
-        cc_dump.app.launch_config.save_active_name(msg.active_name)
+        self._save_launch_configs(msg.configs, msg.active_name)
         self._sync_active_launch_config_state()
         self._close_launch_config()
         self._launch_with_config(msg.config, log_label="quick_launch")
 
     def on_launch_config_panel_activated(self, msg) -> None:
         """Handle LaunchConfigPanel.Activated — save active name, notify."""
-        cc_dump.app.launch_config.save_configs(msg.configs)
-        cc_dump.app.launch_config.save_active_name(msg.name)
+        self._save_launch_configs(msg.configs, msg.name)
         self._sync_active_launch_config_state()
         self.notify("Active: {}".format(msg.name))
 
@@ -2269,12 +2299,6 @@ class CcDumpApp(App):
     # Navigation
     def action_toggle_follow(self):
         _actions.toggle_follow(self)
-
-    def action_focus_stream(self, request_id: str):
-        _actions.focus_stream(self, request_id)
-
-    def action_toggle_stream_view_mode(self):
-        _actions.toggle_stream_view_mode(self)
 
     def action_next_special(self, marker_key: str = "all"):
         _actions.next_special(self, marker_key)
