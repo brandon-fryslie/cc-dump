@@ -499,7 +499,7 @@ class ConversationView(ScrollView):
         strip: Strip,
         selection: Selection | None,
     ) -> None:
-        # [LAW:dataflow-not-control-flow] Selection value decides cache write payload; cache path always executes.
+        # [LAW:dataflow-not-control-flow] Selection disables cache writes to avoid persisting transient highlighting.
         if selection is not None:
             return
         self._line_cache[cache_key] = strip
@@ -1052,7 +1052,6 @@ class ConversationView(ScrollView):
         self._turns.clear()
         self._scroll_anchor = None
         self._reset_background_rerender_state()
-        self._clear_line_cache()
         self._recalculate_offsets()
         if self.is_attached:
             self.refresh()
