@@ -51,6 +51,9 @@ from cc_dump.tui import search_controller as _search
 from cc_dump.tui import dump_export as _dump
 from cc_dump.tui import theme_controller as _theme
 from cc_dump.tui import hot_reload_controller as _hot_reload
+from cc_dump.tui import lifecycle_controller as _lifecycle
+from cc_dump.tui import side_channel_controller as _side_channel
+from cc_dump.tui import settings_launch_controller as _settings_launch
 
 # Additional module-level imports
 import cc_dump.core.palette
@@ -72,8 +75,6 @@ import cc_dump.providers
 
 from cc_dump.io.stderr_tee import get_tee as _get_tee
 import cc_dump.app.domain_store
-import snarfx
-from snarfx import transaction
 from snarfx import textual as stx
 
 logger = logging.getLogger(__name__)
@@ -762,95 +763,7 @@ class CcDumpApp(App):
         yield cc_dump.tui.custom_footer.StatusFooter()
 
     def on_mount(self):
-        self._bind_view_store_reactions()
-
-        # [LAW:one-source-of-truth] Restore persisted theme choice
-        saved = self._settings_store.get("theme") if self._settings_store else None
-        if saved and saved in self.available_themes:
-            self.theme = saved
-        cc_dump.tui.rendering.set_theme(self.current_theme)
-        self._apply_markdown_theme()
-
-        # Connect stderr tee to LogsPanel (flushes buffered pre-TUI messages)
-        # stderr_tee is a stable boundary — safe to use `from` import
-        tee = _get_tee()
-        if tee is not None:
-            _main_thread = threading.current_thread()
-
-            def _drain(level, source, message):
-                formatted = f"[{source}] {message}" if source != "stderr" else message
-                # connect() flushes ring buffer on main thread; runtime stderr
-                # writes arrive from background threads — route accordingly
-                if threading.current_thread() is _main_thread:
-                    self._app_log(level, formatted, False)
-                else:
-                    self.call_from_thread(self._app_log, level, formatted, False)
-            tee.connect(_drain)
-
-        self._app_log("INFO", "🚀 cc-dump proxy started")
-        self._app_log("INFO", f"Listening on: http://{self._host}:{self._port}")
-        for spec in cc_dump.providers.all_provider_specs():
-            endpoint = self._provider_endpoints.get(spec.key)
-            if endpoint is None:
-                continue
-            proxy_url = str(endpoint.get("proxy_url", "") or "")
-            if not proxy_url:
-                continue
-            mode = str(endpoint.get("proxy_mode", spec.proxy_type) or spec.proxy_type).strip().lower()
-            self._app_log("INFO", f"{spec.display_name} endpoint ({mode}): {proxy_url}")
-            target = str(endpoint.get("target", "") or "")
-            if mode == "reverse" and target:
-                self._app_log("INFO", f"  Target: {target}")
-                self._app_log("INFO", f"  Usage: {spec.base_url_env}={proxy_url} {spec.client_hint}")
-            else:
-                ca_path = str(endpoint.get("forward_proxy_ca_cert_path", "") or "")
-                suffix = f" NODE_EXTRA_CA_CERTS={ca_path}" if ca_path else ""
-                self._app_log("INFO", f"  Usage: HTTP_PROXY={proxy_url} HTTPS_PROXY={proxy_url}{suffix} {spec.client_hint}")
-
-        self.run_worker(self._drain_events, thread=True, exclusive=False)
-
-        # Hot-reload file watcher (requires watchfiles dev dep)
-        self.run_worker(self._start_file_watcher)
-
-        # Set initial panel visibility — cycle panels via active_panel
-        self._sync_panel_display(self.active_panel)
-        logs = self._get_logs()
-        if logs is not None:
-            logs.display = self.show_logs
-        info = self._get_info()
-        if info is not None:
-            info.display = self.show_info
-            info.update_info(self._build_server_info())
-
-        # Wire snarfx auto-marshal now that call_from_thread is available
-        snarfx.set_scheduler(self.call_from_thread)
-
-        # React to tmux pane exit — sync store when launched tool exits
-        if self._tmux_controller is not None:
-            stx.reaction(self,
-                lambda: self._tmux_controller.pane_alive.get(),
-                lambda _: self._sync_tmux_to_store(),
-            )
-
-        # Seed external state into view store for reactive footer
-        self._sync_tmux_to_store()
-        self._sync_active_launch_config_state()
-        if self._resume_ui_state is not None:
-            self._apply_resume_ui_state_preload()
-        # Footer hydration — reactions are now active
-        footer = self._get_footer()
-        if footer:
-            footer.update_display(
-                cc_dump.tui.view_store_bridge.enrich_footer_state(
-                    self._view_store.footer_state.get()
-                )
-            )
-        self._log_memory_snapshot("startup")
-
-        if self._replay_data:
-            self._process_replay_data()
-        if self._resume_ui_state is not None:
-            self._apply_resume_ui_state_postload()
+        _lifecycle.on_mount(self)
         self._execute_auto_launch()
 
     def _bind_view_store_reactions(self) -> None:
@@ -1437,24 +1350,10 @@ class CcDumpApp(App):
         _actions.toggle_debug_settings(self)
 
     def _open_settings(self):
-        """Open settings panel, populating from settings store."""
-        initial_values = {}
-        for field_def in cc_dump.tui.settings_panel.SETTINGS_FIELDS:
-            val = self._settings_store.get(field_def.key) if self._settings_store else None
-            initial_values[field_def.key] = val if val is not None else field_def.default
-
-        self._view_store.set("panel:settings", True)
-        panel = cc_dump.tui.settings_panel.create_settings_panel(initial_values)
-        self.screen.mount(panel)
+        _settings_launch.open_settings(self)
 
     def _close_settings(self) -> None:
-        """Close settings panel and restore focus to conversation."""
-        for panel in self.screen.query(cc_dump.tui.settings_panel.SettingsPanel):
-            panel.remove()
-        self._view_store.set("panel:settings", False)
-        conv = self._get_conv()
-        if conv is not None:
-            conv.focus()
+        _settings_launch.close_settings(self)
 
     def on_settings_panel_saved(self, msg) -> None:
         """Handle SettingsPanel.Saved — update store (reactions handle persistence + side effects)."""
@@ -1472,24 +1371,10 @@ class CcDumpApp(App):
         _actions.toggle_launch_config(self)
 
     def _open_launch_config(self):
-        """Open launch config panel, populating state from saved configs."""
-        configs = cc_dump.app.launch_config.load_configs()
-        active_name = cc_dump.app.launch_config.load_active_name()
-
-        self._view_store.set("panel:launch_config", True)
-        panel = cc_dump.tui.launch_config_panel.create_launch_config_panel(
-            configs, active_name
-        )
-        self.screen.mount(panel)
+        _settings_launch.open_launch_config(self)
 
     def _close_launch_config(self) -> None:
-        """Close launch config panel and restore focus to conversation."""
-        for panel in self.screen.query(cc_dump.tui.launch_config_panel.LaunchConfigPanel):
-            panel.remove()
-        self._view_store.set("panel:launch_config", False)
-        conv = self._get_conv()
-        if conv is not None:
-            conv.focus()
+        _settings_launch.close_launch_config(self)
 
     def _execute_auto_launch(self) -> None:
         """Execute auto-launch from the CLI 'run' subcommand.
@@ -1518,6 +1403,7 @@ class CcDumpApp(App):
         self._launch_with_config(merged, log_label="auto_launch:{}".format(config_name))
 
     def _launch_with_config(self, config, log_label: str = "launch_with_config") -> None:
+        _settings_launch.launch_with_config(self, config, log_label=log_label)
         """Build args from config + session_id, launch via tmux."""
         tmux = self._tmux_controller
         if tmux is None:
@@ -1590,160 +1476,28 @@ class CcDumpApp(App):
         _actions.toggle_side_channel(self)
 
     def _open_side_channel(self):
-        """Open AI Workbench sidebar."""
-        self._view_store.set("panel:side_channel", True)
-        panel = cc_dump.tui.side_channel_panel.create_side_channel_panel()
-        self.screen.mount(panel)
-        # Reset sc state — reaction pushes to panel and results tab.
-        self._set_side_channel_result(
-            text="",
-            source="",
-            elapsed_ms=0,
-            loading=False,
-            active_action="",
-        )
-        self._view_store.set("sc:purpose_usage", {})
-        self._sc_action_batch_id = ""
-        self._sc_action_items = []
-        self._refresh_side_channel_usage()
-        # Initial hydration — reaction may not fire if values unchanged from defaults.
-        # Run after refresh so panel children are mounted and queryable.
-        self.call_after_refresh(
-            lambda: panel.update_display(
-                cc_dump.tui.side_channel_panel.SideChannelPanelState(
-                    **self._view_store.sc_panel_state.get()
-                )
-            )
-        )
+        _side_channel.open_side_channel(self)
 
     def _close_side_channel(self):
-        """Close AI Workbench sidebar and restore focus to conversation."""
-        for panel in self.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel):
-            panel.remove()
-        self._view_store.set("panel:side_channel", False)
-        conv = self._get_conv()
-        if conv is not None:
-            conv.focus()
+        _side_channel.close_side_channel(self)
 
     def _side_channel_summarize(self):
-        """Request AI summary of recent messages. Runs in worker thread."""
-        if self._view_store.get("sc:loading") or self._data_dispatcher is None:
-            return
-
-        context_session_key = self._active_context_session_key()
-        messages = self._collect_recent_messages(10)
-        if not messages:
-            self._set_side_channel_result(
-                text="No messages to summarize.",
-                source="fallback",
-                elapsed_ms=0,
-                loading=False,
-                active_action="",
-                focus_results=True,
-                context_session_key=context_session_key,
-            )
-            return
-
-        with transaction():
-            self._view_store.set("sc:loading", True)
-            self._view_store.set("sc:active_action", "summarize_recent")
-
-        dispatcher = self._data_dispatcher
-
-        source_provider = cc_dump.providers.session_provider(self._active_session_key_from_tabs(), default_session_key=self._default_session_key)
-
-        def _do_summarize():
-            result = dispatcher.summarize_messages(messages, source_provider=source_provider)
-            self.call_from_thread(self._on_side_channel_result, result, context_session_key)
-
-        self.run_worker(_do_summarize, thread=True, exclusive=False)
+        _side_channel.side_channel_summarize(self)
 
     def _on_side_channel_result(self, result, context_session_key: str):
-        """Callback from worker thread with AI result."""
-        self._set_side_channel_result(
-            text=result.text,
-            source=result.source,
-            elapsed_ms=result.elapsed_ms,
-            loading=False,
-            active_action="",
-            focus_results=True,
-            context_session_key=context_session_key,
-        )
-        self._refresh_side_channel_usage()
+        _side_channel.on_side_channel_result(self, result, context_session_key)
 
     def _refresh_side_channel_usage(self) -> None:
-        """Project canonical side-channel purpose usage into the panel state.
-
-        // [LAW:one-source-of-truth] AnalyticsStore remains canonical source for usage totals.
-        """
-        usage = (
-            self._analytics_store.get_side_channel_purpose_summary()
-            if self._analytics_store is not None
-            else {}
-        )
-        self._view_store.set("sc:purpose_usage", usage)
+        _side_channel.refresh_side_channel_usage(self)
 
     def _collect_recent_messages(self, count: int) -> list[dict]:
-        """Extract last N messages from captured API traffic."""
-        recent_messages = cast(list[dict], self._app_state.get("recent_messages", []))
-        return recent_messages[-count:]
+        return _side_channel.collect_recent_messages(self, count)
 
     def _get_side_channel_panel_widget(self):
-        panel = self.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel)
-        return panel.first() if panel else None
+        return _side_channel.get_side_channel_panel_widget(self)
 
     def _parse_qa_scope(self, draft, *, total_messages: int) -> tuple[cc_dump.ai.conversation_qa.QAScope, str]:
-        """Build a QAScope from panel draft input.
-
-        // [LAW:single-enforcer] Scope parsing + validation lives in one app boundary.
-        """
-        mode = str(draft.scope_mode or cc_dump.ai.conversation_qa.SCOPE_SELECTED_RANGE)
-        if mode == cc_dump.ai.conversation_qa.SCOPE_WHOLE_SESSION:
-            return (
-                cc_dump.ai.conversation_qa.QAScope(
-                    mode=mode,
-                    explicit_whole_session=bool(draft.explicit_whole_session),
-                ),
-                "",
-            )
-
-        if mode == cc_dump.ai.conversation_qa.SCOPE_SELECTED_INDICES:
-            indices_text = draft.indices_text.strip()
-            if not indices_text:
-                return (
-                    cc_dump.ai.conversation_qa.QAScope(
-                        mode=mode,
-                        indices=(),
-                    ),
-                    "",
-                )
-            parts = [part.strip() for part in indices_text.split(",") if part.strip()]
-            try:
-                indices = tuple(sorted({int(part) for part in parts}))
-            except ValueError:
-                return (cc_dump.ai.conversation_qa.QAScope(mode=mode, indices=()), "indices must be integers")
-            return (cc_dump.ai.conversation_qa.QAScope(mode=mode, indices=indices), "")
-
-        default_start = max(0, total_messages - 10)
-        default_end = max(0, total_messages - 1)
-        start_text = draft.source_start_text.strip()
-        end_text = draft.source_end_text.strip()
-        try:
-            start = int(start_text) if start_text else default_start
-            end = int(end_text) if end_text else default_end
-        except ValueError:
-            return (
-                cc_dump.ai.conversation_qa.QAScope(mode=cc_dump.ai.conversation_qa.SCOPE_SELECTED_RANGE),
-                "range start/end must be integers",
-            )
-        return (
-            cc_dump.ai.conversation_qa.QAScope(
-                mode=cc_dump.ai.conversation_qa.SCOPE_SELECTED_RANGE,
-                source_start=start,
-                source_end=end,
-            ),
-            "",
-        )
+        return _side_channel.parse_qa_scope(self, draft, total_messages=total_messages)
 
     def _render_qa_result_text(
         self,
@@ -1756,27 +1510,16 @@ class CcDumpApp(App):
         prefix: str,
         error: str = "",
     ) -> str:
-        """Render deterministic QA output shown in the panel result area."""
-        lines = [
-            prefix,
-            cc_dump.tui.side_channel_panel.render_qa_scope_line(
-                scope_mode=scope_mode,
-                selected_indices=selected_indices,
-            ),
-            cc_dump.tui.side_channel_panel.render_qa_estimate_line(
-                scope_mode=estimate.scope_mode,
-                message_count=estimate.message_count,
-                estimated_input_tokens=estimate.estimated_input_tokens,
-                estimated_output_tokens=estimate.estimated_output_tokens,
-                estimated_total_tokens=estimate.estimated_total_tokens,
-            ),
-            f"question: {question}",
-        ]
-        if error:
-            lines.append(f"error: {error}")
-        if body:
-            lines.extend(["", body])
-        return "\n".join(lines)
+        return _side_channel.render_qa_result_text(
+            self,
+            question=question,
+            scope_mode=scope_mode,
+            selected_indices=selected_indices,
+            estimate=estimate,
+            body=body,
+            prefix=prefix,
+            error=error,
+        )
 
     def _set_side_channel_result(
         self,
@@ -1789,543 +1532,70 @@ class CcDumpApp(App):
         focus_results: bool = False,
         context_session_key: str | None = None,
     ) -> None:
-        context_key = self._context_session_key(
-            context_session_key
-            if isinstance(context_session_key, str)
-            else self._active_context_session_key()
+        _side_channel.set_side_channel_result(
+            self,
+            text=text,
+            source=source,
+            elapsed_ms=elapsed_ms,
+            loading=loading,
+            active_action=active_action,
+            focus_results=focus_results,
+            context_session_key=context_session_key,
         )
-        with transaction():
-            self._view_store.set("sc:loading", loading)
-            self._view_store.set("sc:active_action", active_action)
-            self._view_store.set("sc:result_text", text)
-            self._view_store.set("sc:result_source", source)
-            self._view_store.set("sc:result_elapsed_ms", elapsed_ms)
-        workbench_results = self._get_workbench_results_view()
-        if workbench_results is not None:
-            workbench_results.update_result(
-                text=text,
-                source=source,
-                elapsed_ms=elapsed_ms,
-                action=active_action,
-                context_session_id=context_key,
-            )
-        if focus_results:
-            self._show_workbench_results_tab()
 
     def _workbench_preview(self, feature: str, owner_ticket: str) -> None:
-        """Publish deterministic placeholder output for non-integrated controls.
-
-        // [LAW:single-enforcer] Placeholder behavior is centralized here.
-        """
-        preview = (
-            f"{feature} is planned but not wired in this panel yet.\n"
-            f"Owner: {owner_ticket}\n"
-            "No side effects were executed."
-        )
-        self._set_side_channel_result(
-            text=preview,
-            source="preview",
-            elapsed_ms=0,
-            loading=False,
-            active_action="",
-            focus_results=True,
-        )
+        _side_channel.workbench_preview(self, feature, owner_ticket)
 
     def action_sc_summarize_recent(self) -> None:
-        """Action target for Workbench summarize control."""
-        self._side_channel_summarize()
+        _side_channel.action_sc_summarize_recent(self)
 
     def action_sc_summarize(self) -> None:
-        """Back-compatible alias for summarize action."""
-        self.action_sc_summarize_recent()
+        _side_channel.action_sc_summarize(self)
 
     def action_sc_qa_estimate(self) -> None:
-        panel = self._get_side_channel_panel_widget()
-        if panel is None:
-            return
-        draft = panel.read_qa_draft()
-        messages = self._collect_recent_messages(50)
-        scope, parse_error = self._parse_qa_scope(draft, total_messages=len(messages))
-        normalized_scope = cc_dump.ai.conversation_qa.normalize_scope(scope, total_messages=len(messages))
-        selected_messages = cc_dump.ai.conversation_qa.select_messages(messages, normalized_scope)
-        estimate = cc_dump.ai.conversation_qa.estimate_qa_budget(
-            question=draft.question,
-            selected_messages=selected_messages,
-            scope_mode=normalized_scope.scope.mode,
-        )
-        error = parse_error or normalized_scope.error
-        question = draft.question.strip()
-        if not question:
-            error = "question is required"
-        body = "Ready to ask scoped Q&A." if not error else ""
-        text = self._render_qa_result_text(
-            question=question or "(empty)",
-            scope_mode=normalized_scope.scope.mode,
-            selected_indices=normalized_scope.selected_indices,
-            estimate=estimate,
-            body=body,
-            prefix="pre-send estimate",
-            error=error,
-        )
-        self._set_side_channel_result(
-            text=text,
-            source="preview",
-            elapsed_ms=0,
-            loading=False,
-            active_action="",
-            focus_results=True,
-        )
+        _side_channel.action_sc_qa_estimate(self)
 
     def action_sc_qa_submit(self) -> None:
-        if self._view_store.get("sc:loading"):
-            return
-        panel = self._get_side_channel_panel_widget()
-        if panel is None:
-            return
-        context_session_key = self._active_context_session_key()
-        draft = panel.read_qa_draft()
-        messages = self._collect_recent_messages(50)
-        scope, parse_error = self._parse_qa_scope(draft, total_messages=len(messages))
-        normalized_scope = cc_dump.ai.conversation_qa.normalize_scope(scope, total_messages=len(messages))
-        selected_messages = cc_dump.ai.conversation_qa.select_messages(messages, normalized_scope)
-        estimate = cc_dump.ai.conversation_qa.estimate_qa_budget(
-            question=draft.question,
-            selected_messages=selected_messages,
-            scope_mode=normalized_scope.scope.mode,
-        )
-
-        question = draft.question.strip()
-        error = parse_error or normalized_scope.error
-        if not question:
-            error = "question is required"
-        if not messages:
-            error = "no captured messages available"
-
-        if error:
-            text = self._render_qa_result_text(
-                question=question or "(empty)",
-                scope_mode=normalized_scope.scope.mode,
-                selected_indices=normalized_scope.selected_indices,
-                estimate=estimate,
-                body="",
-                prefix="scoped Q&A blocked",
-                error=error,
-            )
-            self._set_side_channel_result(
-                text=text,
-                source="fallback",
-                elapsed_ms=0,
-                loading=False,
-                active_action="",
-                focus_results=True,
-                context_session_key=context_session_key,
-            )
-            return
-
-        if self._data_dispatcher is None:
-            text = self._render_qa_result_text(
-                question=question,
-                scope_mode=normalized_scope.scope.mode,
-                selected_indices=normalized_scope.selected_indices,
-                estimate=estimate,
-                body="",
-                prefix="scoped Q&A blocked",
-                error="dispatcher unavailable",
-            )
-            self._set_side_channel_result(
-                text=text,
-                source="fallback",
-                elapsed_ms=0,
-                loading=False,
-                active_action="",
-                focus_results=True,
-                context_session_key=context_session_key,
-            )
-            return
-
-        self._set_side_channel_result(
-            text="Running scoped Q&A…",
-            source="preview",
-            elapsed_ms=0,
-            loading=True,
-            active_action="qa_submit",
-            context_session_key=context_session_key,
-        )
-
-        dispatcher = self._data_dispatcher
-        source_provider = cc_dump.providers.session_provider(self._active_session_key_from_tabs(), default_session_key=self._default_session_key)
-        request_id = f"sc-qa-{int(time.time() * 1000)}"
-
-        def _do_qa() -> None:
-            result = dispatcher.ask_conversation_question(
-                messages,
-                question=question,
-                scope=scope,
-                source_provider=source_provider,
-                request_id=request_id,
-            )
-            self.call_from_thread(
-                self._on_side_channel_qa_result,
-                result,
-                question,
-                context_session_key,
-            )
-
-        self.run_worker(_do_qa, thread=True, exclusive=False)
+        _side_channel.action_sc_qa_submit(self)
 
     def _on_side_channel_qa_result(self, result, question: str, context_session_key: str) -> None:
-        text = self._render_qa_result_text(
-            question=question,
-            scope_mode=result.artifact.scope_mode,
-            selected_indices=tuple(result.artifact.selected_indices),
-            estimate=result.estimate,
-            body=result.markdown,
-            prefix="scoped Q&A result",
-            error=result.error,
-        )
-        self._set_side_channel_result(
-            text=text,
-            source=result.source,
-            elapsed_ms=result.elapsed_ms,
-            loading=False,
-            active_action="",
-            focus_results=True,
-            context_session_key=context_session_key,
-        )
-        self._refresh_side_channel_usage()
+        _side_channel.on_side_channel_qa_result(self, result, question, context_session_key)
 
     def _render_action_candidates_text(self, *, batch_id: str, items: list[object], source: str, error: str = "") -> str:
-        lines = [
-            "action extraction review",
-            f"batch: {batch_id}",
-            f"source: {source}",
-            f"candidate_count: {len(items)}",
-        ]
-        if error:
-            lines.append(f"error: {error}")
-        if not items:
-            lines.append("No action/deferred candidates found.")
-            return "\n".join(lines)
-
-        lines.append("")
-        lines.append("candidates:")
-        for index, item in enumerate(items):
-            kind = str(getattr(item, "kind", "action"))
-            text = str(getattr(item, "text", "")).strip()
-            confidence = float(getattr(item, "confidence", 0.0))
-            source_links = getattr(item, "source_links", []) or []
-            link_parts = [
-                "{}:{}".format(
-                    str(getattr(link, "request_id", "")),
-                    int(getattr(link, "message_index", -1)),
-                )
-                for link in source_links
-            ]
-            source_text = ", ".join(link_parts) if link_parts else "(none)"
-            lines.append(
-                "{}. [{}] {} (confidence={:.2f}) sources={}".format(
-                    index,
-                    kind,
-                    text,
-                    confidence,
-                    source_text,
-                )
-            )
-        lines.extend(
-            [
-                "",
-                "review inputs:",
-                "- set accept indices and reject indices in Action Review controls",
-                "- click Apply Review to confirm explicit accept/reject",
-            ]
+        return _side_channel.render_action_candidates_text(
+            self,
+            batch_id=batch_id,
+            items=items,
+            source=source,
+            error=error,
         )
-        return "\n".join(lines)
 
     def action_sc_action_extract(self) -> None:
-        if self._view_store.get("sc:loading"):
-            return
-        context_session_key = self._active_context_session_key()
-        if self._data_dispatcher is None:
-            self._set_side_channel_result(
-                text="action extraction blocked\nerror: dispatcher unavailable",
-                source="fallback",
-                elapsed_ms=0,
-                loading=False,
-                active_action="",
-                focus_results=True,
-                context_session_key=context_session_key,
-            )
-            return
-
-        messages = self._collect_recent_messages(50)
-        if not messages:
-            self._set_side_channel_result(
-                text="action extraction blocked\nerror: no captured messages available",
-                source="fallback",
-                elapsed_ms=0,
-                loading=False,
-                active_action="",
-                focus_results=True,
-                context_session_key=context_session_key,
-            )
-            return
-
-        self._set_side_channel_result(
-            text="Running action extraction…",
-            source="preview",
-            elapsed_ms=0,
-            loading=True,
-            active_action="action_extract",
-            context_session_key=context_session_key,
-        )
-        dispatcher = self._data_dispatcher
-        source_provider = cc_dump.providers.session_provider(self._active_session_key_from_tabs(), default_session_key=self._default_session_key)
-        request_id = f"sc-action-{int(time.time() * 1000)}"
-
-        def _do_action_extract() -> None:
-            result = dispatcher.extract_action_items(
-                messages,
-                source_provider=source_provider,
-                request_id=request_id,
-            )
-            self.call_from_thread(
-                self._on_side_channel_action_extract_result,
-                result,
-                context_session_key,
-            )
-
-        self.run_worker(_do_action_extract, thread=True, exclusive=False)
+        _side_channel.action_sc_action_extract(self)
 
     def _on_side_channel_action_extract_result(self, result, context_session_key: str) -> None:
-        self._sc_action_batch_id = str(result.batch_id or "")
-        self._sc_action_items = list(result.items or [])
-        text = self._render_action_candidates_text(
-            batch_id=self._sc_action_batch_id,
-            items=self._sc_action_items,
-            source=result.source,
-            error=result.error,
-        )
-        self._set_side_channel_result(
-            text=text,
-            source=result.source,
-            elapsed_ms=result.elapsed_ms,
-            loading=False,
-            active_action="",
-            focus_results=True,
-            context_session_key=context_session_key,
-        )
-        self._refresh_side_channel_usage()
+        _side_channel.on_side_channel_action_extract_result(self, result, context_session_key)
 
     def action_sc_action_apply_review(self) -> None:
-        panel = self._get_side_channel_panel_widget()
-        if panel is None:
-            return
-        if self._data_dispatcher is None:
-            self._set_side_channel_result(
-                text="apply review blocked\nerror: dispatcher unavailable",
-                source="fallback",
-                elapsed_ms=0,
-                loading=False,
-                active_action="",
-                focus_results=True,
-            )
-            return
-        if not self._sc_action_batch_id:
-            self._set_side_channel_result(
-                text="apply review blocked\nerror: run Extract Actions first",
-                source="fallback",
-                elapsed_ms=0,
-                loading=False,
-                active_action="",
-                focus_results=True,
-            )
-            return
-        draft = panel.read_action_review_draft()
-        accept_indices, accept_error = cc_dump.tui.side_channel_panel.parse_review_indices(
-            draft.accept_indices_text
-        )
-        reject_indices, reject_error = cc_dump.tui.side_channel_panel.parse_review_indices(
-            draft.reject_indices_text
-        )
-        parse_error = accept_error or reject_error
-        if parse_error:
-            self._set_side_channel_result(
-                text=f"apply review blocked\nerror: {parse_error}",
-                source="fallback",
-                elapsed_ms=0,
-                loading=False,
-                active_action="",
-                focus_results=True,
-            )
-            return
-        if not accept_indices and not reject_indices:
-            self._set_side_channel_result(
-                text="apply review blocked\nerror: provide explicit accept and/or reject indices",
-                source="fallback",
-                elapsed_ms=0,
-                loading=False,
-                active_action="",
-                focus_results=True,
-            )
-            return
-
-        items = list(self._sc_action_items)
-        max_index = len(items) - 1
-        all_requested = tuple(sorted(set(accept_indices) | set(reject_indices)))
-        out_of_range = [idx for idx in all_requested if idx < 0 or idx > max_index]
-        if out_of_range:
-            self._set_side_channel_result(
-                text=(
-                    "apply review blocked\n"
-                    f"error: indices out of range for candidate_count={len(items)}: {out_of_range}"
-                ),
-                source="fallback",
-                elapsed_ms=0,
-                loading=False,
-                active_action="",
-                focus_results=True,
-            )
-            return
-        overlap = sorted(set(accept_indices) & set(reject_indices))
-        if overlap:
-            self._set_side_channel_result(
-                text=f"apply review blocked\nerror: indices overlap between accept/reject: {overlap}",
-                source="fallback",
-                elapsed_ms=0,
-                loading=False,
-                active_action="",
-                focus_results=True,
-            )
-            return
-
-        accepted_item_ids = [str(getattr(items[idx], "item_id", "")) for idx in accept_indices]
-        accepted = self._data_dispatcher.accept_action_items(
-            batch_id=self._sc_action_batch_id,
-            item_ids=accepted_item_ids,
-            create_beads=draft.create_beads and bool(accepted_item_ids),
-        )
-        rejected_items = [items[idx] for idx in reject_indices]
-        resolved_indices = set(accept_indices) | set(reject_indices)
-        self._sc_action_items = [item for idx, item in enumerate(items) if idx not in resolved_indices]
-
-        lines = [
-            "action review applied",
-            f"batch: {self._sc_action_batch_id}",
-            f"accepted_count: {len(accepted)}",
-            f"rejected_count: {len(rejected_items)}",
-            f"beads_enabled: {draft.create_beads and bool(accepted_item_ids)}",
-            "",
-            "accepted:",
-        ]
-        if not accepted:
-            lines.append("- (none)")
-        for item in accepted:
-            beads_id = str(getattr(item, "beads_issue_id", "") or "")
-            beads_suffix = f" beads={beads_id}" if beads_id else ""
-            lines.append(f"- [{item.kind}] {item.text}{beads_suffix}")
-
-        lines.append("")
-        lines.append("rejected:")
-        if not rejected_items:
-            lines.append("- (none)")
-        for item in rejected_items:
-            lines.append(f"- [{getattr(item, 'kind', 'action')}] {getattr(item, 'text', '')}")
-        lines.append("")
-        lines.append(f"remaining_candidates: {len(self._sc_action_items)}")
-
-        self._set_side_channel_result(
-            text="\n".join(lines),
-            source="preview",
-            elapsed_ms=0,
-            loading=False,
-            active_action="",
-            focus_results=True,
-        )
+        _side_channel.action_sc_action_apply_review(self)
 
     def action_sc_utility_run(self) -> None:
-        if self._view_store.get("sc:loading"):
-            return
-        panel = self._get_side_channel_panel_widget()
-        if panel is None:
-            return
-        context_session_key = self._active_context_session_key()
-        draft = panel.read_utility_draft()
-        utility_id = draft.utility_id.strip()
-        if not utility_id:
-            self._set_side_channel_result(
-                text="utility run blocked\nerror: no utility selected",
-                source="fallback",
-                elapsed_ms=0,
-                loading=False,
-                active_action="",
-                focus_results=True,
-                context_session_key=context_session_key,
-            )
-            return
-        if self._data_dispatcher is None:
-            self._set_side_channel_result(
-                text=f"utility run blocked\nutility_id: {utility_id}\nerror: dispatcher unavailable",
-                source="fallback",
-                elapsed_ms=0,
-                loading=False,
-                active_action="",
-                focus_results=True,
-                context_session_key=context_session_key,
-            )
-            return
-        messages = self._collect_recent_messages(50)
-        self._set_side_channel_result(
-            text=f"Running utility {utility_id}…",
-            source="preview",
-            elapsed_ms=0,
-            loading=True,
-            active_action="utility_run",
-            context_session_key=context_session_key,
-        )
-        dispatcher = self._data_dispatcher
-        source_provider = cc_dump.providers.session_provider(self._active_session_key_from_tabs(), default_session_key=self._default_session_key)
-
-        def _do_utility_run() -> None:
-            result = dispatcher.run_utility(
-                messages,
-                utility_id=utility_id,
-                source_provider=source_provider,
-            )
-            self.call_from_thread(self._on_side_channel_utility_result, result, context_session_key)
-
-        self.run_worker(_do_utility_run, thread=True, exclusive=False)
+        _side_channel.action_sc_utility_run(self)
 
     def _on_side_channel_utility_result(self, result, context_session_key: str) -> None:
-        lines = [
-            "utility result",
-            f"utility_id: {result.utility_id}",
-            f"source: {result.source}",
-        ]
-        if result.error:
-            lines.append(f"error: {result.error}")
-        lines.extend(["", result.text])
-        self._set_side_channel_result(
-            text="\n".join(lines),
-            source=result.source,
-            elapsed_ms=result.elapsed_ms,
-            loading=False,
-            active_action="",
-            focus_results=True,
-            context_session_key=context_session_key,
-        )
-        self._refresh_side_channel_usage()
+        _side_channel.on_side_channel_utility_result(self, result, context_session_key)
 
     def action_sc_preview_qa(self) -> None:
-        self.action_sc_qa_submit()
+        _side_channel.action_sc_preview_qa(self)
 
     def action_sc_preview_action_review(self) -> None:
-        self.action_sc_action_extract()
+        _side_channel.action_sc_preview_action_review(self)
 
     def action_sc_preview_handoff(self) -> None:
-        self._workbench_preview("Handoff Draft", "cc-dump-mjb.4")
+        _side_channel.action_sc_preview_handoff(self)
 
     def action_sc_preview_utilities(self) -> None:
-        self.action_sc_utility_run()
+        _side_channel.action_sc_preview_utilities(self)
 
     # Navigation
     def action_toggle_follow(self):
