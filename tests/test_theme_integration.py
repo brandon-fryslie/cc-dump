@@ -14,9 +14,6 @@ from cc_dump.tui.rendering import (
     build_theme_colors,
     set_theme,
     get_theme_colors,
-    ROLE_STYLES,
-    TAG_STYLES,
-    MSG_COLORS,
 )
 import cc_dump.tui.rendering as rendering
 
@@ -191,16 +188,11 @@ class TestLightDarkModeAdaptation:
 class TestGetThemeColorsFailFast:
     """Tests that get_theme_colors() fails fast when no theme is set."""
 
-    def test_raises_before_set(self):
-        """get_theme_colors() raises RuntimeError when _theme_colors is None."""
-        # Save and clear
-        saved = rendering._theme_colors
-        rendering._theme_colors = None
-        try:
-            with pytest.raises(RuntimeError, match="Theme not initialized"):
-                get_theme_colors()
-        finally:
-            rendering._theme_colors = saved
+    def test_raises_before_set(self, isolated_render_runtime):
+        """get_theme_colors() raises RuntimeError for uninitialized runtime."""
+        _ = isolated_render_runtime
+        with pytest.raises(RuntimeError, match="Theme not initialized"):
+            get_theme_colors()
 
 
 class TestThemeCycling:
