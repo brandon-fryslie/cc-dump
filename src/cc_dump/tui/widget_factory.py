@@ -1482,6 +1482,71 @@ class ConversationView(ScrollView):
             render_key=render_key,
         )
 
+    def _rerender_viewport_turn(
+        self,
+        td: TurnData,
+        *,
+        filters: dict,
+        console,
+        width: int,
+        force: bool,
+        target_revision: int,
+        render_key: tuple[int, int, int, int],
+    ) -> tuple[bool, bool]:
+        if td.is_streaming:
+            return (False, False)
+        changed = td.re_render(
+            filters,
+            console,
+            width,
+            force=force,
+            block_cache=self._block_strip_cache,
+            search_ctx=None,
+            overrides=self._view_overrides,
+            render_key=render_key,
+            render_runtime=self._render_runtime,
+        )
+        td._pending_filter_snapshot = None
+        td._filter_revision = target_revision
+        return (True, changed)
+
+    def _prefetch_indices(
+        self,
+        *,
+        prefetch_start: int,
+        prefetch_end: int,
+        vp_start: int,
+        vp_end: int,
+    ) -> list[int]:
+        # [LAW:dataflow-not-control-flow] Index list computes inclusion once, then runs fixed staging.
+        return [idx for idx in range(prefetch_start, prefetch_end) if idx < vp_start or idx >= vp_end]
+
+    def _stage_prefetch_turn(
+        self,
+        td: TurnData,
+        *,
+        idx: int,
+        filters: dict,
+        force: bool,
+        target_revision: int,
+        render_key: tuple[int, int, int, int],
+    ) -> tuple[bool, bool]:
+        if td.is_streaming:
+            return (False, False)
+        snapshot = {
+            k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE)
+            for k in td.relevant_filter_keys
+        }
+        needs_render_key = render_key != td._last_render_key
+        if force or snapshot != td._last_filter_snapshot or needs_render_key:
+            td._pending_filter_snapshot = snapshot
+            # // [LAW:dataflow-not-control-flow] Queue index value drives background work.
+            self._pending_rerender_indices.append(idx)
+            return (True, True)
+        td._pending_filter_snapshot = None
+        td._filter_revision = target_revision
+        return (True, False)
+
     def _rerender_affected_bounded(
         self,
         *,
@@ -1522,45 +1587,40 @@ class ConversationView(ScrollView):
             },
         ):
             for idx in range(vp_start, min(vp_end, len(self._turns))):
-                td = self._turns[idx]
-                if td.is_streaming:
+                is_viewport_turn, changed = self._rerender_viewport_turn(
+                    self._turns[idx],
+                    filters=filters,
+                    console=console,
+                    width=width,
+                    force=force,
+                    target_revision=target_revision,
+                    render_key=render_key,
+                )
+                if not is_viewport_turn:
                     continue
                 viewport_count += 1
-                if td.re_render(
-                    filters,
-                    console,
-                    width,
-                    force=force,
-                    block_cache=self._block_strip_cache,
-                    search_ctx=None,
-                    overrides=self._view_overrides,
-                    render_key=render_key,
-                ):
-                    if first_changed is None:
-                        first_changed = idx
-                td._pending_filter_snapshot = None
-                td._filter_revision = target_revision
+                if changed and first_changed is None:
+                    first_changed = idx
 
-            for idx in range(prefetch_start, prefetch_end):
-                if vp_start <= idx < vp_end:
+            for idx in self._prefetch_indices(
+                prefetch_start=prefetch_start,
+                prefetch_end=prefetch_end,
+                vp_start=vp_start,
+                vp_end=vp_end,
+            ):
+                considered, deferred = self._stage_prefetch_turn(
+                    self._turns[idx],
+                    idx=idx,
+                    filters=filters,
+                    force=force,
+                    target_revision=target_revision,
+                    render_key=render_key,
+                )
+                if not considered:
                     continue
-                td = self._turns[idx]
-                if td.is_streaming:
-                    continue
-                snapshot = {
-                    k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE)
-                    for k in td.relevant_filter_keys
-                }
-                needs_render_key = render_key != td._last_render_key
-                if force or snapshot != td._last_filter_snapshot or needs_render_key:
-                    td._pending_filter_snapshot = snapshot
-                    # // [LAW:dataflow-not-control-flow] Queue index value drives background work.
-                    self._pending_rerender_indices.append(idx)
+                if deferred:
                     has_deferred = True
                     deferred_count += 1
-                else:
-                    td._pending_filter_snapshot = None
-                    td._filter_revision = target_revision
 
             if first_changed is not None:
                 self._recalculate_offsets_from(first_changed)
