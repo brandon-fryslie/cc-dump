@@ -2,7 +2,8 @@
 
 import pytest
 
-from cc_dump.cli import _detect_run_subcommand
+from cc_dump.app.launch_config import LaunchConfig
+from cc_dump.cli import _detect_run_subcommand, _resolve_auto_launch_config_name
 
 
 class TestDetectRunSubcommand:
@@ -45,16 +46,19 @@ class TestDetectRunSubcommand:
         assert extra == ["--continue", "--verbose"]
 
     def test_run_no_config_name_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as exc:
             _detect_run_subcommand(["run"])
+        assert exc.value.code == 0
 
     def test_run_help_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as exc:
             _detect_run_subcommand(["run", "--help"])
+        assert exc.value.code == 0
 
     def test_run_short_help_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as exc:
             _detect_run_subcommand(["run", "-h"])
+        assert exc.value.code == 0
 
     def test_separator_only_no_extra(self):
         name, flags, extra = _detect_run_subcommand(["run", "claude", "--"])
@@ -69,3 +73,24 @@ class TestDetectRunSubcommand:
         assert name == "haiku"
         assert flags == []
         assert extra == ["-a", "-b", "--flag", "val"]
+
+
+class TestResolveAutoLaunchConfigName:
+    def test_none_passthrough(self):
+        assert _resolve_auto_launch_config_name(None) is None
+
+    def test_existing_config_name_returns_name(self, monkeypatch):
+        monkeypatch.setattr(
+            "cc_dump.app.launch_config.load_configs",
+            lambda: [LaunchConfig(name="claude"), LaunchConfig(name="haiku")],
+        )
+        assert _resolve_auto_launch_config_name("haiku") == "haiku"
+
+    def test_unknown_config_name_exits(self, monkeypatch):
+        monkeypatch.setattr(
+            "cc_dump.app.launch_config.load_configs",
+            lambda: [LaunchConfig(name="claude"), LaunchConfig(name="haiku")],
+        )
+        with pytest.raises(SystemExit) as excinfo:
+            _resolve_auto_launch_config_name("missing")
+        assert excinfo.value.code == 2
