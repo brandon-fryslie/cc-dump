@@ -111,15 +111,42 @@ class Category(Enum):
 
 # ─── Structured IR ────────────────────────────────────────────────────────────
 
-# // [LAW:one-source-of-truth] Block identity — monotonic, unique per process.
-_next_block_id: int = 0
+@dataclass
+class FormatRuntime:
+    """Formatting runtime state.
+
+    // [LAW:one-source-of-truth] Mutable formatting counters live in this object.
+    """
+
+    next_block_id: int = 0
+
+
+_format_runtime = FormatRuntime()
+
+
+def create_format_runtime(*, next_block_id: int = 0) -> FormatRuntime:
+    return FormatRuntime(next_block_id=next_block_id)
+
+
+def set_default_format_runtime(runtime: FormatRuntime) -> FormatRuntime:
+    """Replace default format runtime and return previous runtime."""
+    global _format_runtime
+    previous = _format_runtime
+    _format_runtime = runtime
+    return previous
+
+
+def reset_format_runtime_for_tests(*, next_block_id: int = 0) -> FormatRuntime:
+    """Reset default format runtime for tests and return previous runtime."""
+    previous = _format_runtime
+    set_default_format_runtime(create_format_runtime(next_block_id=next_block_id))
+    return previous
 
 
 def _auto_id() -> int:
     """Allocate a unique block_id. Monotonically increasing per process."""
-    global _next_block_id
-    _next_block_id += 1
-    return _next_block_id
+    _format_runtime.next_block_id += 1
+    return _format_runtime.next_block_id
 
 
 @dataclass

@@ -15,7 +15,9 @@ Two-tier dispatch:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from collections.abc import MutableMapping
 from typing import Callable, cast
 
@@ -132,6 +134,22 @@ class ThemeColors:
     # (panels, toggles, etc.). Naturally distinct from filter_colors since
     # filter hues are placed in gaps *between* these theme colors.
     action_colors: list[str]
+
+
+@dataclass
+class RenderRuntime:
+    """Mutable rendering runtime state.
+
+    // [LAW:one-source-of-truth] Theme-dependent runtime state lives in this object.
+    """
+
+    theme_colors: ThemeColors | None = None
+    role_styles: dict[str, str] = field(default_factory=dict)
+    tag_styles: list[tuple[str, str]] = field(default_factory=list)
+    msg_colors: list[str] = field(
+        default_factory=lambda: ["cyan", "magenta", "yellow", "blue", "green", "red"]
+    )
+    filter_indicators: dict[str, tuple[str, str]] = field(default_factory=dict)
 
 
 def _normalize_color(color: str | None, fallback: str) -> str:
@@ -264,39 +282,113 @@ def build_theme_colors(textual_theme) -> ThemeColors:
     )
 
 
-# Module-level theme state — starts as None, set by set_theme().
-_theme_colors: ThemeColors | None = None
+# // [LAW:one-source-of-truth] Default runtime instance for module-callers that
+# // do not pass an explicit runtime through public boundaries.
+_default_render_runtime = RenderRuntime()
+_active_runtime_override: ContextVar[RenderRuntime | None] = ContextVar(
+    "cc_dump_render_runtime_override",
+    default=None,
+)
 
 
-def get_theme_colors() -> ThemeColors:
-    """Get the current ThemeColors. Raises RuntimeError if set_theme() not called."""
-    if _theme_colors is None:
-        raise RuntimeError("Theme not initialized. Call set_theme() before rendering.")
-    return _theme_colors
+def create_render_runtime() -> RenderRuntime:
+    """Create a fresh render runtime with no theme configured."""
+    return RenderRuntime()
 
 
-def set_theme(textual_theme) -> None:
-    """Rebuild all theme-derived module state from a Textual Theme.
+def _active_runtime() -> RenderRuntime:
+    runtime = _active_runtime_override.get()
+    return runtime if runtime is not None else _default_render_runtime
 
-    Called by app on_mount, watch_theme, and after hot-reload.
-    // [LAW:single-enforcer] Sole entry point for theme changes.
+
+def set_default_render_runtime(runtime: RenderRuntime) -> RenderRuntime:
+    """Replace default render runtime and return previous runtime.
+
+    // [LAW:single-enforcer] Runtime replacement flows through one boundary.
     """
-    global _theme_colors, ROLE_STYLES, TAG_STYLES, MSG_COLORS, FILTER_INDICATORS
+    global _default_render_runtime
+    previous = _default_render_runtime
+    _default_render_runtime = runtime
+    return previous
 
-    _theme_colors = build_theme_colors(textual_theme)
-    tc = _theme_colors
 
-    # Rebuild module-level style vars
-    ROLE_STYLES = {
+def reset_render_runtime_for_tests() -> RenderRuntime:
+    """Reset default render runtime to an uninitialized state for tests.
+
+    Returns previous runtime so callers can restore it.
+    """
+    previous = _default_render_runtime
+    set_default_render_runtime(create_render_runtime())
+    return previous
+
+
+@contextmanager
+def use_render_runtime(runtime: RenderRuntime | None):
+    """Temporarily bind a runtime for nested rendering calls."""
+    if runtime is None:
+        yield
+        return
+    token = _active_runtime_override.set(runtime)
+    try:
+        yield
+    finally:
+        _active_runtime_override.reset(token)
+
+
+def _configure_runtime_theme(runtime: RenderRuntime, textual_theme) -> None:
+    """Populate all theme-derived runtime fields in one place."""
+    tc = build_theme_colors(textual_theme)
+    runtime.theme_colors = tc
+
+    runtime.role_styles = {
         "user": f"bold {tc.user}",
         "assistant": f"bold {tc.assistant}",
         "system": f"bold {tc.system}",
     }
 
-    p = cc_dump.core.palette.PALETTE
-    TAG_STYLES = [p.fg_on_bg_for_mode(i, tc.dark) for i in range(min(p.count, cc_dump.core.palette.TAG_COLOR_COUNT))]
-    MSG_COLORS = [p.msg_color_for_mode(i, tc.dark) for i in range(6)]
-    FILTER_INDICATORS = _build_filter_indicators(tc)
+    palette = cc_dump.core.palette.PALETTE
+    runtime.tag_styles = [
+        palette.fg_on_bg_for_mode(i, tc.dark)
+        for i in range(min(palette.count, cc_dump.core.palette.TAG_COLOR_COUNT))
+    ]
+    runtime.msg_colors = [palette.msg_color_for_mode(i, tc.dark) for i in range(6)]
+    runtime.filter_indicators = _build_filter_indicators(tc)
+
+
+def get_theme_colors() -> ThemeColors:
+    """Get ThemeColors from active runtime.
+
+    Raises RuntimeError when the active runtime has no configured theme.
+    """
+    tc = _active_runtime().theme_colors
+    if tc is None:
+        raise RuntimeError("Theme not initialized. Call set_theme() before rendering.")
+    return tc
+
+
+def set_theme(textual_theme) -> None:
+    """Rebuild theme-derived state on the default render runtime.
+
+    Called by app on_mount, watch_theme, and after hot-reload.
+    // [LAW:single-enforcer] Default runtime theme changes flow through this function.
+    """
+    _configure_runtime_theme(_default_render_runtime, textual_theme)
+
+
+def __getattr__(name: str):
+    """Compatibility view for legacy module-level runtime globals."""
+    runtime = _active_runtime()
+    if name == "_theme_colors":
+        return runtime.theme_colors
+    if name == "ROLE_STYLES":
+        return runtime.role_styles
+    if name == "TAG_STYLES":
+        return runtime.tag_styles
+    if name == "MSG_COLORS":
+        return runtime.msg_colors
+    if name == "FILTER_INDICATORS":
+        return runtime.filter_indicators
+    raise AttributeError(name)
 
 
 # ─── Visibility model constants ───────────────────────────────────────────────
@@ -411,27 +503,32 @@ def _resolve_visibility(block: FormattedBlock, filters: dict, overrides=None) ->
 
 # ─── Style helpers ─────────────────────────────────────────────────────────────
 
-# Initial values — rebuilt by set_theme()
-ROLE_STYLES: dict[str, str] = {}
-TAG_STYLES: list[tuple[str, str]] = []
-# Default MSG_COLORS to avoid division by zero in tests that don't call set_theme()
-MSG_COLORS: list[str] = ["cyan", "magenta", "yellow", "blue", "green", "red"]
+def _role_styles() -> dict[str, str]:
+    return _active_runtime().role_styles
+
+
+def _tag_styles() -> list[tuple[str, str]]:
+    return _active_runtime().tag_styles
+
+
+def _msg_colors() -> list[str]:
+    return _active_runtime().msg_colors
+
+
+def _filter_indicators() -> dict[str, tuple[str, str]]:
+    return _active_runtime().filter_indicators
 
 
 def _build_filter_indicators(tc: ThemeColors) -> dict[str, tuple[str, str]]:
     """Build filter indicator (symbol, fg_color) mapping from ThemeColors.
 
     // [LAW:one-source-of-truth] Filter indicator colors derived from theme via tc.filter_colors.
-    // [LAW:single-enforcer] Rebuilt by set_theme() alongside TAG_STYLES/MSG_COLORS.
+    // [LAW:single-enforcer] Rebuilt by _configure_runtime_theme() with all runtime style fields.
     """
     # // [LAW:one-source-of-truth] 6 categories matching Category enum.
     names = ["tools", "system", "metadata", "user", "assistant", "thinking"]
     # [LAW:one-source-of-truth] Use chip_bg (element [1]) to match footer chip colors.
     return {name: ("\u258c", tc.filter_colors[name][1]) for name in names}
-
-
-# Initialized empty — rebuilt by set_theme() before first render.
-FILTER_INDICATORS: dict[str, tuple[str, str]] = {}
 
 
 def _add_filter_indicator(
@@ -446,10 +543,11 @@ def _add_filter_indicator(
     if not isinstance(text, Text):
         return text
 
-    if filter_name not in FILTER_INDICATORS:
+    indicators = _filter_indicators()
+    if filter_name not in indicators:
         return text
 
-    symbol, color = FILTER_INDICATORS[filter_name]
+    symbol, color = indicators[filter_name]
     indicator = Text()
     indicator.append(symbol, style=f"bold {color}")
     indicator.append(text)
@@ -866,7 +964,7 @@ def _render_tracked_content_summary(
     block: TrackedContentBlock,
 ) -> ConsoleRenderable | None:
     """Render a TrackedContentBlock at SUMMARY level — tag colors + diff-aware display."""
-    fg, bg = TAG_STYLES[block.color_idx % len(TAG_STYLES)]
+    fg, bg = _tag_styles()[block.color_idx % len(_tag_styles())]
     tag_style = "bold {} on {}".format(fg, bg)
 
     renderer = _TRACKED_STATUS_RENDERERS.get(block.status)
@@ -1379,7 +1477,7 @@ def _render_tool_use_oneliner(block: ToolUseBlock) -> Text | None:
 
     // [LAW:one-source-of-truth] Renamed from original _render_tool_use.
     """
-    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     t = Text("  ")
     t.append("[Use: {}]".format(block.name), style="bold {}".format(color))
     if block.detail:
@@ -1391,7 +1489,7 @@ def _render_tool_use_oneliner(block: ToolUseBlock) -> Text | None:
 
 def _render_tool_use_summary_collapsed(block: ToolUseBlock) -> Text | None:
     """Summary-collapsed ToolUse renderer: compact call identity only."""
-    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     t = Text("  ")
     t.append("[Use: {}]".format(block.name), style="bold {}".format(color))
     _append_special_marker_badges(t, block)
@@ -1506,7 +1604,7 @@ def _render_tool_use_bash_full(block: ToolUseBlock) -> ConsoleRenderable | None:
     // [LAW:dataflow-not-control-flow] Dispatch via _TOOL_USE_FULL_RENDERERS table.
     """
     tc = get_theme_colors()
-    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     header = Text("  ")
     header.append("[Use: Bash]", style="bold {}".format(color))
     _append_special_marker_badges(header, block)
@@ -1531,7 +1629,7 @@ def _render_tool_use_edit_full(block: ToolUseBlock) -> Text | None:
 
     // [LAW:dataflow-not-control-flow] Dispatch via _TOOL_USE_FULL_RENDERERS table.
     """
-    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     t = Text("  ")
     t.append("[Use: Edit]", style="bold {}".format(color))
     if block.detail:
@@ -1555,7 +1653,7 @@ def _render_tool_use_edit_full(block: ToolUseBlock) -> Text | None:
 def _render_tool_use_read_full(block: ToolUseBlock) -> Text | None:
     """Full ToolUseBlock for Read: path + range hints."""
     tc = get_theme_colors()
-    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     t = Text("  ")
     t.append("[Use: Read]", style=f"bold {color}")
     if block.detail:
@@ -1581,7 +1679,7 @@ def _render_tool_use_read_full(block: ToolUseBlock) -> Text | None:
 def _render_tool_use_write_full(block: ToolUseBlock) -> Text | None:
     """Full ToolUseBlock for Write: path + payload preview."""
     tc = get_theme_colors()
-    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     t = Text("  ")
     t.append("[Use: Write]", style=f"bold {color}")
     if block.detail:
@@ -1603,7 +1701,7 @@ def _render_tool_use_write_full(block: ToolUseBlock) -> Text | None:
 def _render_tool_use_grep_full(block: ToolUseBlock) -> Text | None:
     """Full ToolUseBlock for Grep: show regex pattern and path scope."""
     tc = get_theme_colors()
-    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     t = Text("  ")
     t.append("[Use: Grep]", style=f"bold {color}")
     if block.detail:
@@ -1625,7 +1723,7 @@ def _render_tool_use_grep_full(block: ToolUseBlock) -> Text | None:
 def _render_tool_use_glob_full(block: ToolUseBlock) -> Text | None:
     """Full ToolUseBlock for Glob: show glob pattern and search root."""
     tc = get_theme_colors()
-    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     t = Text("  ")
     t.append("[Use: Glob]", style=f"bold {color}")
     if block.detail:
@@ -1759,13 +1857,13 @@ def _render_tool_result_summary(block: ToolResultBlock) -> Text | None:
 
     // [LAW:dataflow-not-control-flow] Registered in BLOCK_STATE_RENDERERS.
     """
-    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     return _tool_result_header(block, color)
 
 
 def _render_tool_result_summary_collapsed(block: ToolResultBlock) -> Text | None:
     """Summary-collapsed ToolResult renderer: minimal result signal."""
-    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     t = Text("  ")
     suffix = " ERROR" if block.is_error else ""
     t.append("[Result{}]".format(suffix), style="bold {}".format(color))
@@ -1793,7 +1891,7 @@ def _render_read_content(block: ToolResultBlock) -> ConsoleRenderable | None:
     // [LAW:dataflow-not-control-flow] Dispatch via _TOOL_RESULT_CONTENT_RENDERERS.
     """
     tc = get_theme_colors()
-    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     header = _tool_result_header(block, color)
 
     if not block.content:
@@ -1818,7 +1916,7 @@ def _render_confirm_content(block: ToolResultBlock) -> Text | None:
     // [LAW:dataflow-not-control-flow] Dispatch via _TOOL_RESULT_CONTENT_RENDERERS.
     """
     tc = get_theme_colors()
-    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     header = _tool_result_header(block, color)
 
     if block.is_error and block.content:
@@ -1834,7 +1932,7 @@ def _render_confirm_content(block: ToolResultBlock) -> Text | None:
 def _render_bash_result_content(block: ToolResultBlock) -> ConsoleRenderable | None:
     """Render Bash result with explicit success/error semantics and readable output body."""
     tc = get_theme_colors()
-    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     header = _tool_result_header(block, color)
 
     if not block.content:
@@ -1871,7 +1969,7 @@ def _grep_highlight_text(content: str, pattern: str, highlight_style: str) -> Te
 def _render_grep_result_content(block: ToolResultBlock) -> ConsoleRenderable | None:
     """Render Grep result with highlighted matched pattern."""
     tc = get_theme_colors()
-    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     header = _tool_result_header(block, color)
 
     if not block.content:
@@ -1887,7 +1985,7 @@ def _render_grep_result_content(block: ToolResultBlock) -> ConsoleRenderable | N
 def _render_glob_result_content(block: ToolResultBlock) -> ConsoleRenderable | None:
     """Render Glob result as path list with stable line formatting."""
     tc = get_theme_colors()
-    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     header = _tool_result_header(block, color)
 
     if not block.content:
@@ -1928,7 +2026,7 @@ def _render_tool_result_full(block: ToolResultBlock) -> ConsoleRenderable | None
         return renderer(block)
 
     # Generic fallback: header + dim content
-    color = MSG_COLORS[block.msg_color_idx % len(MSG_COLORS)]
+    color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     header = _tool_result_header(block, color)
     if block.content:
         header.append("\n")
@@ -2408,7 +2506,7 @@ _TRACKED_STATUS_TITLE_RENDERERS = {
 
 def _render_tracked_content_title(block: TrackedContentBlock) -> Text | None:
     """Title-only for TrackedContentBlock at EXISTENCE level."""
-    fg, bg = TAG_STYLES[block.color_idx % len(TAG_STYLES)]
+    fg, bg = _tag_styles()[block.color_idx % len(_tag_styles())]
     tag_style = "bold {} on {}".format(fg, bg)
     renderer = _TRACKED_STATUS_TITLE_RENDERERS.get(block.status)
     if renderer:
@@ -2748,7 +2846,7 @@ def _render_message_header(
     idx = getattr(block, "msg_index", 0)
     timestamp = getattr(block, "timestamp", "")
     role_lower = role.lower()
-    style = ROLE_STYLES.get(role_lower, "bold magenta")
+    style = _role_styles().get(role_lower, "bold magenta")
     label = role.upper().replace("_", " ")
     t = Text(f"{label} [{idx}]", style=style)
     if include_timestamp and timestamp:
@@ -3485,8 +3583,11 @@ def _add_gutter_to_strips(
         continuation_seg = Segment("   ", Style())
         right_seg = Segment("\u2590", Style(dim=True)) if show_right else None  # ▐
     # Category mode: colored gutters + arrow
-    elif indicator_name and indicator_name in FILTER_INDICATORS:
-        symbol, color = FILTER_INDICATORS[indicator_name]
+    elif indicator_name:
+        indicators = _filter_indicators()
+        if indicator_name not in indicators:
+            return block_strips
+        symbol, color = indicators[indicator_name]
         left_seg = Segment(symbol, Style(bold=True, color=color))
 
         # First strip: arrow (if expandable) or spaces
@@ -3982,33 +4083,45 @@ def render_streaming_preview(text: str, console, width: int) -> list:
     Used by _refresh_streaming_delta() for O(n) rendering of accumulated text,
     replacing the O(n^2) full pipeline that re-ran all visibility/dispatch logic.
     """
+    return render_streaming_preview_with_runtime(text, console, width, runtime=None)
 
-    # // [LAW:one-source-of-truth] Reuse gutter constants from this module
-    show_right = width >= MIN_WIDTH_FOR_RIGHT_GUTTER
-    total_gutter = GUTTER_WIDTH + (RIGHT_GUTTER_WIDTH if show_right else 0)
-    render_width = max(1, width - total_gutter)
 
-    tc = get_theme_colors()
-    renderable = Markdown(text, code_theme=tc.code_theme)
+def render_streaming_preview_with_runtime(
+    text: str,
+    console,
+    width: int,
+    runtime: RenderRuntime | None,
+) -> list:
+    """Runtime-aware variant of render_streaming_preview."""
+    # // [LAW:one-source-of-truth] Runtime binding is explicit at this boundary.
+    with use_render_runtime(runtime):
+        # // [LAW:one-source-of-truth] Reuse gutter constants from this module.
+        show_right = width >= MIN_WIDTH_FOR_RIGHT_GUTTER
+        total_gutter = GUTTER_WIDTH + (RIGHT_GUTTER_WIDTH if show_right else 0)
+        render_width = max(1, width - total_gutter)
 
-    render_options = console.options.update_width(render_width)
-    segments = console.render(renderable, render_options)
-    lines = list(Segment.split_lines(segments))
-    if lines:
-        content_strips = [
-            s.adjust_cell_length(render_width) for s in Strip.from_lines(lines)
-        ]
-    else:
-        content_strips = []
+        tc = get_theme_colors()
+        renderable = Markdown(text, code_theme=tc.code_theme)
 
-    return _add_gutter_to_strips(
-        content_strips,
-        indicator_name="assistant",
-        is_expandable=False,
-        arrow_char="",
-        width=width,
-        show_right=show_right,
-    )
+        render_options = console.options.update_width(render_width)
+        segments = console.render(renderable, render_options)
+        lines = list(Segment.split_lines(segments))
+        if lines:
+            content_strips = [
+                strip.adjust_cell_length(render_width)
+                for strip in Strip.from_lines(lines)
+            ]
+        else:
+            content_strips = []
+
+        return _add_gutter_to_strips(
+            content_strips,
+            indicator_name="assistant",
+            is_expandable=False,
+            arrow_char="",
+            width=width,
+            show_right=show_right,
+        )
 
 
 def render_block(block: FormattedBlock) -> ConsoleRenderable | None:
@@ -4018,10 +4131,20 @@ def render_block(block: FormattedBlock) -> ConsoleRenderable | None:
     No filter checks — returns full content always.
     Returns Text, Markdown, or other ConsoleRenderable.
     """
-    renderer = BLOCK_RENDERERS.get(type(block).__name__)
-    if renderer is None:
-        return None
-    return renderer(block)
+    return render_block_with_runtime(block, runtime=None)
+
+
+def render_block_with_runtime(
+    block: FormattedBlock,
+    runtime: RenderRuntime | None,
+) -> ConsoleRenderable | None:
+    """Runtime-aware variant of render_block."""
+    # // [LAW:one-source-of-truth] Runtime binding is explicit at this boundary.
+    with use_render_runtime(runtime):
+        renderer = BLOCK_RENDERERS.get(type(block).__name__)
+        if renderer is None:
+            return None
+        return renderer(block)
 
 
 
@@ -4036,6 +4159,7 @@ def render_turn_to_strips(
     search_ctx=None,
     turn_index: int = -1,
     overrides=None,
+    runtime: RenderRuntime | None = None,
 ) -> tuple[list, dict[int, int], list[FormattedBlock]]:
     """Render blocks to Strip objects for Line API storage.
 
@@ -4061,39 +4185,41 @@ def render_turn_to_strips(
         sequential block index to its first strip line index, and the flattened
         block list for click resolution.
     """
-    base_render_options = console.options
-    if not wrap:
-        base_render_options = base_render_options.update(
-            overflow="ignore", no_wrap=True
+    # // [LAW:one-source-of-truth] Runtime binding is explicit at this boundary.
+    with use_render_runtime(runtime):
+        base_render_options = console.options
+        if not wrap:
+            base_render_options = base_render_options.update(
+                overflow="ignore", no_wrap=True
+            )
+
+        # // [LAW:dataflow-not-control-flow] Compute gutter config once for all blocks.
+        show_right = width >= MIN_WIDTH_FOR_RIGHT_GUTTER
+        total_gutter = GUTTER_WIDTH + (RIGHT_GUTTER_WIDTH if show_right else 0)
+        render_width = max(1, width - total_gutter)
+        base_render_options = base_render_options.update_width(render_width)
+
+        ctx = _RenderContext(
+            all_strips=[],
+            flat_blocks=[],
+            block_strip_map={},
+            console=console,
+            render_options=base_render_options,
+            render_width=render_width,
+            width=width,
+            block_cache=block_cache,
+            is_streaming=is_streaming,
+            search_ctx=search_ctx,
+            turn_index=turn_index,
+            show_right=show_right,
+            filters=filters,
+            overrides=overrides,
         )
 
-    # // [LAW:dataflow-not-control-flow] Compute gutter config once for all blocks
-    show_right = width >= MIN_WIDTH_FOR_RIGHT_GUTTER
-    total_gutter = GUTTER_WIDTH + (RIGHT_GUTTER_WIDTH if show_right else 0)
-    render_width = max(1, width - total_gutter)
-    base_render_options = base_render_options.update_width(render_width)
+        for block in blocks:
+            _render_block_tree(block, ctx)
 
-    ctx = _RenderContext(
-        all_strips=[],
-        flat_blocks=[],
-        block_strip_map={},
-        console=console,
-        render_options=base_render_options,
-        render_width=render_width,
-        width=width,
-        block_cache=block_cache,
-        is_streaming=is_streaming,
-        search_ctx=search_ctx,
-        turn_index=turn_index,
-        show_right=show_right,
-        filters=filters,
-        overrides=overrides,
-    )
-
-    for block in blocks:
-        _render_block_tree(block, ctx)
-
-    return ctx.all_strips, ctx.block_strip_map, ctx.flat_blocks
+        return ctx.all_strips, ctx.block_strip_map, ctx.flat_blocks
 
 
 def _apply_search_highlights(
