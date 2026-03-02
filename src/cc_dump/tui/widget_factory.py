@@ -821,7 +821,6 @@ class ConversationView(ScrollView):
             search_ctx=self._last_search_ctx,
             overrides=self._view_overrides,
             render_key=render_key,
-            render_runtime=self._render_runtime,
         )
         td._filter_revision = self._active_filter_revision
         return idx if changed else -1
@@ -1504,7 +1503,6 @@ class ConversationView(ScrollView):
             search_ctx=None,
             overrides=self._view_overrides,
             render_key=render_key,
-            render_runtime=self._render_runtime,
         )
         td._pending_filter_snapshot = None
         td._filter_revision = target_revision
