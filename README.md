@@ -335,6 +335,8 @@ just run                          # Run the proxy
 uv run pytest                     # All tests
 uv run pytest -k "test_name"      # Single test
 just lint                         # uvx ruff check src/
+just quality-gate                 # no new lint/complexity regressions
+just quality-gate-refresh         # intentionally update baseline
 just fmt                          # uvx ruff format src/
 just install                      # uv tool install -e .
 just reinstall                    # after structural changes

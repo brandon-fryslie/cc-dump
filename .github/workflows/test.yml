@@ -47,10 +47,9 @@ jobs:
     - name: Install dependencies
       run: uv sync --dev
 
-    - name: Check code formatting
+    - name: Quality gate (no new lint or complexity regressions)
       run: |
-        uv run python -m py_compile src/cc_dump/*.py
-        uv run python -m py_compile src/cc_dump/tui/*.py
+        uv run python scripts/quality_gate.py check
 
   coverage:
     runs-on: ubuntu-latest
