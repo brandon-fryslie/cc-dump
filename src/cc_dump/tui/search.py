@@ -435,7 +435,7 @@ class SearchBar(Static):
         self.display = True
 
         # Build multi-line display with theme-aware colors
-        runtime = getattr(getattr(self, "app", None), "_render_runtime", None)
+        runtime = cc_dump.tui.rendering.get_runtime_from_owner(self)
         tc = cc_dump.tui.rendering.get_theme_colors(runtime=runtime)
         lines = []
 
