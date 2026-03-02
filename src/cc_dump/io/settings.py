@@ -60,6 +60,13 @@ def save_settings(data: dict) -> None:
         raise
 
 
+def merge_setting(current_data: dict, key: str, value) -> dict:
+    """Return a new settings dict with a single key updated."""
+    data = dict(current_data)
+    data[key] = value
+    return data
+
+
 def load_setting(key: str, default=None):
     """Load a single setting by key. Returns default if absent."""
     return load_settings().get(key, default)
@@ -67,8 +74,7 @@ def load_setting(key: str, default=None):
 
 def save_setting(key: str, value) -> None:
     """Save a single setting by key (merge into existing settings)."""
-    data = load_settings()
-    data[key] = value
+    data = merge_setting(load_settings(), key, value)
     save_settings(data)
 
 

@@ -267,6 +267,10 @@ def _normalize_configs(configs: list[LaunchConfig]) -> list[LaunchConfig]:
     return _dedupe_config_names(with_defaults)
 
 
+def _persist_configs(serialized: list[dict]) -> None:
+    cc_dump.io.settings.save_setting("launch_configs", serialized)
+
+
 def load_configs() -> list[LaunchConfig]:
     """Load launch configs from settings.json with per-tool default presets."""
     raw = cc_dump.io.settings.load_setting("launch_configs", None)
@@ -287,9 +291,8 @@ def save_configs(configs: list[LaunchConfig]) -> list[LaunchConfig]:
     (e.g. active_name) against possibly-deduped config names.
     """
     normalized = _normalize_configs(configs)
-    cc_dump.io.settings.save_setting(
-        "launch_configs", [_config_to_dict(c) for c in normalized]
-    )
+    serialized = [_config_to_dict(c) for c in normalized]
+    _persist_configs(serialized)
     return normalized
 
 
