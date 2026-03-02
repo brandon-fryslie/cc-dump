@@ -36,7 +36,7 @@ def _restore_theme(app) -> None:
     saved = app._settings_store.get("theme") if app._settings_store else None
     if saved and saved in app.available_themes:
         app.theme = saved
-    cc_dump.tui.rendering.set_theme(app.current_theme)
+    cc_dump.tui.rendering.set_theme(app.current_theme, runtime=app._render_runtime)
     app._apply_markdown_theme()
 
 

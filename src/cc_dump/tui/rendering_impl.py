@@ -296,6 +296,20 @@ def create_render_runtime() -> RenderRuntime:
     return RenderRuntime()
 
 
+def get_runtime_from_owner(owner: object | None) -> RenderRuntime | None:
+    """Resolve render runtime from an app/widget-like owner.
+
+    // [LAW:single-enforcer] Runtime ownership lookup is centralized here.
+    """
+    if owner is None:
+        return None
+    runtime = getattr(owner, "_render_runtime", None)
+    if runtime is not None:
+        return cast(RenderRuntime | None, runtime)
+    app = getattr(owner, "app", None)
+    return cast(RenderRuntime | None, getattr(app, "_render_runtime", None))
+
+
 def _active_runtime() -> RenderRuntime:
     runtime = _active_runtime_override.get()
     return runtime if runtime is not None else _default_render_runtime
@@ -4086,7 +4100,12 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
 # ─── Core rendering ───────────────────────────────────────────────────────────
 
 
-def render_streaming_preview(text: str, console, width: int) -> list:
+def render_streaming_preview(
+    text: str,
+    console,
+    width: int,
+    runtime: RenderRuntime | None = None,
+) -> list:
     """Lightweight streaming renderer — Markdown + gutter, nothing else.
 
     Bypasses: visibility resolution, _render_block_tree(), renderer dispatch,
@@ -4095,7 +4114,7 @@ def render_streaming_preview(text: str, console, width: int) -> list:
     Used by _refresh_streaming_delta() for O(n) rendering of accumulated text,
     replacing the O(n^2) full pipeline that re-ran all visibility/dispatch logic.
     """
-    return render_streaming_preview_with_runtime(text, console, width, runtime=None)
+    return render_streaming_preview_with_runtime(text, console, width, runtime=runtime)
 
 
 def render_streaming_preview_with_runtime(
