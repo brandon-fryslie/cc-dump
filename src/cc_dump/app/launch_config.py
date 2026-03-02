@@ -410,7 +410,7 @@ def config_with_extra_args(config: LaunchConfig, extra_args: list[str]) -> Launc
     The returned config is transient — never persisted to settings.
     """
     existing_extra = str(config.options.get("extra_args", "") or "").strip()
-    cli_extra = " ".join(extra_args)
+    cli_extra = shlex.join(extra_args)
     merged = " ".join(filter(None, [existing_extra, cli_extra]))
     new_options = dict(config.options)
     new_options["extra_args"] = merged
