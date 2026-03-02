@@ -232,6 +232,10 @@ class CcDumpApp(App):
         self._settings_store = settings_store
         self._view_store = view_store
         self._domain_store = domain_store if domain_store is not None else cc_dump.app.domain_store.DomainStore()
+        self._format_runtime = cc_dump.core.formatting.create_format_runtime()
+        self._render_runtime = cc_dump.tui.rendering.create_render_runtime()
+        cc_dump.core.formatting.set_default_format_runtime(self._format_runtime)
+        cc_dump.tui.rendering.set_default_render_runtime(self._render_runtime)
         self._store_context = store_context
         self._auto_launch_config = auto_launch_config
         self._auto_launch_extra_args = list(auto_launch_extra_args) if auto_launch_extra_args else []
@@ -426,6 +430,7 @@ class CcDumpApp(App):
         conv = cc_dump.tui.widget_factory.create_conversation_view(
             view_store=self._view_store,
             domain_store=domain_store,
+            render_runtime=self._render_runtime,
         )
         conv.id = conv_id
 
@@ -740,6 +745,7 @@ class CcDumpApp(App):
                 conv = cc_dump.tui.widget_factory.create_conversation_view(
                     view_store=self._view_store,
                     domain_store=self._domain_store,
+                    render_runtime=self._render_runtime,
                 )
                 conv.id = self._conv_id
                 yield conv
@@ -1165,6 +1171,7 @@ class CcDumpApp(App):
                 "refresh_session": self._refresh_session,
             },
             "analytics_store": self._analytics_store,
+            "format_runtime": self._format_runtime,
         }
 
         # [LAW:dataflow-not-control-flow] Always call handler, use no-op for unknown
@@ -1683,7 +1690,7 @@ class CcDumpApp(App):
     def watch_theme(self, theme_name: str) -> None:
         if not stx.is_safe(self):
             return
-        cc_dump.tui.rendering.set_theme(self.current_theme)
+        cc_dump.tui.rendering.set_theme(self.current_theme, runtime=self._render_runtime)
         self._apply_markdown_theme()
         gen = self._view_store.get("theme:generation")
         self._view_store.set("theme:generation", gen + 1)

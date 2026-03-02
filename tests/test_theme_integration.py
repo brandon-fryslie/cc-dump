@@ -10,6 +10,7 @@ import pytest
 from textual.theme import BUILTIN_THEMES, Theme
 
 from cc_dump.tui.rendering import (
+    create_render_runtime,
     ThemeColors,
     build_theme_colors,
     set_theme,
@@ -162,6 +163,16 @@ class TestSetTheme:
         assert tc_dracula.primary != tc_latte.primary
         assert tc_dracula.dark != tc_latte.dark
 
+    def test_set_theme_can_target_explicit_runtime(self):
+        """Explicit runtimes can be configured without relying on ambient globals."""
+        runtime = create_render_runtime()
+        set_theme(BUILTIN_THEMES["dracula"], runtime=runtime)
+
+        tc = get_theme_colors(runtime=runtime)
+
+        assert isinstance(tc, ThemeColors)
+        assert tc.primary == BUILTIN_THEMES["dracula"].primary
+
 
 class TestLightDarkModeAdaptation:
     """Tests that TAG_STYLES and MSG_COLORS adapt to light/dark mode."""
@@ -191,16 +202,11 @@ class TestLightDarkModeAdaptation:
 class TestGetThemeColorsFailFast:
     """Tests that get_theme_colors() fails fast when no theme is set."""
 
-    def test_raises_before_set(self):
-        """get_theme_colors() raises RuntimeError when _theme_colors is None."""
-        # Save and clear
-        saved = rendering._theme_colors
-        rendering._theme_colors = None
-        try:
-            with pytest.raises(RuntimeError, match="Theme not initialized"):
-                get_theme_colors()
-        finally:
-            rendering._theme_colors = saved
+    def test_raises_before_set(self, isolated_render_runtime):
+        """get_theme_colors() raises when the active runtime has no theme configured."""
+        _ = isolated_render_runtime
+        with pytest.raises(RuntimeError, match="Theme not initialized"):
+            get_theme_colors()
 
 
 class TestThemeCycling:
