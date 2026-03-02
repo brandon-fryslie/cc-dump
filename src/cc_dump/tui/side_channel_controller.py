@@ -126,37 +126,31 @@ def get_side_channel_panel_widget(app):
     return panel.first() if panel else None
 
 
-def parse_qa_scope(draft, *, total_messages: int) -> tuple[cc_dump.ai.conversation_qa.QAScope, str]:
-    """Build and validate QAScope from panel draft controls.
-
-    // [LAW:single-enforcer] Scope parsing and normalization entrypoint is centralized here.
-    """
-    mode = str(draft.scope_mode or cc_dump.ai.conversation_qa.SCOPE_SELECTED_RANGE)
-    if mode == cc_dump.ai.conversation_qa.SCOPE_WHOLE_SESSION:
+def _parse_indices_scope(mode: str, indices_text: str) -> tuple[cc_dump.ai.conversation_qa.QAScope, str]:
+    stripped = indices_text.strip()
+    if not stripped:
+        return (cc_dump.ai.conversation_qa.QAScope(mode=mode, indices=()), "")
+    parts = [part.strip() for part in stripped.split(",") if part.strip()]
+    try:
+        indices = tuple(sorted({int(part) for part in parts}))
+    except ValueError:
         return (
-            cc_dump.ai.conversation_qa.QAScope(
-                mode=mode,
-                explicit_whole_session=bool(draft.explicit_whole_session),
-            ),
-            "",
+            cc_dump.ai.conversation_qa.QAScope(mode=mode, indices=()),
+            "indices must be integers",
         )
+    return (cc_dump.ai.conversation_qa.QAScope(mode=mode, indices=indices), "")
 
-    if mode == cc_dump.ai.conversation_qa.SCOPE_SELECTED_INDICES:
-        indices_text = draft.indices_text.strip()
-        if not indices_text:
-            return (cc_dump.ai.conversation_qa.QAScope(mode=mode, indices=()), "")
-        parts = [part.strip() for part in indices_text.split(",") if part.strip()]
-        try:
-            indices = tuple(sorted({int(part) for part in parts}))
-        except ValueError:
-            return (
-                cc_dump.ai.conversation_qa.QAScope(mode=mode, indices=()),
-                "indices must be integers",
-            )
-        return (cc_dump.ai.conversation_qa.QAScope(mode=mode, indices=indices), "")
 
-    default_start = max(0, total_messages - 10)
-    default_end = max(0, total_messages - 1)
+def _default_scope_range(total_messages: int) -> tuple[int, int]:
+    return (max(0, total_messages - 10), max(0, total_messages - 1))
+
+
+def _parse_range_scope(
+    draft,
+    *,
+    total_messages: int,
+) -> tuple[cc_dump.ai.conversation_qa.QAScope, str]:
+    default_start, default_end = _default_scope_range(total_messages)
     start_text = draft.source_start_text.strip()
     end_text = draft.source_end_text.strip()
     try:
@@ -177,6 +171,29 @@ def parse_qa_scope(draft, *, total_messages: int) -> tuple[cc_dump.ai.conversati
         ),
         "",
     )
+
+
+def parse_qa_scope(draft, *, total_messages: int) -> tuple[cc_dump.ai.conversation_qa.QAScope, str]:
+    """Build and validate QAScope from panel draft controls.
+
+    // [LAW:single-enforcer] Scope parsing and normalization entrypoint is centralized here.
+    """
+    mode = str(draft.scope_mode or cc_dump.ai.conversation_qa.SCOPE_SELECTED_RANGE)
+    scope_parsers = {
+        cc_dump.ai.conversation_qa.SCOPE_WHOLE_SESSION: lambda: (
+            cc_dump.ai.conversation_qa.QAScope(
+                mode=mode,
+                explicit_whole_session=bool(draft.explicit_whole_session),
+            ),
+            "",
+        ),
+        cc_dump.ai.conversation_qa.SCOPE_SELECTED_INDICES: lambda: _parse_indices_scope(
+            mode,
+            draft.indices_text,
+        ),
+    }
+    # [LAW:dataflow-not-control-flow] Operation order is fixed; mode selects values/parser only.
+    return scope_parsers.get(mode, lambda: _parse_range_scope(draft, total_messages=total_messages))()
 
 
 def render_qa_result_text(
@@ -672,34 +689,68 @@ def _blocked_apply_review(app, message: str) -> None:
     )
 
 
-def action_sc_action_apply_review(app) -> None:
-    panel = get_side_channel_panel_widget(app)
-    if panel is None:
-        return
+def _apply_review_prerequisite_error(app) -> str:
     if app._data_dispatcher is None:
-        _blocked_apply_review(app, "dispatcher unavailable")
-        return
+        return "dispatcher unavailable"
     if not app._sc_action_batch_id:
-        _blocked_apply_review(app, "run Extract Actions first")
-        return
+        return "run Extract Actions first"
+    return ""
 
+
+def _resolve_action_review_inputs(
+    app,
+    panel,
+    *,
+    items: list[object],
+) -> tuple[object, tuple[int, ...], tuple[int, ...], str]:
     draft = panel.read_action_review_draft()
     accept_indices, reject_indices, parse_error = _review_parse_indices(app, draft)
-    if parse_error:
-        _blocked_apply_review(app, parse_error)
-        return
-
-    items = list(app._sc_action_items)
     validation_error = _review_validate_indices(
         items=items,
         accept_indices=accept_indices,
         reject_indices=reject_indices,
     )
-    if validation_error:
-        _blocked_apply_review(app, validation_error)
+    return (draft, accept_indices, reject_indices, parse_error or validation_error)
+
+
+def _item_ids_at_indices(items: list[object], indices: tuple[int, ...]) -> list[str]:
+    return [str(getattr(items[idx], "item_id", "")) for idx in indices]
+
+
+def _items_at_indices(items: list[object], indices: tuple[int, ...]) -> list[object]:
+    return [items[idx] for idx in indices]
+
+
+def _remaining_items_after_review(
+    items: list[object],
+    *,
+    accept_indices: tuple[int, ...],
+    reject_indices: tuple[int, ...],
+) -> list[object]:
+    resolved_indices = set(accept_indices) | set(reject_indices)
+    return [item for idx, item in enumerate(items) if idx not in resolved_indices]
+
+
+def action_sc_action_apply_review(app) -> None:
+    panel = get_side_channel_panel_widget(app)
+    if panel is None:
+        return
+    blocked_reason = _apply_review_prerequisite_error(app)
+    if blocked_reason:
+        _blocked_apply_review(app, blocked_reason)
         return
 
-    accepted_item_ids = [str(getattr(items[idx], "item_id", "")) for idx in accept_indices]
+    items = list(app._sc_action_items)
+    draft, accept_indices, reject_indices, review_error = _resolve_action_review_inputs(
+        app,
+        panel,
+        items=items,
+    )
+    if review_error:
+        _blocked_apply_review(app, review_error)
+        return
+
+    accepted_item_ids = _item_ids_at_indices(items, accept_indices)
     beads_enabled = bool(draft.create_beads and accepted_item_ids)
     accepted = app._data_dispatcher.accept_action_items(
         batch_id=app._sc_action_batch_id,
@@ -707,11 +758,12 @@ def action_sc_action_apply_review(app) -> None:
         create_beads=beads_enabled,
     )
 
-    rejected_items = [items[idx] for idx in reject_indices]
-    resolved_indices = set(accept_indices) | set(reject_indices)
-    app._sc_action_items = [
-        item for idx, item in enumerate(items) if idx not in resolved_indices
-    ]
+    rejected_items = _items_at_indices(items, reject_indices)
+    app._sc_action_items = _remaining_items_after_review(
+        items,
+        accept_indices=accept_indices,
+        reject_indices=reject_indices,
+    )
 
     set_side_channel_result(
         app,
