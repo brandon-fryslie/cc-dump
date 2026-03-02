@@ -151,6 +151,22 @@ class CycleSelector(Widget, can_focus=True):
         self._index = new_index % len(self._options)
         self.refresh()
 
+    def set_options(self, options: Sequence[str], *, value: str | None = None) -> None:
+        """Replace options list and selected value.
+
+        // [LAW:one-source-of-truth] Selection index is recomputed from new options.
+        """
+        updated = list(options)
+        self._options = updated if updated else [""]
+        self._index = (
+            self._options.index(value)
+            if value is not None and value in self._options
+            else 0
+        )
+        self._editing = False
+        self._zone = _ZONE_CENTER
+        self.refresh()
+
     # -- Rendering -----------------------------------------------------------
 
     def render(self) -> Text:
