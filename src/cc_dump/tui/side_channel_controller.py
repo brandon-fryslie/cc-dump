@@ -705,12 +705,14 @@ def _resolve_action_review_inputs(
 ) -> tuple[object, tuple[int, ...], tuple[int, ...], str]:
     draft = panel.read_action_review_draft()
     accept_indices, reject_indices, parse_error = _review_parse_indices(app, draft)
+    if parse_error:
+        return (draft, accept_indices, reject_indices, parse_error)
     validation_error = _review_validate_indices(
         items=items,
         accept_indices=accept_indices,
         reject_indices=reject_indices,
     )
-    return (draft, accept_indices, reject_indices, parse_error or validation_error)
+    return (draft, accept_indices, reject_indices, validation_error)
 
 
 def _item_ids_at_indices(items: list[object], indices: tuple[int, ...]) -> list[str]:

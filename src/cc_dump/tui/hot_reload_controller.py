@@ -191,7 +191,7 @@ async def _do_hot_reload(app) -> None:
         bar.display = False
 
     # Rebuild theme state after modules reload (before any rendering)
-    cc_dump.tui.rendering.set_theme(app.current_theme)
+    cc_dump.tui.rendering.set_theme(app.current_theme, runtime=app._render_runtime)
     cc_dump.tui.theme_controller.apply_markdown_theme(app)
 
     # Reconcile settings store (values survive, reactions re-register)
@@ -410,6 +410,7 @@ def _build_replacement_conversations(
         new_conv = cc_dump.tui.widget_factory.create_conversation_view(
             view_store=app._view_store,
             domain_store=payload.domain_store,
+            runtime=app._render_runtime,
         )
         _validate_and_restore_widget_state(
             new_conv,
