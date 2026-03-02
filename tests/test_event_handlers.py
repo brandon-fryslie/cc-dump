@@ -127,8 +127,8 @@ def _turn_text(blocks) -> str:
     )
 
 
-def _noop_log(*args, **kwargs) -> None:
-    _ = (args, kwargs)
+def _noop_log(*_args, **_kwargs) -> None:
+    pass
 
 
 class TestEventHandlersRequestScopedStreaming:
