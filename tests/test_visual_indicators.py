@@ -10,16 +10,17 @@ class TestIndicatorHelperFunction:
 
     def test_filter_indicators_mapping_exists(self):
         from cc_dump.tui import rendering
-        assert isinstance(rendering.FILTER_INDICATORS, dict)
+        indicators = rendering.get_filter_indicators()
+        assert isinstance(indicators, dict)
 
         expected_filters = ["tools", "system", "metadata", "user", "assistant", "thinking"]
         for filter_name in expected_filters:
-            assert filter_name in rendering.FILTER_INDICATORS
+            assert filter_name in indicators
 
     def test_filter_indicators_have_symbol_and_color(self):
         from cc_dump.tui import rendering
 
-        for filter_name, (symbol, color) in rendering.FILTER_INDICATORS.items():
+        for filter_name, (symbol, color) in rendering.get_filter_indicators().items():
             assert isinstance(symbol, str)
             assert len(symbol) > 0
             assert isinstance(color, str)

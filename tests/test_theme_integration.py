@@ -130,21 +130,23 @@ class TestSetTheme:
         """ROLE_STYLES contains the theme's primary color for user."""
         theme = BUILTIN_THEMES["dracula"]
         set_theme(theme)
-        assert theme.primary in rendering.ROLE_STYLES["user"]
+        assert theme.primary in rendering.get_role_styles()["user"]
 
     def test_set_theme_rebuilds_tag_styles(self):
         """TAG_STYLES is populated with (fg, bg) tuples after set_theme()."""
         set_theme(BUILTIN_THEMES["nord"])
-        assert len(rendering.TAG_STYLES) > 0
-        fg, bg = rendering.TAG_STYLES[0]
+        tag_styles = rendering.get_tag_styles()
+        assert len(tag_styles) > 0
+        fg, bg = tag_styles[0]
         assert _is_hex(fg)
         assert _is_hex(bg)
 
     def test_set_theme_rebuilds_msg_colors(self):
         """MSG_COLORS is populated with hex strings after set_theme()."""
         set_theme(BUILTIN_THEMES["tokyo-night"])
-        assert len(rendering.MSG_COLORS) == 6
-        for color in rendering.MSG_COLORS:
+        msg_colors = rendering.get_msg_colors()
+        assert len(msg_colors) == 6
+        for color in msg_colors:
             assert _is_hex(color), f"MSG_COLORS entry {color!r} is not hex"
 
     def test_theme_switch_changes_colors(self):
@@ -166,7 +168,7 @@ class TestLightDarkModeAdaptation:
     def test_dark_tag_styles_have_light_fg(self):
         """Dark theme TAG_STYLES have lighter foreground (higher lightness)."""
         set_theme(BUILTIN_THEMES["textual-dark"])
-        fg, bg = rendering.TAG_STYLES[0]
+        fg, bg = rendering.get_tag_styles()[0]
         # Parse hex to check relative lightness
         fg_r, fg_g, fg_b = int(fg[1:3], 16), int(fg[3:5], 16), int(fg[5:7], 16)
         bg_r, bg_g, bg_b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
@@ -177,7 +179,7 @@ class TestLightDarkModeAdaptation:
     def test_light_tag_styles_have_dark_fg(self):
         """Light theme TAG_STYLES have darker foreground (lower lightness)."""
         set_theme(BUILTIN_THEMES["textual-light"])
-        fg, bg = rendering.TAG_STYLES[0]
+        fg, bg = rendering.get_tag_styles()[0]
         fg_r, fg_g, fg_b = int(fg[1:3], 16), int(fg[3:5], 16), int(fg[5:7], 16)
         bg_r, bg_g, bg_b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
         fg_lum = fg_r + fg_g + fg_b

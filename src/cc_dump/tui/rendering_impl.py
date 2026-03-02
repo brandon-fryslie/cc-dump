@@ -355,40 +355,52 @@ def _configure_runtime_theme(runtime: RenderRuntime, textual_theme) -> None:
     runtime.filter_indicators = _build_filter_indicators(tc)
 
 
-def get_theme_colors() -> ThemeColors:
+def set_theme(textual_theme, runtime: RenderRuntime | None = None) -> None:
+    """Rebuild theme-derived state on a render runtime.
+
+    Called by app on_mount, watch_theme, and after hot-reload.
+    // [LAW:single-enforcer] Theme changes flow through this boundary.
+    """
+    target = _default_render_runtime if runtime is None else runtime
+    _configure_runtime_theme(target, textual_theme)
+
+
+def get_theme_colors(runtime: RenderRuntime | None = None) -> ThemeColors:
     """Get ThemeColors from active runtime.
 
     Raises RuntimeError when the active runtime has no configured theme.
     """
-    tc = _active_runtime().theme_colors
-    if tc is None:
-        raise RuntimeError("Theme not initialized. Call set_theme() before rendering.")
-    return tc
+    with use_render_runtime(runtime):
+        tc = _active_runtime().theme_colors
+        if tc is None:
+            raise RuntimeError("Theme not initialized. Call set_theme() before rendering.")
+        return tc
 
 
-def set_theme(textual_theme) -> None:
-    """Rebuild theme-derived state on the default render runtime.
-
-    Called by app on_mount, watch_theme, and after hot-reload.
-    // [LAW:single-enforcer] Default runtime theme changes flow through this function.
-    """
-    _configure_runtime_theme(_default_render_runtime, textual_theme)
+def get_role_styles(runtime: RenderRuntime | None = None) -> dict[str, str]:
+    """Read role styles for a runtime as a snapshot copy."""
+    with use_render_runtime(runtime):
+        return dict(_active_runtime().role_styles)
 
 
-def __getattr__(name: str):
-    """Compatibility view for legacy module-level runtime globals."""
-    runtime = _active_runtime()
-    if name == "_theme_colors":
-        return runtime.theme_colors
-    if name == "ROLE_STYLES":
-        return runtime.role_styles
-    if name == "TAG_STYLES":
-        return runtime.tag_styles
-    if name == "MSG_COLORS":
-        return runtime.msg_colors
-    if name == "FILTER_INDICATORS":
-        return runtime.filter_indicators
-    raise AttributeError(name)
+def get_tag_styles(runtime: RenderRuntime | None = None) -> list[tuple[str, str]]:
+    """Read tag styles for a runtime as a snapshot copy."""
+    with use_render_runtime(runtime):
+        return list(_active_runtime().tag_styles)
+
+
+def get_msg_colors(runtime: RenderRuntime | None = None) -> list[str]:
+    """Read message colors for a runtime as a snapshot copy."""
+    with use_render_runtime(runtime):
+        return list(_active_runtime().msg_colors)
+
+
+def get_filter_indicators(
+    runtime: RenderRuntime | None = None,
+) -> dict[str, tuple[str, str]]:
+    """Read filter indicators for a runtime as a snapshot copy."""
+    with use_render_runtime(runtime):
+        return dict(_active_runtime().filter_indicators)
 
 
 # ─── Visibility model constants ───────────────────────────────────────────────
