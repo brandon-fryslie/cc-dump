@@ -4,7 +4,6 @@ import pytest
 
 from cc_dump.core.formatting import (
     ConfigContentBlock,
-    ContentRegion,
     ErrorBlock,
     FormattedBlock,
     HeaderBlock,
@@ -34,11 +33,13 @@ from cc_dump.core.formatting import (
     TurnBudgetBlock,
     UnknownTypeBlock,
     format_request,
+    format_request_for_provider,
     format_request_headers,
+    format_openai_request,
+    format_openai_complete_response,
     format_response_event,
     format_response_headers,
     make_diff_lines,
-    populate_content_regions,
     track_content,
     _tool_detail,
     _front_ellipse_path,
@@ -1492,13 +1493,6 @@ class TestToolUseBlockDescription:
 
 
 # ─── OpenAI Formatting Tests ─────────────────────────────────────────────────
-
-from cc_dump.core.formatting import (
-    format_openai_request,
-    format_openai_complete_response,
-    format_request_for_provider,
-    Category,
-)
 
 
 def _fresh_openai_state():
