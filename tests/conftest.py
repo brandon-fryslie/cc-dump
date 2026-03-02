@@ -3,7 +3,6 @@
 import os
 import re
 import shutil
-import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -13,15 +12,31 @@ from ptydriver import PtyProcess
 
 
 # ---------------------------------------------------------------------------
-# Theme initialization — populate rendering globals before any tests run
+# Theme initialization — configure default render runtime before tests run
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session", autouse=True)
 def _init_theme():
-    """Initialize rendering module globals so unit tests see populated dicts."""
+    """Initialize default render runtime theme for tests."""
     from textual.theme import BUILTIN_THEMES
     from cc_dump.tui.rendering import set_theme
     set_theme(BUILTIN_THEMES["textual-dark"])
+
+
+@pytest.fixture
+def isolated_render_runtime():
+    """Provide an isolated, uninitialized render runtime for a test.
+
+    // [LAW:behavior-not-structure] Tests needing fail-fast theme behavior use
+    // explicit runtime setup/reset APIs instead of mutating module internals.
+    """
+    import cc_dump.tui.rendering as rendering
+
+    previous = rendering.reset_render_runtime_for_tests()
+    try:
+        yield
+    finally:
+        rendering.set_default_render_runtime(previous)
 
 
 # ---------------------------------------------------------------------------
@@ -226,5 +241,3 @@ def fresh_state():
         "next_color": 0,
         "request_counter": 0,
     }
-
-
