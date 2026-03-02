@@ -1405,38 +1405,8 @@ class CcDumpApp(App):
         self._launch_with_config(merged, log_label="auto_launch:{}".format(config_name))
 
     def _launch_with_config(self, config, log_label: str = "launch_with_config") -> None:
-        _settings_launch.launch_with_config(self, config, log_label=log_label)
         """Build args from config + session_id, launch via tmux."""
-        tmux = self._tmux_controller
-        if tmux is None:
-            self.notify("Tmux not available", severity="warning")
-            return
-
-        session_id = self._active_resume_session_id()
-        profile = cc_dump.app.launch_config.build_launch_profile(
-            config,
-            provider_endpoints=self._provider_endpoints,
-            session_id=session_id,
-        )
-        tmux.configure_launcher(
-            command=config.resolved_command,
-            process_names=profile.process_names,
-            launch_env=profile.environment,
-            launcher_label=profile.launcher_label,
-        )
-        result = tmux.launch_tool(command=profile.command)
-        self._app_log("INFO", "{}: {}".format(log_label, result))
-        if result.success:
-            self.notify("{}: {}".format(result.action.value, result.detail))
-        else:
-            self.notify("Launch failed: {}".format(result.detail), severity="error")
-        self._view_store.update(
-            {
-                "launch:active_name": config.name,
-                "launch:active_tool": profile.launcher_key,
-            }
-        )
-        self._sync_tmux_to_store()
+        _settings_launch.launch_with_config(self, config, log_label=log_label)
 
     def _save_launch_configs(self, configs: list, active_name: str) -> None:
         """Persist configs and active name, invalidating the command palette cache."""
