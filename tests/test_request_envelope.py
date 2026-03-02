@@ -28,7 +28,6 @@ from cc_dump.pipeline.event_types import (
     ResponseNonStreamingEvent,
     ResponseProgressEvent,
     ResponseSSEEvent,
-    parse_sse_event,
 )
 from cc_dump.pipeline.proxy import EventQueueSink
 

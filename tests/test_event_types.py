@@ -11,7 +11,6 @@ from cc_dump.pipeline.event_types import (
     Usage,
     MessageInfo,
     # SSE events
-    SSEEvent,
     MessageStartEvent,
     TextBlockStartEvent,
     ToolUseBlockStartEvent,

@@ -3,7 +3,6 @@
 import pytest
 
 from cc_dump.app.analytics_store import AnalyticsStore, TurnRecord, ToolInvocationRecord
-from cc_dump.core.analysis import ToolEconomicsRow
 from cc_dump.pipeline.event_types import (
     RequestBodyEvent,
     ResponseCompleteEvent,

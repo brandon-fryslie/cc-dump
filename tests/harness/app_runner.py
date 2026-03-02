@@ -13,7 +13,6 @@ from textual.pilot import Pilot
 from cc_dump.app.analytics_store import AnalyticsStore
 from cc_dump.pipeline.router import EventRouter, QueueSubscriber
 from cc_dump.tui.app import CcDumpApp
-import cc_dump.tui.view_store_bridge
 
 
 @asynccontextmanager

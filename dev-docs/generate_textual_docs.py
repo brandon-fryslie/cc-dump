@@ -73,7 +73,7 @@ def run_repomix(include_pattern: str, output_file: Path, compress: bool = True) 
     result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:
-        print(f"FAILED")
+        print("FAILED")
         print(result.stderr)
         return {}
 
@@ -220,7 +220,7 @@ def main():
     generate_index(results)
 
     print(f"\n✓ Done! Generated {len(results)} files in {OUTPUT_DIR}")
-    print(f"\nSee INDEX.md for details.")
+    print("\nSee INDEX.md for details.")
 
 
 if __name__ == "__main__":

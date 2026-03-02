@@ -23,6 +23,7 @@ from textual.widgets import Input, Label, Select, Static
 import cc_dump.app.settings_store
 from cc_dump.tui.chip import ToggleChip
 
+import cc_dump.app.settings_store
 import cc_dump.core.palette
 
 

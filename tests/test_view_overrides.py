@@ -3,17 +3,14 @@
 Covers AC1–AC6 from the plan.
 """
 
-import copy
 
 from textual.theme import BUILTIN_THEMES
 
 from cc_dump.core.formatting import (
-    FormattedBlock,
     TextContentBlock,
     ToolUseBlock,
     HeaderBlock,
     Category,
-    VisState,
     ALWAYS_VISIBLE,
     populate_content_regions,
 )

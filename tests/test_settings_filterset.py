@@ -3,9 +3,7 @@
 import json
 import logging
 
-import pytest
 
-from cc_dump.core.formatting import VisState
 from cc_dump.io.settings import (
     DEFAULT_FILTERSETS,
     _VALID_CATEGORY_KEYS,

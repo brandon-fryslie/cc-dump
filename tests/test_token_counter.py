@@ -1,6 +1,5 @@
 """Tests for token_counter module."""
 
-import pytest
 from cc_dump.core.token_counter import count_tokens
 
 

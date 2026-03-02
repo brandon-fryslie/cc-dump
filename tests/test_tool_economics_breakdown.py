@@ -1,6 +1,5 @@
 """Tests for tool economics model breakdown rendering."""
 
-import pytest
 
 from cc_dump.core.analysis import ToolEconomicsRow, format_model_short
 from cc_dump.tui.panel_renderers import render_economics_panel
@@ -82,7 +81,7 @@ def test_render_economics_panel_aggregate_layout():
     lines = text.split("\n")
 
     # Header should have: Tool | Calls | Input (Cached) | Output | Norm Cost
-    header = next((l for l in lines if "Tool" in l and "Calls" in l), "")
+    header = next((line for line in lines if "Tool" in line and "Calls" in line), "")
     assert "Model" not in header
     assert "Tool" in header
     assert "Calls" in header
@@ -102,7 +101,7 @@ def test_render_economics_panel_breakdown_layout():
     lines = text.split("\n")
 
     # Header should have: Tool | Model | Calls | Input (Cached) | Output | Norm Cost
-    header = next((l for l in lines if "Tool" in l and "Model" in l), "")
+    header = next((line for line in lines if "Tool" in line and "Model" in line), "")
     assert "Tool" in header
     assert "Model" in header
     assert "Calls" in header
@@ -164,7 +163,7 @@ def test_render_economics_panel_mixed_models_alignment():
     lines = text.split("\n")
 
     # Should have header + 2 data lines
-    data_lines = [l for l in lines if "Read" in l or "Bash" in l]
+    data_lines = [line for line in lines if "Read" in line or "Bash" in line]
     assert len(data_lines) == 2
 
     # All lines should be non-empty
