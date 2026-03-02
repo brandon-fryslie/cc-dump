@@ -65,6 +65,21 @@ class _ConversationSwap:
     domain_store: object
 
 
+@dataclass(frozen=True)
+class _WidgetSwapSnapshot:
+    conversations: list[_ConversationSwap]
+    old_logs: object | None
+    old_info: object | None
+    old_footer: object | None
+    logs_state: dict
+    info_state: dict
+    old_panels: dict[str, object | None]
+    panel_states: dict[str, dict]
+    active_panel: str
+    logs_visible: bool
+    info_visible: bool
+
+
 def stop_file_watcher() -> None:
     """Dispose watcher stream subscribers and clear global reference."""
     global _watcher_stream
@@ -272,88 +287,144 @@ async def _replace_all_widgets_inner(app) -> None:
     widgets, then mount new ones with the correct IDs. The stx.pause() guard
     prevents any reaction from querying widgets during the gap.
     """
-    from cc_dump.tui.app import _resolve_factory
+    snapshot = _capture_widget_snapshot(app)
+    if not snapshot.conversations:
+        return
 
-    # 1. Capture state from old widgets
+    new_conversations = _build_replacement_conversations(app, snapshot.conversations)
+    new_panels = _build_replacement_panels(snapshot.panel_states)
+    new_logs = _build_replacement_logs(snapshot.logs_state)
+    new_info = _build_replacement_info(snapshot.info_state)
+
+    await _remove_ephemeral_panels(app)
+    await _remove_old_widgets(snapshot)
+    await _mount_replacement_widgets(
+        app,
+        snapshot=snapshot,
+        new_conversations=new_conversations,
+        new_panels=new_panels,
+        new_logs=new_logs,
+        new_info=new_info,
+    )
+
+    for new_conv in new_conversations.values():
+        new_conv.rerender(app.active_filters)
+    if hasattr(app, "_get_active_domain_store"):
+        # // [LAW:one-source-of-truth] Back-compat alias points at active session store.
+        app._domain_store = app._get_active_domain_store()
+    _rehydrate_panels_from_store(app, new_panels)
+
+
+def _collect_conversation_swaps(app) -> list[_ConversationSwap]:
+    """Collect existing conversation widgets and durable per-session state."""
     # // [LAW:one-source-of-truth] Conversation swap scope is owned by app._session_conv_ids.
     session_conv_ids = getattr(app, "_session_conv_ids", {})
     session_domain_stores = getattr(app, "_session_domain_stores", {})
-    old_conversations: list[_ConversationSwap] = []
-    if isinstance(session_conv_ids, dict) and session_conv_ids:
-        for session_key, conv_id in session_conv_ids.items():
-            old_conv = app._query_safe("#" + str(conv_id))
-            if old_conv is None:
-                continue
-            if isinstance(session_domain_stores, dict):
-                domain_store = session_domain_stores.get(session_key, getattr(app, "_domain_store", None))
-            else:
-                domain_store = getattr(app, "_domain_store", None)
-            conv_widget = cast(_ConversationWidget, old_conv)
-            old_conversations.append(
-                _ConversationSwap(
-                    session_key=str(session_key),
-                    conv_id=str(conv_id),
-                    conv=conv_widget,
-                    parent=conv_widget.parent,
-                    state=conv_widget.get_state(),
-                    domain_store=domain_store,
-                )
-            )
-    else:
-        old_conv = app._get_conv()
-        if old_conv is not None:
-            conv_widget = cast(_ConversationWidget, old_conv)
-            old_conversations.append(
-                _ConversationSwap(
-                    session_key="__default__",
-                    conv_id=str(getattr(app, "_conv_id", "conversation-view")),
-                    conv=conv_widget,
-                    parent=conv_widget.parent,
-                    state=conv_widget.get_state(),
-                    domain_store=getattr(app, "_domain_store", None),
-                )
-            )
+    if not isinstance(session_conv_ids, dict) or not session_conv_ids:
+        return _legacy_default_conversation_swap(app)
 
+    swaps: list[_ConversationSwap] = []
+    for session_key, conv_id in session_conv_ids.items():
+        old_conv = app._query_safe("#" + str(conv_id))
+        if old_conv is None:
+            continue
+        if isinstance(session_domain_stores, dict):
+            domain_store = session_domain_stores.get(
+                session_key,
+                getattr(app, "_domain_store", None),
+            )
+        else:
+            domain_store = getattr(app, "_domain_store", None)
+        conv_widget = cast(_ConversationWidget, old_conv)
+        swaps.append(
+            _ConversationSwap(
+                session_key=str(session_key),
+                conv_id=str(conv_id),
+                conv=conv_widget,
+                parent=conv_widget.parent,
+                state=conv_widget.get_state(),
+                domain_store=domain_store,
+            )
+        )
+    return swaps
+
+
+def _legacy_default_conversation_swap(app) -> list[_ConversationSwap]:
+    """Back-compat path for single-conversation apps."""
+    old_conv = app._get_conv()
+    if old_conv is None:
+        return []
+    conv_widget = cast(_ConversationWidget, old_conv)
+    return [
+        _ConversationSwap(
+            session_key="__default__",
+            conv_id=str(getattr(app, "_conv_id", "conversation-view")),
+            conv=conv_widget,
+            parent=conv_widget.parent,
+            state=conv_widget.get_state(),
+            domain_store=getattr(app, "_domain_store", None),
+        )
+    ]
+
+
+def _capture_widget_snapshot(app) -> _WidgetSwapSnapshot:
+    """Capture old widgets, visibility, and serializable widget state."""
+    old_conversations = _collect_conversation_swaps(app)
     old_logs = app._get_logs()
     old_info = app._get_info()
     old_footer = app._get_footer()
-
-    if not old_conversations:
-        return  # Widgets already missing — nothing to replace
-
     logs_state = old_logs.get_state() if old_logs else {}
     info_state = old_info.get_state() if old_info else {}
 
-    # [LAW:one-source-of-truth] Capture cycling panel state from registry
-    old_panels = {}
-    panel_states = {}
+    # [LAW:one-source-of-truth] Capture cycling panel state from registry.
+    old_panels: dict[str, object | None] = {}
+    panel_states: dict[str, dict] = {}
     for spec in PANEL_REGISTRY:
         old_widget = app._get_panel(spec.name)
         old_panels[spec.name] = old_widget
         panel_states[spec.name] = old_widget.get_state() if old_widget else {}
 
-    active_panel = app.active_panel
     logs_visible = old_logs.display if old_logs else app.show_logs
     info_visible = old_info.display if old_info else app.show_info
+    return _WidgetSwapSnapshot(
+        conversations=old_conversations,
+        old_logs=old_logs,
+        old_info=old_info,
+        old_footer=old_footer,
+        logs_state=logs_state,
+        info_state=info_state,
+        old_panels=old_panels,
+        panel_states=panel_states,
+        active_panel=app.active_panel,
+        logs_visible=logs_visible,
+        info_visible=info_visible,
+    )
 
-    # 2. Create ALL new widgets (without IDs yet — set after mounting).
+
+def _build_replacement_conversations(
+    app,
+    payloads: list[_ConversationSwap],
+) -> dict[str, _ConversationWidget]:
     new_conversations: dict[str, _ConversationWidget] = {}
-    for payload in old_conversations:
-        session_key = payload.session_key
-        domain_store = payload.domain_store
+    for payload in payloads:
         new_conv = cc_dump.tui.widget_factory.create_conversation_view(
             view_store=app._view_store,
-            domain_store=domain_store,
+            domain_store=payload.domain_store,
         )
         _validate_and_restore_widget_state(
             new_conv,
             payload.state,
-            widget_name=f"ConversationView:{session_key}",
+            widget_name=f"ConversationView:{payload.session_key}",
         )
-        new_conversations[session_key] = cast(_ConversationWidget, new_conv)
+        new_conversations[payload.session_key] = cast(_ConversationWidget, new_conv)
+    return new_conversations
 
-    # [LAW:one-source-of-truth] Create cycling panels from registry
-    new_panels = {}
+
+def _build_replacement_panels(panel_states: dict[str, dict]) -> dict[str, object]:
+    from cc_dump.tui.app import _resolve_factory
+
+    # [LAW:one-source-of-truth] Create cycling panels from registry.
+    new_panels: dict[str, object] = {}
     for spec in PANEL_REGISTRY:
         factory = _resolve_factory(spec.factory)
         widget = factory()
@@ -363,74 +434,104 @@ async def _replace_all_widgets_inner(app) -> None:
             widget_name=f"Panel:{spec.name}",
         )
         new_panels[spec.name] = widget
+    return new_panels
 
+
+def _build_replacement_logs(logs_state: dict):
     new_logs = cc_dump.tui.widget_factory.create_logs_panel()
     _validate_and_restore_widget_state(new_logs, logs_state, widget_name="LogsPanel")
+    return new_logs
 
+
+def _build_replacement_info(info_state: dict):
     new_info = cc_dump.tui.info_panel.create_info_panel()
     _validate_and_restore_widget_state(new_info, info_state, widget_name="InfoPanel")
+    return new_info
 
-    # Remove keys panel if mounted (stateless, no state transfer needed)
+
+async def _remove_ephemeral_panels(app) -> None:
+    """Drop transient overlays before remounting persisted widgets."""
     for panel in app.screen.query(cc_dump.tui.keys_panel.KeysPanel):
         await panel.remove()
 
-    # Remove settings panel if mounted (stateless, no state transfer needed)
-    for panel in app.screen.query(cc_dump.tui.settings_panel.SettingsPanel):
-        await panel.remove()
-    app._view_store.set("panel:settings", False)
+    removals = (
+        (cc_dump.tui.settings_panel.SettingsPanel, "panel:settings"),
+        (cc_dump.tui.launch_config_panel.LaunchConfigPanel, "panel:launch_config"),
+        (cc_dump.tui.side_channel_panel.SideChannelPanel, "panel:side_channel"),
+    )
+    for panel_type, store_key in removals:
+        for panel in app.screen.query(panel_type):
+            await panel.remove()
+        app._view_store.set(store_key, False)
 
-    # Remove launch config panel if mounted (stateless, no state transfer needed)
-    for panel in app.screen.query(cc_dump.tui.launch_config_panel.LaunchConfigPanel):
-        await panel.remove()
-    app._view_store.set("panel:launch_config", False)
 
-    # Remove side-channel panel if mounted (stateless, no state transfer needed)
-    for panel in app.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel):
-        await panel.remove()
-    app._view_store.set("panel:side_channel", False)
-
-    # 3. Remove old widgets
-    for payload in old_conversations:
+async def _remove_old_widgets(snapshot: _WidgetSwapSnapshot) -> None:
+    for payload in snapshot.conversations:
         await payload.conv.remove()
     for spec in PANEL_REGISTRY:
-        old_widget = old_panels[spec.name]
+        old_widget = snapshot.old_panels.get(spec.name)
         if old_widget is not None:
             await old_widget.remove()
-    if old_logs is not None:
-        await old_logs.remove()
-    if old_info is not None:
-        await old_info.remove()
-    if old_footer is not None:
-        await old_footer.remove()
+    if snapshot.old_logs is not None:
+        await snapshot.old_logs.remove()
+    if snapshot.old_info is not None:
+        await snapshot.old_info.remove()
+    if snapshot.old_footer is not None:
+        await snapshot.old_footer.remove()
 
-    # 4. Assign IDs, set visibility, and mount new widgets
+
+def _assign_replacement_identity(
+    app,
+    *,
+    snapshot: _WidgetSwapSnapshot,
+    new_conversations: dict[str, _ConversationWidget],
+    new_panels: dict[str, object],
+    new_logs,
+    new_info,
+) -> None:
     new_logs.id = app._logs_id
+    new_logs.display = snapshot.logs_visible
     new_info.id = app._info_id
-    for payload in old_conversations:
-        session_key = payload.session_key
-        conv_id = payload.conv_id
-        new_conversations[session_key].id = conv_id
+    new_info.display = snapshot.info_visible
+
+    for payload in snapshot.conversations:
+        new_conversations[payload.session_key].id = payload.conv_id
 
     for spec in PANEL_REGISTRY:
-        w = new_panels[spec.name]
-        w.id = app._panel_ids[spec.name]
-        w.display = (spec.name == active_panel)
+        panel = new_panels[spec.name]
+        panel.id = app._panel_ids[spec.name]
+        panel.display = spec.name == snapshot.active_panel
 
-    new_logs.display = logs_visible
-    new_info.display = info_visible
+
+async def _mount_replacement_widgets(
+    app,
+    *,
+    snapshot: _WidgetSwapSnapshot,
+    new_conversations: dict[str, _ConversationWidget],
+    new_panels: dict[str, object],
+    new_logs,
+    new_info,
+) -> None:
+    """Mount all replacement widgets in deterministic order."""
+    _assign_replacement_identity(
+        app,
+        snapshot=snapshot,
+        new_conversations=new_conversations,
+        new_panels=new_panels,
+        new_logs=new_logs,
+        new_info=new_info,
+    )
 
     header = app.query_one(Header)
-    # Mount cycling panels in registry order
     prev_widget = header
     for spec in PANEL_REGISTRY:
         await app.mount(new_panels[spec.name], after=prev_widget)
         prev_widget = new_panels[spec.name]
 
-    for payload in old_conversations:
-        session_key = payload.session_key
+    for payload in snapshot.conversations:
         await _mount_replacement_conversation(
             app,
-            new_conversations[session_key],
+            new_conversations[payload.session_key],
             prev_widget=prev_widget,
             old_conv_parent=payload.parent,
         )
@@ -440,7 +541,6 @@ async def _replace_all_widgets_inner(app) -> None:
     await app.mount(new_logs, after=mount_after)
     await app.mount(new_info, after=new_logs)
 
-    # StatusFooter is stateless — create fresh and hydrate from store
     new_footer = cc_dump.tui.custom_footer.StatusFooter()
     await app.mount(new_footer, after=new_info)
     new_footer.update_display(
@@ -448,14 +548,6 @@ async def _replace_all_widgets_inner(app) -> None:
             app._view_store.footer_state.get()
         )
     )
-
-    # 5. Re-render with current filters
-    for new_conv in new_conversations.values():
-        new_conv.rerender(app.active_filters)
-    if hasattr(app, "_get_active_domain_store"):
-        # // [LAW:one-source-of-truth] Back-compat alias points at active session store.
-        app._domain_store = app._get_active_domain_store()
-    _rehydrate_panels_from_store(app, new_panels)
 
 
 def _rehydrate_panels_from_store(app, new_panels: dict[str, object]) -> None:
