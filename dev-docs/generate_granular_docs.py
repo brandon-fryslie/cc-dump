@@ -270,7 +270,7 @@ python3 generate_granular_docs.py
     (OUTPUT_DIR / "INDEX.md").write_text(index_md)
     (OUTPUT_DIR / "manifest.json").write_text(json.dumps(results, indent=2))
 
-    print(f"\n✓ Generated INDEX.md and manifest.json")
+    print("\n✓ Generated INDEX.md and manifest.json")
     print(f"\n📊 Summary: {total_files} files, {total_kb:.0f}KB total")
     print(f"   Average: {total_kb/total_files:.1f}KB per file")
 
@@ -278,7 +278,7 @@ python3 generate_granular_docs.py
 def main():
     if not REPO_DIR.exists():
         print(f"❌ Error: {REPO_DIR} not found")
-        print(f"   Run: git clone --depth 1 https://github.com/textualize/textual.git textual-repo")
+        print("   Run: git clone --depth 1 https://github.com/textualize/textual.git textual-repo")
         return 1
 
     print("🔨 Generating granular Textual documentation...")
@@ -293,7 +293,7 @@ def main():
 
     generate_index(results)
 
-    print(f"\n✅ Done! Check INDEX.md for details")
+    print("\n✅ Done! Check INDEX.md for details")
     return 0
 
 
