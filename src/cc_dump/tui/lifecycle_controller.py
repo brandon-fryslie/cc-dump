@@ -56,6 +56,51 @@ def _connect_stderr_tee(app) -> None:
     tee.connect(_drain)
 
 
+def _endpoint_mode(spec, endpoint: dict[str, object]) -> str:
+    """Return normalized endpoint mode."""
+    raw = endpoint.get("proxy_mode", spec.proxy_type)
+    return str(raw or spec.proxy_type).strip().lower()
+
+
+def _endpoint_usage_line(
+    spec,
+    *,
+    mode: str,
+    proxy_url: str,
+    target: str,
+    ca_path: str,
+) -> str:
+    """Build provider usage line preserving existing reverse-target behavior."""
+    if mode == "reverse" and target:
+        return f"  Usage: {spec.base_url_env}={proxy_url} {spec.client_hint}"
+    suffix = f" NODE_EXTRA_CA_CERTS={ca_path}" if ca_path else ""
+    return (
+        f"  Usage: HTTP_PROXY={proxy_url} HTTPS_PROXY={proxy_url}{suffix} "
+        f"{spec.client_hint}"
+    )
+
+
+def _endpoint_detail_lines(spec, endpoint: dict[str, object]) -> list[str]:
+    """Return detail lines for one provider endpoint."""
+    proxy_url = str(endpoint.get("proxy_url", "") or "")
+    mode = _endpoint_mode(spec, endpoint)
+    target = str(endpoint.get("target", "") or "")
+    ca_path = str(endpoint.get("forward_proxy_ca_cert_path", "") or "")
+    details = [f"{spec.display_name} endpoint ({mode}): {proxy_url}"]
+    if mode == "reverse" and target:
+        details.append(f"  Target: {target}")
+    details.append(
+        _endpoint_usage_line(
+            spec,
+            mode=mode,
+            proxy_url=proxy_url,
+            target=target,
+            ca_path=ca_path,
+        )
+    )
+    return details
+
+
 def _log_proxy_endpoints(app) -> None:
     app._app_log("INFO", "🚀 cc-dump proxy started")
     app._app_log("INFO", f"Listening on: http://{app._host}:{app._port}")
@@ -66,19 +111,9 @@ def _log_proxy_endpoints(app) -> None:
         proxy_url = str(endpoint.get("proxy_url", "") or "")
         if not proxy_url:
             continue
-        mode = str(endpoint.get("proxy_mode", spec.proxy_type) or spec.proxy_type).strip().lower()
-        app._app_log("INFO", f"{spec.display_name} endpoint ({mode}): {proxy_url}")
-        target = str(endpoint.get("target", "") or "")
-        if mode == "reverse" and target:
-            app._app_log("INFO", f"  Target: {target}")
-            app._app_log("INFO", f"  Usage: {spec.base_url_env}={proxy_url} {spec.client_hint}")
-            continue
-        ca_path = str(endpoint.get("forward_proxy_ca_cert_path", "") or "")
-        suffix = f" NODE_EXTRA_CA_CERTS={ca_path}" if ca_path else ""
-        app._app_log(
-            "INFO",
-            f"  Usage: HTTP_PROXY={proxy_url} HTTPS_PROXY={proxy_url}{suffix} {spec.client_hint}",
-        )
+        # // [LAW:dataflow-not-control-flow] Endpoint logging is derived line data.
+        for line in _endpoint_detail_lines(spec, endpoint):
+            app._app_log("INFO", line)
 
 
 def _start_workers(app) -> None:
