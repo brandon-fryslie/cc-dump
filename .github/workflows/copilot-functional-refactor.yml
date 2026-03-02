@@ -1,0 +1,44 @@
+name: Copilot Functional Refactor
+
+on:
+  schedule:
+    - cron: "0 15 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: copilot-functional-refactor
+  cancel-in-progress: false
+
+jobs:
+  create-agent-task:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      # // [LAW:dataflow-not-control-flow] The job always runs the same steps; only the prompt data and repo metadata vary.
+      # // [LAW:one-source-of-truth] The scheduled task reads the prompt from one canonical file instead of duplicating it in workflow YAML.
+      - name: Validate Copilot agent token
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_AGENT_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::Missing COPILOT_AGENT_TOKEN. Store a user token that can create Copilot coding agent tasks."
+            exit 1
+          fi
+
+      - name: Create Copilot coding agent task
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_AGENT_TOKEN }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          gh auth status
+          gh agent-task create \
+            --repo "$GITHUB_REPOSITORY" \
+            --base "$DEFAULT_BRANCH" \
+            --from-file .github/copilot-prompts/functional-refactor.md
