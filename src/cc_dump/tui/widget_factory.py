@@ -165,6 +165,7 @@ class TurnData:
         search_ctx=None,
         overrides=None,
         render_key: tuple | None = None,
+        render_runtime=None,
     ) -> bool:
         """Re-render if a relevant filter changed. Returns True if strips changed.
 
@@ -196,6 +197,7 @@ class TurnData:
             search_ctx=search_ctx,
             turn_index=self.turn_index,
             overrides=overrides,
+            runtime=render_runtime,
         )
         strip_hash = _hash_strips(strips)
         if strip_hash == self._strip_hash:
@@ -242,11 +244,12 @@ class ConversationView(ScrollView):
     }
     """
 
-    def __init__(self, view_store=None, domain_store=None):
+    def __init__(self, view_store=None, domain_store=None, render_runtime=None):
         super().__init__()
         self._view_store = view_store
         # Auto-create domain store for tests that don't provide one
         self._domain_store = domain_store if domain_store is not None else cc_dump.app.domain_store.DomainStore()
+        self._render_runtime = render_runtime
         self._turns: list[TurnData] = []
         self._total_lines: int = 0
         self._widest_line: int = 0
@@ -821,6 +824,7 @@ class ConversationView(ScrollView):
             search_ctx=self._last_search_ctx,
             overrides=self._view_overrides,
             render_key=render_key,
+            render_runtime=self._render_runtime,
         )
         td._filter_revision = self._active_filter_revision
         return idx if changed else -1
@@ -1122,6 +1126,7 @@ class ConversationView(ScrollView):
             search_ctx=self._last_search_ctx,
             turn_index=turn_index,
             overrides=self._view_overrides,
+            runtime=self._render_runtime,
         )
         td = TurnData(
             turn_index=turn_index,
@@ -1256,7 +1261,7 @@ class ConversationView(ScrollView):
 
         console = self.app.console
         delta_strips = cc_dump.tui.rendering.render_streaming_preview(
-            delta_text, console, width
+            delta_text, console, width, runtime=self._render_runtime
         )
 
         td.strips = td.strips[: td._stable_strip_count] + delta_strips
@@ -1333,6 +1338,7 @@ class ConversationView(ScrollView):
             width,
             block_cache=self._block_strip_cache,
             overrides=self._view_overrides,
+            runtime=self._render_runtime,
         )
 
         # Create or reuse TurnData for the finalized turn
@@ -1502,6 +1508,7 @@ class ConversationView(ScrollView):
             search_ctx=None,
             overrides=self._view_overrides,
             render_key=render_key,
+            render_runtime=self._render_runtime,
         )
         td._pending_filter_snapshot = None
         td._filter_revision = target_revision
@@ -1670,6 +1677,7 @@ class ConversationView(ScrollView):
                         search_ctx=search_ctx,
                         overrides=self._view_overrides,
                         render_key=render_key,
+                        render_runtime=self._render_runtime,
                     ):
                         if first_changed is None:
                             first_changed = idx
@@ -1712,6 +1720,7 @@ class ConversationView(ScrollView):
             search_ctx=self._last_search_ctx,
             overrides=self._view_overrides,
             render_key=render_key,
+            render_runtime=self._render_runtime,
         )
         self._recalculate_offsets_from(turn_index)
 
@@ -1751,6 +1760,7 @@ class ConversationView(ScrollView):
                     search_ctx=self._last_search_ctx,
                     turn_index=td.turn_index,
                     overrides=self._view_overrides,
+                    runtime=self._render_runtime,
                 )
             )
             td._strip_hash = _hash_strips(td.strips)
@@ -2615,9 +2625,17 @@ class LogsPanel(RichLog):
 
 
 # Factory functions for creating widgets
-def create_conversation_view(view_store=None, domain_store=None) -> ConversationView:
+def create_conversation_view(
+    view_store=None,
+    domain_store=None,
+    render_runtime=None,
+) -> ConversationView:
     """Create a new ConversationView instance."""
-    return ConversationView(view_store=view_store, domain_store=domain_store)
+    return ConversationView(
+        view_store=view_store,
+        domain_store=domain_store,
+        render_runtime=render_runtime,
+    )
 
 
 def create_stats_panel() -> StatsPanel:
