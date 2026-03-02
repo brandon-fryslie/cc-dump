@@ -24,6 +24,18 @@ def _init_theme():
     set_theme(BUILTIN_THEMES["textual-dark"])
 
 
+@pytest.fixture
+def isolated_render_runtime():
+    """Provide an isolated render runtime for tests that need fail-fast setup."""
+    import cc_dump.tui.rendering as rendering
+
+    previous = rendering.reset_render_runtime_for_tests()
+    try:
+        yield
+    finally:
+        rendering.set_default_render_runtime(previous)
+
+
 # ---------------------------------------------------------------------------
 # Smart wait helpers — replace fixed time.sleep() across test files
 # ---------------------------------------------------------------------------
@@ -226,5 +238,4 @@ def fresh_state():
         "next_color": 0,
         "request_counter": 0,
     }
-
 

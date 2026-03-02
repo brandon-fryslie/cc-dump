@@ -144,12 +144,23 @@ def _handle_complete_response_payload(
     )
 
     status_code, headers_dict = _pop_response_meta(app_state, request_id)
+    format_runtime = widgets.get("format_runtime")
     response_blocks: list = []
     if status_code > 0 or headers_dict:
         response_blocks.extend(
-            cc_dump.core.formatting.format_response_headers(status_code or 200, headers_dict)
+            cc_dump.core.formatting.format_response_headers(
+                status_code or 200,
+                headers_dict,
+                runtime=format_runtime,
+            )
         )
-    response_blocks.extend(cc_dump.core.formatting.format_complete_response_for_provider(provider, complete_body))
+    response_blocks.extend(
+        cc_dump.core.formatting.format_complete_response_for_provider(
+            provider,
+            complete_body,
+            runtime=format_runtime,
+        )
+    )
 
     domain_store = widgets["domain_store"]
     if domain_store.get_stream_blocks(request_id):
@@ -210,7 +221,14 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
         pending_headers = pending_headers_all.pop(event.request_id, None)
         app_state["pending_request_headers"] = pending_headers_all
         provider = event.provider
-        blocks = cc_dump.core.formatting.format_request_for_provider(provider, body, state, request_headers=pending_headers)
+        format_runtime = widgets.get("format_runtime")
+        blocks = cc_dump.core.formatting.format_request_for_provider(
+            provider,
+            body,
+            state,
+            request_headers=pending_headers,
+            runtime=format_runtime,
+        )
 
         domain_store = widgets["domain_store"]
         stats = widgets["stats"]
@@ -243,7 +261,12 @@ def handle_response_headers(event: ResponseHeadersEvent, state, widgets, app_sta
             recv_ns=event.recv_ns,
         )
 
-        blocks = cc_dump.core.formatting.format_response_headers(status_code, headers_dict)
+        format_runtime = widgets.get("format_runtime")
+        blocks = cc_dump.core.formatting.format_response_headers(
+            status_code,
+            headers_dict,
+            runtime=format_runtime,
+        )
 
         domain_store = widgets["domain_store"]
 

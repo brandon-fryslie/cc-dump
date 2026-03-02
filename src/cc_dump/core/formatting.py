@@ -4,6 +4,8 @@ Returns FormattedBlock dataclasses that can be rendered by different backends
 (e.g., tui/rendering.py for Rich renderables in TUI mode).
 """
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 import difflib
 import hashlib
 import json
@@ -111,15 +113,66 @@ class Category(Enum):
 
 # ─── Structured IR ────────────────────────────────────────────────────────────
 
-# // [LAW:one-source-of-truth] Block identity — monotonic, unique per process.
-_next_block_id: int = 0
+@dataclass
+class FormatRuntime:
+    """Formatting runtime state.
+
+    // [LAW:one-source-of-truth] Mutable block allocation state lives here.
+    """
+
+    next_block_id: int = 0
+
+
+_default_format_runtime = FormatRuntime()
+_active_format_runtime_override: ContextVar[FormatRuntime | None] = ContextVar(
+    "cc_dump_format_runtime_override",
+    default=None,
+)
+
+
+def create_format_runtime(*, next_block_id: int = 0) -> FormatRuntime:
+    """Create a fresh formatting runtime."""
+    return FormatRuntime(next_block_id=next_block_id)
+
+
+def _active_format_runtime() -> FormatRuntime:
+    runtime = _active_format_runtime_override.get()
+    return runtime if runtime is not None else _default_format_runtime
+
+
+def set_default_format_runtime(runtime: FormatRuntime) -> FormatRuntime:
+    """Replace the default formatting runtime and return the previous runtime."""
+    global _default_format_runtime
+    previous = _default_format_runtime
+    _default_format_runtime = runtime
+    return previous
+
+
+def reset_format_runtime_for_tests(*, next_block_id: int = 0) -> FormatRuntime:
+    """Reset the default formatting runtime to an isolated test instance."""
+    previous = _default_format_runtime
+    set_default_format_runtime(create_format_runtime(next_block_id=next_block_id))
+    return previous
+
+
+@contextmanager
+def use_format_runtime(runtime: FormatRuntime | None):
+    """Temporarily bind a formatting runtime for nested block allocation."""
+    if runtime is None:
+        yield
+        return
+    token = _active_format_runtime_override.set(runtime)
+    try:
+        yield
+    finally:
+        _active_format_runtime_override.reset(token)
 
 
 def _auto_id() -> int:
     """Allocate a unique block_id. Monotonically increasing per process."""
-    global _next_block_id
-    _next_block_id += 1
-    return _next_block_id
+    runtime = _active_format_runtime()
+    runtime.next_block_id += 1
+    return runtime.next_block_id
 
 
 @dataclass
@@ -1023,7 +1076,18 @@ _COMPOUND_TOOL_PARSERS: dict[str, "Callable[[str], list[FormattedBlock]]"] = {
 
 
 
-def format_request(body, state, request_headers: dict | None = None):
+def format_request(
+    body,
+    state,
+    request_headers: dict | None = None,
+    runtime: FormatRuntime | None = None,
+):
+    """Format a full API request as a list of FormattedBlock."""
+    with use_format_runtime(runtime):
+        return _format_request_impl(body, state, request_headers=request_headers)
+
+
+def _format_request_impl(body, state, request_headers: dict | None = None):
     """Format a full API request as a list of FormattedBlock.
 
     Produces hierarchical container blocks (MetadataSection, ToolDefsSection,
@@ -1278,7 +1342,16 @@ _RESPONSE_EVENT_FORMATTERS: dict[type[SSEEvent], Callable[[SSEEvent], list[Forma
 }
 
 
-def format_response_event(sse_event: SSEEvent) -> list[FormattedBlock]:
+def format_response_event(
+    sse_event: SSEEvent,
+    runtime: FormatRuntime | None = None,
+) -> list[FormattedBlock]:
+    """Format a streaming SSE event as a list of FormattedBlock."""
+    with use_format_runtime(runtime):
+        return _format_response_event_impl(sse_event)
+
+
+def _format_response_event_impl(sse_event: SSEEvent) -> list[FormattedBlock]:
     """Format a streaming SSE event as a list of FormattedBlock.
 
     // [LAW:one-source-of-truth] The class IS the type — dispatch on type().
@@ -1318,7 +1391,16 @@ _COMPLETE_RESPONSE_FACTORIES = {
 }
 
 
-def format_complete_response(complete_message):
+def format_complete_response(
+    complete_message,
+    runtime: FormatRuntime | None = None,
+):
+    """Format a complete (non-streaming) Claude message as FormattedBlocks."""
+    with use_format_runtime(runtime):
+        return _format_complete_response_impl(complete_message)
+
+
+def _format_complete_response_impl(complete_message):
     """Format a complete (non-streaming) Claude message as FormattedBlocks.
 
     Wraps content in a MessageBlock container for structural consistency with
@@ -1367,7 +1449,17 @@ def format_request_headers(headers_dict: dict) -> list:
     return [HttpHeadersBlock(headers=headers_dict or {}, header_type="request")]
 
 
-def format_response_headers(status_code: int, headers_dict: dict) -> list:
+def format_response_headers(
+    status_code: int,
+    headers_dict: dict,
+    runtime: FormatRuntime | None = None,
+) -> list:
+    """Format HTTP response headers as a ResponseMetadataSection container."""
+    with use_format_runtime(runtime):
+        return _format_response_headers_impl(status_code, headers_dict)
+
+
+def _format_response_headers_impl(status_code: int, headers_dict: dict) -> list:
     """Format HTTP response headers as a ResponseMetadataSection container."""
     # [LAW:dataflow-not-control-flow] Always emit container;
     # empty headers dict → HttpHeadersBlock with no entries (status code still shown)
@@ -1397,6 +1489,24 @@ def format_response_headers(status_code: int, headers_dict: dict) -> list:
 
 
 def format_openai_request(
+    body,
+    state,
+    request_headers=None,
+    *,
+    provider_label: str = "OpenAI",
+    runtime: FormatRuntime | None = None,
+) -> list:
+    """Format an OpenAI API request as a list of FormattedBlock."""
+    with use_format_runtime(runtime):
+        return _format_openai_request_impl(
+            body,
+            state,
+            request_headers=request_headers,
+            provider_label=provider_label,
+        )
+
+
+def _format_openai_request_impl(
     body,
     state,
     request_headers=None,
@@ -1560,7 +1670,16 @@ def format_openai_request(
     return blocks
 
 
-def format_openai_complete_response(complete_message) -> list:
+def format_openai_complete_response(
+    complete_message,
+    runtime: FormatRuntime | None = None,
+) -> list:
+    """Format a complete OpenAI chat completion as FormattedBlocks."""
+    with use_format_runtime(runtime):
+        return _format_openai_complete_response_impl(complete_message)
+
+
+def _format_openai_complete_response_impl(complete_message) -> list:
     """Format a complete OpenAI chat completion as FormattedBlocks.
 
     Mirrors format_complete_response() structure: StreamInfoBlock, MessageBlock
@@ -1639,12 +1758,18 @@ _CompleteResponseFormatter = Callable[[object], list]
 
 
 _COMPLETE_RESPONSE_FORMATTERS_BY_FAMILY: dict[str, _CompleteResponseFormatter] = {
-    "anthropic": format_complete_response,
-    "openai": format_openai_complete_response,
+    "anthropic": _format_complete_response_impl,
+    "openai": _format_openai_complete_response_impl,
 }
 
 
-def format_request_for_provider(provider: str, body, state, request_headers=None) -> list:
+def format_request_for_provider(
+    provider: str,
+    body,
+    state,
+    request_headers=None,
+    runtime: FormatRuntime | None = None,
+) -> list:
     """Dispatch request formatting by provider."""
     spec = cc_dump.providers.get_provider_spec(provider)
     if spec.protocol_family == "openai":
@@ -1653,15 +1778,21 @@ def format_request_for_provider(provider: str, body, state, request_headers=None
             state,
             request_headers=request_headers,
             provider_label=spec.display_name,
+            runtime=runtime,
         )
-    return format_request(body, state, request_headers=request_headers)
+    return format_request(body, state, request_headers=request_headers, runtime=runtime)
 
 
-def format_complete_response_for_provider(provider: str, complete_message) -> list:
+def format_complete_response_for_provider(
+    provider: str,
+    complete_message,
+    runtime: FormatRuntime | None = None,
+) -> list:
     """Dispatch complete response formatting by provider."""
     spec = cc_dump.providers.get_provider_spec(provider)
     formatter = _COMPLETE_RESPONSE_FORMATTERS_BY_FAMILY.get(
         spec.protocol_family,
-        format_complete_response,
+        _format_complete_response_impl,
     )
-    return formatter(complete_message)
+    with use_format_runtime(runtime):
+        return formatter(complete_message)
