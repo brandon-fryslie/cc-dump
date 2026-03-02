@@ -178,6 +178,8 @@ class CcDumpApp(App):
         provider_endpoints: Optional[dict[str, dict[str, object]]] = None,
         openai_port: Optional[int] = None,
         openai_target: Optional[str] = None,
+        auto_launch_config: Optional[str] = None,
+        auto_launch_extra_args: Optional[list[str]] = None,
     ):
         super().__init__()
         self._event_queue = event_queue
@@ -230,6 +232,8 @@ class CcDumpApp(App):
         self._view_store = view_store
         self._domain_store = domain_store if domain_store is not None else cc_dump.app.domain_store.DomainStore()
         self._store_context = store_context
+        self._auto_launch_config = auto_launch_config
+        self._auto_launch_extra_args = list(auto_launch_extra_args) if auto_launch_extra_args else []
         self._closing = False
         self._quit_requested_at: float | None = None
         self._markdown_theme_pushed = False
@@ -847,6 +851,7 @@ class CcDumpApp(App):
             self._process_replay_data()
         if self._resume_ui_state is not None:
             self._apply_resume_ui_state_postload()
+        self._execute_auto_launch()
 
     def _bind_view_store_reactions(self) -> None:
         """(Re)bind view-store reactions after app mount.
@@ -1485,6 +1490,32 @@ class CcDumpApp(App):
         conv = self._get_conv()
         if conv is not None:
             conv.focus()
+
+    def _execute_auto_launch(self) -> None:
+        """Execute auto-launch from the CLI 'run' subcommand.
+
+        // [LAW:dataflow-not-control-flow] Config resolution and extra-args merging
+        // are data transformations; launch outcome determined by result values.
+        """
+        config_name = self._auto_launch_config
+        if config_name is None:
+            return
+        configs = cc_dump.app.launch_config.load_configs()
+        by_name = {c.name: c for c in configs}
+        config = by_name.get(config_name)
+        if config is None:
+            available = ", ".join(c.name for c in configs)
+            self.notify(
+                "Unknown config '{}'. Available: {}".format(config_name, available),
+                severity="error",
+                timeout=10,
+            )
+            self._app_log("ERROR", "auto-launch: config '{}' not found".format(config_name))
+            return
+        merged = cc_dump.app.launch_config.config_with_extra_args(config, self._auto_launch_extra_args)
+        extra_desc = " + {}".format(" ".join(self._auto_launch_extra_args)) if self._auto_launch_extra_args else ""
+        self._app_log("INFO", "auto-launching '{}'{}".format(config_name, extra_desc))
+        self._launch_with_config(merged, log_label="auto_launch:{}".format(config_name))
 
     def _launch_with_config(self, config, log_label: str = "launch_with_config") -> None:
         """Build args from config + session_id, launch via tmux."""
