@@ -9,6 +9,7 @@ from cc_dump.app.launch_config import (
     LaunchConfig,
     build_full_command,
     build_launch_profile,
+    config_with_extra_args,
     default_configs,
     get_active_config,
     load_active_name,
@@ -296,3 +297,56 @@ class TestDefaultsFactory:
         assert [config.name for config in configs] == list(
             cc_dump.app.launcher_registry.launcher_keys()
         )
+
+
+class TestConfigWithExtraArgs:
+    """config_with_extra_args — transient extra-arg merging for 'run' subcommand."""
+
+    def test_empty_extra_args_unchanged(self):
+        config = LaunchConfig(name="test", options={"extra_args": ""})
+        result = config_with_extra_args(config, [])
+        assert result.options["extra_args"] == ""
+        assert result.name == "test"
+
+    def test_appends_cli_args_to_empty(self):
+        config = LaunchConfig(name="test", options={"extra_args": ""})
+        result = config_with_extra_args(config, ["--continue", "--verbose"])
+        assert result.options["extra_args"] == "--continue --verbose"
+
+    def test_merges_with_existing_extra_args(self):
+        config = LaunchConfig(name="test", options={"extra_args": "--existing"})
+        result = config_with_extra_args(config, ["--new"])
+        assert result.options["extra_args"] == "--existing --new"
+
+    def test_does_not_mutate_original(self):
+        original_options = {"extra_args": "original"}
+        config = LaunchConfig(name="test", options=dict(original_options))
+        config_with_extra_args(config, ["--added"])
+        assert config.options["extra_args"] == "original"
+
+    def test_preserves_other_fields(self):
+        config = LaunchConfig(
+            name="myconfig",
+            launcher="claude",
+            model="opus",
+            options={"extra_args": ""},
+        )
+        result = config_with_extra_args(config, ["--flag"])
+        assert result.name == "myconfig"
+        assert result.launcher == "claude"
+        assert result.model == "opus"
+
+    def test_missing_extra_args_key_treated_as_empty(self):
+        config = LaunchConfig(name="test", options={})
+        result = config_with_extra_args(config, ["--flag"])
+        assert result.options["extra_args"] == "--flag"
+
+    def test_args_with_spaces_are_shell_quoted(self):
+        config = LaunchConfig(name="test", options={"extra_args": ""})
+        result = config_with_extra_args(config, ["--msg=hello world"])
+        assert result.options["extra_args"] == "'--msg=hello world'"
+
+    def test_merges_with_existing_when_arg_has_spaces(self):
+        config = LaunchConfig(name="test", options={"extra_args": "--existing"})
+        result = config_with_extra_args(config, ["--msg=hello world"])
+        assert result.options["extra_args"] == "--existing '--msg=hello world'"
