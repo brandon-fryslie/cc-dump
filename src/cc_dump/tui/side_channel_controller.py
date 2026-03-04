@@ -31,27 +31,6 @@ def _side_channel_usage_summary(app) -> dict:
         else {}
     )
 
-
-def _sync_workbench_result(
-    app,
-    *,
-    text: str,
-    source: str,
-    elapsed_ms: int,
-    active_action: str,
-    context_key: str,
-) -> None:
-    workbench_results = app._get_workbench_results_view()
-    if workbench_results is not None:
-        workbench_results.update_result(
-            text=text,
-            source=source,
-            elapsed_ms=elapsed_ms,
-            action=active_action,
-            context_session_id=context_key,
-        )
-
-
 def open_side_channel(app) -> None:
     """Open AI Workbench sidebar and hydrate panel state."""
     _ensure_side_channel_panel(app)
@@ -68,15 +47,12 @@ def open_side_channel(app) -> None:
             "sc:result_source": "",
             "sc:result_elapsed_ms": 0,
             "sc:purpose_usage": _side_channel_usage_summary(app),
+            "workbench:text": "",
+            "workbench:source": "",
+            "workbench:elapsed_ms": 0,
+            "workbench:action": "",
+            "workbench:context_session_id": context_key,
         }
-    )
-    _sync_workbench_result(
-        app,
-        text="",
-        source="",
-        elapsed_ms=0,
-        active_action="",
-        context_key=context_key,
     )
     app._sc_action_batch_id = ""
     app._sc_action_items = []
@@ -282,14 +258,11 @@ def set_side_channel_result(
         app._view_store.set("sc:result_text", text)
         app._view_store.set("sc:result_source", source)
         app._view_store.set("sc:result_elapsed_ms", elapsed_ms)
-    _sync_workbench_result(
-        app,
-        text=text,
-        source=source,
-        elapsed_ms=elapsed_ms,
-        active_action=active_action,
-        context_key=context_key,
-    )
+        app._view_store.set("workbench:text", text)
+        app._view_store.set("workbench:source", source)
+        app._view_store.set("workbench:elapsed_ms", elapsed_ms)
+        app._view_store.set("workbench:action", active_action)
+        app._view_store.set("workbench:context_session_id", context_key)
     if focus_results:
         app._show_workbench_results_tab()
 

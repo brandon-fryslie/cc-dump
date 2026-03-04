@@ -48,6 +48,18 @@ def build_reaction_context(app) -> dict:
             return
         panel.update_display(SideChannelPanelState(**state))
 
+    def push_workbench(state):
+        workbench = app._get_workbench_results_view()
+        if workbench is None:
+            return
+        workbench.update_result(
+            text=str(state.get("text", "")),
+            source=str(state.get("source", "")),
+            elapsed_ms=int(state.get("elapsed_ms", 0)),
+            action=str(state.get("action", "")),
+            context_session_id=str(state.get("context_session_id", "")),
+        )
+
     def push_panel_change(value):
         app._sync_panel_display(value)
         _actions.refresh_active_panel(app, value)
@@ -98,6 +110,7 @@ def build_reaction_context(app) -> dict:
         "push_footer": push_footer,
         "push_errors": push_errors,
         "push_sc_panel": push_sc_panel,
+        "push_workbench": push_workbench,
         "push_panel_change": push_panel_change,
         "push_sidebar_state": push_sidebar_state,
         "push_chrome_panels": push_chrome_panels,

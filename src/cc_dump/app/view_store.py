@@ -51,6 +51,13 @@ SCHEMA["sc:result_elapsed_ms"] = 0
 SCHEMA["sc:purpose_usage"] = {}
 SCHEMA["settings:side_channel_enabled"] = False
 
+# Workbench results projection state (canonical source for results tab rendering)
+SCHEMA["workbench:text"] = ""
+SCHEMA["workbench:source"] = ""
+SCHEMA["workbench:elapsed_ms"] = 0
+SCHEMA["workbench:action"] = ""
+SCHEMA["workbench:context_session_id"] = ""
+
 # Search identity state — survives hot-reload via reconcile
 # // [LAW:one-source-of-truth] String, not SearchPhase enum — stable across reloads.
 SCHEMA["search:phase"] = "inactive"
@@ -161,6 +168,19 @@ def create():
     store.sc_panel_state = sc_panel_state
 
     @computed
+    def workbench_state():
+        # [LAW:one-source-of-truth] Workbench result rendering is derived from canonical store keys.
+        return {
+            "text": str(store.get("workbench:text")),
+            "source": str(store.get("workbench:source")),
+            "elapsed_ms": _coerce_int(store.get("workbench:elapsed_ms"), 0),
+            "action": str(store.get("workbench:action")),
+            "context_session_id": str(store.get("workbench:context_session_id")),
+        }
+
+    store.workbench_state = workbench_state
+
+    @computed
     def search_ui_state():
         # [LAW:single-enforcer] Search bar + footer visibility projection is centralized here.
         phase = str(store.get("search:phase"))
@@ -206,6 +226,7 @@ def setup_reactions(store, context=None):
                 ("push_footer", lambda: store.footer_state.get()),
                 ("push_errors", lambda: store.error_items.get()),
                 ("push_sc_panel", lambda: store.sc_panel_state.get()),
+                ("push_workbench", lambda: store.workbench_state.get()),
                 ("push_search_ui", lambda: store.search_ui_state.get()),
             ]:
                 cb = context.get(key)
