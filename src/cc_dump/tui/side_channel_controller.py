@@ -24,28 +24,62 @@ def _ensure_side_channel_panel(app):
     return panel
 
 
+def _side_channel_usage_summary(app) -> dict:
+    return (
+        app._analytics_store.get_side_channel_purpose_summary()
+        if app._analytics_store is not None
+        else {}
+    )
+
+
+def _sync_workbench_result(
+    app,
+    *,
+    text: str,
+    source: str,
+    elapsed_ms: int,
+    active_action: str,
+    context_key: str,
+) -> None:
+    workbench_results = app._get_workbench_results_view()
+    if workbench_results is not None:
+        workbench_results.update_result(
+            text=text,
+            source=source,
+            elapsed_ms=elapsed_ms,
+            action=active_action,
+            context_session_id=context_key,
+        )
+
+
 def open_side_channel(app) -> None:
     """Open AI Workbench sidebar and hydrate panel state."""
     _ensure_side_channel_panel(app)
+    context_key = app._context_session_key(app._active_context_session_key())
+    # [LAW:dataflow-not-control-flow] Single snapshot update avoids intermediate UI states.
     app._view_store.update(
         {
             "panel:settings": False,
             "panel:launch_config": False,
             "panel:side_channel": True,
+            "sc:loading": False,
+            "sc:active_action": "",
+            "sc:result_text": "",
+            "sc:result_source": "",
+            "sc:result_elapsed_ms": 0,
+            "sc:purpose_usage": _side_channel_usage_summary(app),
         }
     )
-    set_side_channel_result(
+    _sync_workbench_result(
         app,
         text="",
         source="",
         elapsed_ms=0,
-        loading=False,
         active_action="",
+        context_key=context_key,
     )
-    app._view_store.set("sc:purpose_usage", {})
     app._sc_action_batch_id = ""
     app._sc_action_items = []
-    refresh_side_channel_usage(app)
 
 
 def close_side_channel(app) -> None:
@@ -110,12 +144,7 @@ def refresh_side_channel_usage(app) -> None:
 
     // [LAW:one-source-of-truth] AnalyticsStore is canonical source for usage aggregates.
     """
-    usage = (
-        app._analytics_store.get_side_channel_purpose_summary()
-        if app._analytics_store is not None
-        else {}
-    )
-    app._view_store.set("sc:purpose_usage", usage)
+    app._view_store.set("sc:purpose_usage", _side_channel_usage_summary(app))
 
 
 def collect_recent_messages(app, count: int) -> list[dict]:
@@ -253,15 +282,14 @@ def set_side_channel_result(
         app._view_store.set("sc:result_text", text)
         app._view_store.set("sc:result_source", source)
         app._view_store.set("sc:result_elapsed_ms", elapsed_ms)
-    workbench_results = app._get_workbench_results_view()
-    if workbench_results is not None:
-        workbench_results.update_result(
-            text=text,
-            source=source,
-            elapsed_ms=elapsed_ms,
-            action=active_action,
-            context_session_id=context_key,
-        )
+    _sync_workbench_result(
+        app,
+        text=text,
+        source=source,
+        elapsed_ms=elapsed_ms,
+        active_action=active_action,
+        context_key=context_key,
+    )
     if focus_results:
         app._show_workbench_results_tab()
 
