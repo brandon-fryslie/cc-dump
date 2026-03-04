@@ -6,6 +6,7 @@ Import validation, widget protocols, state preservation, and module structure.
 
 import ast
 import importlib
+import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -249,6 +250,7 @@ class TestImportValidation:
         def _old_func() -> str:
             return "old"
 
+        _old_func.__module__ = provider_name
         provider.some_func = _old_func
         consumer = ModuleType(consumer_name)
         # Simulate: from cc_dump._hr_test_provider import some_func
@@ -267,6 +269,7 @@ class TestImportValidation:
                     def _reload_module(mod):
                         def _new_func() -> str:
                             return "new"
+                        _new_func.__module__ = provider_name
                         mod.some_func = _new_func
                         return mod
 
@@ -276,6 +279,80 @@ class TestImportValidation:
         assert reloaded == [provider_name]
         assert consumer.some_func is provider.some_func
         assert consumer.some_func() == "new"
+
+    def test_hot_reload_does_not_rebind_shared_primitive_aliases(self):
+        import cc_dump.app.hot_reload as hr
+
+        provider_name = "cc_dump._hr_test_provider_primitives"
+        consumer_name = "cc_dump._hr_test_consumer_primitives"
+        unrelated_name = "cc_dump._hr_test_unrelated_primitives"
+        original_token = sys.intern("cc_dump_hr_test_token")
+        replacement_token = sys.intern("cc_dump_hr_test_token_reloaded")
+
+        provider = ModuleType(provider_name)
+        provider.count = original_token
+
+        consumer = ModuleType(consumer_name)
+        consumer.count = provider.count
+
+        unrelated = ModuleType(unrelated_name)
+        unrelated.also_count = original_token
+
+        with patch.dict(
+            "sys.modules",
+            {
+                provider_name: provider,
+                consumer_name: consumer,
+                unrelated_name: unrelated,
+            },
+            clear=False,
+        ):
+            with patch.object(hr, "_RELOAD_ORDER", [provider_name]):
+                with patch.object(importlib, "reload") as mock_reload:
+                    mock_reload.side_effect = (
+                        lambda mod: setattr(mod, "count", replacement_token) or mod
+                    )
+                    reloaded = hr.check_and_get_reloaded()
+
+        assert reloaded == [provider_name]
+        # Primitive exports are intentionally excluded from alias refresh.
+        assert consumer.count is original_token
+        assert unrelated.also_count is original_token
+        assert provider.count is replacement_token
+
+    def test_hot_reload_applies_alias_replacements_when_new_value_is_none(self):
+        import cc_dump.app.hot_reload as hr
+
+        provider_name = "cc_dump._hr_test_provider_none"
+        consumer_name = "cc_dump._hr_test_consumer_none"
+
+        provider = ModuleType(provider_name)
+
+        def _old_func() -> str:
+            return "old"
+
+        _old_func.__module__ = provider_name
+        provider.some_func = _old_func
+
+        consumer = ModuleType(consumer_name)
+        consumer.some_func = provider.some_func
+
+        with patch.dict(
+            "sys.modules",
+            {
+                provider_name: provider,
+                consumer_name: consumer,
+            },
+            clear=False,
+        ):
+            with patch.object(hr, "_RELOAD_ORDER", [provider_name]):
+                with patch.object(importlib, "reload") as mock_reload:
+                    mock_reload.side_effect = lambda mod: setattr(mod, "some_func", None) or mod
+                    reloaded = hr.check_and_get_reloaded()
+
+        assert reloaded == [provider_name]
+        assert provider.some_func is None
+        assert consumer.some_func is None
 
     def test_reloadable_modules_prefer_top_level_from_imports(self):
         src_dir = Path(__file__).parent.parent / "src" / "cc_dump"
