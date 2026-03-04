@@ -47,6 +47,19 @@ class CycleSelectorState:
     zone: int = _ZONE_CENTER
 
 
+def _initial_cycle_selector_state(
+    options: Sequence[str],
+    value: str | None,
+) -> CycleSelectorState:
+    """Build initial reactive state from options/value inputs.
+
+    // [LAW:one-source-of-truth] Option normalization and initial index selection live here.
+    """
+    options_tuple = tuple(options) if options else ("",)
+    index = options_tuple.index(value) if value is not None and value in options_tuple else 0
+    return CycleSelectorState(options=options_tuple, index=index)
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # CycleSelector — single-select
 # ═══════════════════════════════════════════════════════════════════════════
@@ -126,10 +139,8 @@ class CycleSelector(Widget, can_focus=True):
         super().__init__(name=name, id=id, classes=classes, disabled=disabled)
         if tooltip is not None:
             self.tooltip = tooltip
-        options_tuple = tuple(options) if options else ("",)
-        index = options_tuple.index(value) if value is not None and value in options_tuple else 0
         self._state: Observable[CycleSelectorState] = Observable(
-            CycleSelectorState(options=options_tuple, index=index)
+            _initial_cycle_selector_state(options, value)
         )
         # [LAW:single-enforcer] Local selector rendering is invalidated by a single state reaction.
         self._state_reaction = reaction(
