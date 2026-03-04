@@ -69,13 +69,17 @@ def setup_reactions(store, context=None):
         view_store = context.get("view_store")
 
         if view_store is not None:
-            for key, project, apply in (
+            view_store_bindings: tuple[
+                tuple[str, Callable[[object], object], Callable[[object], None]],
+                ...,
+            ] = (
                 (
                     "side_channel_enabled",
                     bool,
                     lambda value: view_store.set("settings:side_channel_enabled", bool(value)),
                 ),
-            ):
+            )
+            for key, project, apply in view_store_bindings:
                 disposers.append(_bind_setting(store, key, project, apply))
 
         if mgr is not None:
@@ -93,9 +97,13 @@ def setup_reactions(store, context=None):
 
         tmux = context.get("tmux_controller")
         if tmux is not None:
-            for key, project, apply in (
+            tmux_bindings: tuple[
+                tuple[str, Callable[[object], object], Callable[[object], None]],
+                ...,
+            ] = (
                 ("auto_zoom_default", bool, lambda value: setattr(tmux, "auto_zoom", bool(value))),
-            ):
+            )
+            for key, project, apply in tmux_bindings:
                 disposers.append(_bind_setting(store, key, project, apply))
 
     return disposers

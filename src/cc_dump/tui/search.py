@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from collections import OrderedDict
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import Enum, IntFlag
 from typing import Callable
@@ -540,6 +540,7 @@ class SearchBar(Static):
     def _build_nav_help_line(self, state: SearchBarState, tc) -> Text:
         line = Text()
         line.append("Keys: ", style="dim")
+        pairs: Sequence[tuple[str, str]]
         if state.phase == SearchPhase.EDITING:
             pairs = (
                 ("Enter", "=search "),
