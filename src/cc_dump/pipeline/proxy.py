@@ -325,14 +325,23 @@ _PROGRESS_EXTRACTORS_BY_FAMILY: dict[str, Callable[[str, dict], dict[str, object
 
 def _fan_out_sse(resp, sinks):
     """Drive an SSE response to multiple sinks with per-sink error isolation."""
+    def _safe_sink_call(phase: str, sink, callback: Callable[[], None]) -> None:
+        try:
+            callback()
+        except Exception as exc:
+            # [LAW:single-enforcer] Sink failure handling is centralized and explicit.
+            logger.warning(
+                "SSE sink failure during %s (%s): %s",
+                phase,
+                sink.__class__.__name__,
+                exc,
+            )
+
     # [LAW:dataflow-not-control-flow] All sinks called unconditionally
     try:
         for raw_line in resp:
             for sink in sinks:
-                try:
-                    sink.on_raw(raw_line)
-                except Exception:
-                    pass
+                _safe_sink_call("on_raw", sink, lambda sink=sink: sink.on_raw(raw_line))
 
             line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
             if not line.startswith("data: "):
@@ -348,16 +357,14 @@ def _fan_out_sse(resp, sinks):
 
             event_type = event.get("type", "")
             for sink in sinks:
-                try:
-                    sink.on_event(event_type, event)
-                except Exception:
-                    pass
+                _safe_sink_call(
+                    "on_event",
+                    sink,
+                    lambda sink=sink: sink.on_event(event_type, event),
+                )
     finally:
         for sink in sinks:
-            try:
-                sink.on_done()
-            except Exception:
-                pass
+            _safe_sink_call("on_done", sink, lambda sink=sink: sink.on_done())
 
 
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
