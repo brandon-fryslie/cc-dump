@@ -1501,70 +1501,8 @@ class CcDumpApp(App):
     def _close_side_channel(self):
         _side_channel.close_side_channel(self)
 
-    def _side_channel_summarize(self):
-        _side_channel.side_channel_summarize(self)
-
     def _on_side_channel_result(self, result, context_session_key: str):
         _side_channel.on_side_channel_result(self, result, context_session_key)
-
-    def _refresh_side_channel_usage(self) -> None:
-        _side_channel.refresh_side_channel_usage(self)
-
-    def _collect_recent_messages(self, count: int) -> list[dict]:
-        return _side_channel.collect_recent_messages(self, count)
-
-    def _get_side_channel_panel_widget(self):
-        return _side_channel.get_side_channel_panel_widget(self)
-
-    def _parse_qa_scope(self, draft, *, total_messages: int) -> tuple[cc_dump.ai.conversation_qa.QAScope, str]:
-        return _side_channel.parse_qa_scope(draft, total_messages=total_messages)
-
-    def _render_qa_result_text(
-        self,
-        *,
-        question: str,
-        scope_mode: str,
-        selected_indices: tuple[int, ...],
-        estimate,
-        body: str,
-        prefix: str,
-        error: str = "",
-    ) -> str:
-        return _side_channel.render_qa_result_text(
-            self,
-            question=question,
-            scope_mode=scope_mode,
-            selected_indices=selected_indices,
-            estimate=estimate,
-            body=body,
-            prefix=prefix,
-            error=error,
-        )
-
-    def _set_side_channel_result(
-        self,
-        *,
-        text: str,
-        source: str,
-        elapsed_ms: int,
-        loading: bool = False,
-        active_action: str = "",
-        focus_results: bool = False,
-        context_session_key: str | None = None,
-    ) -> None:
-        _side_channel.set_side_channel_result(
-            self,
-            text=text,
-            source=source,
-            elapsed_ms=elapsed_ms,
-            loading=loading,
-            active_action=active_action,
-            focus_results=focus_results,
-            context_session_key=context_session_key,
-        )
-
-    def _workbench_preview(self, feature: str, owner_ticket: str) -> None:
-        _side_channel.workbench_preview(self, feature, owner_ticket)
 
     def action_sc_summarize_recent(self) -> None:
         _side_channel.action_sc_summarize_recent(self)
@@ -1580,15 +1518,6 @@ class CcDumpApp(App):
 
     def _on_side_channel_qa_result(self, result, question: str, context_session_key: str) -> None:
         _side_channel.on_side_channel_qa_result(self, result, question, context_session_key)
-
-    def _render_action_candidates_text(self, *, batch_id: str, items: list[object], source: str, error: str = "") -> str:
-        return _side_channel.render_action_candidates_text(
-            self,
-            batch_id=batch_id,
-            items=items,
-            source=source,
-            error=error,
-        )
 
     def action_sc_action_extract(self) -> None:
         _side_channel.action_sc_action_extract(self)

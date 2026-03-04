@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+import cc_dump.tui.side_channel_controller
 from tests.harness import run_app
 
 
@@ -45,7 +46,8 @@ async def test_workbench_results_tab_receives_full_output_and_metadata():
         app.action_toggle_side_channel()
         await pilot.pause()
 
-        app._set_side_channel_result(
+        cc_dump.tui.side_channel_controller.set_side_channel_result(
+            app,
             text="## Session Summary\n\n- one\n- two\n",
             source="ai",
             elapsed_ms=42,
