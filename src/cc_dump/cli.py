@@ -19,6 +19,7 @@ from cc_dump.app.analytics_store import AnalyticsStore
 import cc_dump.io.stderr_tee
 import cc_dump.core.palette
 import cc_dump.io.sessions
+import cc_dump.cli_presentation
 from cc_dump.pipeline.event_types import PipelineEvent
 import cc_dump.pipeline.har_replayer
 import cc_dump.pipeline.har_recorder
@@ -242,7 +243,8 @@ def main():
 
     if args.list_recordings:
         recordings = cc_dump.io.sessions.list_recordings()
-        cc_dump.io.sessions.print_recordings_list(recordings)
+        # [LAW:single-enforcer] CLI owns terminal side effects; renderer stays pure.
+        print(cc_dump.cli_presentation.render_recordings_list(recordings), end="")
         return
 
     if args.cleanup_recordings is not None:

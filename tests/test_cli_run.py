@@ -12,6 +12,7 @@ from cc_dump.cli import (
     _recordings_output_dir,
     _recording_path_for_provider,
 )
+from cc_dump.cli_presentation import render_recordings_list
 
 
 class TestDetectRunSubcommand:
@@ -126,3 +127,27 @@ class TestRecordingPathHelpers:
         assert path.endswith(".har")
         short_id = Path(path).stem.rsplit("-", 1)[-1]
         assert re.fullmatch(r"[0-9a-f]{8}", short_id) is not None
+
+
+class TestRenderRecordingsList:
+    def test_render_empty(self):
+        assert render_recordings_list([]) == "No recordings found.\n"
+
+    def test_render_single_recording_row(self):
+        output = render_recordings_list([
+            {
+                "path": "/tmp/recording-a.har",
+                "filename": "recording-a.har",
+                "session_id": "a",
+                "session_name": "session-a",
+                "provider": "anthropic",
+                "created": "2026-03-04T12:34:56.000000+00:00",
+                "entry_count": 3,
+                "size_bytes": 1024,
+            }
+        ])
+        assert "Found 1 recording(s):" in output
+        assert "SESSION" in output
+        assert "session-a" in output
+        assert "anthropic" in output
+        assert "2026-03-04 12:34:56" in output
