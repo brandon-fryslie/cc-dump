@@ -355,11 +355,11 @@ def _fan_out_sse(resp, sinks):
 
 
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
-    target_host = None  # set by cli.py or factory before server starts
-    event_queue = None  # set by cli.py or factory before server starts
-    request_pipeline = None  # set by cli.py or factory before server starts
-    provider = "anthropic"  # set by factory for multi-provider support
-    forward_proxy_ca = None  # set by factory when forward proxy CONNECT interception is enabled
+    target_host: str | None = None  # set by cli.py or factory before server starts
+    event_queue: object = None  # set by cli.py or factory before server starts
+    request_pipeline: RequestPipeline | None = None  # set by cli.py or factory before server starts
+    provider: str = "anthropic"  # set by factory for multi-provider support
+    forward_proxy_ca: object | None = None  # set by factory when forward proxy CONNECT interception is enabled
 
     def log_message(self, fmt, *args):
         self.event_queue.put(LogEvent(method=self.command, path=self.path, status=args[0] if args else "", provider=self.provider))

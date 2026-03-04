@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from cc_dump.pipeline.proxy import make_handler_class
+from cc_dump.pipeline.proxy import ProxyHandler, make_handler_class
 from cc_dump.pipeline.router import EventRouter, QueueSubscriber, DirectSubscriber
 from cc_dump.app.analytics_store import AnalyticsStore
 import cc_dump.io.stderr_tee
@@ -318,7 +318,7 @@ def main():
 
     proxy_servers: dict[str, http.server.ThreadingHTTPServer] = {}
     # // [LAW:one-source-of-truth] Handler classes keyed by provider for shared runtime wiring.
-    proxy_handlers: dict[str, type[http.server.BaseHTTPRequestHandler]] = {}
+    proxy_handlers: dict[str, type[ProxyHandler]] = {}
     proxy_ports: dict[str, int] = {}
     proxy_targets: dict[str, str | None] = {}
     provider_endpoints: dict[str, dict[str, str]] = {}
@@ -364,12 +364,12 @@ def main():
     print("🚀 cc-dump proxy started")
     for spec in active_specs:
         proxy_url = f"http://{args.host}:{proxy_ports[spec.key]}"
-        target = proxy_targets.get(spec.key, "")
+        provider_target = proxy_targets.get(spec.key)
         print(f"   {spec.display_name} endpoint: {proxy_url}")
         print(f"     Proxy type: {spec.proxy_type}")
         if spec.proxy_type == "reverse":
-            if target:
-                print(f"     Target: {target}")
+            if provider_target:
+                print(f"     Target: {provider_target}")
             print(f"     Usage: {spec.base_url_env}={proxy_url} {spec.client_hint}")
         else:
             print(
@@ -378,7 +378,7 @@ def main():
 
         provider_endpoints[spec.key] = {
             "proxy_url": proxy_url,
-            "target": (target or "") if spec.proxy_type == "reverse" else "",
+            "target": (provider_target or "") if spec.proxy_type == "reverse" else "",
             "proxy_mode": spec.proxy_type,
         }
         if spec.proxy_type == "forward" and forward_proxy_ca is not None:
@@ -510,8 +510,8 @@ def main():
         interceptors=[cc_dump.pipeline.sentinel.make_interceptor(tmux_ctrl)],
     )
     # // [LAW:single-enforcer] One shared request pipeline is applied at every provider handler boundary.
-    for handler in proxy_handlers.values():
-        handler.request_pipeline = pipeline
+    for handler_cls in proxy_handlers.values():
+        handler_cls.request_pipeline = pipeline
 
     router.start()
 

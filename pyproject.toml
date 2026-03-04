@@ -72,10 +72,12 @@ filterwarnings = [
 mypy_path = "stubs"
 check_untyped_defs = true
 disallow_any_explicit = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
 disable_error_code = [
     "dict-item",      # 27 errors — rendering dispatch table signature mismatches
     "arg-type",       # 26 errors — list variance, tuple element types
     "union-attr",     # 23 errors — accessing attrs on Optional without narrowing
     "attr-defined",   # 18 errors — dynamic attrs (_expandable, _xml_strip_ranges, etc.)
-    "assignment",     #  8 errors — None → datetime, implicit Optional defaults
 ]

@@ -312,6 +312,7 @@ def render_economics_panel(rows: list) -> str:
 
     # Detect breakdown mode by checking if any row has a model
     is_breakdown = any(row.model is not None for row in rows)
+    header_cols: tuple[str, ...]
 
     # [LAW:dataflow-not-control-flow] Layout config drives rendering
     if is_breakdown:

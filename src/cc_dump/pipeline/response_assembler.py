@@ -89,7 +89,7 @@ def _handle_message_start(event: dict, state: _ReconstructionState) -> None:
         "cache_creation_input_tokens",
     ):
         if k in raw_usage:
-            usage[k] = raw_usage[k]  # type: ignore[literal-required]
+            usage[k] = raw_usage[k]
     state.message["usage"] = usage
 
 
