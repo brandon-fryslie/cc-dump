@@ -176,7 +176,22 @@ class SettingsPanel(VerticalScroll):
         )
 
     def on_mount(self) -> None:
-        """Focus first focusable widget on mount (standard Textual pattern)."""
+        """Initialize focus only when panel is visible."""
+        if self.display:
+            self.focus_default_control()
+
+    def reset_values(self, values: dict) -> None:
+        """Reset visible field widgets from latest settings values."""
+        self._initial_values = dict(values)
+        for field in SETTINGS_FIELDS:
+            widget = self.query_one("#field-{}".format(field.key))
+            value = self._initial_values.get(field.key, field.default)
+            if field.kind in {"text", "select"}:
+                widget.value = str(value)
+            else:
+                widget.value = bool(value)
+
+    def focus_default_control(self) -> None:
         focusable = self.query("Input, Select, OptionList, ToggleChip")
         if focusable:
             focusable.first().focus()

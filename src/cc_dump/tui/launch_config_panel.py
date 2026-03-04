@@ -123,7 +123,7 @@ class LaunchActionChip(Chip):
     def _emit(self) -> None:
         self.post_message(self.Pressed(self._action_key))
 
-    async def on_click(self, event) -> None:
+    def on_click(self, event) -> None:
         event.stop()
         self._emit()
 
@@ -286,11 +286,22 @@ class LaunchConfigPanel(VerticalScroll):
         )
 
     def on_mount(self) -> None:
-        target_name = self._active_name or (self._configs[0].name if self._configs else "")
+        self.reset_configs(self._configs, self._active_name)
+        if self.display:
+            self.focus_default_control()
+
+    def reset_configs(self, configs: list, active_config_name: str) -> None:
+        """Reset panel state from persisted launch configs."""
+        incoming = copy.deepcopy(configs)
+        self._configs = incoming or cc_dump.app.launch_config.default_configs()
+        self._active_name = active_config_name
+        names = [config.name for config in self._configs]
+        target_name = self._active_name if self._active_name in names else (names[0] if names else "")
         self._refresh_config_selector(preferred_name=target_name)
         self._populate_form(self._selected_config())
         self._refresh_active_display()
 
+    def focus_default_control(self) -> None:
         focusable = self.query("Input, CycleSelector, ToggleChip")
         if focusable:
             focusable.first().focus()
@@ -430,9 +441,14 @@ class LaunchConfigPanel(VerticalScroll):
         except NoMatches:
             return
 
-        for child in tuple(container.children):
-            child.remove()
+        container.remove_children()
+        self.call_after_refresh(self._mount_tool_option_fields, copy.deepcopy(config))
 
+    def _mount_tool_option_fields(self, config) -> None:
+        try:
+            container = self.query_one("#lc-tool-fields", Vertical)
+        except NoMatches:
+            return
         option_values = cc_dump.app.launch_config.normalize_options(config.options)
         for option in cc_dump.app.launch_config.launcher_option_defs(config.launcher):
             value = option_values.get(option.key, option.default)

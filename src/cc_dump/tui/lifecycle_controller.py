@@ -123,6 +123,13 @@ def _start_workers(app) -> None:
 
 def _seed_panel_state(app) -> None:
     app._sync_panel_display(app.active_panel)
+    app._sync_sidebar_panels(
+        (
+            bool(app._view_store.get("panel:settings")),
+            bool(app._view_store.get("panel:launch_config")),
+            bool(app._view_store.get("panel:side_channel")),
+        )
+    )
     logs = app._get_logs()
     if logs is not None:
         logs.display = app.show_logs

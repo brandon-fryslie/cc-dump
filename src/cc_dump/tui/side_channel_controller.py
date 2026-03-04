@@ -15,40 +15,76 @@ import cc_dump.tui.side_channel_panel
 from snarfx import transaction
 
 
+def _ensure_side_channel_panel(app):
+    panel = get_side_channel_panel_widget(app)
+    if panel is None:
+        panel = cc_dump.tui.side_channel_panel.create_side_channel_panel()
+        panel.display = False
+        app.screen.mount(panel)
+    return panel
+
+
+def _side_channel_usage_summary(app) -> dict:
+    return (
+        app._analytics_store.get_side_channel_purpose_summary()
+        if app._analytics_store is not None
+        else {}
+    )
+
+
+def _sync_workbench_result(
+    app,
+    *,
+    text: str,
+    source: str,
+    elapsed_ms: int,
+    active_action: str,
+    context_key: str,
+) -> None:
+    workbench_results = app._get_workbench_results_view()
+    if workbench_results is not None:
+        workbench_results.update_result(
+            text=text,
+            source=source,
+            elapsed_ms=elapsed_ms,
+            action=active_action,
+            context_session_id=context_key,
+        )
+
+
 def open_side_channel(app) -> None:
     """Open AI Workbench sidebar and hydrate panel state."""
-    app._view_store.set("panel:side_channel", True)
-    panel = cc_dump.tui.side_channel_panel.create_side_channel_panel()
-    app.screen.mount(panel)
-    set_side_channel_result(
+    _ensure_side_channel_panel(app)
+    context_key = app._context_session_key(app._active_context_session_key())
+    # [LAW:dataflow-not-control-flow] Single snapshot update avoids intermediate UI states.
+    app._view_store.update(
+        {
+            "panel:settings": False,
+            "panel:launch_config": False,
+            "panel:side_channel": True,
+            "sc:loading": False,
+            "sc:active_action": "",
+            "sc:result_text": "",
+            "sc:result_source": "",
+            "sc:result_elapsed_ms": 0,
+            "sc:purpose_usage": _side_channel_usage_summary(app),
+        }
+    )
+    _sync_workbench_result(
         app,
         text="",
         source="",
         elapsed_ms=0,
-        loading=False,
         active_action="",
+        context_key=context_key,
     )
-    app._view_store.set("sc:purpose_usage", {})
     app._sc_action_batch_id = ""
     app._sc_action_items = []
-    refresh_side_channel_usage(app)
-    app.call_after_refresh(
-        lambda: panel.update_display(
-            cc_dump.tui.side_channel_panel.SideChannelPanelState(
-                **app._view_store.sc_panel_state.get()
-            )
-        )
-    )
 
 
 def close_side_channel(app) -> None:
-    """Close AI Workbench sidebar and restore conversation focus."""
-    for panel in app.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel):
-        panel.remove()
+    """Hide AI Workbench sidebar."""
     app._view_store.set("panel:side_channel", False)
-    conv = app._get_conv()
-    if conv is not None:
-        conv.focus()
 
 
 def side_channel_summarize(app) -> None:
@@ -108,12 +144,7 @@ def refresh_side_channel_usage(app) -> None:
 
     // [LAW:one-source-of-truth] AnalyticsStore is canonical source for usage aggregates.
     """
-    usage = (
-        app._analytics_store.get_side_channel_purpose_summary()
-        if app._analytics_store is not None
-        else {}
-    )
-    app._view_store.set("sc:purpose_usage", usage)
+    app._view_store.set("sc:purpose_usage", _side_channel_usage_summary(app))
 
 
 def collect_recent_messages(app, count: int) -> list[dict]:
@@ -251,15 +282,14 @@ def set_side_channel_result(
         app._view_store.set("sc:result_text", text)
         app._view_store.set("sc:result_source", source)
         app._view_store.set("sc:result_elapsed_ms", elapsed_ms)
-    workbench_results = app._get_workbench_results_view()
-    if workbench_results is not None:
-        workbench_results.update_result(
-            text=text,
-            source=source,
-            elapsed_ms=elapsed_ms,
-            action=active_action,
-            context_session_id=context_key,
-        )
+    _sync_workbench_result(
+        app,
+        text=text,
+        source=source,
+        elapsed_ms=elapsed_ms,
+        active_action=active_action,
+        context_key=context_key,
+    )
     if focus_results:
         app._show_workbench_results_tab()
 

@@ -6,6 +6,7 @@ InfoPanel instances and swap them in via hot-reload.
 All field values are click-to-copy.
 """
 
+from snarfx import Observable, reaction
 from textual.widgets import Static
 
 # Use module-level imports for hot-reload
@@ -31,8 +32,14 @@ class InfoPanel(Static):
 
     def __init__(self):
         super().__init__("")
-        self._info: dict = {}
         self._rows: list[tuple[str, str, str]] = []
+        self._info: Observable[dict[str, object]] = Observable({})
+        # [LAW:single-enforcer] One reactive projection owns info text + click rows.
+        self._info_reaction = reaction(
+            lambda: self._info.get(),
+            self._render_info,
+            fire_immediately=False,
+        )
 
     def update_info(self, info: dict):
         """Update the info panel with server configuration.
@@ -40,15 +47,19 @@ class InfoPanel(Static):
         Args:
             info: Dict with server info fields (see render_info_panel for schema)
         """
-        self._info = info
-        self._refresh_display()
+        self._info.set(dict(info))
 
-    def _refresh_display(self):
-        """Rebuild the info panel display."""
+    def _render_info(self, info: dict):
+        """Rebuild the info panel display from current info state."""
         # // [LAW:one-source-of-truth] Rows are derived by panel_renderers.info_panel_rows.
-        self._rows = cc_dump.tui.panel_renderers.info_panel_rows(self._info)
-        text = cc_dump.tui.panel_renderers.render_info_panel(self._info)
+        self._rows = cc_dump.tui.panel_renderers.info_panel_rows(info)
+        if not self.is_attached:
+            return
+        text = cc_dump.tui.panel_renderers.render_info_panel(info)
         self.update(text)
+
+    def on_mount(self) -> None:
+        self._render_info(dict(self._info.get()))
 
     def on_click(self, event) -> None:
         """Copy field value to clipboard on click.
@@ -67,12 +78,14 @@ class InfoPanel(Static):
 
     def get_state(self) -> dict:
         """Extract state for transfer to a new instance."""
-        return {"info": dict(self._info)}
+        return {"info": dict(self._info.get())}
 
     def restore_state(self, state: dict):
         """Restore state from a previous instance."""
-        self._info = state.get("info", {})
-        self._refresh_display()
+        self._info.set(dict(state.get("info", {})))
+
+    def on_unmount(self) -> None:
+        self._info_reaction.dispose()
 
 
 def create_info_panel() -> InfoPanel:
