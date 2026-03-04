@@ -1220,8 +1220,9 @@ class CcDumpApp(App):
                 kind, cc_dump.tui.event_handlers._noop
             ),
         )
-        self._app_state = handler(
-            event, self._state, widgets, self._app_state, self._app_log
+        self._app_state = cast(
+            AppState,
+            handler(event, self._state, widgets, self._app_state, self._app_log),
         )
         request_id = str(getattr(event, "request_id", "") or "")
         if request_id:

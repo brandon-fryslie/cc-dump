@@ -10,6 +10,7 @@ import os
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import TextIO
 
 from cc_dump.pipeline.event_types import (
     PipelineEvent,
@@ -150,7 +151,7 @@ class HARRecordingSubscriber:
         self._events_received: dict[str, int] = {}
 
         # Lazy file init — _file is None until first entry
-        self._file = None
+        self._file: TextIO | None = None
         self._entries_end_pos = 0
         self._first_entry = True
         self._entry_count = 0

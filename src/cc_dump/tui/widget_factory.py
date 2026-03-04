@@ -1149,7 +1149,7 @@ class ConversationView(ScrollView):
         self._clear_pending_filter_snapshots()
         self._refresh_after_turn_prune()
 
-    def _render_new_turn(self, blocks: list, filters: dict = None) -> None:
+    def _render_new_turn(self, blocks: list, filters: dict | None = None) -> None:
         """Render blocks to TurnData and append as completed turn.
 
         // [LAW:single-enforcer] Called via _invalidate("new_turn").
@@ -1157,7 +1157,7 @@ class ConversationView(ScrollView):
         """
         self._render_and_append_turn(blocks, filters)
 
-    def _render_and_append_turn(self, blocks: list, filters: dict = None) -> None:
+    def _render_and_append_turn(self, blocks: list, filters: dict | None = None) -> None:
         """Render blocks to TurnData and append as completed turn."""
         if filters is None:
             filters = self._last_filters
@@ -1193,7 +1193,7 @@ class ConversationView(ScrollView):
         td._filter_revision = self._active_filter_revision
         self._append_completed_turn(td)
 
-    def add_turn(self, blocks: list, filters: dict = None):
+    def add_turn(self, blocks: list, filters: dict | None = None):
         """Add a completed turn from block list.
 
         Delegates to domain_store.add_turn() which fires _on_turn_added callback.
@@ -1255,7 +1255,7 @@ class ConversationView(ScrollView):
             return
         self._invalidate("stream_started", request_id=request_id, meta=meta)
 
-    def _render_stream_started(self, request_id: str, meta: dict = None) -> None:
+    def _render_stream_started(self, request_id: str, meta: dict | None = None) -> None:
         """Create streaming preview TurnData for a new stream."""
         if request_id in self._stream_preview_turns:
             return
@@ -1458,7 +1458,7 @@ class ConversationView(ScrollView):
     def begin_streaming_turn(self):
         self.begin_stream("__default__")
 
-    def append_streaming_block(self, block, filters: dict = None):
+    def append_streaming_block(self, block, filters: dict | None = None):
         self.append_stream_block("__default__", block, filters)
 
     def finalize_streaming_turn(self) -> list:
@@ -1488,7 +1488,7 @@ class ConversationView(ScrollView):
         reason = "search" if search_ctx is not None else "filters_changed"
         self._invalidate(reason, filters=filters, search_ctx=search_ctx, force=force)
 
-    def _rerender_affected(self, filters: dict = None, search_ctx=None, force: bool = False) -> None:
+    def _rerender_affected(self, filters: dict | None = None, search_ctx=None, force: bool = False) -> None:
         """Re-render affected turns in place using viewport-only strategy.
 
         // [LAW:single-enforcer] Called via _invalidate("filters_changed") or _invalidate("search").
@@ -2265,7 +2265,7 @@ class ConversationView(ScrollView):
             self.mark_overrides_changed()
             self._invalidate("block_toggled", turn=turn)
 
-    def _render_single_turn(self, turn: TurnData = None) -> None:
+    def _render_single_turn(self, turn: TurnData | None = None) -> None:
         """Re-render a single turn after toggle. Post-render via _post_render."""
         if turn is None:
             return
@@ -2346,7 +2346,7 @@ class ConversationView(ScrollView):
         self._view_overrides = cc_dump.tui.view_overrides.ViewOverrides.from_dict(vo_data)
         self.mark_overrides_changed()
 
-    def _render_restore(self, filters: dict = None) -> None:
+    def _render_restore(self, filters: dict | None = None) -> None:
         """Dispatch target for _invalidate("restore"). Delegates to _rebuild_from_state."""
         self._rebuild_from_state(filters or self._last_filters)
 
@@ -2447,7 +2447,7 @@ class StatsPanel(Static):
     def refresh_from_store(
         self,
         store,
-        current_turn: dict = None,
+        current_turn: dict | None = None,
         domain_store=None,
         all_domain_stores: tuple[object, ...] | None = None,
     ):

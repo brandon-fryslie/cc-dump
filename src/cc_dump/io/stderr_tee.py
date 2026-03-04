@@ -10,7 +10,7 @@ import re
 import sys
 import threading
 from collections import deque
-from typing import Callable, Optional
+from typing import Callable, Optional, TextIO, cast
 
 # Callback signature: (level: str, source: str, message: str)
 DrainFn = Callable[[str, str, str], None]
@@ -144,7 +144,7 @@ def install() -> StderrTee:
     if _tee is not None:
         return _tee
     _tee = StderrTee(sys.stderr)
-    sys.stderr = _tee  # type: ignore[assignment]
+    sys.stderr = cast(TextIO, _tee)
     return _tee
 
 
