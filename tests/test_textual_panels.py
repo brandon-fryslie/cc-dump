@@ -163,3 +163,97 @@ async def test_launch_config_panel_uses_cycle_and_chip_controls():
         assert not panel.query(OptionList)
         assert not panel.query(Select)
         assert not panel.query(Switch)
+
+
+async def test_launch_config_enter_save_keeps_app_responsive():
+    """Saving launch configs with Enter should close panel and preserve key handling."""
+    async with run_app() as (pilot, app):
+        app.action_toggle_launch_config()
+        await pilot.pause()
+
+        for _ in range(5):
+            await press_and_settle(pilot, "tab")
+        focused = app.screen.focused
+        assert focused is not None
+        assert getattr(focused, "id", "") == "lc-field-name"
+
+        await press_and_settle(pilot, "enter")
+        assert not app._view_store.get("panel:launch_config")
+
+        before = app.active_panel
+        await press_and_settle(pilot, ".")
+        assert app.active_panel != before
+
+
+async def test_launch_config_toggle_reopens_hidden_panel():
+    """Launch config toggle should hide and re-show the same mounted sidebar."""
+    import cc_dump.tui.launch_config_panel
+
+    async with run_app() as (pilot, app):
+        app.action_toggle_launch_config()
+        await pilot.pause()
+        panel = app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+        assert panel.display
+
+        app.action_toggle_launch_config()
+        await pilot.pause()
+        assert not app._view_store.get("panel:launch_config")
+        assert not panel.display
+
+        app.action_toggle_launch_config()
+        await pilot.pause()
+        panel_after = app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+        assert panel_after is panel
+        assert panel_after.display
+
+
+async def test_settings_toggle_reopens_hidden_panel():
+    """Settings toggle should hide and re-show the same mounted sidebar."""
+    import cc_dump.tui.settings_panel
+
+    async with run_app() as (pilot, app):
+        app.action_toggle_settings()
+        await pilot.pause()
+        panel = app.screen.query_one(cc_dump.tui.settings_panel.SettingsPanel)
+        assert panel.display
+
+        app.action_toggle_settings()
+        await pilot.pause()
+        assert not app._view_store.get("panel:settings")
+        assert not panel.display
+
+        app.action_toggle_settings()
+        await pilot.pause()
+        panel_after = app.screen.query_one(cc_dump.tui.settings_panel.SettingsPanel)
+        assert panel_after is panel
+        assert panel_after.display
+
+
+async def test_sidebars_are_exclusive_and_reused():
+    """Opening one sidebar closes the others while reusing mounted widgets."""
+    import cc_dump.tui.settings_panel
+    import cc_dump.tui.launch_config_panel
+    import cc_dump.tui.side_channel_panel
+
+    async with run_app() as (pilot, app):
+        settings = app.screen.query_one(cc_dump.tui.settings_panel.SettingsPanel)
+        launch = app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+        side = app.screen.query_one(cc_dump.tui.side_channel_panel.SideChannelPanel)
+
+        app.action_toggle_settings()
+        await pilot.pause()
+        assert settings.display
+        assert not launch.display
+        assert not side.display
+
+        app.action_toggle_launch_config()
+        await pilot.pause()
+        assert not settings.display
+        assert launch.display
+        assert not side.display
+
+        app.action_toggle_side_channel()
+        await pilot.pause()
+        assert not settings.display
+        assert not launch.display
+        assert side.display
