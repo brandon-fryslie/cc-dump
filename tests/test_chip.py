@@ -12,6 +12,11 @@ def test_chip_default_css_uses_visible_state_colors_without_opacity_fade():
     assert "opacity" not in css
 
 
+def test_chip_is_focusable_for_keyboard_activation():
+    chip = Chip(" Search ")
+    assert chip.can_focus is True
+
+
 def test_toggle_chip_default_css_keeps_on_off_states_visible():
     css = ToggleChip.DEFAULT_CSS
     assert "background: $accent;" in css

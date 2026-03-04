@@ -16,6 +16,7 @@ class Chip(Static):
     """
 
     ALLOW_SELECT = False
+    can_focus = True
     DEFAULT_CSS = """
     Chip {
         width: auto;
@@ -59,9 +60,19 @@ class Chip(Static):
         super().__init__(label, **kwargs)
         self._action = action
 
-    async def on_click(self, event) -> None:
+    async def _activate(self) -> None:
+        # [LAW:single-enforcer] One activation path serves click + keyboard input.
         if self._action:
             await self.run_action(self._action)
+
+    async def on_click(self, event) -> None:
+        await self._activate()
+
+    async def on_key(self, event) -> None:
+        if event.key in ("enter", "space"):
+            event.stop()
+            event.prevent_default()
+            await self._activate()
 
 
 class ToggleChip(Static):
