@@ -4,6 +4,7 @@ This module is RELOADABLE. It appears in _RELOAD_ORDER before its
 consumers (custom_footer, settings_panel, side_channel_panel).
 """
 
+from snarfx import Observable, reaction
 from textual.widgets import Static
 
 
@@ -110,25 +111,31 @@ class ToggleChip(Static):
     def __init__(self, label: str, *, value: bool = False, **kwargs):
         super().__init__("", **kwargs)
         self._base_label = label
-        self._value = False
-        self.value = value
+        self._value = Observable(bool(value))
+        # [LAW:single-enforcer] One reactive projection owns ToggleChip label/CSS state.
+        self._value_reaction = reaction(
+            lambda: self._value.get(),
+            self._render_value,
+            fire_immediately=True,
+        )
 
     @property
     def value(self) -> bool:
-        return self._value
+        return bool(self._value.get())
 
     @value.setter
     def value(self, value: bool) -> None:
-        self._value = bool(value)
-        self._refresh_label()
+        self._value.set(bool(value))
 
-    def _refresh_label(self):
-        self.update(f" {self._base_label}  {'ON' if self._value else 'OFF'} ")
-        self.set_class(not self._value, "-off")
+    def _render_value(self, value: bool) -> None:
+        self.update(f" {self._base_label}  {'ON' if value else 'OFF'} ")
+        self.set_class(not value, "-off")
 
     def _toggle(self) -> None:
         self.value = not self.value
-        self._refresh_label()
+
+    def on_unmount(self) -> None:
+        self._value_reaction.dispose()
 
     async def on_click(self, event) -> None:
         self._toggle()
