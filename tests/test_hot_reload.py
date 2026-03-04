@@ -6,6 +6,7 @@ Import validation, widget protocols, state preservation, and module structure.
 
 import ast
 import importlib
+import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -285,15 +286,17 @@ class TestImportValidation:
         provider_name = "cc_dump._hr_test_provider_primitives"
         consumer_name = "cc_dump._hr_test_consumer_primitives"
         unrelated_name = "cc_dump._hr_test_unrelated_primitives"
+        original_token = sys.intern("cc_dump_hr_test_token")
+        replacement_token = sys.intern("cc_dump_hr_test_token_reloaded")
 
         provider = ModuleType(provider_name)
-        provider.count = 1
+        provider.count = original_token
 
         consumer = ModuleType(consumer_name)
         consumer.count = provider.count
 
         unrelated = ModuleType(unrelated_name)
-        unrelated.also_count = 1
+        unrelated.also_count = original_token
 
         with patch.dict(
             "sys.modules",
@@ -306,14 +309,16 @@ class TestImportValidation:
         ):
             with patch.object(hr, "_RELOAD_ORDER", [provider_name]):
                 with patch.object(importlib, "reload") as mock_reload:
-                    mock_reload.side_effect = lambda mod: setattr(mod, "count", 2) or mod
+                    mock_reload.side_effect = (
+                        lambda mod: setattr(mod, "count", replacement_token) or mod
+                    )
                     reloaded = hr.check_and_get_reloaded()
 
         assert reloaded == [provider_name]
         # Primitive exports are intentionally excluded from alias refresh.
-        assert consumer.count == 1
-        assert unrelated.also_count == 1
-        assert provider.count == 2
+        assert consumer.count is original_token
+        assert unrelated.also_count is original_token
+        assert provider.count is replacement_token
 
     def test_hot_reload_applies_alias_replacements_when_new_value_is_none(self):
         import cc_dump.app.hot_reload as hr
