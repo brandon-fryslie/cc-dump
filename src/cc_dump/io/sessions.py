@@ -3,7 +3,7 @@
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, TypedDict
 
@@ -94,7 +94,7 @@ def _provider_from_entries(entries: list[dict], provider_keys: set[str]) -> str 
 def _entry_created_or_mtime(entries: list[dict], path: Path) -> str:
     if entries and "startedDateTime" in entries[0]:
         return str(entries[0]["startedDateTime"])
-    return datetime.fromtimestamp(path.stat().st_mtime).isoformat()
+    return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
 
 
 def _load_recording_info(

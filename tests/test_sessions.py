@@ -364,3 +364,35 @@ def test_list_recordings_provider_layout(recordings_dir):
     assert by_name["ccdump-anthropic-20260304-101530Z-a1b2c3d4.har"]["provider"] == "anthropic"
     assert by_name["ccdump-openai-20260304-101530Z-a5b6c7d8.har"]["provider"] == "openai"
     assert by_name["ccdump-copilot-20260304-101530Z-a9b0c1d2.har"]["provider"] == "copilot"
+
+
+def test_list_recordings_provider_inferred_from_openai_url(recordings_dir):
+    har = recordings_dir / "misc-openai.har"
+    create_har_file(har, entry_count=1)
+    with open(har, "r+", encoding="utf-8") as f:
+        payload = json.load(f)
+        payload["log"]["entries"][0]["request"]["url"] = "https://api.openai.com/v1/chat/completions"
+        payload["log"]["entries"][0].pop("_cc_dump", None)
+        f.seek(0)
+        json.dump(payload, f)
+        f.truncate()
+
+    recordings = list_recordings(str(recordings_dir))
+    assert len(recordings) == 1
+    assert recordings[0]["provider"] == "openai"
+
+
+def test_list_recordings_provider_metadata_overrides_url_fallback(recordings_dir):
+    har = recordings_dir / "misc-provider-metadata.har"
+    create_har_file(har, entry_count=1)
+    with open(har, "r+", encoding="utf-8") as f:
+        payload = json.load(f)
+        payload["log"]["entries"][0]["request"]["url"] = "https://api.anthropic.com/v1/messages"
+        payload["log"]["entries"][0]["_cc_dump"] = {"provider": "copilot"}
+        f.seek(0)
+        json.dump(payload, f)
+        f.truncate()
+
+    recordings = list_recordings(str(recordings_dir))
+    assert len(recordings) == 1
+    assert recordings[0]["provider"] == "copilot"

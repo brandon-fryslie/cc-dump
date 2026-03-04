@@ -314,7 +314,7 @@ Each press cycles: current → next visibility level.
 
 | Path | Contents |
 |------|----------|
-| `~/.local/share/cc-dump/recordings/` | HAR recordings, organized by provider |
+| `~/.local/share/cc-dump/recordings/` | HAR recordings (flat directory; provider encoded in filename) |
 | `~/.config/cc-dump/settings.json` | Persisted settings (filtersets, theme) |
 
 ## Environment Variables

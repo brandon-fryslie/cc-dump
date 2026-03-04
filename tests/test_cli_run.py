@@ -113,6 +113,12 @@ class TestRecordingPathHelpers:
         output = _recordings_output_dir("/tmp/custom.har")
         assert output == Path("/tmp")
 
+    def test_recordings_output_dir_existing_har_suffixed_directory_is_preserved(self, tmp_path):
+        directory = tmp_path / "recordings.har"
+        directory.mkdir()
+        output = _recordings_output_dir(str(directory))
+        assert output == directory
+
     def test_recording_path_for_provider_uses_provider_first_format(self):
         timestamp = "20260304-231500Z"
         path = _recording_path_for_provider(Path("/tmp/recordings"), "anthropic", timestamp)

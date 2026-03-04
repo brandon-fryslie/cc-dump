@@ -98,6 +98,8 @@ def _recordings_output_dir(record_arg: str | None) -> Path:
     if not record_arg:
         return default_dir
     candidate = Path(os.path.expanduser(record_arg))
+    if candidate.exists() and candidate.is_dir():
+        return candidate
     # [LAW:dataflow-not-control-flow] Legacy file-like input maps to its parent directory.
     return candidate.parent if candidate.suffix.lower() == ".har" else candidate
 
