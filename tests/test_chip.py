@@ -21,3 +21,13 @@ def test_toggle_chip_default_css_keeps_on_off_states_visible():
     assert "background: $surface-lighten-1;" in css
     assert "background: $surface-darken-1;" in css
     assert "opacity" not in css
+
+
+def test_toggle_chip_programmatic_value_updates_render_and_class():
+    chip = ToggleChip("Perf Logging", value=False)
+    assert str(chip.render()) == " Perf Logging  OFF "
+    assert chip.has_class("-off")
+
+    chip.value = True
+    assert str(chip.render()) == " Perf Logging  ON "
+    assert not chip.has_class("-off")
