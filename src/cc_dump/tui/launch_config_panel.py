@@ -123,11 +123,11 @@ class LaunchActionChip(Chip):
     def _emit(self) -> None:
         self.post_message(self.Pressed(self._action_key))
 
-    async def on_click(self, event) -> None:
+    def on_click(self, event) -> None:
         event.stop()
         self._emit()
 
-    async def on_key(self, event) -> None:
+    def on_key(self, event) -> None:
         if event.key in ("enter", "space"):
             event.stop()
             event.prevent_default()

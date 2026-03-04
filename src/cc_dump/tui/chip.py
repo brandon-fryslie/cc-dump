@@ -60,19 +60,19 @@ class Chip(Static):
         super().__init__(label, **kwargs)
         self._action = action
 
-    async def _activate(self) -> None:
+    def _activate(self) -> None:
         # [LAW:single-enforcer] One activation path serves click + keyboard input.
         if self._action:
-            await self.run_action(self._action)
+            self.call_later(self.run_action, self._action)
 
-    async def on_click(self, event) -> None:
-        await self._activate()
+    def on_click(self, event) -> None:
+        self._activate()
 
-    async def on_key(self, event) -> None:
+    def on_key(self, event) -> None:
         if event.key in ("enter", "space"):
             event.stop()
             event.prevent_default()
-            await self._activate()
+            self._activate()
 
 
 class ToggleChip(Static):
