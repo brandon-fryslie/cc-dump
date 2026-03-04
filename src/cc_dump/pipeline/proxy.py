@@ -14,7 +14,6 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
 
 from cc_dump.pipeline.event_types import (
     ErrorEvent,
@@ -31,6 +30,7 @@ from cc_dump.pipeline.event_types import (
     sse_progress_payload,
 )
 from cc_dump.pipeline.response_assembler import ResponseAssembler, OpenAIResponseAssembler
+import cc_dump.pipeline.proxy_flow
 import cc_dump.providers
 
 if TYPE_CHECKING:
@@ -375,60 +375,51 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         content_len = int(self.headers.get("Content-Length", 0))
         body_bytes = self.rfile.read(content_len) if content_len else b""
 
-        # Detect proxy mode and determine target URL
-        if self.path.startswith("http://") or self.path.startswith("https://"):
-            # Forward proxy mode - absolute URI
-            parsed = urlparse(self.path)
-            request_path = parsed.path
-            # Upgrade to HTTPS for security
-            url = self.path
-            if url.startswith("http://"):
-                url = "https://" + url[7:]
-        else:
-            # Reverse proxy mode - relative URI
-            request_path = self.path
-            if not self.target_host:
-                self.event_queue.put(
-                    ErrorEvent(
-                        code=500,
-                        reason="No target_host configured for reverse proxy mode",
-                        request_id=request_id,
-                        recv_ns=time.monotonic_ns(),
-                        provider=self.provider,
-                    )
+        target = cc_dump.pipeline.proxy_flow.resolve_proxy_target(self.path, self.target_host)
+        request_path = target.request_path
+        url = target.upstream_url
+        if target.error_reason:
+            self.event_queue.put(
+                ErrorEvent(
+                    code=target.error_status or 500,
+                    reason=target.error_reason,
+                    request_id=request_id,
+                    recv_ns=time.monotonic_ns(),
+                    provider=self.provider,
                 )
-                self.send_response(500)
-                self.end_headers()
-                self.wfile.write(
-                    b"No target configured. Use --target or send absolute URIs."
-                )
-                return
-            url = self.target_host + self.path
+            )
+            self.send_response(target.error_status or 500)
+            self.end_headers()
+            self.wfile.write(
+                b"No target configured. Use --target or send absolute URIs."
+            )
+            return
 
-        body = None
-        if body_bytes and self._expects_json_body(request_path):
-            try:
-                body = json.loads(body_bytes)
-                # Emit request headers before request body (TUI sees original request)
-                safe_req_headers = _safe_headers(self.headers)
-                # // [LAW:one-source-of-truth] request_id/seq/recv_ns envelope is
-                # carried by request-side events too, not only response-side events.
-                self.event_queue.put(RequestHeadersEvent(
-                    headers=safe_req_headers,
-                    request_id=request_id,
-                    seq=0,
-                    recv_ns=time.monotonic_ns(),
-                    provider=self.provider,
-                ))
-                self.event_queue.put(RequestBodyEvent(
-                    body=body,
-                    request_id=request_id,
-                    seq=1,
-                    recv_ns=time.monotonic_ns(),
-                    provider=self.provider,
-                ))
-            except json.JSONDecodeError as e:
-                logger.warning("malformed request JSON: %s", e)
+        body, parse_error = cc_dump.pipeline.proxy_flow.parse_request_json(
+            body_bytes,
+            expects_json=self._expects_json_body(request_path),
+        )
+        if parse_error:
+            logger.warning("malformed request JSON: %s", parse_error)
+        if body is not None:
+            # Emit request headers before request body (TUI sees original request)
+            safe_req_headers = _safe_headers(self.headers)
+            # // [LAW:one-source-of-truth] request_id/seq/recv_ns envelope is
+            # carried by request-side events too, not only response-side events.
+            self.event_queue.put(RequestHeadersEvent(
+                headers=safe_req_headers,
+                request_id=request_id,
+                seq=0,
+                recv_ns=time.monotonic_ns(),
+                provider=self.provider,
+            ))
+            self.event_queue.put(RequestBodyEvent(
+                body=body,
+                request_id=request_id,
+                seq=1,
+                recv_ns=time.monotonic_ns(),
+                provider=self.provider,
+            ))
 
         # // [LAW:single-enforcer] Only emit response/error events for API-path requests
         # that also emitted request events. Non-API traffic (health checks, token counting)
@@ -444,12 +435,10 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             body_bytes = json.dumps(body).encode()  # re-serialize for upstream
 
         # Forward
-        headers = {
-            k: v
-            for k, v in self.headers.items()
-            if k.lower() not in ("host", "content-length")
-        }
-        headers["Content-Length"] = str(len(body_bytes))
+        headers = cc_dump.pipeline.proxy_flow.build_upstream_headers(
+            self.headers,
+            content_length=len(body_bytes),
+        )
 
         req = urllib.request.Request(
             url, data=body_bytes or None, headers=headers, method=self.command
@@ -512,10 +501,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(data)
             if emitted_request:
                 safe_resp_headers = _safe_headers(resp.headers)
-                try:
-                    resp_body = json.loads(data)
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    resp_body = {}
+                resp_body = cc_dump.pipeline.proxy_flow.decode_json_response_body(data)
                 self.event_queue.put(ResponseHeadersEvent(
                     status_code=resp.status,
                     headers=safe_resp_headers,
