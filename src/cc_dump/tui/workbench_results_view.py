@@ -6,10 +6,23 @@ fit comfortably in the sidebar panel.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
+
+from snarfx import Observable, reaction
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Markdown, Static
+
+
+@dataclass(frozen=True)
+class WorkbenchResultState:
+    text: str = ""
+    source: str = ""
+    elapsed_ms: int = 0
+    action: str = ""
+    context_session_id: str = ""
+    meta: str = ""
 
 
 class WorkbenchResultsView(Widget):
@@ -42,18 +55,48 @@ class WorkbenchResultsView(Widget):
 
     def __init__(self) -> None:
         super().__init__()
-        self._last_text = ""
-        self._last_source = ""
-        self._last_elapsed_ms = 0
-        self._last_action = ""
-        self._last_context_session_id = ""
-        self._last_meta = ""
+        self._result_state: Observable[WorkbenchResultState] = Observable(
+            WorkbenchResultState()
+        )
+        # [LAW:single-enforcer] One reactive projection owns markdown/meta rendering.
+        self._result_state_reaction = reaction(
+            lambda: self._result_state.get(),
+            self._render_result_state,
+            fire_immediately=False,
+        )
 
     def compose(self) -> ComposeResult:
         yield Static("Workbench Results", id="workbench-results-title")
         yield Static("", id="workbench-results-meta")
         with VerticalScroll(id="workbench-results-scroll"):
             yield Markdown("No workbench output yet.", id="workbench-results-markdown")
+
+    def on_mount(self) -> None:
+        self._render_result_state(self._result_state.get())
+
+    def on_unmount(self) -> None:
+        self._result_state_reaction.dispose()
+
+    @staticmethod
+    def _build_meta_line(state: WorkbenchResultState) -> str:
+        parts: list[str] = []
+        if state.context_session_id:
+            parts.append(f"context={state.context_session_id}")
+        if state.source:
+            parts.append(f"source={state.source}")
+        parts.append(f"elapsed={state.elapsed_ms}ms")
+        if state.action:
+            parts.append(f"action={state.action}")
+        return "  ".join(parts)
+
+    def _render_result_state(self, state: WorkbenchResultState) -> None:
+        if not self.is_attached:
+            return
+        markdown = self.query_one("#workbench-results-markdown", Markdown)
+        markdown.update(state.text or "No workbench output yet.")
+
+        meta = self.query_one("#workbench-results-meta", Static)
+        meta.update(state.meta)
 
     def update_result(
         self,
@@ -68,36 +111,49 @@ class WorkbenchResultsView(Widget):
 
         // [LAW:single-enforcer] Result-view formatting is centralized here.
         """
-        self._last_text = str(text or "")
-        self._last_source = str(source or "")
-        self._last_elapsed_ms = int(elapsed_ms or 0)
-        self._last_action = str(action or "")
-        self._last_context_session_id = str(context_session_id or "")
+        base_state = WorkbenchResultState(
+            text=str(text or ""),
+            source=str(source or ""),
+            elapsed_ms=int(elapsed_ms or 0),
+            action=str(action or ""),
+            context_session_id=str(context_session_id or ""),
+        )
+        self._result_state.set(replace(base_state, meta=self._build_meta_line(base_state)))
 
-        markdown = self.query_one("#workbench-results-markdown", Markdown)
-        markdown.update(self._last_text or "No workbench output yet.")
+    @property
+    def _last_text(self) -> str:
+        return self._result_state.get().text
 
-        meta = self.query_one("#workbench-results-meta", Static)
-        parts: list[str] = []
-        if self._last_context_session_id:
-            parts.append(f"context={self._last_context_session_id}")
-        if self._last_source:
-            parts.append(f"source={self._last_source}")
-        parts.append(f"elapsed={self._last_elapsed_ms}ms")
-        if self._last_action:
-            parts.append(f"action={self._last_action}")
-        self._last_meta = "  ".join(parts)
-        meta.update(self._last_meta)
+    @property
+    def _last_source(self) -> str:
+        return self._result_state.get().source
+
+    @property
+    def _last_elapsed_ms(self) -> int:
+        return self._result_state.get().elapsed_ms
+
+    @property
+    def _last_action(self) -> str:
+        return self._result_state.get().action
+
+    @property
+    def _last_context_session_id(self) -> str:
+        return self._result_state.get().context_session_id
+
+    @property
+    def _last_meta(self) -> str:
+        return self._result_state.get().meta
 
     def get_state(self) -> dict[str, object]:
         """Expose latest rendered state for deterministic tests."""
+        state = self._result_state.get()
         return {
-            "text": self._last_text,
-            "source": self._last_source,
-            "elapsed_ms": self._last_elapsed_ms,
-            "action": self._last_action,
-            "context_session_id": self._last_context_session_id,
-            "meta": self._last_meta,
+            "text": state.text,
+            "source": state.source,
+            "elapsed_ms": state.elapsed_ms,
+            "action": state.action,
+            "context_session_id": state.context_session_id,
+            "meta": state.meta,
         }
 
 

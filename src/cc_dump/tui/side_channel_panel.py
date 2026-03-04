@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from snarfx import Observable, reaction
 from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.widget import Widget
@@ -160,6 +161,17 @@ WORKBENCH_CONTROL_GROUPS: tuple[WorkbenchControlGroup, ...] = (
 )
 
 
+_DEFAULT_SIDE_CHANNEL_PANEL_STATE = SideChannelPanelState(
+    enabled=False,
+    loading=False,
+    active_action="",
+    result_text="",
+    result_source="",
+    result_elapsed_ms=0,
+    purpose_usage={},
+)
+
+
 class SideChannelPanel(Widget):
     """Docked panel for Workbench orchestration controls and status."""
 
@@ -262,6 +274,18 @@ class SideChannelPanel(Widget):
     }
     """
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._display_state: Observable[SideChannelPanelState] = Observable(
+            _DEFAULT_SIDE_CHANNEL_PANEL_STATE
+        )
+        # [LAW:single-enforcer] One reactive projection owns panel control/result rendering.
+        self._display_reaction = reaction(
+            lambda: self._display_state.get(),
+            self._apply_display_state,
+            fire_immediately=False,
+        )
+
     def compose(self) -> ComposeResult:
         yield Static("AI Workbench", id="sc-title")
         yield Static("", id="sc-status")
@@ -309,6 +333,29 @@ class SideChannelPanel(Widget):
         // [LAW:dataflow-not-control-flow] Every control runs through the same
         rendering pipeline; state values drive action/label classes.
         """
+        # [LAW:one-source-of-truth] Keep a canonical immutable-ish snapshot for rendering.
+        self._display_state.set(
+            SideChannelPanelState(
+                enabled=bool(state.enabled),
+                loading=bool(state.loading),
+                active_action=str(state.active_action),
+                result_text=str(state.result_text),
+                result_source=str(state.result_source),
+                result_elapsed_ms=int(state.result_elapsed_ms),
+                purpose_usage=dict(state.purpose_usage),
+            )
+        )
+
+    def on_mount(self) -> None:
+        self._apply_display_state(self._display_state.get())
+
+    def on_unmount(self) -> None:
+        self._display_reaction.dispose()
+
+    def _apply_display_state(self, state: SideChannelPanelState) -> None:
+        # [LAW:dataflow-not-control-flow] exception: Textual widget mutation requires mounted nodes.
+        if not self.is_attached:
+            return
         status = self.query_one("#sc-status", Static)
         status.update(
             _render_status_line(
