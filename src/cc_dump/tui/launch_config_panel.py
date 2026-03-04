@@ -127,7 +127,7 @@ class LaunchActionChip(Chip):
         event.stop()
         self._emit()
 
-    def on_key(self, event) -> None:
+    async def on_key(self, event) -> None:
         if event.key in ("enter", "space"):
             event.stop()
             event.prevent_default()
