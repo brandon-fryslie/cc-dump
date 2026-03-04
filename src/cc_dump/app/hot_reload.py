@@ -219,7 +219,7 @@ def _is_alias_refreshable_export(module_name: str, value: object) -> bool:
     """True when an export is safe and meaningful for alias refresh mapping.
 
     Restricting to module-owned symbols prevents accidental global rebinding caused
-    by interned/shared primitive identities (for example int/str/None singletons).
+    by shared primitive identities from interning/caching (for example int/str/None).
     """
     if isinstance(value, str | bytes | int | float | complex | bool | tuple | frozenset | list | dict | set | type(None)):
         return False
