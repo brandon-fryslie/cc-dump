@@ -3,6 +3,7 @@
 import http.server
 import json
 import logging
+import queue
 import ssl
 
 import truststore
@@ -12,11 +13,13 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from cc_dump.pipeline.event_types import (
     ErrorEvent,
     LogEvent,
+    PipelineEvent,
     ProxyErrorEvent,
     RequestBodyEvent,
     RequestHeadersEvent,
@@ -29,6 +32,9 @@ from cc_dump.pipeline.event_types import (
 )
 from cc_dump.pipeline.response_assembler import ResponseAssembler, OpenAIResponseAssembler
 import cc_dump.providers
+
+if TYPE_CHECKING:
+    from cc_dump.pipeline.forward_proxy_tls import ForwardProxyCertificateAuthority
 
 # Headers to exclude from emitted events (security + noise reduction)
 _EXCLUDED_HEADERS = frozenset(
@@ -355,11 +361,11 @@ def _fan_out_sse(resp, sinks):
 
 
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
-    target_host = None  # set by cli.py or factory before server starts
-    event_queue = None  # set by cli.py or factory before server starts
-    request_pipeline = None  # set by cli.py or factory before server starts
-    provider = "anthropic"  # set by factory for multi-provider support
-    forward_proxy_ca = None  # set by factory when forward proxy CONNECT interception is enabled
+    target_host: str | None = None  # set by cli.py or factory before server starts
+    event_queue: queue.Queue[PipelineEvent] = queue.Queue()  # set by cli.py or factory before server starts
+    request_pipeline: RequestPipeline | None = None  # set by cli.py or factory before server starts
+    provider: str = "anthropic"  # set by factory for multi-provider support
+    forward_proxy_ca: "ForwardProxyCertificateAuthority | None" = None  # set by factory when forward proxy CONNECT interception is enabled
 
     def log_message(self, fmt, *args):
         self.event_queue.put(LogEvent(method=self.command, path=self.path, status=args[0] if args else "", provider=self.provider))
@@ -723,9 +729,9 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 def make_handler_class(
     provider: str,
     target_host: str | None,
-    event_queue,
-    request_pipeline=None,
-    forward_proxy_ca=None,
+    event_queue: queue.Queue[PipelineEvent],
+    request_pipeline: RequestPipeline | None = None,
+    forward_proxy_ca: "ForwardProxyCertificateAuthority | None" = None,
 ) -> type[ProxyHandler]:
     """Create a configured ProxyHandler subclass for a specific provider.
 

@@ -80,17 +80,20 @@ def _handle_message_start(event: dict, state: _ReconstructionState) -> None:
     state.message["id"] = msg.get("id", "")
     state.message["model"] = msg.get("model", "")
     state.message["role"] = msg.get("role", "assistant")
-    raw_usage = msg.get("usage", {})
+    state.message["usage"] = _extract_usage(msg.get("usage", {}))
+
+
+def _extract_usage(raw_usage: dict) -> _UsageDict:
     usage: _UsageDict = {}
-    for k in (
-        "input_tokens",
-        "output_tokens",
-        "cache_read_input_tokens",
-        "cache_creation_input_tokens",
-    ):
-        if k in raw_usage:
-            usage[k] = raw_usage[k]  # type: ignore[literal-required]
-    state.message["usage"] = usage
+    if "input_tokens" in raw_usage:
+        usage["input_tokens"] = raw_usage["input_tokens"]
+    if "output_tokens" in raw_usage:
+        usage["output_tokens"] = raw_usage["output_tokens"]
+    if "cache_read_input_tokens" in raw_usage:
+        usage["cache_read_input_tokens"] = raw_usage["cache_read_input_tokens"]
+    if "cache_creation_input_tokens" in raw_usage:
+        usage["cache_creation_input_tokens"] = raw_usage["cache_creation_input_tokens"]
+    return usage
 
 
 def _handle_content_block_start(event: dict, state: _ReconstructionState) -> None:
