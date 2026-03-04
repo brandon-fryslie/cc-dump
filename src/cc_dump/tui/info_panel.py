@@ -33,7 +33,7 @@ class InfoPanel(Static):
     def __init__(self):
         super().__init__("")
         self._rows: list[tuple[str, str, str]] = []
-        self._info = Observable({})
+        self._info: Observable[dict[str, object]] = Observable({})
         # [LAW:single-enforcer] One reactive projection owns info text + click rows.
         self._info_reaction = reaction(
             lambda: self._info.get(),
