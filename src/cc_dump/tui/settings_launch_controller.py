@@ -121,4 +121,3 @@ def launch_with_config(app, config, *, log_label: str = "launch_with_config") ->
             "launch:active_tool": profile.launcher_key,
         }
     )
-    app._sync_tmux_to_store()

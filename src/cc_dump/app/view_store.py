@@ -27,6 +27,8 @@ SCHEMA["panel:active"] = "session"
 SCHEMA["panel:side_channel"] = False
 SCHEMA["panel:settings"] = False
 SCHEMA["panel:launch_config"] = False
+SCHEMA["panel:logs"] = False
+SCHEMA["panel:info"] = False
 # // [LAW:one-source-of-truth] String, not FollowState enum — enum class identity
 # changes on reload; string comparison is stable across reloads.
 SCHEMA["nav:follow"] = "active"
@@ -54,11 +56,23 @@ SCHEMA["search:phase"] = "inactive"
 SCHEMA["search:query"] = ""
 SCHEMA["search:modes"] = 13    # CASE_INSENSITIVE(1) | REGEX(4) | INCREMENTAL(8)
 SCHEMA["search:cursor_pos"] = 0
+SCHEMA["search:current_index"] = 0
+SCHEMA["search:match_count"] = 0
 
 
 def create():
     """Create view store with defaults from CATEGORY_CONFIG."""
     store = HotReloadStore(SCHEMA)
+
+    def _coerce_int(value: object, default: int = 0) -> int:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, (int, float, str, bytes, bytearray)):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+        return default
 
     # [LAW:one-source-of-truth] Computed assembles VisState dict from 18 observables.
     # Lives on the store object — survives reconcile (reads via stable store.get()).
@@ -98,6 +112,27 @@ def create():
 
     store.footer_state = footer_state
 
+    @computed
+    def sidebar_panel_state():
+        # [LAW:one-source-of-truth] Sidebar visibility tuple is derived from panel:* keys once.
+        return (
+            bool(store.get("panel:settings")),
+            bool(store.get("panel:launch_config")),
+            bool(store.get("panel:side_channel")),
+        )
+
+    store.sidebar_panel_state = sidebar_panel_state
+
+    @computed
+    def chrome_panel_state():
+        # [LAW:one-source-of-truth] Logs/info visibility is derived from panel:* keys once.
+        return (
+            bool(store.get("panel:logs")),
+            bool(store.get("panel:info")),
+        )
+
+    store.chrome_panel_state = chrome_panel_state
+
     # // [LAW:single-enforcer] error_items Computed combines stale files + exceptions.
     @computed
     def error_items():
@@ -124,6 +159,23 @@ def create():
         }
 
     store.sc_panel_state = sc_panel_state
+
+    @computed
+    def search_ui_state():
+        # [LAW:single-enforcer] Search bar + footer visibility projection is centralized here.
+        phase = str(store.get("search:phase"))
+        return {
+            "phase": phase,
+            "query": str(store.get("search:query")),
+            "modes": _coerce_int(store.get("search:modes"), 13),
+            "cursor_pos": _coerce_int(store.get("search:cursor_pos"), 0),
+            "current_index": _coerce_int(store.get("search:current_index"), 0),
+            "match_count": _coerce_int(store.get("search:match_count"), 0),
+            # [LAW:dataflow-not-control-flow] Footer visibility is a derived value from search phase.
+            "footer_visible": phase == "inactive",
+        }
+
+    store.search_ui_state = search_ui_state
 
     return store
 
@@ -155,17 +207,12 @@ def setup_reactions(store, context=None):
             # // [LAW:single-enforcer] Callback-based reactions — bridge provides push functions.
             for key, data_fn in [
                 ("push_panel_change", lambda: store.get("panel:active")),
-                (
-                    "push_sidebar_state",
-                    lambda: (
-                        bool(store.get("panel:settings")),
-                        bool(store.get("panel:launch_config")),
-                        bool(store.get("panel:side_channel")),
-                    ),
-                ),
+                ("push_sidebar_state", lambda: store.sidebar_panel_state.get()),
+                ("push_chrome_panels", lambda: store.chrome_panel_state.get()),
                 ("push_footer", lambda: store.footer_state.get()),
                 ("push_errors", lambda: store.error_items.get()),
                 ("push_sc_panel", lambda: store.sc_panel_state.get()),
+                ("push_search_ui", lambda: store.search_ui_state.get()),
             ]:
                 cb = context.get(key)
                 if cb:

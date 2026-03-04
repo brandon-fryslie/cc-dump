@@ -116,10 +116,30 @@ def _apply_edit_action(state, action: str) -> tuple[bool, bool]:
 
 def _post_search_edit(app, *, text_changed: bool, cursor_changed: bool) -> None:
     """Run shared post-edit side effects for search query editing."""
+    # [LAW:dataflow-not-control-flow] SearchBar projection reacts to store-backed fields.
     if text_changed or cursor_changed:
-        update_search_bar(app)
+        pass
     if text_changed and app._search_state.modes & cc_dump.tui.search.SearchMode.INCREMENTAL:
         schedule_incremental_search(app)
+
+
+def _sync_search_match_summary(app) -> None:
+    """Project transient match summary into view-store keys for SearchBar rendering."""
+    state = app._search_state
+    if not state.matches:
+        state.current_index = 0
+    # [LAW:single-enforcer] Search match summary for UI is written at one boundary.
+    app._view_store.set("search:match_count", len(state.matches))
+
+
+def update_search_bar(app) -> None:
+    """Backward-compatible shim for callers/tests during migration.
+
+    // [LAW:single-enforcer] exception: legacy entrypoint delegates to reactive store projection.
+    """
+    if not hasattr(app, "_view_store"):
+        return
+    _sync_search_match_summary(app)
 
 
 def start_search(app) -> None:
@@ -148,7 +168,7 @@ def start_search(app) -> None:
         state.saved_scroll_y = conv.scroll_offset.y
     else:
         state.saved_scroll_y = None
-    update_search_bar(app)
+    _sync_search_match_summary(app)
 
 
 def handle_search_editing_key(app, event) -> None:
@@ -166,7 +186,6 @@ def handle_search_editing_key(app, event) -> None:
     }
     if key in _MODE_TOGGLES:
         state.modes ^= _MODE_TOGGLES[key]
-        update_search_bar(app)
         if state.modes & SearchMode.INCREMENTAL:
             schedule_incremental_search(app)
         return
@@ -219,7 +238,6 @@ def handle_search_editing_key(app, event) -> None:
             + state.query[state.cursor_pos :]
         )
         state.cursor_pos += 1
-        update_search_bar(app)
         if state.modes & SearchMode.INCREMENTAL:
             schedule_incremental_search(app)
         return
@@ -246,7 +264,6 @@ def handle_search_nav_special_keys(app, event) -> bool:
     if event.character == "/":
         app._search_state.phase = SearchPhase.EDITING
         app._search_state.cursor_pos = len(app._search_state.query)
-        update_search_bar(app)
         return True
 
     # Exit search - keep current position
@@ -290,7 +307,7 @@ def _exit_search_common(app) -> None:
         state.debounce_timer.stop()
         state.debounce_timer = None
 
-    update_search_bar(app)
+    _sync_search_match_summary(app)
     # Re-render without search context (highlights removed)
     conv = app._get_conv()
     if conv is not None:
@@ -336,8 +353,6 @@ def commit_search(app) -> None:
     else:
         state.phase = SearchPhase.NAVIGATING
 
-    update_search_bar(app)
-
 
 def schedule_incremental_search(app) -> None:
     """Schedule a debounced incremental search (150ms)."""
@@ -353,7 +368,6 @@ def run_incremental_search(app) -> None:
     state.debounce_timer = None
     run_search(app)
     search_rerender(app)
-    update_search_bar(app)
 
 
 def run_search(app) -> None:
@@ -362,12 +376,13 @@ def run_search(app) -> None:
     pattern = cc_dump.tui.search.compile_search_pattern(state.query, state.modes)
     if pattern is None:
         state.matches = []
-        state.current_index = 0
+        _sync_search_match_summary(app)
         return
 
     conv = app._get_conv()
     if conv is None:
         state.matches = []
+        _sync_search_match_summary(app)
         return
 
     # // [LAW:no-shared-mutable-globals] Cache is state-owned and locally bounded.
@@ -385,6 +400,7 @@ def run_search(app) -> None:
     )
     if state.current_index >= len(state.matches):
         state.current_index = 0
+    _sync_search_match_summary(app)
 
 
 def navigate_next(app) -> None:
@@ -479,7 +495,6 @@ def navigate_to_current(app) -> None:
         location,
         rerender=lambda: search_rerender(app),
     )
-    update_search_bar(app)
 
 
 def clear_search_expand(app) -> None:
@@ -516,18 +531,3 @@ def search_rerender(app) -> None:
         )
 
     conv.rerender(app.active_filters, search_ctx=search_ctx)
-
-
-def update_search_bar(app) -> None:
-    """Update the search bar widget display and toggle Footer visibility."""
-    SearchPhase = cc_dump.tui.search.SearchPhase
-    bar = app._get_search_bar()
-    footer = app._get_footer()
-
-    if bar is not None:
-        bar.update_display(app._search_state)
-
-    # Footer hidden when search is active, visible when inactive
-    search_active = app._search_state.phase != SearchPhase.INACTIVE
-    if footer is not None:
-        footer.display = not search_active

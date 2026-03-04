@@ -286,6 +286,13 @@ class ConversationView(ScrollView):
         self._scrolling_programmatically: bool = False
         self._scroll_anchor: ScrollAnchor | None = None
         self._indicator = cc_dump.tui.error_indicator.IndicatorState()
+        self._indicator_state: Observable[tuple[list, bool]] = Observable(([], False))
+        # [LAW:single-enforcer] One reactive projection owns indicator invalidation/refresh.
+        self._indicator_reaction = reaction(
+            lambda: self._indicator_state.get(),
+            self._apply_indicator_state,
+            fire_immediately=False,
+        )
         # // [LAW:one-source-of-truth] All per-block view state lives here.
         self._view_overrides = cc_dump.tui.view_overrides.ViewOverrides()
         # Streaming preview rendering state (rendering concern).
@@ -375,7 +382,32 @@ class ConversationView(ScrollView):
 
         // [LAW:one-source-of-truth] DomainStore remains canonical; widget cache is derived.
         """
+        self._apply_indicator_state(self._indicator_state.get())
         self._hydrate_from_domain_store()
+
+    def on_unmount(self) -> None:
+        self._indicator_reaction.dispose()
+
+    def _set_indicator_state(
+        self,
+        *,
+        items: list | None = None,
+        expanded: bool | None = None,
+    ) -> None:
+        """Update indicator projection state; rendering side effects happen in reaction."""
+        current_items, current_expanded = self._indicator_state.get()
+        next_items = list(current_items) if items is None else list(items)
+        next_expanded = current_expanded if expanded is None else bool(expanded)
+        self._indicator_state.set((next_items, next_expanded))
+
+    def _apply_indicator_state(self, indicator_state: tuple[list, bool]) -> None:
+        items, expanded = indicator_state
+        # [LAW:dataflow-not-control-flow] Apply always runs; values control expansion.
+        self._indicator.items = list(items)
+        self._indicator.expanded = bool(expanded and items)
+        self._clear_line_cache()
+        if self.is_attached:
+            self.refresh()
 
     def _hydrate_from_domain_store(self) -> None:
         """Rebuild rendered turns from current domain store state."""
@@ -585,12 +617,15 @@ class ConversationView(ScrollView):
     def _report_render_line_exception(self, exc: Exception) -> None:
         logger.exception("render_line failed")
         err_key = f"render:{type(exc).__name__}"
-        if not any(item.id == err_key for item in self._indicator.items):
-            self._indicator.items.append(
+        items, expanded = self._indicator_state.get()
+        if not any(item.id == err_key for item in items):
+            next_items = list(items)
+            next_items.append(
                 cc_dump.tui.error_indicator.ErrorItem(
                     err_key, "\u26a0\ufe0f", f"{type(exc).__name__}: {exc}"
                 )
             )
+            self._set_indicator_state(items=next_items, expanded=expanded)
 
     def render_line(self, y: int) -> Strip:
         """Line API: render a single line at virtual position y."""
@@ -2253,11 +2288,8 @@ class ConversationView(ScrollView):
 
     def update_error_items(self, items: list) -> None:
         """Set error indicator items. Called by app when stale files change."""
-        self._indicator.items = items
-        if not items:
-            self._indicator.expanded = False
-        self._clear_line_cache()
-        self.refresh()
+        _items, expanded = self._indicator_state.get()
+        self._set_indicator_state(items=items, expanded=(expanded if items else False))
 
     def on_mouse_move(self, event) -> None:
         """Track hover for error indicator expansion."""
@@ -2268,10 +2300,9 @@ class ConversationView(ScrollView):
                 self._indicator, content_offset.x, content_offset.y, self._content_width
             )
         )
-        if hit != self._indicator.expanded:
-            self._indicator.expanded = hit
-            self._clear_line_cache()
-            self.refresh()
+        items, expanded = self._indicator_state.get()
+        if hit != expanded:
+            self._set_indicator_state(items=items, expanded=hit)
 
     # ─── State management ────────────────────────────────────────────────────
 
