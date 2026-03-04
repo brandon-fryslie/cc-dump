@@ -144,7 +144,7 @@ def install() -> StderrTee:
     if _tee is not None:
         return _tee
     _tee = StderrTee(sys.stderr)
-    sys.stderr = _tee  # type: ignore[assignment]
+    sys.stderr = _tee
     return _tee
 
 
