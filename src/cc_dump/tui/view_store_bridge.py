@@ -8,6 +8,8 @@
 import cc_dump.tui.widget_factory
 import cc_dump.tui.custom_footer
 import cc_dump.tui.side_channel_panel
+import cc_dump.tui.keys_panel
+import cc_dump.tui.debug_settings_panel
 import cc_dump.tui.search
 from textual.css.query import NoMatches
 from cc_dump.tui import action_handlers as _actions
@@ -76,6 +78,28 @@ def build_reaction_context(app) -> dict:
         if info is not None:
             info.display = bool(info_visible)
 
+    def push_aux_panels(value):
+        keys_visible, debug_visible = value
+
+        keys_panels = list(app.screen.query(cc_dump.tui.keys_panel.KeysPanel))
+        if keys_visible and not keys_panels:
+            app.screen.mount(cc_dump.tui.keys_panel.create_keys_panel())
+        if (not keys_visible) and keys_panels:
+            for panel in keys_panels:
+                panel.remove()
+
+        debug_panels = list(app.screen.query(cc_dump.tui.debug_settings_panel.DebugSettingsPanel))
+        if debug_visible and not debug_panels:
+            app.screen.mount(
+                cc_dump.tui.debug_settings_panel.create_debug_settings_panel(app_ref=app)
+            )
+        if (not debug_visible) and debug_panels:
+            for panel in debug_panels:
+                panel.remove()
+            conv = app._get_conv()
+            if conv is not None:
+                conv.focus()
+
     def push_search_ui(value):
         SearchBarState = cc_dump.tui.search.SearchBarState
         SearchMode = cc_dump.tui.search.SearchMode
@@ -114,6 +138,7 @@ def build_reaction_context(app) -> dict:
         "push_panel_change": push_panel_change,
         "push_sidebar_state": push_sidebar_state,
         "push_chrome_panels": push_chrome_panels,
+        "push_aux_panels": push_aux_panels,
         "push_search_ui": push_search_ui,
     }
 

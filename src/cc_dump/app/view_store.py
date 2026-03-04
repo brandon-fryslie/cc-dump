@@ -29,6 +29,8 @@ SCHEMA["panel:settings"] = False
 SCHEMA["panel:launch_config"] = False
 SCHEMA["panel:logs"] = False
 SCHEMA["panel:info"] = False
+SCHEMA["panel:keys"] = False
+SCHEMA["panel:debug_settings"] = False
 # // [LAW:one-source-of-truth] String, not FollowState enum — enum class identity
 # changes on reload; string comparison is stable across reloads.
 SCHEMA["nav:follow"] = "active"
@@ -141,6 +143,16 @@ def create():
 
     store.chrome_panel_state = chrome_panel_state
 
+    @computed
+    def aux_panel_state():
+        # [LAW:one-source-of-truth] Keys/debug overlay visibility is derived from panel:* keys once.
+        return (
+            bool(store.get("panel:keys")),
+            bool(store.get("panel:debug_settings")),
+        )
+
+    store.aux_panel_state = aux_panel_state
+
     # // [LAW:single-enforcer] error_items Computed combines stale files + exceptions.
     @computed
     def error_items():
@@ -223,6 +235,7 @@ def setup_reactions(store, context=None):
                 ("push_panel_change", lambda: store.get("panel:active")),
                 ("push_sidebar_state", lambda: store.sidebar_panel_state.get()),
                 ("push_chrome_panels", lambda: store.chrome_panel_state.get()),
+                ("push_aux_panels", lambda: store.aux_panel_state.get()),
                 ("push_footer", lambda: store.footer_state.get()),
                 ("push_errors", lambda: store.error_items.get()),
                 ("push_sc_panel", lambda: store.sc_panel_state.get()),

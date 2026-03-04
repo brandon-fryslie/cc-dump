@@ -987,6 +987,8 @@ class CcDumpApp(App):
             "panel:launch_config",
             "panel:logs",
             "panel:info",
+            "panel:keys",
+            "panel:debug_settings",
             "nav:follow",
             "filter:active",
             "search:phase",

@@ -17,6 +17,7 @@ import cc_dump.tui.search
 import cc_dump.tui.widget_factory
 import cc_dump.tui.info_panel
 import cc_dump.tui.keys_panel
+import cc_dump.tui.debug_settings_panel
 import cc_dump.tui.settings_panel
 import cc_dump.tui.custom_footer
 import cc_dump.app.settings_store
@@ -459,6 +460,8 @@ def _build_replacement_info(info_state: dict):
 async def _remove_ephemeral_panels(app) -> None:
     """Drop transient overlays before remounting persisted widgets."""
     for panel in app.screen.query(cc_dump.tui.keys_panel.KeysPanel):
+        await panel.remove()
+    for panel in app.screen.query(cc_dump.tui.debug_settings_panel.DebugSettingsPanel):
         await panel.remove()
 
     removals = (
