@@ -286,11 +286,22 @@ class LaunchConfigPanel(VerticalScroll):
         )
 
     def on_mount(self) -> None:
-        target_name = self._active_name or (self._configs[0].name if self._configs else "")
+        self.reset_configs(self._configs, self._active_name)
+        if self.display:
+            self.focus_default_control()
+
+    def reset_configs(self, configs: list, active_config_name: str) -> None:
+        """Reset panel state from persisted launch configs."""
+        incoming = copy.deepcopy(configs)
+        self._configs = incoming or cc_dump.app.launch_config.default_configs()
+        self._active_name = active_config_name
+        names = [config.name for config in self._configs]
+        target_name = self._active_name if self._active_name in names else (names[0] if names else "")
         self._refresh_config_selector(preferred_name=target_name)
         self._populate_form(self._selected_config())
         self._refresh_active_display()
 
+    def focus_default_control(self) -> None:
         focusable = self.query("Input, CycleSelector, ToggleChip")
         if focusable:
             focusable.first().focus()

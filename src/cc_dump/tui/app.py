@@ -760,6 +760,23 @@ class CcDumpApp(App):
         info.id = self._info_id
         yield info
 
+        settings_panel = cc_dump.tui.settings_panel.create_settings_panel(
+            _settings_launch.initial_settings_values(self)
+        )
+        settings_panel.display = False
+        yield settings_panel
+
+        launch_panel = cc_dump.tui.launch_config_panel.create_launch_config_panel(
+            cc_dump.app.launch_config.load_configs(),
+            cc_dump.app.launch_config.load_active_name(),
+        )
+        launch_panel.display = False
+        yield launch_panel
+
+        side_channel_panel = cc_dump.tui.side_channel_panel.create_side_channel_panel()
+        side_channel_panel.display = False
+        yield side_channel_panel
+
         search_bar = cc_dump.tui.search.SearchBar()
         search_bar.id = self._search_bar_id
         yield search_bar
@@ -1649,6 +1666,36 @@ class CcDumpApp(App):
             widget = self._get_panel(name)
             if widget is not None:
                 widget.display = (name == active)
+
+    def _sync_sidebar_panels(self, state: tuple[bool, bool, bool]) -> None:
+        """Single enforcer for sidebar visibility + focus."""
+        settings_open, launch_open, side_open = state
+        def _first_or_none(panel_type):
+            try:
+                return self.screen.query(panel_type).first()
+            except NoMatches:
+                return None
+
+        settings_panel = _first_or_none(cc_dump.tui.settings_panel.SettingsPanel)
+        launch_panel = _first_or_none(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+        side_panel = _first_or_none(cc_dump.tui.side_channel_panel.SideChannelPanel)
+
+        if settings_panel is not None:
+            settings_panel.display = settings_open
+        if launch_panel is not None:
+            launch_panel.display = launch_open
+        if side_panel is not None:
+            side_panel.display = side_open
+
+        focus_target = side_panel if side_open else launch_panel if launch_open else settings_panel if settings_open else None
+        if focus_target is not None:
+            focus_default = getattr(focus_target, "focus_default_control", None)
+            if callable(focus_default):
+                self.call_after_refresh(focus_default)
+        else:
+            conv = self._get_conv()
+            if conv is not None:
+                self.call_after_refresh(conv.focus)
 
     def watch_show_logs(self, value):
         pass

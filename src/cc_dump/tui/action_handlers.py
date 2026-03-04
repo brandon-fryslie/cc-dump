@@ -20,10 +20,7 @@ import cc_dump.tui.rendering
 from cc_dump.tui.panel_registry import PANEL_ORDER
 from snarfx import transaction
 import cc_dump.tui.keys_panel
-import cc_dump.tui.settings_panel
 import cc_dump.tui.debug_settings_panel
-import cc_dump.tui.launch_config_panel
-import cc_dump.tui.side_channel_panel
 import cc_dump.tui.widget_factory
 
 
@@ -185,10 +182,8 @@ def toggle_keys(app) -> None:
 
 
 def toggle_settings(app) -> None:
-    """Toggle the settings panel via mount/remove."""
-    panel_class = cc_dump.tui.settings_panel.SettingsPanel
-    existing = app.screen.query(panel_class)
-    if existing:
+    """Toggle the settings panel via state booleans."""
+    if app._view_store.get("panel:settings"):
         app._close_settings()
     else:
         app._open_settings()
@@ -210,20 +205,16 @@ def toggle_debug_settings(app) -> None:
 
 
 def toggle_launch_config(app) -> None:
-    """Toggle the launch config panel via mount/remove."""
-    panel_class = cc_dump.tui.launch_config_panel.LaunchConfigPanel
-    existing = app.screen.query(panel_class)
-    if existing:
+    """Toggle the launch config panel via show/hide."""
+    if app._view_store.get("panel:launch_config"):
         app._close_launch_config()
     else:
         app._open_launch_config()
 
 
 def toggle_side_channel(app) -> None:
-    """Toggle the side-channel AI panel via mount/remove."""
-    panel_class = cc_dump.tui.side_channel_panel.SideChannelPanel
-    existing = app.screen.query(panel_class)
-    if existing:
+    """Toggle the side-channel AI panel via state booleans."""
+    if app._view_store.get("panel:side_channel"):
         app._close_side_channel()
     else:
         app._open_side_channel()

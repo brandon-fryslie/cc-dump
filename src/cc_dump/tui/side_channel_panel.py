@@ -345,6 +345,11 @@ class SideChannelPanel(Widget):
         usage = self.query_one("#sc-usage", Static)
         usage.update(_render_purpose_usage(state.purpose_usage))
 
+    def focus_default_control(self) -> None:
+        focusable = self.query("Chip, Input, Select, Checkbox")
+        if focusable:
+            focusable.first().focus()
+
     def get_state(self) -> dict:
         return {}  # Stateless
 

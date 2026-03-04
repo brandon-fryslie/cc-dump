@@ -17,9 +17,18 @@ from snarfx import transaction
 
 def open_side_channel(app) -> None:
     """Open AI Workbench sidebar and hydrate panel state."""
-    app._view_store.set("panel:side_channel", True)
-    panel = cc_dump.tui.side_channel_panel.create_side_channel_panel()
-    app.screen.mount(panel)
+    panel = get_side_channel_panel_widget(app)
+    if panel is None:
+        panel = cc_dump.tui.side_channel_panel.create_side_channel_panel()
+        panel.display = False
+        app.screen.mount(panel)
+    app._view_store.update(
+        {
+            "panel:settings": False,
+            "panel:launch_config": False,
+            "panel:side_channel": True,
+        }
+    )
     set_side_channel_result(
         app,
         text="",
@@ -32,23 +41,11 @@ def open_side_channel(app) -> None:
     app._sc_action_batch_id = ""
     app._sc_action_items = []
     refresh_side_channel_usage(app)
-    app.call_after_refresh(
-        lambda: panel.update_display(
-            cc_dump.tui.side_channel_panel.SideChannelPanelState(
-                **app._view_store.sc_panel_state.get()
-            )
-        )
-    )
 
 
 def close_side_channel(app) -> None:
-    """Close AI Workbench sidebar and restore conversation focus."""
-    for panel in app.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel):
-        panel.remove()
+    """Hide AI Workbench sidebar."""
     app._view_store.set("panel:side_channel", False)
-    conv = app._get_conv()
-    if conv is not None:
-        conv.focus()
 
 
 def side_channel_summarize(app) -> None:
