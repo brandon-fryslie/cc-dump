@@ -33,20 +33,13 @@ def _parse_level(raw: str) -> tuple[str, int]:
     return str(level_name), int(level)
 
 
-def _safe_name(value: str) -> str:
-    candidate = "".join(ch if (ch.isalnum() or ch in {"-", "_"}) else "-" for ch in value)
-    cleaned = candidate.strip("-_")
-    return cleaned or "session"
-
-
-def _default_log_path(session_name: str) -> str:
+def _default_log_path() -> str:
     log_dir = Path(
         os.environ.get("CC_DUMP_LOG_DIR", os.path.expanduser("~/.local/share/cc-dump/logs"))
     )
     log_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    safe_session = _safe_name(session_name)
-    return str(log_dir / f"{safe_session}-{ts}-{os.getpid()}.log")
+    return str(log_dir / f"cc-dump-{ts}-{os.getpid()}.log")
 
 
 def _make_stream_handler(level: int) -> logging.Handler:
@@ -75,7 +68,7 @@ def _make_file_handler(level: int, file_path: str) -> logging.Handler:
     return handler
 
 
-def configure(session_name: str = "unnamed-session") -> LoggingRuntime:
+def configure() -> LoggingRuntime:
     """Configure cc_dump logger hierarchy with stderr + rotating file handlers.
 
     Idempotent: repeated calls return the originally configured runtime.
@@ -85,7 +78,7 @@ def configure(session_name: str = "unnamed-session") -> LoggingRuntime:
         return _RUNTIME
 
     level_name, level = _parse_level(os.environ.get("CC_DUMP_LOG_LEVEL", "INFO"))
-    file_path = os.environ.get("CC_DUMP_LOG_FILE", _default_log_path(session_name))
+    file_path = os.environ.get("CC_DUMP_LOG_FILE", _default_log_path())
     Path(file_path).parent.mkdir(parents=True, exist_ok=True)
 
     # [LAW:single-enforcer] All cc_dump module loggers propagate to this one logger.

@@ -70,7 +70,7 @@ Each browser tab runs an independent cc-dump instance.
 cc-dump automatically records all API traffic to HAR files:
 
 ```bash
-# Normal operation — records to ~/.local/share/cc-dump/recordings/<session>/<provider>/
+# Normal operation — records to ~/.local/share/cc-dump/recordings/
 cc-dump
 
 # Replay a previous session (proxy still runs for new traffic)
@@ -83,11 +83,8 @@ cc-dump --continue
 # Disable recording
 cc-dump --no-record
 
-# Custom recording path base (provider subdirectories are still created)
-cc-dump --record /path/to/output.har
-
-# Organize recordings by session name
-cc-dump --session my-project
+# Custom recording output directory
+cc-dump --record /path/to/recordings
 ```
 
 HAR files are the source of truth for events. Replay mode loads previous data, then the proxy accepts new traffic on top.
@@ -99,10 +96,9 @@ HAR files are the source of truth for events. Replay mode loads previous data, t
 | `--host HOST` | `127.0.0.1` | Bind address |
 | `--port PORT` | `0` (OS-assigned) | Listen port |
 | `--target URL` | `https://api.anthropic.com` | Upstream API URL (empty string for forward proxy mode). Defaults to `ANTHROPIC_BASE_URL` env var if set |
-| `--session NAME` | `unnamed-session` | Session name — recordings are organized into subdirectories by session |
 | `--replay PATH` | — | Replay a HAR file (`latest` for most recent) |
 | `--continue` | — | Continue from most recent recording (replay + live proxy) |
-| `--record PATH` | auto | Custom HAR recording output path base (saved as `<provider>/<name>.har`) |
+| `--record PATH` | auto | Custom HAR recording output directory |
 | `--no-record` | — | Disable HAR recording |
 | `--seed-hue HUE` | `190` (cyan) | Base hue (0–360) for the color palette. Also settable via `CC_DUMP_SEED_HUE` env var |
 
@@ -173,7 +169,7 @@ Text content is rendered using Rich:
 
 ### HAR Recording and Replay
 
-All API traffic is recorded in HAR 1.2 format. Recordings are organized by session and provider under `~/.local/share/cc-dump/recordings/<session>/<provider>/`. Replay feeds saved data through the same rendering pipeline as live traffic.
+All API traffic is recorded in HAR 1.2 format. Recordings are stored in `~/.local/share/cc-dump/recordings/` with filenames like `ccdump-<provider>-<timestamp>-<shortid>.har`. Replay feeds saved data through the same rendering pipeline as live traffic.
 
 ### Tmux Integration
 
@@ -212,7 +208,7 @@ User-saved filtersets override built-in defaults for the same slot.
 
 ### Info Panel
 
-`i` toggles a panel showing server configuration: proxy URL, mode, target, session name, session ID, recording path, Python/Textual versions, PID. Click any row to copy its value to the clipboard.
+`i` toggles a panel showing server configuration: proxy URL, mode, target, session ID, recording path, Python/Textual versions, PID. Click any row to copy its value to the clipboard.
 
 ### Logs Panel
 
@@ -318,7 +314,7 @@ Each press cycles: current → next visibility level.
 
 | Path | Contents |
 |------|----------|
-| `~/.local/share/cc-dump/recordings/` | HAR recordings, organized by session and provider |
+| `~/.local/share/cc-dump/recordings/` | HAR recordings (flat directory; provider encoded in filename) |
 | `~/.config/cc-dump/settings.json` | Persisted settings (filtersets, theme) |
 
 ## Environment Variables
