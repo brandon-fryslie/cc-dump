@@ -1,6 +1,7 @@
 """CLI entry point for cc-dump."""
 
 import argparse
+import hashlib
 import http.server
 import logging
 import os
@@ -8,7 +9,8 @@ import queue
 import signal
 import sys
 import threading
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from cc_dump.pipeline.proxy import make_handler_class
@@ -91,6 +93,26 @@ def _resolve_auto_launch_config_name(config_name: str | None) -> str | None:
     sys.exit(2)
 
 
+def _recordings_output_dir(record_arg: str | None) -> Path:
+    default_dir = Path(os.path.expanduser("~/.local/share/cc-dump/recordings"))
+    if not record_arg:
+        return default_dir
+    candidate = Path(os.path.expanduser(record_arg))
+    # [LAW:dataflow-not-control-flow] Legacy file-like input maps to its parent directory.
+    return candidate.parent if candidate.suffix.lower() == ".har" else candidate
+
+
+def _short_recording_hash(provider: str, timestamp: str) -> str:
+    payload = f"{provider}:{timestamp}:{os.getpid()}:{uuid.uuid4().hex}"
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:8]
+
+
+def _recording_path_for_provider(recordings_dir: Path, provider: str, timestamp: str) -> str:
+    # [LAW:one-source-of-truth] HAR filename is derived from provider + timestamp + short hash.
+    filename = f"ccdump-{provider}-{timestamp}-{_short_recording_hash(provider, timestamp)}.har"
+    return str(recordings_dir / filename)
+
+
 def main():
     auto_launch_config, _argv, auto_launch_extra_args = _detect_run_subcommand(sys.argv[1:])
 
@@ -117,16 +139,10 @@ def main():
         help="Upstream API URL for reverse proxy mode (default: https://api.anthropic.com)",
     )
     parser.add_argument(
-        "--record", type=str, default=None, help="HAR recording output path"
+        "--record", type=str, default=None, help="HAR recording output directory"
     )
     parser.add_argument(
         "--no-record", action="store_true", help="Disable HAR recording"
-    )
-    parser.add_argument(
-        "--session",
-        type=str,
-        default="unnamed-session",
-        help="Session name for organizing recordings (default: unnamed-session)",
     )
     parser.add_argument(
         "--replay",
@@ -212,7 +228,7 @@ def main():
     # Install stderr tee before anything else writes to stderr
     cc_dump.io.stderr_tee.install()
     # [LAW:single-enforcer] Runtime logger configuration is centralized in io.logging_setup.
-    log_runtime = cc_dump.io.logging_setup.configure(session_name=args.session)
+    log_runtime = cc_dump.io.logging_setup.configure()
     logger.info(
         "logging configured level=%s file=%s",
         log_runtime.level_name,
@@ -388,29 +404,18 @@ def main():
     router.add_subscriber(DirectSubscriber(analytics_store.on_event))
 
     # HAR recording subscriber (direct subscriber, inline writes)
-    # [LAW:one-source-of-truth] Session name from CLI or default
-    session_name = args.session
     har_recorders: list[cc_dump.pipeline.har_recorder.HARRecordingSubscriber] = []
     recording_paths: dict[str, str] = {}
     primary_record_path = None
     if not args.no_record:
-        # [LAW:one-source-of-truth] Recordings organized by session name
-        record_dir = os.path.expanduser("~/.local/share/cc-dump/recordings")
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        # [LAW:one-source-of-truth] Recording output directory is centralized in one resolver.
+        recordings_dir = _recordings_output_dir(args.record)
+        recordings_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
         active_providers = list(proxy_ports.keys())
 
-        def _recording_path_for_provider(provider: str) -> str:
-            # // [LAW:dataflow-not-control-flow] Path is derived from provider + timestamp in one deterministic function.
-            if args.record:
-                custom = Path(os.path.expanduser(args.record))
-                custom_name = custom.name
-                if not custom_name.endswith(".har"):
-                    custom_name = custom_name + ".har"
-                return str(custom.parent / provider / custom_name)
-            return os.path.join(record_dir, session_name, provider, f"recording-{timestamp}.har")
-
         for provider in active_providers:
-            record_path = _recording_path_for_provider(provider)
+            record_path = _recording_path_for_provider(recordings_dir, provider, timestamp)
             recording_paths[provider] = record_path
             recorder = cc_dump.pipeline.har_recorder.HARRecordingSubscriber(
                 record_path,
@@ -534,7 +539,6 @@ def main():
         state,
         router,
         analytics_store=analytics_store,
-        session_name=session_name,
         host=args.host,
         port=actual_port,
         target=anthropic_target,

@@ -1,8 +1,4 @@
-"""Session management for HAR recordings.
-
-Provides listing, metadata extraction, and utility functions for managing
-recorded HAR files in the recordings directory.
-"""
+"""HAR recording management utilities."""
 
 import json
 import logging
@@ -11,14 +7,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, TypedDict
 
+import cc_dump.providers
+
 logger = logging.getLogger(__name__)
 
 
 class RecordingInfo(TypedDict):
     path: str
     filename: str
-    session_id: str | None
-    session_name: str | None
     provider: str | None
     created: str
     entry_count: int
@@ -42,6 +38,84 @@ def get_recordings_dir() -> str:
     return os.path.expanduser("~/.local/share/cc-dump/recordings")
 
 
+def _provider_keys() -> set[str]:
+    # [LAW:one-source-of-truth] Known provider keys come from provider registry.
+    return {spec.key for spec in cc_dump.providers.all_provider_specs()}
+
+
+def _provider_from_filename(path: Path, provider_keys: set[str]) -> str | None:
+    stem = path.stem
+    if not stem.startswith("ccdump-"):
+        return None
+    parts = stem.split("-", 3)
+    if len(parts) < 4:
+        return None
+    # [LAW:one-source-of-truth] Provider identity in filename must match canonical provider keys.
+    candidate = parts[1]
+    return candidate if candidate in provider_keys else None
+
+
+def _provider_from_metadata(entries: list[dict], provider_keys: set[str]) -> str | None:
+    if not entries:
+        return None
+    metadata = entries[0].get("_cc_dump", {})
+    if not isinstance(metadata, dict):
+        return None
+    candidate = metadata.get("provider")
+    if not isinstance(candidate, str):
+        return None
+    normalized = candidate.strip().lower()
+    return normalized if normalized in provider_keys else None
+
+
+def _provider_from_request_url(entries: list[dict]) -> str | None:
+    if not entries:
+        return None
+    request = entries[0].get("request", {})
+    if not isinstance(request, dict):
+        return None
+    raw_url = request.get("url")
+    if not isinstance(raw_url, str):
+        return None
+    url = raw_url.strip().lower()
+    if not url:
+        return None
+    # [LAW:one-source-of-truth] URL marker matching uses provider registry metadata.
+    for spec in cc_dump.providers.all_provider_specs():
+        if any(marker in url for marker in spec.url_markers):
+            return spec.key
+    return None
+
+
+def _provider_from_entries(entries: list[dict], provider_keys: set[str]) -> str | None:
+    return _provider_from_metadata(entries, provider_keys) or _provider_from_request_url(entries)
+
+
+def _entry_created_or_mtime(entries: list[dict], path: Path) -> str:
+    if entries and "startedDateTime" in entries[0]:
+        return str(entries[0]["startedDateTime"])
+    return datetime.fromtimestamp(path.stat().st_mtime).isoformat()
+
+
+def _load_recording_info(
+    path: Path,
+    provider_keys: set[str],
+) -> RecordingInfo:
+    with open(path, "r", encoding="utf-8") as f:
+        har = json.load(f)
+
+    entries = har.get("log", {}).get("entries", [])
+    return {
+        "path": str(path),
+        "filename": path.name,
+        "provider": _provider_from_filename(path, provider_keys)
+        or _provider_from_entries(entries, provider_keys),
+        "created": _entry_created_or_mtime(entries, path),
+        "entry_count": len(entries),
+        "size_bytes": path.stat().st_size,
+    }
+
+
 def list_recordings(recordings_dir: Optional[str] = None) -> list[RecordingInfo]:
     """List available recordings with metadata.
 
@@ -49,13 +123,12 @@ def list_recordings(recordings_dir: Optional[str] = None) -> list[RecordingInfo]
         recordings_dir: Directory to search (default: ~/.local/share/cc-dump/recordings)
 
     Returns:
-        List of recording metadata dicts, sorted by filename (chronological):
+        List of recording metadata dicts, sorted by filename:
         [
             {
-                "path": "/path/to/recording-xyz.har",
-                "filename": "recording-xyz.har",
-                "session_id": "xyz",
-                "session_name": "my-session",  # NEW: session subdirectory name
+                "path": "/path/to/ccdump-anthropic-20260304-101530Z-a1b2c3d4.har",
+                "filename": "ccdump-anthropic-20260304-101530Z-a1b2c3d4.har",
+                "provider": "anthropic",
                 "created": "2026-02-03T14:30:00",
                 "entry_count": 42,
                 "size_bytes": 102400,
@@ -73,60 +146,14 @@ def list_recordings(recordings_dir: Optional[str] = None) -> list[RecordingInfo]
     if not recordings_path.exists():
         return recordings
 
-    # // [LAW:dataflow-not-control-flow] One recursive HAR scan supports old and new folder layouts.
-    har_files = sorted(path for path in recordings_path.rglob("*.har") if path.is_file())
-
-    def _infer_context(path: Path) -> tuple[str | None, str | None]:
-        try:
-            rel_parts = path.relative_to(recordings_path).parts
-        except ValueError:
-            return (None, None)
-        if len(rel_parts) >= 3:
-            # recordings/<session>/<provider>/<file>.har
-            return (rel_parts[-3], rel_parts[-2])
-        if len(rel_parts) == 2:
-            # recordings/<session>/<file>.har
-            return (rel_parts[-2], None)
-        return (None, None)
+    # [LAW:one-source-of-truth] Canonical recording layout is flat under recordings root.
+    har_files = sorted(path for path in recordings_path.glob("*.har") if path.is_file())
+    provider_keys = _provider_keys()
 
     # Process all found .har files
     for path in har_files:
         try:
-            session_name, provider = _infer_context(path)
-
-            # Extract session_id from filename (recording-<session_id>.har)
-            session_id = None
-            if path.stem.startswith("recording-"):
-                session_id = path.stem[len("recording-") :]
-
-            # Load HAR to get entry count and creation time
-            with open(path, "r", encoding="utf-8") as f:
-                har = json.load(f)
-
-            entries = har.get("log", {}).get("entries", [])
-            entry_count = len(entries)
-
-            # Get creation time from first entry or file mtime
-            created = None
-            if entries and "startedDateTime" in entries[0]:
-                created = entries[0]["startedDateTime"]
-            else:
-                # Fallback to file modification time
-                mtime = path.stat().st_mtime
-                created = datetime.fromtimestamp(mtime).isoformat()
-
-            recordings.append(
-                {
-                    "path": str(path),
-                    "filename": path.name,
-                    "session_id": session_id,
-                    "session_name": session_name,  # None for flat structure files
-                    "provider": provider,
-                    "created": created,
-                    "entry_count": entry_count,
-                    "size_bytes": path.stat().st_size,
-                }
-            )
+            recordings.append(_load_recording_info(path, provider_keys))
 
         except (json.JSONDecodeError, OSError, KeyError) as e:
             # Skip malformed files, but continue processing others
@@ -189,7 +216,6 @@ def cleanup_recordings(
 
     removed_paths: list[str] = []
     bytes_freed = 0
-    touched_dirs: set[Path] = set()
 
     for rec in to_remove:
         har_path = Path(rec["path"])
@@ -201,25 +227,8 @@ def cleanup_recordings(
             size = candidate.stat().st_size
             bytes_freed += size
             removed_paths.append(str(candidate))
-            touched_dirs.add(candidate.parent)
-            touched_dirs.add(candidate.parent.parent)
             if not dry_run:
                 candidate.unlink()
-
-    # Best-effort cleanup of now-empty session subdirectories.
-    if not dry_run:
-        root = Path(recordings_dir).resolve()
-        for directory in sorted(touched_dirs, key=lambda p: len(p.parts), reverse=True):
-            try:
-                resolved = directory.resolve()
-            except OSError:
-                continue
-            if resolved == root:
-                continue
-            try:
-                directory.rmdir()
-            except OSError:
-                continue
 
     return {
         "kept": len(survivors),
@@ -262,10 +271,8 @@ def print_recordings_list(recordings: list[RecordingInfo]) -> None:
     print(f"Found {len(recordings)} recording(s):\n")
 
     # Print table header
-    print(
-        f"{'SESSION':<20} {'PROVIDER':<12} {'CREATED':<22} {'ENTRIES':<10} {'SIZE':<12} {'FILE':<50}"
-    )
-    print("-" * 127)
+    print(f"{'PROVIDER':<12} {'CREATED':<22} {'ENTRIES':<10} {'SIZE':<12} {'FILE':<50}")
+    print("-" * 112)
 
     # Print each recording
     for rec in recordings:
@@ -280,11 +287,10 @@ def print_recordings_list(recordings: list[RecordingInfo]) -> None:
 
         size_str = format_size(rec["size_bytes"])
         filename = rec["filename"]
-        session_name = rec.get("session_name") or "(flat)"
         provider = rec.get("provider") or "(mixed)"
 
         print(
-            f"{session_name:<20} {provider:<12} {created:<22} {rec['entry_count']:<10} {size_str:<12} {filename:<50}"
+            f"{provider:<12} {created:<22} {rec['entry_count']:<10} {size_str:<12} {filename:<50}"
         )
 
     print()

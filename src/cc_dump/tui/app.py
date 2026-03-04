@@ -55,7 +55,6 @@ from cc_dump.tui import side_channel_controller as _side_channel
 from cc_dump.tui import settings_launch_controller as _settings_launch
 
 # Additional module-level imports
-import cc_dump.core.palette
 import cc_dump.app.launch_config
 import cc_dump.app.tmux_controller
 import cc_dump.tui.error_indicator
@@ -156,7 +155,6 @@ class CcDumpApp(App):
         state,
         router,
         analytics_store=None,
-        session_name: str = "unnamed-session",
         host: str = "127.0.0.1",
         port: int = 3344,
         target: Optional[str] = None,
@@ -183,7 +181,6 @@ class CcDumpApp(App):
         self._router = router
         self._analytics_store = analytics_store
         self._session_id: str | None = None
-        self._session_name = session_name
         self._host = host
         self._port = port
         self._target = target
@@ -241,8 +238,6 @@ class CcDumpApp(App):
         )
         if self._memory_snapshot_enabled and not tracemalloc.is_tracing():
             tracemalloc.start(25)
-
-        self.sub_title = f"[{cc_dump.core.palette.PALETTE.info}]session: {session_name}[/]"
 
         self._replay_complete = threading.Event()
         if not replay_data:
@@ -946,7 +941,6 @@ class CcDumpApp(App):
             "proxy_mode": proxy_mode,
             "target": primary_target,
             "providers": provider_rows,
-            "session_name": self._session_name,
             "session_id": self._session_id,
             "recording_path": self._recording_path,
             "recording_dir": cc_dump.io.sessions.get_recordings_dir(),
