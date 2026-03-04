@@ -7,7 +7,7 @@ Import validation, widget protocols, state preservation, and module structure.
 import ast
 import importlib
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -230,67 +230,76 @@ class TestHotReloadMultiSessionTabs:
 
 
 class TestImportValidation:
-    """Test import validation to prevent stale references."""
+    """Test import behavior + alias refresh semantics for hot-reload."""
 
-    def test_import_validation(self):
-        """Validate that stable modules use module-level imports, not direct imports."""
-        from cc_dump.app.hot_reload import _RELOAD_ORDER
+    def test_reload_order_includes_shared_pure_modules(self):
+        import cc_dump.app.hot_reload as hr
 
-        test_dir = Path(__file__).parent
-        project_root = test_dir.parent
-        src_dir = project_root / "src" / "cc_dump"
+        assert "cc_dump.core.coerce" in hr._RELOAD_ORDER
+        assert "cc_dump.app.error_models" in hr._RELOAD_ORDER
 
-        stable_modules = [
-            src_dir / "tui" / "app.py",
-            src_dir / "proxy.py",
-            src_dir / "tui" / "hot_reload_controller.py",
-            src_dir / "tui" / "search_controller.py",
+    def test_hot_reload_refreshes_top_level_from_import_aliases(self):
+        import cc_dump.app.hot_reload as hr
+
+        provider_name = "cc_dump._hr_test_provider"
+        consumer_name = "cc_dump._hr_test_consumer"
+
+        provider = ModuleType(provider_name)
+
+        def _old_func() -> str:
+            return "old"
+
+        provider.some_func = _old_func
+        consumer = ModuleType(consumer_name)
+        # Simulate: from cc_dump._hr_test_provider import some_func
+        consumer.some_func = provider.some_func
+
+        with patch.dict(
+            "sys.modules",
+            {
+                provider_name: provider,
+                consumer_name: consumer,
+            },
+            clear=False,
+        ):
+            with patch.object(hr, "_RELOAD_ORDER", [provider_name]):
+                with patch.object(importlib, "reload") as mock_reload:
+                    def _reload_module(mod):
+                        def _new_func() -> str:
+                            return "new"
+                        mod.some_func = _new_func
+                        return mod
+
+                    mock_reload.side_effect = _reload_module
+                    reloaded = hr.check_and_get_reloaded()
+
+        assert reloaded == [provider_name]
+        assert consumer.some_func is provider.some_func
+        assert consumer.some_func() == "new"
+
+    def test_reloadable_modules_prefer_top_level_from_imports(self):
+        src_dir = Path(__file__).parent.parent / "src" / "cc_dump"
+        policy_modules = [
+            src_dir / "app" / "view_store.py",
+            src_dir / "app" / "settings_store.py",
+            src_dir / "tui" / "error_indicator.py",
         ]
+        violations: list[str] = []
 
-        # // [LAW:one-source-of-truth] Derive from _RELOAD_ORDER, not a separate list
-        forbidden_modules = set(_RELOAD_ORDER)
-
-        # Known-safe direct imports: class references used for query_one() that
-        # are never replaced during hot-reload. Document why each is safe.
-        allowed_imports = {
-            ("cc_dump.tui.custom_footer", "StatusFooter"),  # footer never hot-swapped
-        }
-
-        violations = []
-
-        for module_path in stable_modules:
-            if not module_path.exists():
-                continue
-
-            with open(module_path) as f:
-                try:
-                    tree = ast.parse(f.read(), filename=str(module_path))
-                except SyntaxError:
-                    continue
-
+        for module_path in policy_modules:
+            tree = ast.parse(module_path.read_text(), filename=str(module_path))
             for node in ast.walk(tree):
-                if isinstance(node, ast.ImportFrom):
-                    if node.module in forbidden_modules:
-                        imported_names = [alias.name for alias in node.names]
-                        if all(
-                            (node.module, name) in allowed_imports
-                            for name in imported_names
-                        ):
-                            continue
-                        violations.append(
-                            f"{module_path.name}:{node.lineno}: "
-                            f"from {node.module} import {', '.join(imported_names)}\n"
-                            f"  -> Use 'import {node.module}' instead to avoid stale references"
-                        )
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name.startswith("cc_dump."):
+                            violations.append(
+                                f"{module_path.name}:{node.lineno}: import {alias.name}"
+                            )
 
-        if violations:
-            violation_msg = "\n\n".join(violations)
-            pytest.fail(
-                f"Found {len(violations)} import violations in stable boundary modules:\n\n"
-                f"{violation_msg}\n\n"
-                f"Stable modules must use 'import module' pattern, not 'from module import ...'.\n"
-                f"See HOT_RELOAD_ARCHITECTURE.md for details."
-            )
+        assert not violations, (
+            "Reloadable modules should prefer top-level `from ... import ...` for cc_dump imports. "
+            f"Violations: {violations}"
+        )
 
 
 class TestWidgetProtocolValidation:

@@ -66,7 +66,9 @@ Provider specs (`providers.py`) use `protocol_family` ("anthropic" | "openai") t
 
 Any file change triggers full module reload + widget replacement.
 
-**Critical rule:** Stable boundary modules must use `import cc_dump.module` — never `from cc_dump.module import func`. Direct imports create stale references that won't update on reload.
+**Critical rule:** Prefer top-level `from cc_dump.x import y` imports. Module-object imports (`import cc_dump.x`) are not allowed unless there is no workable alternative.
+
+Hot-reload now includes an alias-refresh pass after module reload that updates stale `from ... import ...` bindings across loaded `cc_dump.*` modules. This is the canonical mechanism for keeping top-level imports safe during reload.
 
 Check `app/hot_reload.py` for `_RELOAD_ORDER` (reloadable modules in dependency order), `_EXCLUDED_FILES` (stable boundaries), and `_EXCLUDED_MODULES` (stable TUI modules). When adding new modules, classify them accordingly.
 
