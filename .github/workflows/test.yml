@@ -7,6 +7,12 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+# // [LAW:one-source-of-truth] Workflow-level concurrency defines one canonical deduplication policy for all jobs in this pipeline.
+# // [LAW:dataflow-not-control-flow] Jobs still execute in the same order; only queueing keys vary by PR number or ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   mypy-changed-files:
     runs-on: ubuntu-latest
