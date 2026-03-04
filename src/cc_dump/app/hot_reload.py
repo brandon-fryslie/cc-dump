@@ -13,6 +13,7 @@ import importlib
 import logging
 import os
 import sys
+from types import ModuleType
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -166,6 +167,7 @@ def check_and_get_reloaded() -> list[str]:
     """
     # Reload all modules in dependency order — any file change triggers full reload
     to_reload = list(_RELOAD_ORDER)
+    old_exports = _snapshot_reloaded_exports(to_reload)
 
     # Reload in order
     reloaded = []
@@ -180,6 +182,8 @@ def check_and_get_reloaded() -> list[str]:
                 # Continue with other modules even if one fails
                 # This way a syntax error in one module doesn't break the whole reload
 
+    _refresh_top_level_import_aliases(old_exports, reloaded)
+
     if reloaded:
         logger.info(
             "hot-reload reloaded %d module(s): %s",
@@ -188,6 +192,82 @@ def check_and_get_reloaded() -> list[str]:
         )
 
     return reloaded
+
+
+def _snapshot_reloaded_exports(module_names: list[str]) -> dict[str, dict[str, object]]:
+    """Capture pre-reload exported names for modules we intend to reload.
+
+    // [LAW:one-source-of-truth] Old->new alias refresh is derived from this snapshot.
+    """
+    snapshot: dict[str, dict[str, object]] = {}
+    for module_name in module_names:
+        module = sys.modules.get(module_name)
+        if module is None:
+            continue
+        values = {
+            name: value
+            for name, value in vars(module).items()
+            if not name.startswith("__")
+        }
+        snapshot[module_name] = values
+    return snapshot
+
+
+def _refresh_top_level_import_aliases(
+    old_exports: dict[str, dict[str, object]],
+    reloaded_modules: list[str],
+) -> None:
+    """Refresh stale `from x import y` aliases across already-loaded cc_dump modules.
+
+    // [LAW:single-enforcer] Alias rebinding happens in one centralized pass after reload.
+    """
+    replacements = _build_alias_replacements(old_exports, reloaded_modules)
+    if not replacements:
+        return
+
+    updated_bindings = _apply_alias_replacements(replacements)
+    if updated_bindings:
+        logger.info("hot-reload refreshed %d top-level import alias(es)", updated_bindings)
+
+
+def _build_alias_replacements(
+    old_exports: dict[str, dict[str, object]],
+    reloaded_modules: list[str],
+) -> dict[int, object]:
+    replacements: dict[int, object] = {}
+    for module_name in reloaded_modules:
+        module = sys.modules.get(module_name)
+        if module is None:
+            continue
+        old_values = old_exports.get(module_name, {})
+        for name, old_value in old_values.items():
+            new_value = getattr(module, name, old_value)
+            if new_value is not old_value:
+                replacements[id(old_value)] = new_value
+    return replacements
+
+
+def _iter_cc_dump_module_dicts() -> Iterator[dict[str, object]]:
+    for module in list(sys.modules.values()):
+        if not isinstance(module, ModuleType):
+            continue
+        module_name = getattr(module, "__name__", "")
+        if not module_name.startswith("cc_dump."):
+            continue
+        module_dict = getattr(module, "__dict__", None)
+        if isinstance(module_dict, dict):
+            yield module_dict
+
+
+def _apply_alias_replacements(replacements: dict[int, object]) -> int:
+    updated_bindings = 0
+    for module_dict in _iter_cc_dump_module_dicts():
+        for name, value in list(module_dict.items()):
+            replacement = replacements.get(id(value))
+            if replacement is not None:
+                module_dict[name] = replacement
+                updated_bindings += 1
+    return updated_bindings
 
 
 def _iter_excluded_files() -> Iterator[tuple[str, str]]:

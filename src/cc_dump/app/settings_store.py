@@ -7,8 +7,8 @@
 import logging
 from collections.abc import Callable
 
-import cc_dump.io.settings
-import cc_dump.core.coerce as coerce
+from cc_dump.core.coerce import coerce_int, coerce_str_object_dict
+from cc_dump.io.settings import load_settings, save_settings
 from snarfx.hot_reload import HotReloadStore
 from snarfx import reaction
 
@@ -29,7 +29,7 @@ SCHEMA: dict[str, object] = {
 
 def create(initial_overrides: dict | None = None):
     """Create settings store, seeded from disk."""
-    disk_data = cc_dump.io.settings.load_settings()
+    disk_data = load_settings()
     # Filter disk data to known keys only
     merged = {k: disk_data.get(k, default) for k, default in SCHEMA.items()}
     if initial_overrides:
@@ -83,10 +83,10 @@ def setup_reactions(store, context=None):
             manager_bindings: tuple[tuple[str, Callable[[object], object], Callable[[object], None]], ...] = (
                 ("side_channel_enabled", bool, lambda value: setattr(mgr, "enabled", bool(value))),
                 ("side_channel_global_kill", bool, lambda value: setattr(mgr, "global_kill", bool(value))),
-                ("side_channel_max_concurrent", lambda value: coerce.coerce_int(value, 1), mgr.set_max_concurrent),
-                ("side_channel_purpose_enabled", coerce.coerce_str_object_dict, mgr.set_purpose_enabled_map),
-                ("side_channel_timeout_by_purpose", coerce.coerce_str_object_dict, mgr.set_timeout_overrides),
-                ("side_channel_budget_caps", coerce.coerce_str_object_dict, mgr.set_budget_caps),
+                ("side_channel_max_concurrent", lambda value: coerce_int(value, 1), mgr.set_max_concurrent),
+                ("side_channel_purpose_enabled", coerce_str_object_dict, mgr.set_purpose_enabled_map),
+                ("side_channel_timeout_by_purpose", coerce_str_object_dict, mgr.set_timeout_overrides),
+                ("side_channel_budget_caps", coerce_str_object_dict, mgr.set_budget_caps),
             )
             for key, project, apply in manager_bindings:
                 disposers.append(_bind_setting(store, key, project, apply))
@@ -104,8 +104,8 @@ def setup_reactions(store, context=None):
 def _safe_persist(snapshot: dict) -> None:
     """Write settings to disk. Catches and logs I/O errors."""
     try:
-        existing = cc_dump.io.settings.load_settings()
+        existing = load_settings()
         existing.update(snapshot)
-        cc_dump.io.settings.save_settings(existing)
+        save_settings(existing)
     except Exception:
         logger.exception("Failed to persist settings to disk")

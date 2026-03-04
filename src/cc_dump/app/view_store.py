@@ -6,9 +6,9 @@
 // [LAW:one-way-deps] No widget imports — push callbacks provided via context (see view_store_bridge).
 """
 
-import cc_dump.core.formatting
-import cc_dump.app.error_models
-import cc_dump.core.coerce
+from cc_dump.core.formatting import VisState
+from cc_dump.app.error_models import ErrorItem
+from cc_dump.core.coerce import coerce_int
 
 from cc_dump.tui.category_config import CATEGORY_CONFIG
 from snarfx.hot_reload import HotReloadStore
@@ -80,7 +80,7 @@ def create():
     @computed
     def active_filters():
         return {
-            name: cc_dump.core.formatting.VisState(
+            name: VisState(
                 store.get(f"vis:{name}"),
                 store.get(f"full:{name}"),
                 store.get(f"exp:{name}"),
@@ -147,7 +147,6 @@ def create():
     # // [LAW:single-enforcer] error_items Computed combines stale files + exceptions.
     @computed
     def error_items():
-        ErrorItem = cc_dump.app.error_models.ErrorItem
         items = [ErrorItem("stale", "\u274c", s.split("/")[-1]) for s in store.stale_files]
         items.extend(store.exception_items)
         return items
@@ -176,7 +175,7 @@ def create():
         return {
             "text": str(store.get("workbench:text")),
             "source": str(store.get("workbench:source")),
-            "elapsed_ms": cc_dump.core.coerce.coerce_int(store.get("workbench:elapsed_ms"), 0),
+            "elapsed_ms": coerce_int(store.get("workbench:elapsed_ms"), 0),
             "action": str(store.get("workbench:action")),
             "context_session_id": str(store.get("workbench:context_session_id")),
         }
@@ -190,10 +189,10 @@ def create():
         return {
             "phase": phase,
             "query": str(store.get("search:query")),
-            "modes": cc_dump.core.coerce.coerce_int(store.get("search:modes"), 13),
-            "cursor_pos": cc_dump.core.coerce.coerce_int(store.get("search:cursor_pos"), 0),
-            "current_index": cc_dump.core.coerce.coerce_int(store.get("search:current_index"), 0),
-            "match_count": cc_dump.core.coerce.coerce_int(store.get("search:match_count"), 0),
+            "modes": coerce_int(store.get("search:modes"), 13),
+            "cursor_pos": coerce_int(store.get("search:cursor_pos"), 0),
+            "current_index": coerce_int(store.get("search:current_index"), 0),
+            "match_count": coerce_int(store.get("search:match_count"), 0),
             # [LAW:dataflow-not-control-flow] Footer visibility is a derived value from search phase.
             "footer_visible": phase == "inactive",
         }
@@ -240,9 +239,9 @@ def setup_reactions(store, context=None):
     return disposers
 
 
-def get_category_state(store, name: str) -> "cc_dump.core.formatting.VisState":
+def get_category_state(store, name: str) -> VisState:
     """Read 3 keys, return VisState for a category."""
-    return cc_dump.core.formatting.VisState(
+    return VisState(
         store.get(f"vis:{name}"),
         store.get(f"full:{name}"),
         store.get(f"exp:{name}"),

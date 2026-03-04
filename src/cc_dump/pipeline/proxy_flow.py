@@ -8,8 +8,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from collections.abc import Mapping
-from typing import cast
 from urllib.parse import urlparse
+
+from pydantic import TypeAdapter, ValidationError
+
+
+_JSON_OBJECT = TypeAdapter(dict[str, object])
 
 
 @dataclass(frozen=True)
@@ -55,9 +59,11 @@ def parse_request_json(
         parsed = json.loads(body_bytes)
     except json.JSONDecodeError as exc:
         return None, str(exc)
-    if not isinstance(parsed, dict):
+    try:
+        validated = _JSON_OBJECT.validate_python(parsed)
+    except ValidationError:
         return None, "Request JSON must be an object at the top level"
-    return cast(dict[str, object], parsed), ""
+    return validated, ""
 
 
 def build_upstream_headers(headers: Mapping[str, str], *, content_length: int) -> dict[str, str]:
@@ -77,6 +83,7 @@ def decode_json_response_body(data: bytes) -> dict[str, object]:
         parsed = json.loads(data)
     except (json.JSONDecodeError, UnicodeDecodeError):
         return {}
-    if isinstance(parsed, dict):
-        return cast(dict[str, object], parsed)
-    return {}
+    try:
+        return _JSON_OBJECT.validate_python(parsed)
+    except ValidationError:
+        return {}
