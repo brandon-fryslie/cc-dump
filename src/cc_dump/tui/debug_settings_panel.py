@@ -161,12 +161,13 @@ class DebugSettingsPanel(VerticalScroll):
     def _apply_toggle_state(self, toggle_state: tuple[bool, bool]) -> None:
         perf_enabled, mem_enabled = toggle_state
         cc_dump.io.perf_logging.set_enabled(perf_enabled)
+        # [LAW:single-enforcer] Memory tracing is app-scoped and enforced only when an app context exists.
         if self._app_ref:
             self._app_ref._memory_snapshot_enabled = mem_enabled
-        if mem_enabled and not tracemalloc.is_tracing():
-            tracemalloc.start(25)
-        if (not mem_enabled) and tracemalloc.is_tracing():
-            tracemalloc.stop()
+            if mem_enabled and not tracemalloc.is_tracing():
+                tracemalloc.start(25)
+            if (not mem_enabled) and tracemalloc.is_tracing():
+                tracemalloc.stop()
 
 
 def create_debug_settings_panel(app_ref=None) -> DebugSettingsPanel:
