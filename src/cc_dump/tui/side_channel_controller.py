@@ -15,13 +15,18 @@ import cc_dump.tui.side_channel_panel
 from snarfx import transaction
 
 
-def open_side_channel(app) -> None:
-    """Open AI Workbench sidebar and hydrate panel state."""
+def _ensure_side_channel_panel(app):
     panel = get_side_channel_panel_widget(app)
     if panel is None:
         panel = cc_dump.tui.side_channel_panel.create_side_channel_panel()
         panel.display = False
         app.screen.mount(panel)
+    return panel
+
+
+def open_side_channel(app) -> None:
+    """Open AI Workbench sidebar and hydrate panel state."""
+    _ensure_side_channel_panel(app)
     app._view_store.update(
         {
             "panel:settings": False,

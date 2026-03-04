@@ -31,7 +31,9 @@ def _ensure_settings_panel(app):
 def _ensure_launch_config_panel(app, configs: list, active_name: str):
     existing = app.screen.query(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
     if existing:
-        return existing.first()
+        panel = existing.first()
+        panel.reset_configs(configs, active_name)
+        return panel
     panel = cc_dump.tui.launch_config_panel.create_launch_config_panel(
         configs,
         active_name,
@@ -78,6 +80,19 @@ def close_launch_config(app) -> None:
     app._view_store.set("panel:launch_config", False)
 
 
+def _resume_session_id(app, config) -> str:
+    auto_resume = cc_dump.app.launch_config.option_value(config, "auto_resume")
+    return app._active_resume_session_id() if auto_resume else ""
+
+
+def _notify_launch_result(app, result) -> None:
+    if result.success:
+        detail = result.command or result.detail
+        app.notify("{}: {}".format(result.action.value, detail))
+        return
+    app.notify("Launch failed: {}".format(result.detail), severity="error")
+
+
 def launch_with_config(app, config, *, log_label: str = "launch_with_config") -> None:
     """Build launch profile and execute tool launch via tmux boundary."""
     tmux = app._tmux_controller
@@ -85,8 +100,7 @@ def launch_with_config(app, config, *, log_label: str = "launch_with_config") ->
         app.notify("Tmux not available", severity="warning")
         return
 
-    auto_resume = cc_dump.app.launch_config.option_value(config, "auto_resume")
-    session_id = app._active_resume_session_id() if auto_resume else ""
+    session_id = _resume_session_id(app, config)
     profile = cc_dump.app.launch_config.build_launch_profile(
         config,
         provider_endpoints=app._provider_endpoints,
@@ -100,11 +114,7 @@ def launch_with_config(app, config, *, log_label: str = "launch_with_config") ->
     )
     result = tmux.launch_tool(command=profile.command)
     app._app_log("INFO", "{}: {}".format(log_label, result))
-    if result.success:
-        detail = result.command or result.detail
-        app.notify("{}: {}".format(result.action.value, detail))
-    else:
-        app.notify("Launch failed: {}".format(result.detail), severity="error")
+    _notify_launch_result(app, result)
     app._view_store.update(
         {
             "launch:active_name": config.name,
