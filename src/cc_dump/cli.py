@@ -526,6 +526,7 @@ def main():
         "side_channel_manager": side_channel_mgr,
         "tmux_controller": tmux_ctrl,
         "settings_store": settings_store,
+        "view_store": view_store,
     }
     settings_store._reaction_disposers = cc_dump.app.settings_store.setup_reactions(
         settings_store, store_context

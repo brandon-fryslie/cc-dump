@@ -7,7 +7,7 @@
 """
 
 import cc_dump.core.formatting
-import cc_dump.tui.error_indicator
+import cc_dump.app.error_models
 
 from cc_dump.tui.category_config import CATEGORY_CONFIG
 from snarfx.hot_reload import HotReloadStore
@@ -49,6 +49,7 @@ SCHEMA["sc:result_text"] = ""
 SCHEMA["sc:result_source"] = ""
 SCHEMA["sc:result_elapsed_ms"] = 0
 SCHEMA["sc:purpose_usage"] = {}
+SCHEMA["settings:side_channel_enabled"] = False
 
 # Search identity state — survives hot-reload via reconcile
 # // [LAW:one-source-of-truth] String, not SearchPhase enum — stable across reloads.
@@ -136,7 +137,7 @@ def create():
     # // [LAW:single-enforcer] error_items Computed combines stale files + exceptions.
     @computed
     def error_items():
-        ErrorItem = cc_dump.tui.error_indicator.ErrorItem
+        ErrorItem = cc_dump.app.error_models.ErrorItem
         items = [ErrorItem("stale", "\u274c", s.split("/")[-1]) for s in store.stale_files]
         items.extend(store.exception_items)
         return items
@@ -147,9 +148,8 @@ def create():
     # Returns plain dict — bridge converts to SideChannelPanelState.
     @computed
     def sc_panel_state():
-        settings = getattr(store, '_settings_store', None)
         return {
-            "enabled": settings.get("side_channel_enabled") if settings else False,
+            "enabled": bool(store.get("settings:side_channel_enabled")),
             "loading": store.get("sc:loading"),
             "active_action": store.get("sc:active_action"),
             "result_text": store.get("sc:result_text"),
@@ -184,7 +184,7 @@ def setup_reactions(store, context=None):
     """Register reactions. Returns list of disposers.
 
     Called on create and on hot-reload reconcile.
-    context: dict with "app", optional "settings_store", and push callbacks from bridge.
+    context: dict with "app" and push callbacks from bridge.
 
     // [LAW:single-enforcer] All guards (pause, NoMatches, thread-marshal) enforced by stx.
     // [LAW:one-way-deps] Push callbacks provided by caller, not imported here.
@@ -193,12 +193,6 @@ def setup_reactions(store, context=None):
 
     if context:
         app = context.get("app")
-        settings_store = context.get("settings_store")
-
-        # Wire settings_store ref for sc_panel_state Computed cross-store access
-        if settings_store is not None:
-            store._settings_store = settings_store
-
         if app is not None:
             disposers.append(stx.autorun(app,
                 lambda: (store.active_filters.get(), app._rerender_if_mounted())

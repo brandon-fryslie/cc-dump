@@ -55,9 +55,10 @@ from cc_dump.tui import side_channel_controller as _side_channel
 from cc_dump.tui import settings_launch_controller as _settings_launch
 
 # Additional module-level imports
+import cc_dump.core.palette
+import cc_dump.app.error_models
 import cc_dump.app.launch_config
 import cc_dump.app.tmux_controller
-import cc_dump.tui.error_indicator
 import cc_dump.tui.settings_panel
 import cc_dump.tui.launch_config_panel
 import cc_dump.tui.side_channel_panel
@@ -845,7 +846,7 @@ class CcDumpApp(App):
                 self._app_log("ERROR", line)
 
         # Add to error indicator (top-right overlay)
-        exc_item = cc_dump.tui.error_indicator.ErrorItem(
+        exc_item = cc_dump.app.error_models.ErrorItem(
             id=f"exc-{id(error)}",
             icon="💥",
             summary=f"{type(error).__name__}: {error}"

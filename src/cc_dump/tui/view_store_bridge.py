@@ -28,7 +28,17 @@ def build_reaction_context(app) -> dict:
     def push_errors(items):
         conv = app._get_conv()
         if conv is not None:
-            conv.update_error_items(items)
+            ErrorItem = cc_dump.tui.error_indicator.ErrorItem
+            conv.update_error_items(
+                [
+                    ErrorItem(
+                        str(item.id),
+                        str(item.icon),
+                        str(item.summary),
+                    )
+                    for item in items
+                ]
+            )
 
     def push_sc_panel(state):
         SideChannelPanelState = cc_dump.tui.side_channel_panel.SideChannelPanelState

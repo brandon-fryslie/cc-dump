@@ -70,6 +70,23 @@ def setup_reactions(store, context=None):
     # Consumer sync
     if context:
         mgr = context.get("side_channel_manager")
+        view_store = context.get("view_store")
+
+        if view_store is not None:
+            def _select_side_channel_enabled_for_view() -> bool:
+                return bool(store.get("side_channel_enabled"))
+
+            def _apply_side_channel_enabled_for_view(val: bool) -> None:
+                view_store.set("settings:side_channel_enabled", bool(val))
+
+            disposers.append(
+                reaction(
+                    _select_side_channel_enabled_for_view,
+                    _apply_side_channel_enabled_for_view,
+                    fire_immediately=True,
+                )
+            )
+
         if mgr is not None:
             def _select_side_channel_enabled() -> bool:
                 return bool(store.get("side_channel_enabled"))
