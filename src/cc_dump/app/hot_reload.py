@@ -24,8 +24,10 @@ _RELOAD_ORDER = [
     "cc_dump.core.analysis",  # no deps within project
     "cc_dump.core.formatting_impl",  # depends on: palette, analysis
     "cc_dump.core.formatting",  # facade depends on: formatting_impl
+    "cc_dump.core.coerce",  # shared pure coercion helpers
     "cc_dump.tui.action_config",  # depends on: formatting (VisState), pure data
     "cc_dump.app.launch_config",  # depends on: settings (pure data + persistence)
+    "cc_dump.app.error_models",  # shared pure error view-models
     "cc_dump.app.settings_store",  # depends on: settings (schema + reactions)
     "cc_dump.app.view_store",  # depends on: formatting (VisState), category_config
     "cc_dump.core.segmentation",  # depends on: nothing (pure parser, before rendering)

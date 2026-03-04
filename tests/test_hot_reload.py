@@ -232,6 +232,12 @@ class TestHotReloadMultiSessionTabs:
 class TestImportValidation:
     """Test import behavior + alias refresh semantics for hot-reload."""
 
+    def test_reload_order_includes_shared_pure_modules(self):
+        import cc_dump.app.hot_reload as hr
+
+        assert "cc_dump.core.coerce" in hr._RELOAD_ORDER
+        assert "cc_dump.app.error_models" in hr._RELOAD_ORDER
+
     def test_hot_reload_refreshes_top_level_from_import_aliases(self):
         import cc_dump.app.hot_reload as hr
 

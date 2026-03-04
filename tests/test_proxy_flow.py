@@ -24,6 +24,12 @@ def test_parse_request_json_rejects_invalid_json():
     assert error != ""
 
 
+def test_parse_request_json_rejects_invalid_utf8_payload():
+    body, error = parse_request_json(b'"\xff"', expects_json=True)
+    assert body is None
+    assert error != ""
+
+
 def test_decode_json_response_body_returns_dict_only():
     assert decode_json_response_body(b'{"ok":true}') == {"ok": True}
     assert decode_json_response_body(b'["not","object"]') == {}

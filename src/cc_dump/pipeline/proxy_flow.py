@@ -57,7 +57,7 @@ def parse_request_json(
         return None, ""
     try:
         parsed = json.loads(body_bytes)
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         return None, str(exc)
     try:
         validated = _JSON_OBJECT.validate_python(parsed)
