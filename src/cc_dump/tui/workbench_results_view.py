@@ -6,7 +6,7 @@ fit comfortably in the sidebar panel.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from snarfx import Observable, reaction
 from textual.app import ComposeResult
@@ -111,23 +111,14 @@ class WorkbenchResultsView(Widget):
 
         // [LAW:single-enforcer] Result-view formatting is centralized here.
         """
-        next_state = WorkbenchResultState(
+        base_state = WorkbenchResultState(
             text=str(text or ""),
             source=str(source or ""),
             elapsed_ms=int(elapsed_ms or 0),
             action=str(action or ""),
             context_session_id=str(context_session_id or ""),
         )
-        self._result_state.set(
-            WorkbenchResultState(
-                text=next_state.text,
-                source=next_state.source,
-                elapsed_ms=next_state.elapsed_ms,
-                action=next_state.action,
-                context_session_id=next_state.context_session_id,
-                meta=self._build_meta_line(next_state),
-            )
-        )
+        self._result_state.set(replace(base_state, meta=self._build_meta_line(base_state)))
 
     @property
     def _last_text(self) -> str:

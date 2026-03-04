@@ -45,15 +45,16 @@ class SessionPanel(Static):
         return self._state.get().session_id
 
     @property
-    def _last_message_time(self) -> float | None:
-        return self._state.get().last_message_time
-
-    @property
     def _connected(self) -> bool:
-        """// [LAW:one-source-of-truth] Derived from last_message_time."""
-        if self._last_message_time is None:
+        """Backward-compatible accessor for tests/consumers."""
+        return self._connected_from_state(self._state.get())
+
+    @staticmethod
+    def _connected_from_state(state: SessionPanelState) -> bool:
+        """// [LAW:one-source-of-truth] Connected is derived from projected state."""
+        if state.last_message_time is None:
             return False
-        return (time.monotonic() - self._last_message_time) < _CONNECTION_TIMEOUT_S
+        return (time.monotonic() - state.last_message_time) < _CONNECTION_TIMEOUT_S
 
     def on_mount(self) -> None:
         """Start 1s timer for live age updates. Textual auto-stops on widget removal."""
@@ -85,7 +86,7 @@ class SessionPanel(Static):
 
     def _render_session(self, state: SessionPanelState) -> None:
         rich_text, self._session_id_span = cc_dump.tui.panel_renderers.render_session_panel(
-            connected=self._connected,
+            connected=self._connected_from_state(state),
             session_id=state.session_id,
             last_message_time=state.last_message_time,
         )
