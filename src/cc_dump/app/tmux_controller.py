@@ -167,7 +167,7 @@ class TmuxController:
         auto_zoom: bool = False,
     ) -> None:
         self.state = TmuxState.NOT_IN_TMUX
-        self.auto_zoom = auto_zoom
+        self._auto_zoom = bool(auto_zoom)
         self._is_zoomed = False
         self._port: int | None = None  # legacy fallback path
         self._launch_command = ""
@@ -179,6 +179,8 @@ class TmuxController:
         self._our_pane: libtmux.Pane | None = None
         self._tool_pane: libtmux.Pane | None = None
         self.pane_alive = Observable(False)  # reactive — True while launched pane is alive
+        self.auto_zoom_state = Observable(self._auto_zoom)
+        self.zoomed_state = Observable(self._is_zoomed)
         self.configure_launcher(
             command=launch_command,
             process_names=process_names,
@@ -293,6 +295,8 @@ class TmuxController:
         except Exception:
             self._tool_pane = None
             self.state = TmuxState.READY
+            self._is_zoomed = False
+            self.zoomed_state.set(self._is_zoomed)
             return False
 
     def _find_tool_pane(self) -> "libtmux.Pane | None":
@@ -325,6 +329,15 @@ class TmuxController:
     def launch_command(self) -> str:
         """The base launcher command."""
         return self._launch_command
+
+    @property
+    def auto_zoom(self) -> bool:
+        return self._auto_zoom
+
+    @auto_zoom.setter
+    def auto_zoom(self, value: bool) -> None:
+        self._auto_zoom = bool(value)
+        self.auto_zoom_state.set(self._auto_zoom)
 
     def launch_tool(self, command: str = "") -> LaunchResult:
         """Evaluate preconditions, derive action, log, execute.
@@ -536,6 +549,7 @@ class TmuxController:
         try:
             self._our_pane.resize(zoom=True)
             self._is_zoomed = True
+            self.zoomed_state.set(self._is_zoomed)
         except Exception as e:
             _log("zoom error: {}".format(e))
 
@@ -546,6 +560,7 @@ class TmuxController:
         try:
             self._our_pane.resize(zoom=True)
             self._is_zoomed = False
+            self.zoomed_state.set(self._is_zoomed)
         except Exception as e:
             _log("unzoom error: {}".format(e))
 

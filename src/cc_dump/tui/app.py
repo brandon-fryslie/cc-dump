@@ -24,7 +24,6 @@ import textual.filter as _textual_filter
 from textual.app import App, ComposeResult, SystemCommand
 from textual.css.query import NoMatches
 from textual.message import Message
-from textual.reactive import reactive
 from textual.widgets import Header, TabbedContent, TabPane
 from rich.style import Style
 
@@ -150,10 +149,6 @@ class CcDumpApp(App):
     """TUI application for cc-dump."""
 
     CSS_PATH = "styles.css"
-
-    # Panel visibility
-    show_logs = reactive(False)
-    show_info = reactive(False)
 
     def __init__(
         self,
@@ -754,10 +749,12 @@ class CcDumpApp(App):
 
         logs = cc_dump.tui.widget_factory.create_logs_panel()
         logs.id = self._logs_id
+        logs.display = bool(self._view_store.get("panel:logs"))
         yield logs
 
         info = cc_dump.tui.info_panel.create_info_panel()
         info.id = self._info_id
+        info.display = bool(self._view_store.get("panel:info"))
         yield info
 
         settings_panel = cc_dump.tui.settings_panel.create_settings_panel(
@@ -875,15 +872,28 @@ class CcDumpApp(App):
             level_num = getattr(logging, level, logging.INFO)
             logger.log(level_num, message, extra={"cc_dump_in_app": True})
 
+    def _tmux_store_projection(self, tmux) -> dict[str, bool]:
+        """Compute footer-facing tmux flags from controller state/observables."""
+        _TMUX_ACTIVE = {cc_dump.app.tmux_controller.TmuxState.READY, cc_dump.app.tmux_controller.TmuxState.TOOL_RUNNING}
+        if tmux is None:
+            return {
+                "tmux:available": False,
+                "tmux:auto_zoom": False,
+                "tmux:zoomed": False,
+            }
+        auto_obs = getattr(tmux, "auto_zoom_state", None)
+        zoom_obs = getattr(tmux, "zoomed_state", None)
+        auto_zoom = auto_obs.get() if auto_obs is not None else bool(getattr(tmux, "auto_zoom", False))
+        zoomed = zoom_obs.get() if zoom_obs is not None else bool(getattr(tmux, "_is_zoomed", False))
+        return {
+            "tmux:available": tmux.state in _TMUX_ACTIVE,
+            "tmux:auto_zoom": auto_zoom,
+            "tmux:zoomed": zoomed,
+        }
+
     def _sync_tmux_to_store(self):
         """Mirror tmux controller state to view store for reactive footer updates."""
-        tmux = self._tmux_controller
-        _TMUX_ACTIVE = {cc_dump.app.tmux_controller.TmuxState.READY, cc_dump.app.tmux_controller.TmuxState.TOOL_RUNNING}
-        self._view_store.update({
-            "tmux:available": tmux is not None and tmux.state in _TMUX_ACTIVE,
-            "tmux:auto_zoom": tmux.auto_zoom if tmux is not None else False,
-            "tmux:zoomed": tmux._is_zoomed if tmux is not None else False,
-        })
+        self._view_store.update(self._tmux_store_projection(self._tmux_controller))
 
     def _sync_active_launch_config_state(self) -> None:
         """Mirror active launch config identity to view-store footer keys."""
@@ -980,12 +990,16 @@ class CcDumpApp(App):
             "panel:side_channel",
             "panel:settings",
             "panel:launch_config",
+            "panel:logs",
+            "panel:info",
             "nav:follow",
             "filter:active",
             "search:phase",
             "search:query",
             "search:modes",
             "search:cursor_pos",
+            "search:current_index",
+            "search:match_count",
         ):
             view_state[key] = self._view_store.get(key)
 
@@ -1015,28 +1029,45 @@ class CcDumpApp(App):
                 "active_session_key": active_session_key,
             },
             "app": {
-                "show_logs": bool(self.show_logs),
-                "show_info": bool(self.show_info),
+                # [LAW:one-source-of-truth] Back-compat app fields are derived from view-store panel keys.
+                "show_logs": bool(self._view_store.get("panel:logs")),
+                "show_info": bool(self._view_store.get("panel:info")),
             },
         }
 
     def _apply_resume_ui_state_preload(self) -> None:
         """Apply store + app state before replay processing."""
         state = self._resume_ui_state or {}
-        view_state = state.get("view_store", {})
-        if isinstance(view_state, dict):
-            updates = {
-                key: value
-                for key, value in view_state.items()
-                if isinstance(key, str)
-            }
-            if updates:
-                self._view_store.update(updates)
+        self._apply_resume_view_store_state(state.get("view_store", {}))
+        self._apply_resume_legacy_app_state(state.get("app", {}))
 
-        app_state = state.get("app", {})
-        if isinstance(app_state, dict):
-            self.show_logs = bool(app_state.get("show_logs", self.show_logs))
-            self.show_info = bool(app_state.get("show_info", self.show_info))
+    def _apply_resume_view_store_state(self, view_state: object) -> None:
+        if not isinstance(view_state, dict):
+            return
+        updates = {
+            key: value
+            for key, value in view_state.items()
+            if isinstance(key, str)
+        }
+        if updates:
+            self._view_store.update(updates)
+
+    def _apply_resume_legacy_app_state(self, app_state: object) -> None:
+        if not isinstance(app_state, dict):
+            return
+        # [LAW:one-source-of-truth] exception: Back-compat legacy app flags are translated into panel:* keys.
+        updates = self._legacy_resume_panel_updates(app_state)
+        if updates:
+            self._view_store.update(updates)
+
+    def _legacy_resume_panel_updates(self, app_state: dict) -> dict[str, bool]:
+        """Translate legacy sidecar app flags into canonical panel:* store keys."""
+        updates = {}
+        if "show_logs" in app_state:
+            updates["panel:logs"] = bool(app_state.get("show_logs"))
+        if "show_info" in app_state:
+            updates["panel:info"] = bool(app_state.get("show_info"))
+        return updates
 
     def _apply_resume_ui_state_postload(self) -> None:
         """Apply conversation-view state after replay/live initial hydration."""
@@ -1325,7 +1356,6 @@ class CcDumpApp(App):
             self.notify("Tmux not available", severity="warning")
             return
         tmux.toggle_zoom()
-        self._sync_tmux_to_store()
 
     def action_toggle_auto_zoom(self):
         tmux = self._tmux_controller
@@ -1335,7 +1365,6 @@ class CcDumpApp(App):
         tmux.toggle_auto_zoom()
         label = "on" if tmux.auto_zoom else "off"
         self.notify("Auto-zoom: {}".format(label))
-        self._sync_tmux_to_store()
 
     def action_open_tmux_log_tail(self):
         tmux = self._tmux_controller
@@ -1655,9 +1684,6 @@ class CcDumpApp(App):
     def _handle_search_nav_special_keys(self, event) -> bool:
         return _search.handle_search_nav_special_keys(self, event)
 
-    def _update_search_bar(self):
-        _search.update_search_bar(self)
-
     # ─── Reactive watchers ─────────────────────────────────────────────
 
     def _sync_panel_display(self, active: str):
@@ -1696,12 +1722,6 @@ class CcDumpApp(App):
             conv = self._get_conv()
             if conv is not None:
                 self.call_after_refresh(conv.focus)
-
-    def watch_show_logs(self, value):
-        pass
-
-    def watch_show_info(self, value):
-        pass
 
     def watch_theme(self, theme_name: str) -> None:
         if not stx.is_safe(self):

@@ -151,16 +151,9 @@ def refresh_active_panel(app, panel_name: str) -> None:
 
 
 def _toggle_panel(app, panel_key: str) -> None:
-    """// [LAW:dataflow-not-control-flow] Panel toggling driven by config, not branches."""
-    attr, getter_name, refresh_name = cc_dump.tui.action_config.PANEL_TOGGLE_CONFIG[panel_key]
-    new_val = not getattr(app, attr)
-    setattr(app, attr, new_val)
-    widget = getattr(app, getter_name)()
-    if widget is not None:
-        widget.display = new_val
-    # [LAW:dataflow-not-control-flow] refresh_name is None for panels without db refresh
-    if new_val and refresh_name is not None:
-        globals()[refresh_name](app)
+    """// [LAW:dataflow-not-control-flow] Panel toggling is store-key driven data."""
+    store_key = cc_dump.tui.action_config.PANEL_TOGGLE_CONFIG[panel_key]
+    app._view_store.set(store_key, not bool(app._view_store.get(store_key)))
 
 
 def toggle_logs(app) -> None:
@@ -194,7 +187,6 @@ def toggle_debug_settings(app) -> None:
     panel_class = cc_dump.tui.debug_settings_panel.DebugSettingsPanel
     existing = app.screen.query(panel_class)
     if existing:
-        existing.first()._apply_toggle_states()
         existing.first().remove()
         conv = app._get_conv()
         if conv is not None:

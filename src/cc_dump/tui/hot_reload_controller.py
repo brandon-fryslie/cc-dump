@@ -262,8 +262,6 @@ async def _do_hot_reload(app) -> None:
         if saved_phase == SearchPhase.NAVIGATING and state.matches:
             cc_dump.tui.search_controller.navigate_to_current(app)
 
-        cc_dump.tui.search_controller.update_search_bar(app)
-
 
 async def replace_all_widgets(app) -> None:
     """Replace all widgets with fresh instances from the reloaded factory.
@@ -384,8 +382,16 @@ def _capture_widget_snapshot(app) -> _WidgetSwapSnapshot:
         old_panels[spec.name] = old_widget
         panel_states[spec.name] = old_widget.get_state() if old_widget else {}
 
-    logs_visible = old_logs.display if old_logs else app.show_logs
-    info_visible = old_info.display if old_info else app.show_info
+    logs_visible = (
+        old_logs.display
+        if old_logs
+        else bool(app._view_store.get("panel:logs"))
+    )
+    info_visible = (
+        old_info.display
+        if old_info
+        else bool(app._view_store.get("panel:info"))
+    )
     return _WidgetSwapSnapshot(
         conversations=old_conversations,
         old_logs=old_logs,

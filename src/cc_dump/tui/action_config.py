@@ -46,6 +46,6 @@ VIS_TOGGLE_SPECS = {
 
 # [LAW:one-type-per-behavior] Toggle config for non-cycling panels
 PANEL_TOGGLE_CONFIG = {
-    "logs": ("show_logs", "_get_logs", None),
-    "info": ("show_info", "_get_info", None),
+    "logs": "panel:logs",
+    "info": "panel:info",
 }

@@ -130,12 +130,8 @@ def _seed_panel_state(app) -> None:
             bool(app._view_store.get("panel:side_channel")),
         )
     )
-    logs = app._get_logs()
-    if logs is not None:
-        logs.display = app.show_logs
     info = app._get_info()
     if info is not None:
-        info.display = app.show_info
         info.update_info(app._build_server_info())
 
 
@@ -143,9 +139,21 @@ def _wire_reactive_runtime(app) -> None:
     snarfx.set_scheduler(app.call_from_thread)
     if app._tmux_controller is None:
         return
+
+    def _tmux_projection():
+        tmux = app._tmux_controller
+        if tmux is None:
+            return (False, False, False)
+        pane_alive = tmux.pane_alive.get() if hasattr(tmux, "pane_alive") else False
+        auto_obs = getattr(tmux, "auto_zoom_state", None)
+        zoom_obs = getattr(tmux, "zoomed_state", None)
+        auto_zoom = auto_obs.get() if auto_obs is not None else bool(getattr(tmux, "auto_zoom", False))
+        zoomed = zoom_obs.get() if zoom_obs is not None else bool(getattr(tmux, "_is_zoomed", False))
+        return (pane_alive, auto_zoom, zoomed)
+
     stx.reaction(
         app,
-        lambda: app._tmux_controller.pane_alive.get(),
+        _tmux_projection,
         lambda _: app._sync_tmux_to_store(),
     )
 

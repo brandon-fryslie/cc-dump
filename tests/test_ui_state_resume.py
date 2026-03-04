@@ -28,8 +28,8 @@ def _make_app():
 
 def test_export_ui_state_includes_view_and_app_fields(monkeypatch):
     app = _make_app()
-    app.show_logs = True
-    app.show_info = False
+    app._view_store.set("panel:logs", True)
+    app._view_store.set("panel:info", False)
     app._view_store.set("panel:active", "stats")
     app._view_store.set("search:query", "hello")
 
@@ -89,8 +89,8 @@ def test_apply_resume_ui_state_preload_updates_store_and_app_flags():
     assert app._view_store.get("panel:active") == "stats"
     assert app._view_store.get("search:query") == "resume me"
     assert app._view_store.get("vis:user") is False
-    assert app.show_logs is True
-    assert app.show_info is True
+    assert app._view_store.get("panel:logs") is True
+    assert app._view_store.get("panel:info") is True
 
 
 def test_apply_resume_ui_state_postload_restores_conv_state(monkeypatch):

@@ -49,13 +49,14 @@ def is_panel_visible(app: CcDumpApp, panel: str) -> bool:
     """Check if a panel is visible.
 
     For cycling panels (stats, economics, timeline): checks actual widget.display.
-    For toggle panels (logs, info): checks show_<panel> reactive.
+    For toggle panels (logs, info): checks view-store panel:* keys.
     """
     from cc_dump.tui.panel_registry import PANEL_ORDER
     if panel in PANEL_ORDER:
         widget = app._get_panel(panel)
         return widget is not None and widget.display
-    return getattr(app, f"show_{panel}")
+    store_key = f"panel:{panel}"
+    return bool(app._view_store.get(store_key))
 
 
 def get_turn_count(app: CcDumpApp) -> int:
