@@ -33,6 +33,7 @@ import cc_dump.tui.rendering
 import cc_dump.tui.panel_renderers
 import cc_dump.tui.error_indicator
 import cc_dump.tui.view_overrides
+import cc_dump.app.error_models
 import cc_dump.app.domain_store
 from cc_dump.io.perf_logging import monitor_slow_path
 
@@ -621,7 +622,7 @@ class ConversationView(ScrollView):
         if not any(item.id == err_key for item in items):
             next_items = list(items)
             next_items.append(
-                cc_dump.tui.error_indicator.ErrorItem(
+                cc_dump.app.error_models.ErrorItem(
                     err_key, "\u26a0\ufe0f", f"{type(exc).__name__}: {exc}"
                 )
             )

@@ -6,8 +6,9 @@
 // [LAW:one-way-deps] No widget imports — push callbacks provided via context (see view_store_bridge).
 """
 
-import cc_dump.core.formatting
-import cc_dump.tui.error_indicator
+from cc_dump.core.formatting import VisState
+from cc_dump.app.error_models import ErrorItem
+from cc_dump.core.coerce import coerce_int
 
 from cc_dump.tui.category_config import CATEGORY_CONFIG
 from snarfx.hot_reload import HotReloadStore
@@ -29,6 +30,8 @@ SCHEMA["panel:settings"] = False
 SCHEMA["panel:launch_config"] = False
 SCHEMA["panel:logs"] = False
 SCHEMA["panel:info"] = False
+SCHEMA["panel:keys"] = False
+SCHEMA["panel:debug_settings"] = False
 # // [LAW:one-source-of-truth] String, not FollowState enum — enum class identity
 # changes on reload; string comparison is stable across reloads.
 SCHEMA["nav:follow"] = "active"
@@ -49,6 +52,14 @@ SCHEMA["sc:result_text"] = ""
 SCHEMA["sc:result_source"] = ""
 SCHEMA["sc:result_elapsed_ms"] = 0
 SCHEMA["sc:purpose_usage"] = {}
+SCHEMA["settings:side_channel_enabled"] = False
+
+# Workbench results projection state (canonical source for results tab rendering)
+SCHEMA["workbench:text"] = ""
+SCHEMA["workbench:source"] = ""
+SCHEMA["workbench:elapsed_ms"] = 0
+SCHEMA["workbench:action"] = ""
+SCHEMA["workbench:context_session_id"] = ""
 
 # Search identity state — survives hot-reload via reconcile
 # // [LAW:one-source-of-truth] String, not SearchPhase enum — stable across reloads.
@@ -64,22 +75,12 @@ def create():
     """Create view store with defaults from CATEGORY_CONFIG."""
     store = HotReloadStore(SCHEMA)
 
-    def _coerce_int(value: object, default: int = 0) -> int:
-        if isinstance(value, bool):
-            return int(value)
-        if isinstance(value, (int, float, str, bytes, bytearray)):
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                return default
-        return default
-
     # [LAW:one-source-of-truth] Computed assembles VisState dict from 18 observables.
     # Lives on the store object — survives reconcile (reads via stable store.get()).
     @computed
     def active_filters():
         return {
-            name: cc_dump.core.formatting.VisState(
+            name: VisState(
                 store.get(f"vis:{name}"),
                 store.get(f"full:{name}"),
                 store.get(f"exp:{name}"),
@@ -133,10 +134,19 @@ def create():
 
     store.chrome_panel_state = chrome_panel_state
 
+    @computed
+    def aux_panel_state():
+        # [LAW:one-source-of-truth] Keys/debug overlay visibility is derived from panel:* keys once.
+        return (
+            bool(store.get("panel:keys")),
+            bool(store.get("panel:debug_settings")),
+        )
+
+    store.aux_panel_state = aux_panel_state
+
     # // [LAW:single-enforcer] error_items Computed combines stale files + exceptions.
     @computed
     def error_items():
-        ErrorItem = cc_dump.tui.error_indicator.ErrorItem
         items = [ErrorItem("stale", "\u274c", s.split("/")[-1]) for s in store.stale_files]
         items.extend(store.exception_items)
         return items
@@ -147,9 +157,8 @@ def create():
     # Returns plain dict — bridge converts to SideChannelPanelState.
     @computed
     def sc_panel_state():
-        settings = getattr(store, '_settings_store', None)
         return {
-            "enabled": settings.get("side_channel_enabled") if settings else False,
+            "enabled": bool(store.get("settings:side_channel_enabled")),
             "loading": store.get("sc:loading"),
             "active_action": store.get("sc:active_action"),
             "result_text": store.get("sc:result_text"),
@@ -161,16 +170,29 @@ def create():
     store.sc_panel_state = sc_panel_state
 
     @computed
+    def workbench_state():
+        # [LAW:one-source-of-truth] Workbench result rendering is derived from canonical store keys.
+        return {
+            "text": str(store.get("workbench:text")),
+            "source": str(store.get("workbench:source")),
+            "elapsed_ms": coerce_int(store.get("workbench:elapsed_ms"), 0),
+            "action": str(store.get("workbench:action")),
+            "context_session_id": str(store.get("workbench:context_session_id")),
+        }
+
+    store.workbench_state = workbench_state
+
+    @computed
     def search_ui_state():
         # [LAW:single-enforcer] Search bar + footer visibility projection is centralized here.
         phase = str(store.get("search:phase"))
         return {
             "phase": phase,
             "query": str(store.get("search:query")),
-            "modes": _coerce_int(store.get("search:modes"), 13),
-            "cursor_pos": _coerce_int(store.get("search:cursor_pos"), 0),
-            "current_index": _coerce_int(store.get("search:current_index"), 0),
-            "match_count": _coerce_int(store.get("search:match_count"), 0),
+            "modes": coerce_int(store.get("search:modes"), 13),
+            "cursor_pos": coerce_int(store.get("search:cursor_pos"), 0),
+            "current_index": coerce_int(store.get("search:current_index"), 0),
+            "match_count": coerce_int(store.get("search:match_count"), 0),
             # [LAW:dataflow-not-control-flow] Footer visibility is a derived value from search phase.
             "footer_visible": phase == "inactive",
         }
@@ -184,7 +206,7 @@ def setup_reactions(store, context=None):
     """Register reactions. Returns list of disposers.
 
     Called on create and on hot-reload reconcile.
-    context: dict with "app", optional "settings_store", and push callbacks from bridge.
+    context: dict with "app" and push callbacks from bridge.
 
     // [LAW:single-enforcer] All guards (pause, NoMatches, thread-marshal) enforced by stx.
     // [LAW:one-way-deps] Push callbacks provided by caller, not imported here.
@@ -193,12 +215,6 @@ def setup_reactions(store, context=None):
 
     if context:
         app = context.get("app")
-        settings_store = context.get("settings_store")
-
-        # Wire settings_store ref for sc_panel_state Computed cross-store access
-        if settings_store is not None:
-            store._settings_store = settings_store
-
         if app is not None:
             disposers.append(stx.autorun(app,
                 lambda: (store.active_filters.get(), app._rerender_if_mounted())
@@ -209,9 +225,11 @@ def setup_reactions(store, context=None):
                 ("push_panel_change", lambda: store.get("panel:active")),
                 ("push_sidebar_state", lambda: store.sidebar_panel_state.get()),
                 ("push_chrome_panels", lambda: store.chrome_panel_state.get()),
+                ("push_aux_panels", lambda: store.aux_panel_state.get()),
                 ("push_footer", lambda: store.footer_state.get()),
                 ("push_errors", lambda: store.error_items.get()),
                 ("push_sc_panel", lambda: store.sc_panel_state.get()),
+                ("push_workbench", lambda: store.workbench_state.get()),
                 ("push_search_ui", lambda: store.search_ui_state.get()),
             ]:
                 cb = context.get(key)
@@ -221,9 +239,9 @@ def setup_reactions(store, context=None):
     return disposers
 
 
-def get_category_state(store, name: str) -> "cc_dump.core.formatting.VisState":
+def get_category_state(store, name: str) -> VisState:
     """Read 3 keys, return VisState for a category."""
-    return cc_dump.core.formatting.VisState(
+    return VisState(
         store.get(f"vis:{name}"),
         store.get(f"full:{name}"),
         store.get(f"exp:{name}"),

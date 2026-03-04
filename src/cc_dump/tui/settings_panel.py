@@ -15,7 +15,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from snarfx import Observable, reaction
 from textual.app import ComposeResult
+from textual.css.query import NoMatches
 from textual.containers import Horizontal, VerticalScroll
 from textual.message import Message
 from textual.widgets import Input, Label, Select, Static
@@ -38,6 +40,11 @@ class FieldDef:
     kind: Literal["text", "bool", "select"]
     default: str | bool = ""
     options: tuple[str, ...] = ()  # only for kind="select"
+
+
+@dataclass(frozen=True)
+class SettingsPanelViewState:
+    values: dict[str, object]
 
 
 # ─── Field registry ──────────────────────────────────────────────────────────
@@ -150,6 +157,15 @@ class SettingsPanel(VerticalScroll):
     def __init__(self, initial_values: dict | None = None) -> None:
         super().__init__()
         self._initial_values = initial_values or {}
+        self._view_state: Observable[SettingsPanelViewState] = Observable(
+            SettingsPanelViewState(values=dict(self._initial_values))
+        )
+        # [LAW:single-enforcer] One reactive projection owns settings widget hydration.
+        self._view_reaction = reaction(
+            lambda: self._view_state.get(),
+            self._apply_view_state,
+            fire_immediately=False,
+        )
 
     def compose(self) -> ComposeResult:
         p = cc_dump.core.palette.PALETTE
@@ -177,19 +193,31 @@ class SettingsPanel(VerticalScroll):
 
     def on_mount(self) -> None:
         """Initialize focus only when panel is visible."""
+        self._apply_view_state(self._view_state.get())
         if self.display:
             self.focus_default_control()
 
-    def reset_values(self, values: dict) -> None:
-        """Reset visible field widgets from latest settings values."""
-        self._initial_values = dict(values)
+    def on_unmount(self) -> None:
+        self._view_reaction.dispose()
+
+    def _apply_view_state(self, view_state: SettingsPanelViewState) -> None:
+        if not self.is_attached:
+            return
         for field in SETTINGS_FIELDS:
-            widget = self.query_one("#field-{}".format(field.key))
-            value = self._initial_values.get(field.key, field.default)
+            try:
+                widget = self.query_one("#field-{}".format(field.key))
+            except NoMatches:
+                continue
+            value = view_state.values.get(field.key, field.default)
             if field.kind in {"text", "select"}:
                 widget.value = str(value)
             else:
                 widget.value = bool(value)
+
+    def reset_values(self, values: dict) -> None:
+        """Reset visible field widgets from latest settings values."""
+        self._initial_values = dict(values)
+        self._view_state.set(SettingsPanelViewState(values=dict(self._initial_values)))
 
     def focus_default_control(self) -> None:
         focusable = self.query("Input, Select, OptionList, ToggleChip")
