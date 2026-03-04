@@ -209,10 +209,27 @@ def _snapshot_reloaded_exports(module_names: list[str]) -> dict[str, dict[str, o
         values = {
             name: value
             for name, value in vars(module).items()
-            if not name.startswith("__")
+            if not name.startswith("__") and _is_alias_refreshable_export(module_name, value)
         }
         snapshot[module_name] = values
     return snapshot
+
+
+def _is_alias_refreshable_export(module_name: str, value: object) -> bool:
+    """True when an export is safe and meaningful for alias refresh mapping.
+
+    Restricting to module-owned symbols prevents accidental global rebinding caused
+    by interned/shared primitive identities (for example int/str/None singletons).
+    """
+    if isinstance(value, str | bytes | int | float | complex | bool | tuple | frozenset | list | dict | set | type(None)):
+        return False
+
+    value_module = getattr(value, "__module__", None)
+    if value_module == module_name:
+        return True
+
+    value_type_module = getattr(type(value), "__module__", None)
+    return value_type_module == module_name
 
 
 def _refresh_top_level_import_aliases(
@@ -265,9 +282,9 @@ def _apply_alias_replacements(replacements: dict[int, object]) -> int:
     updated_bindings = 0
     for module_dict in _iter_cc_dump_module_dicts():
         for name, value in list(module_dict.items()):
-            replacement = replacements.get(id(value))
-            if replacement is not None:
-                module_dict[name] = replacement
+            value_id = id(value)
+            if value_id in replacements:
+                module_dict[name] = replacements[value_id]
                 updated_bindings += 1
     return updated_bindings
 
