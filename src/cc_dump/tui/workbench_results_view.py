@@ -119,7 +119,6 @@ class WorkbenchResultsView(Widget):
             context_session_id=str(context_session_id or ""),
         )
         self._result_state.set(replace(base_state, meta=self._build_meta_line(base_state)))
-        self._result_state.set(replace(base_state, meta=self._build_meta_line(base_state)))
 
     @property
     def _last_text(self) -> str:
