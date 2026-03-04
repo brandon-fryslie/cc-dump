@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from enum import Enum, IntFlag
 from typing import Callable
 
+from snarfx import Observable, reaction
 from rich.text import Text
 from textual.widgets import Static
 
@@ -444,8 +445,33 @@ class SearchBar(Static):
 
     def __init__(self):
         super().__init__("")
+        self._display_state: Observable[SearchBarState] = Observable(
+            SearchBarState(
+                phase=SearchPhase.INACTIVE,
+                query="",
+                modes=SearchMode.CASE_INSENSITIVE,
+                cursor_pos=0,
+                current_index=0,
+                match_count=0,
+            )
+        )
+        # [LAW:single-enforcer] SearchBar rendering is owned by one local projection reaction.
+        self._display_reaction = reaction(
+            lambda: self._display_state.get(),
+            self._render_display,
+            fire_immediately=False,
+        )
+
+    def on_mount(self) -> None:
+        self._render_display(self._display_state.get())
+
+    def on_unmount(self) -> None:
+        self._display_reaction.dispose()
 
     def update_display(self, state: SearchBarState) -> None:
+        self._display_state.set(state)
+
+    def _render_display(self, state: SearchBarState) -> None:
         """Render the search bar from current state."""
         if state.phase == SearchPhase.INACTIVE:
             self.display = False
