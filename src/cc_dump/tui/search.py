@@ -87,6 +87,18 @@ class SearchContext:
         ]
 
 
+@dataclass(frozen=True)
+class SearchBarState:
+    """Store-projected state required to render SearchBar."""
+
+    phase: SearchPhase
+    query: str
+    modes: SearchMode
+    cursor_pos: int
+    current_index: int
+    match_count: int
+
+
 class SearchTextCache:
     """Bounded LRU cache for searchable block text.
 
@@ -183,7 +195,6 @@ class SearchState:
         self._store = store
         # Transient — rebuilt by run_search() after reload
         self.matches: list[SearchMatch] = []
-        self.current_index: int = 0
         self.saved_filters: dict = {}
         self.expanded_blocks: list[tuple[int, int, object]] = []
         self.debounce_timer: object | None = None
@@ -223,6 +234,14 @@ class SearchState:
     @cursor_pos.setter
     def cursor_pos(self, v: int) -> None:
         self._store.set("search:cursor_pos", v)
+
+    @property
+    def current_index(self) -> int:
+        return self._store.get("search:current_index")
+
+    @current_index.setter
+    def current_index(self, v: int) -> None:
+        self._store.set("search:current_index", v)
 
 
 # ─── Text extraction ─────────────────────────────────────────────────────────
@@ -426,7 +445,7 @@ class SearchBar(Static):
     def __init__(self):
         super().__init__("")
 
-    def update_display(self, state: SearchState) -> None:
+    def update_display(self, state: SearchBarState) -> None:
         """Render the search bar from current state."""
         if state.phase == SearchPhase.INACTIVE:
             self.display = False
@@ -459,9 +478,9 @@ class SearchBar(Static):
             search_line.append(state.query, style="bold")
 
         # Match count on same line
-        if state.matches:
+        if state.match_count > 0:
             search_line.append(
-                f"  [{state.current_index + 1}/{len(state.matches)}]",
+                f"  [{state.current_index + 1}/{state.match_count}]",
                 style=tc.search_active_style,
             )
         elif state.query:

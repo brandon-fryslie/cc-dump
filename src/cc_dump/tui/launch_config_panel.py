@@ -13,6 +13,7 @@ import copy
 from dataclasses import dataclass
 from typing import Literal
 
+from snarfx import Observable, reaction
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
@@ -35,6 +36,15 @@ class BaseFieldDef:
     kind: Literal["text", "select"]
     default: str
     options: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class LaunchConfigPanelViewState:
+    """Reactive projection trigger for selector/active/form rendering."""
+
+    active_name: str
+    selected_idx: int
+    revision: int
 
 
 _SHELL_NONE_LABEL = "(none)"
@@ -245,6 +255,20 @@ class LaunchConfigPanel(VerticalScroll):
         self._configs = incoming or cc_dump.app.launch_config.default_configs()
         self._active_name = active_config_name
         self._selected_idx = 0
+        self._view_revision = 0
+        self._panel_state: Observable[LaunchConfigPanelViewState] = Observable(
+            LaunchConfigPanelViewState(
+                active_name=self._active_name,
+                selected_idx=self._selected_idx,
+                revision=self._view_revision,
+            )
+        )
+        # [LAW:single-enforcer] One reactive projection owns selector/active/form sync.
+        self._panel_reaction = reaction(
+            lambda: self._panel_state.get(),
+            self._apply_panel_state,
+            fire_immediately=False,
+        )
 
     def compose(self) -> ComposeResult:
         p = cc_dump.core.palette.PALETTE
@@ -286,9 +310,55 @@ class LaunchConfigPanel(VerticalScroll):
         )
 
     def on_mount(self) -> None:
-        self.reset_configs(self._configs, self._active_name)
+        self._apply_panel_state(self._panel_state.get())
         if self.display:
             self.focus_default_control()
+
+    def on_unmount(self) -> None:
+        self._panel_reaction.dispose()
+
+    def _emit_panel_state(self) -> None:
+        """Trigger reactive selector/active/form projection after model mutation."""
+        self._view_revision += 1
+        self._panel_state.set(
+            LaunchConfigPanelViewState(
+                active_name=self._active_name,
+                selected_idx=self._selected_idx,
+                revision=self._view_revision,
+            )
+        )
+
+    def _apply_panel_state(self, panel_state: LaunchConfigPanelViewState) -> None:
+        # [LAW:dataflow-not-control-flow] exception: widget mutations require mounted children.
+        if not self.is_attached:
+            return
+        if not self._configs:
+            self._configs = cc_dump.app.launch_config.default_configs()
+
+        names = [config.name for config in self._configs]
+        # [LAW:one-source-of-truth] _selected_idx/_active_name are canonical panel selection state.
+        selected_idx = max(0, min(panel_state.selected_idx, len(names) - 1))
+        self._selected_idx = selected_idx
+        self._active_name = (
+            panel_state.active_name
+            if panel_state.active_name in names
+            else names[0]
+        )
+        selected_name = names[self._selected_idx]
+
+        try:
+            selector = self.query_one("#lc-config-selector", CycleSelector)
+            selector.set_options(names, value=selected_name)
+        except NoMatches:
+            pass
+
+        try:
+            active_widget = self.query_one("#lc-active", Static)
+            active_widget.update("Active preset: {}".format(self._active_name or "(none)"))
+        except NoMatches:
+            pass
+
+        self._populate_form(self._selected_config())
 
     def reset_configs(self, configs: list, active_config_name: str) -> None:
         """Reset panel state from persisted launch configs."""
@@ -297,9 +367,8 @@ class LaunchConfigPanel(VerticalScroll):
         self._active_name = active_config_name
         names = [config.name for config in self._configs]
         target_name = self._active_name if self._active_name in names else (names[0] if names else "")
-        self._refresh_config_selector(preferred_name=target_name)
-        self._populate_form(self._selected_config())
-        self._refresh_active_display()
+        self._selected_idx = names.index(target_name) if target_name in names else 0
+        self._emit_panel_state()
 
     def focus_default_control(self) -> None:
         focusable = self.query("Input, CycleSelector, ToggleChip")
@@ -311,29 +380,6 @@ class LaunchConfigPanel(VerticalScroll):
             return None
         self._selected_idx = max(0, min(self._selected_idx, len(self._configs) - 1))
         return self._configs[self._selected_idx]
-
-    def _refresh_active_display(self) -> None:
-        try:
-            widget = self.query_one("#lc-active", Static)
-        except NoMatches:
-            return
-        widget.update("Active preset: {}".format(self._active_name or "(none)"))
-
-    def _refresh_config_selector(self, preferred_name: str = "") -> None:
-        if not self._configs:
-            self._configs = cc_dump.app.launch_config.default_configs()
-
-        names = [config.name for config in self._configs]
-        selected_name = preferred_name or names[min(self._selected_idx, len(names) - 1)]
-        if selected_name not in names:
-            selected_name = names[0]
-
-        self._selected_idx = names.index(selected_name)
-        try:
-            selector = self.query_one("#lc-config-selector", CycleSelector)
-        except NoMatches:
-            return
-        selector.set_options(names, value=selected_name)
 
     def _read_launcher_value(self) -> str:
         try:
@@ -501,7 +547,7 @@ class LaunchConfigPanel(VerticalScroll):
             return
         self._apply_form_to_selected()
         self._selected_idx = idx
-        self._populate_form(self._configs[idx])
+        self._emit_panel_state()
 
     def _next_config_name(self, base_name: str) -> str:
         taken = {config.name for config in self._configs}
@@ -520,8 +566,7 @@ class LaunchConfigPanel(VerticalScroll):
         new_config.name = self._next_config_name(base_launcher)
         self._configs.append(new_config)
         self._selected_idx = len(self._configs) - 1
-        self._refresh_config_selector(preferred_name=new_config.name)
-        self._populate_form(new_config)
+        self._emit_panel_state()
 
     def delete_selected_config(self) -> None:
         if len(self._configs) <= 1:
@@ -536,11 +581,7 @@ class LaunchConfigPanel(VerticalScroll):
             self._active_name = self._configs[0].name
 
         self._selected_idx = min(self._selected_idx, len(self._configs) - 1)
-        current = self._selected_config()
-        preferred = current.name if current is not None else ""
-        self._refresh_config_selector(preferred_name=preferred)
-        self._populate_form(current)
-        self._refresh_active_display()
+        self._emit_panel_state()
 
     def activate_selected_config(self) -> None:
         self._apply_form_to_selected()
@@ -548,8 +589,7 @@ class LaunchConfigPanel(VerticalScroll):
         if selected is None:
             return
         self._active_name = selected.name
-        self._refresh_config_selector(preferred_name=selected.name)
-        self._refresh_active_display()
+        self._emit_panel_state()
         self.post_message(self.Activated(self._active_name, self._configs))
 
     def quick_launch_selected_config(self) -> None:
@@ -561,9 +601,7 @@ class LaunchConfigPanel(VerticalScroll):
 
     def _do_save(self) -> None:
         self._apply_form_to_selected()
-        selected = self._selected_config()
-        preferred = selected.name if selected is not None else ""
-        self._refresh_config_selector(preferred_name=preferred)
+        self._emit_panel_state()
         self.post_message(self.Saved(self._configs, self._active_name))
 
     def on_launch_action_chip_pressed(self, event: LaunchActionChip.Pressed) -> None:
@@ -600,7 +638,7 @@ class LaunchConfigPanel(VerticalScroll):
                 option_launcher=old_launcher,
                 launcher_value=new_launcher,
             )
-            self._rebuild_tool_option_fields(selected)
+            self._emit_panel_state()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
