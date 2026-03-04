@@ -8,6 +8,7 @@
 
 import cc_dump.core.formatting
 import cc_dump.app.error_models
+from cc_dump.core.coerce import coerce_int
 
 from cc_dump.tui.category_config import CATEGORY_CONFIG
 from snarfx.hot_reload import HotReloadStore
@@ -73,16 +74,6 @@ SCHEMA["search:match_count"] = 0
 def create():
     """Create view store with defaults from CATEGORY_CONFIG."""
     store = HotReloadStore(SCHEMA)
-
-    def _coerce_int(value: object, default: int = 0) -> int:
-        if isinstance(value, bool):
-            return int(value)
-        if isinstance(value, (int, float, str, bytes, bytearray)):
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                return default
-        return default
 
     # [LAW:one-source-of-truth] Computed assembles VisState dict from 18 observables.
     # Lives on the store object — survives reconcile (reads via stable store.get()).
@@ -185,7 +176,7 @@ def create():
         return {
             "text": str(store.get("workbench:text")),
             "source": str(store.get("workbench:source")),
-            "elapsed_ms": _coerce_int(store.get("workbench:elapsed_ms"), 0),
+            "elapsed_ms": coerce_int(store.get("workbench:elapsed_ms"), 0),
             "action": str(store.get("workbench:action")),
             "context_session_id": str(store.get("workbench:context_session_id")),
         }
@@ -199,10 +190,10 @@ def create():
         return {
             "phase": phase,
             "query": str(store.get("search:query")),
-            "modes": _coerce_int(store.get("search:modes"), 13),
-            "cursor_pos": _coerce_int(store.get("search:cursor_pos"), 0),
-            "current_index": _coerce_int(store.get("search:current_index"), 0),
-            "match_count": _coerce_int(store.get("search:match_count"), 0),
+            "modes": coerce_int(store.get("search:modes"), 13),
+            "cursor_pos": coerce_int(store.get("search:cursor_pos"), 0),
+            "current_index": coerce_int(store.get("search:current_index"), 0),
+            "match_count": coerce_int(store.get("search:match_count"), 0),
             # [LAW:dataflow-not-control-flow] Footer visibility is a derived value from search phase.
             "footer_visible": phase == "inactive",
         }

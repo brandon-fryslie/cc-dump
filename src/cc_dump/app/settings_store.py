@@ -5,9 +5,10 @@
 """
 
 import logging
-from typing import cast
+from collections.abc import Callable
 
 import cc_dump.io.settings
+from cc_dump.core.coerce import coerce_int, coerce_str_object_dict
 from snarfx.hot_reload import HotReloadStore
 from snarfx import reaction
 
@@ -36,21 +37,16 @@ def create(initial_overrides: dict | None = None):
     return HotReloadStore(SCHEMA, initial=merged)
 
 
-def _coerce_int(value: object, default: int) -> int:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, (int, float, str, bytes, bytearray)):
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return default
-    return default
+def _bind_setting(store, key: str, project: Callable[[object], object], apply: Callable[[object], None]):
+    """Create one fire-immediately reaction from a setting key to a consumer.
 
-
-def _coerce_str_object_dict(value: object) -> dict[str, object]:
-    if not isinstance(value, dict):
-        return {}
-    return cast(dict[str, object], value)
+    // [LAW:single-enforcer] Store→consumer projection happens through one helper.
+    """
+    return reaction(
+        lambda: project(store.get(key)),
+        apply,
+        fire_immediately=True,
+    )
 
 
 def setup_reactions(store, context=None):
@@ -73,120 +69,34 @@ def setup_reactions(store, context=None):
         view_store = context.get("view_store")
 
         if view_store is not None:
-            def _select_side_channel_enabled_for_view() -> bool:
-                return bool(store.get("side_channel_enabled"))
-
-            def _apply_side_channel_enabled_for_view(val: bool) -> None:
-                view_store.set("settings:side_channel_enabled", bool(val))
-
-            disposers.append(
-                reaction(
-                    _select_side_channel_enabled_for_view,
-                    _apply_side_channel_enabled_for_view,
-                    fire_immediately=True,
-                )
-            )
+            for key, project, apply in (
+                (
+                    "side_channel_enabled",
+                    bool,
+                    lambda value: view_store.set("settings:side_channel_enabled", bool(value)),
+                ),
+            ):
+                disposers.append(_bind_setting(store, key, project, apply))
 
         if mgr is not None:
-            def _select_side_channel_enabled() -> bool:
-                return bool(store.get("side_channel_enabled"))
-
-            def _apply_side_channel_enabled(val: bool) -> None:
-                mgr.enabled = val
-
-            disposers.append(
-                reaction(
-                    _select_side_channel_enabled,
-                    _apply_side_channel_enabled,
-                    fire_immediately=True,
-                )
+            # // [LAW:dataflow-not-control-flow] Canonical setting→consumer map drives all bindings.
+            manager_bindings: tuple[tuple[str, Callable[[object], object], Callable[[object], None]], ...] = (
+                ("side_channel_enabled", bool, lambda value: setattr(mgr, "enabled", bool(value))),
+                ("side_channel_global_kill", bool, lambda value: setattr(mgr, "global_kill", bool(value))),
+                ("side_channel_max_concurrent", lambda value: coerce_int(value, 1), mgr.set_max_concurrent),
+                ("side_channel_purpose_enabled", coerce_str_object_dict, mgr.set_purpose_enabled_map),
+                ("side_channel_timeout_by_purpose", coerce_str_object_dict, mgr.set_timeout_overrides),
+                ("side_channel_budget_caps", coerce_str_object_dict, mgr.set_budget_caps),
             )
-
-            def _select_side_channel_global_kill() -> bool:
-                return bool(store.get("side_channel_global_kill"))
-
-            def _apply_side_channel_global_kill(val: bool) -> None:
-                mgr.global_kill = val
-
-            disposers.append(
-                reaction(
-                    _select_side_channel_global_kill,
-                    _apply_side_channel_global_kill,
-                    fire_immediately=True,
-                )
-            )
-
-            def _select_side_channel_max_concurrent() -> int:
-                return _coerce_int(store.get("side_channel_max_concurrent"), 1)
-
-            def _apply_side_channel_max_concurrent(val: int) -> None:
-                mgr.set_max_concurrent(val)
-
-            disposers.append(
-                reaction(
-                    _select_side_channel_max_concurrent,
-                    _apply_side_channel_max_concurrent,
-                    fire_immediately=True,
-                )
-            )
-
-            def _select_side_channel_purpose_enabled() -> dict[str, object]:
-                return _coerce_str_object_dict(store.get("side_channel_purpose_enabled"))
-
-            def _apply_side_channel_purpose_enabled(val: dict[str, object]) -> None:
-                mgr.set_purpose_enabled_map(val)
-
-            disposers.append(
-                reaction(
-                    _select_side_channel_purpose_enabled,
-                    _apply_side_channel_purpose_enabled,
-                    fire_immediately=True,
-                )
-            )
-
-            def _select_side_channel_timeout_by_purpose() -> dict[str, object]:
-                return _coerce_str_object_dict(store.get("side_channel_timeout_by_purpose"))
-
-            def _apply_side_channel_timeout_by_purpose(val: dict[str, object]) -> None:
-                mgr.set_timeout_overrides(val)
-
-            disposers.append(
-                reaction(
-                    _select_side_channel_timeout_by_purpose,
-                    _apply_side_channel_timeout_by_purpose,
-                    fire_immediately=True,
-                )
-            )
-
-            def _select_side_channel_budget_caps() -> dict[str, object]:
-                return _coerce_str_object_dict(store.get("side_channel_budget_caps"))
-
-            def _apply_side_channel_budget_caps(val: dict[str, object]) -> None:
-                mgr.set_budget_caps(val)
-
-            disposers.append(
-                reaction(
-                    _select_side_channel_budget_caps,
-                    _apply_side_channel_budget_caps,
-                    fire_immediately=True,
-                )
-            )
+            for key, project, apply in manager_bindings:
+                disposers.append(_bind_setting(store, key, project, apply))
 
         tmux = context.get("tmux_controller")
         if tmux is not None:
-            def _select_auto_zoom_default() -> bool:
-                return bool(store.get("auto_zoom_default"))
-
-            def _apply_auto_zoom_default(val: bool) -> None:
-                tmux.auto_zoom = val
-
-            disposers.append(
-                reaction(
-                    _select_auto_zoom_default,
-                    _apply_auto_zoom_default,
-                    fire_immediately=True,
-                )
-            )
+            for key, project, apply in (
+                ("auto_zoom_default", bool, lambda value: setattr(tmux, "auto_zoom", bool(value))),
+            ):
+                disposers.append(_bind_setting(store, key, project, apply))
 
     return disposers
 
