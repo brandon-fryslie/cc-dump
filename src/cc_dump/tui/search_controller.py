@@ -132,16 +132,6 @@ def _sync_search_match_summary(app) -> None:
     app._view_store.set("search:match_count", len(state.matches))
 
 
-def update_search_bar(app) -> None:
-    """Backward-compatible shim for callers/tests during migration.
-
-    // [LAW:single-enforcer] exception: legacy entrypoint delegates to reactive store projection.
-    """
-    if not hasattr(app, "_view_store"):
-        return
-    _sync_search_match_summary(app)
-
-
 def start_search(app) -> None:
     """Transition: INACTIVE → EDITING. Save filter state and scroll position."""
     SearchPhase = cc_dump.tui.search.SearchPhase
