@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import time
 from typing import cast
 
@@ -13,6 +14,16 @@ import cc_dump.ai.conversation_qa
 import cc_dump.providers
 import cc_dump.tui.side_channel_panel
 from snarfx import transaction
+
+
+@dataclass(frozen=True)
+class PreparedQARequest:
+    question: str
+    scope: cc_dump.ai.conversation_qa.QAScope
+    normalized_scope: cc_dump.ai.conversation_qa.NormalizedQAScope
+    selected_messages: list[dict]
+    estimate: cc_dump.ai.conversation_qa.QABudgetEstimate
+    error: str
 
 
 def _ensure_side_channel_panel(app):
@@ -31,27 +42,6 @@ def _side_channel_usage_summary(app) -> dict:
         else {}
     )
 
-
-def _sync_workbench_result(
-    app,
-    *,
-    text: str,
-    source: str,
-    elapsed_ms: int,
-    active_action: str,
-    context_key: str,
-) -> None:
-    workbench_results = app._get_workbench_results_view()
-    if workbench_results is not None:
-        workbench_results.update_result(
-            text=text,
-            source=source,
-            elapsed_ms=elapsed_ms,
-            action=active_action,
-            context_session_id=context_key,
-        )
-
-
 def open_side_channel(app) -> None:
     """Open AI Workbench sidebar and hydrate panel state."""
     _ensure_side_channel_panel(app)
@@ -68,15 +58,12 @@ def open_side_channel(app) -> None:
             "sc:result_source": "",
             "sc:result_elapsed_ms": 0,
             "sc:purpose_usage": _side_channel_usage_summary(app),
+            "workbench:text": "",
+            "workbench:source": "",
+            "workbench:elapsed_ms": 0,
+            "workbench:action": "",
+            "workbench:context_session_id": context_key,
         }
-    )
-    _sync_workbench_result(
-        app,
-        text="",
-        source="",
-        elapsed_ms=0,
-        active_action="",
-        context_key=context_key,
     )
     app._sc_action_batch_id = ""
     app._sc_action_items = []
@@ -227,6 +214,47 @@ def parse_qa_scope(draft, *, total_messages: int) -> tuple[cc_dump.ai.conversati
     return scope_parsers.get(mode, lambda: _parse_range_scope(draft, total_messages=total_messages))()
 
 
+def prepare_qa_request(
+    draft,
+    *,
+    messages: list[dict],
+    require_messages: bool,
+) -> PreparedQARequest:
+    """Build reusable scoped-QA payload from panel draft data.
+
+    // [LAW:single-enforcer] Scope parsing, normalization, selection, estimate, and validation are centralized.
+    """
+    scope, parse_error = parse_qa_scope(draft, total_messages=len(messages))
+    normalized_scope = cc_dump.ai.conversation_qa.normalize_scope(
+        scope,
+        total_messages=len(messages),
+    )
+    selected_messages = cc_dump.ai.conversation_qa.select_messages(
+        messages,
+        normalized_scope,
+    )
+    estimate = cc_dump.ai.conversation_qa.estimate_qa_budget(
+        question=draft.question,
+        selected_messages=selected_messages,
+        scope_mode=normalized_scope.scope.mode,
+    )
+
+    question = draft.question.strip()
+    error = parse_error or normalized_scope.error
+    if not question:
+        error = "question is required"
+    if require_messages and not messages:
+        error = "no captured messages available"
+    return PreparedQARequest(
+        question=question,
+        scope=scope,
+        normalized_scope=normalized_scope,
+        selected_messages=selected_messages,
+        estimate=estimate,
+        error=error,
+    )
+
+
 def render_qa_result_text(
     app,
     *,
@@ -282,14 +310,11 @@ def set_side_channel_result(
         app._view_store.set("sc:result_text", text)
         app._view_store.set("sc:result_source", source)
         app._view_store.set("sc:result_elapsed_ms", elapsed_ms)
-    _sync_workbench_result(
-        app,
-        text=text,
-        source=source,
-        elapsed_ms=elapsed_ms,
-        active_action=active_action,
-        context_key=context_key,
-    )
+        app._view_store.set("workbench:text", text)
+        app._view_store.set("workbench:source", source)
+        app._view_store.set("workbench:elapsed_ms", elapsed_ms)
+        app._view_store.set("workbench:action", active_action)
+        app._view_store.set("workbench:context_session_id", context_key)
     if focus_results:
         app._show_workbench_results_tab()
 
@@ -326,34 +351,21 @@ def action_sc_qa_estimate(app) -> None:
         return
     draft = panel.read_qa_draft()
     messages = collect_recent_messages(app, 50)
-    scope, parse_error = parse_qa_scope(draft, total_messages=len(messages))
-    normalized_scope = cc_dump.ai.conversation_qa.normalize_scope(
-        scope,
-        total_messages=len(messages),
+    prepared = prepare_qa_request(
+        draft,
+        messages=messages,
+        require_messages=False,
     )
-    selected_messages = cc_dump.ai.conversation_qa.select_messages(
-        messages,
-        normalized_scope,
-    )
-    estimate = cc_dump.ai.conversation_qa.estimate_qa_budget(
-        question=draft.question,
-        selected_messages=selected_messages,
-        scope_mode=normalized_scope.scope.mode,
-    )
-    error = parse_error or normalized_scope.error
-    question = draft.question.strip()
-    if not question:
-        error = "question is required"
-    body = "Ready to ask scoped Q&A." if not error else ""
+    body = "Ready to ask scoped Q&A." if not prepared.error else ""
     text = render_qa_result_text(
         app,
-        question=question or "(empty)",
-        scope_mode=normalized_scope.scope.mode,
-        selected_indices=normalized_scope.selected_indices,
-        estimate=estimate,
+        question=prepared.question or "(empty)",
+        scope_mode=prepared.normalized_scope.scope.mode,
+        selected_indices=prepared.normalized_scope.selected_indices,
+        estimate=prepared.estimate,
         body=body,
         prefix="pre-send estimate",
-        error=error,
+        error=prepared.error,
     )
     set_side_channel_result(
         app,
@@ -375,38 +387,21 @@ def action_sc_qa_submit(app) -> None:
     context_session_key = app._active_context_session_key()
     draft = panel.read_qa_draft()
     messages = collect_recent_messages(app, 50)
-    scope, parse_error = parse_qa_scope(draft, total_messages=len(messages))
-    normalized_scope = cc_dump.ai.conversation_qa.normalize_scope(
-        scope,
-        total_messages=len(messages),
+    prepared = prepare_qa_request(
+        draft,
+        messages=messages,
+        require_messages=True,
     )
-    selected_messages = cc_dump.ai.conversation_qa.select_messages(
-        messages,
-        normalized_scope,
-    )
-    estimate = cc_dump.ai.conversation_qa.estimate_qa_budget(
-        question=draft.question,
-        selected_messages=selected_messages,
-        scope_mode=normalized_scope.scope.mode,
-    )
-
-    question = draft.question.strip()
-    error = parse_error or normalized_scope.error
-    if not question:
-        error = "question is required"
-    if not messages:
-        error = "no captured messages available"
-
-    if error:
+    if prepared.error:
         text = render_qa_result_text(
             app,
-            question=question or "(empty)",
-            scope_mode=normalized_scope.scope.mode,
-            selected_indices=normalized_scope.selected_indices,
-            estimate=estimate,
+            question=prepared.question or "(empty)",
+            scope_mode=prepared.normalized_scope.scope.mode,
+            selected_indices=prepared.normalized_scope.selected_indices,
+            estimate=prepared.estimate,
             body="",
             prefix="scoped Q&A blocked",
-            error=error,
+            error=prepared.error,
         )
         set_side_channel_result(
             app,
@@ -423,10 +418,10 @@ def action_sc_qa_submit(app) -> None:
     if app._data_dispatcher is None:
         text = render_qa_result_text(
             app,
-            question=question,
-            scope_mode=normalized_scope.scope.mode,
-            selected_indices=normalized_scope.selected_indices,
-            estimate=estimate,
+            question=prepared.question,
+            scope_mode=prepared.normalized_scope.scope.mode,
+            selected_indices=prepared.normalized_scope.selected_indices,
+            estimate=prepared.estimate,
             body="",
             prefix="scoped Q&A blocked",
             error="dispatcher unavailable",
@@ -463,15 +458,15 @@ def action_sc_qa_submit(app) -> None:
     def _do_qa() -> None:
         result = dispatcher.ask_conversation_question(
             messages,
-            question=question,
-            scope=scope,
+            question=prepared.question,
+            scope=prepared.scope,
             source_provider=source_provider,
             request_id=request_id,
         )
         app.call_from_thread(
             app._on_side_channel_qa_result,
             result,
-            question,
+            prepared.question,
             context_session_key,
         )
 

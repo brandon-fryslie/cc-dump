@@ -33,7 +33,6 @@ def _event(key: str, character: str | None = None):
 def test_search_edit_ctrl_a_and_ctrl_e_move_cursor(monkeypatch):
     state = _State("hello world", 5)
     app = _App(state)
-    monkeypatch.setattr(ctrl, "update_search_bar", lambda _app: None)
     monkeypatch.setattr(ctrl, "schedule_incremental_search", lambda _app: None)
 
     ctrl.handle_search_editing_key(app, _event("ctrl+a"))
@@ -45,7 +44,6 @@ def test_search_edit_ctrl_a_and_ctrl_e_move_cursor(monkeypatch):
 def test_search_edit_ctrl_w_deletes_previous_word(monkeypatch):
     state = _State("alpha beta gamma", len("alpha beta "))
     app = _App(state)
-    monkeypatch.setattr(ctrl, "update_search_bar", lambda _app: None)
     monkeypatch.setattr(ctrl, "schedule_incremental_search", lambda _app: None)
 
     ctrl.handle_search_editing_key(app, _event("ctrl+w"))
@@ -56,7 +54,6 @@ def test_search_edit_ctrl_w_deletes_previous_word(monkeypatch):
 def test_search_edit_alt_b_and_alt_f_move_by_word(monkeypatch):
     state = _State("alpha beta gamma", len("alpha beta "))
     app = _App(state)
-    monkeypatch.setattr(ctrl, "update_search_bar", lambda _app: None)
     monkeypatch.setattr(ctrl, "schedule_incremental_search", lambda _app: None)
 
     ctrl.handle_search_editing_key(app, _event("alt+b"))
@@ -68,7 +65,6 @@ def test_search_edit_alt_b_and_alt_f_move_by_word(monkeypatch):
 def test_search_edit_ctrl_u_and_ctrl_k_kill_ranges(monkeypatch):
     state = _State("alpha beta gamma", len("alpha "))
     app = _App(state)
-    monkeypatch.setattr(ctrl, "update_search_bar", lambda _app: None)
     monkeypatch.setattr(ctrl, "schedule_incremental_search", lambda _app: None)
 
     ctrl.handle_search_editing_key(app, _event("ctrl+k"))
@@ -83,7 +79,6 @@ def test_search_edit_ctrl_u_and_ctrl_k_kill_ranges(monkeypatch):
 def test_search_edit_ctrl_h_aliases_backspace(monkeypatch):
     state = _State("hello", len("hello"))
     app = _App(state)
-    monkeypatch.setattr(ctrl, "update_search_bar", lambda _app: None)
     monkeypatch.setattr(ctrl, "schedule_incremental_search", lambda _app: None)
 
     ctrl.handle_search_editing_key(app, _event("ctrl+h"))

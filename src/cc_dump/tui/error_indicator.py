@@ -10,14 +10,11 @@ indicator strips onto conversation output in render_line().
 RELOADABLE — pure data + rendering, no live state.
 """
 
-from collections import namedtuple
-
 from rich.segment import Segment
 from rich.style import Style
 from textual.strip import Strip
 
-
-ErrorItem = namedtuple("ErrorItem", ["id", "icon", "summary"])
+from cc_dump.app.error_models import ErrorItem
 
 # Visual constants
 _COLLAPSED_ICON = " \u274c "  # " ❌ "

@@ -117,6 +117,14 @@ class PreparedPrompt:
     error: str = ""
 
 
+@dataclass(frozen=True)
+class SideChannelExecution:
+    source: str  # "ai" | "fallback" | "error"
+    text: str
+    elapsed_ms: int
+    error: str = ""
+
+
 class DataDispatcher:
     """Routes enrichment requests to AI or fallback.
 
@@ -133,6 +141,58 @@ class DataDispatcher:
         self._action_items = ActionItemStore()
         self._handoff_store = HandoffStore()
         self._utility_registry = UtilityRegistry()
+
+    def _execute_side_channel(
+        self,
+        *,
+        prompt: str,
+        purpose: str,
+        prompt_version: str,
+        source_provider: str,
+        blocked_log_label: str,
+        disabled_error: str = "",
+    ) -> SideChannelExecution:
+        """Run side-channel once and normalize outcome mapping.
+
+        // [LAW:single-enforcer] Disabled/guardrail/error routing is centralized here.
+        """
+        if not self._side_channel.enabled:
+            return SideChannelExecution(
+                source="fallback",
+                text="",
+                elapsed_ms=0,
+                error=disabled_error,
+            )
+
+        result = self._side_channel.run(
+            prompt=prompt,
+            purpose=purpose,
+            prompt_version=prompt_version,
+            timeout=None,
+            source_provider=source_provider,
+            profile="ephemeral_default",
+        )
+        self._analytics.record(purpose=result.purpose)
+        if result.error is None:
+            return SideChannelExecution(
+                source="ai",
+                text=result.text,
+                elapsed_ms=result.elapsed_ms,
+            )
+        if result.error.startswith("Guardrail:"):
+            logger.info("%s blocked: %s", blocked_log_label, result.error)
+            return SideChannelExecution(
+                source="fallback",
+                text="",
+                elapsed_ms=result.elapsed_ms,
+                error=result.error,
+            )
+        return SideChannelExecution(
+            source="error",
+            text="",
+            elapsed_ms=result.elapsed_ms,
+            error=result.error,
+        )
 
     def summarize_messages(
         self,
@@ -169,44 +229,39 @@ class DataDispatcher:
                 elapsed_ms=0,
             )
 
-        if not self._side_channel.enabled:
-            return fallback
-
         prompt = _resolve_prompt_override(prepared.prompt, prompt_override)
-        result = self._side_channel.run(
+        execution = self._execute_side_channel(
             prompt=prompt,
             purpose=prepared.purpose,
             prompt_version=prepared.prompt_version,
-            timeout=None,
             source_provider=source_provider,
-            profile="ephemeral_default",
+            blocked_log_label="side-channel",
         )
-        self._analytics.record(purpose=result.purpose)
-
-        if result.error is not None:
-            if result.error.startswith("Guardrail:"):
-                logger.info("side-channel blocked: %s", result.error)
+        if execution.source == "fallback":
+            if execution.error.startswith("Guardrail:"):
                 return EnrichedResult(
-                    text=f"{fallback.text}\n\n[side-channel blocked] {result.error}",
+                    text=f"{fallback.text}\n\n[side-channel blocked] {execution.error}",
                     source="fallback",
-                    elapsed_ms=result.elapsed_ms,
+                    elapsed_ms=execution.elapsed_ms,
                 )
+            return fallback
+        if execution.source == "error":
             return EnrichedResult(
-                text=f"AI error: {result.error}\n\n---\n\n{fallback.text}",
+                text=f"AI error: {execution.error}\n\n---\n\n{fallback.text}",
                 source="error",
-                elapsed_ms=result.elapsed_ms,
+                elapsed_ms=execution.elapsed_ms,
             )
         self._summary_cache.put(
             key=cache_key,
             purpose=prepared.purpose,
             prompt_version=prepared.prompt_version,
             content=context,
-            summary_text=result.text,
+            summary_text=execution.text,
         )
         return EnrichedResult(
-            text=result.text,
+            text=execution.text,
             source="ai",
-            elapsed_ms=result.elapsed_ms,
+            elapsed_ms=execution.elapsed_ms,
         )
 
     def side_channel_usage_snapshot(self) -> dict[str, dict[str, int]]:
@@ -232,40 +287,17 @@ class DataDispatcher:
         selected_messages = _slice_messages_for_range(messages, normalized_start, normalized_end)
         fallback_text = _fallback_summary(selected_messages)
 
-        if not self._side_channel.enabled:
-            artifact = self._checkpoint_store.add(
-                create_checkpoint_artifact(
-                    purpose=spec.purpose,
-                    prompt_version=spec.version,
-                    source_provider=source_provider,
-                    request_id=request_id,
-                    source_start=normalized_start,
-                    source_end=normalized_end,
-                    summary_text=fallback_text,
-                )
-            )
-            return CheckpointCreateResult(
-                artifact=artifact,
-                source="fallback",
-                elapsed_ms=0,
-            )
-
         context = _build_summary_context(selected_messages)
         prompt = _build_summary_prompt(context, spec)
-        result = self._side_channel.run(
+        execution = self._execute_side_channel(
             prompt=prompt,
             purpose=spec.purpose,
             prompt_version=spec.version,
-            timeout=None,
             source_provider=source_provider,
-            profile="ephemeral_default",
+            blocked_log_label="checkpoint",
         )
-        self._analytics.record(purpose=result.purpose)
-        summary_text = result.text if result.error is None else fallback_text
-        source = "ai" if result.error is None else "error"
-        if result.error is not None and result.error.startswith("Guardrail:"):
-            logger.info("checkpoint blocked: %s", result.error)
-            source = "fallback"
+        summary_text = execution.text if execution.source == "ai" else fallback_text
+        source = execution.source
         artifact = self._checkpoint_store.add(
             create_checkpoint_artifact(
                 purpose=spec.purpose,
@@ -280,8 +312,8 @@ class DataDispatcher:
         return CheckpointCreateResult(
             artifact=artifact,
             source=source,
-            elapsed_ms=result.elapsed_ms,
-            error=result.error or "",
+            elapsed_ms=execution.elapsed_ms,
+            error=execution.error if execution.error != "side-channel disabled" else "",
         )
 
     def checkpoint_snapshot(self) -> list[CheckpointArtifact]:
@@ -311,47 +343,32 @@ class DataDispatcher:
         prompt_override: str | None = None,
     ) -> ActionExtractionResult:
         """Extract action/deferred candidates and stage them for explicit review."""
-        if not self._side_channel.enabled:
-            batch_id = self._action_items.stage([])
-            return ActionExtractionResult(
-                batch_id=batch_id,
-                items=[],
-                source="fallback",
-                elapsed_ms=0,
-                error="side-channel disabled",
-            )
-
         prepared = self.prepare_action_extraction_prompt(messages)
         prompt = _resolve_prompt_override(prepared.prompt, prompt_override)
-        result = self._side_channel.run(
+        execution = self._execute_side_channel(
             prompt=prompt,
             purpose=prepared.purpose,
             prompt_version=prepared.prompt_version,
-            timeout=None,
             source_provider=source_provider,
-            profile="ephemeral_default",
+            blocked_log_label="action extraction",
+            disabled_error="side-channel disabled",
         )
-        self._analytics.record(purpose=result.purpose)
-        if result.error is not None:
-            source = "error"
-            if result.error.startswith("Guardrail:"):
-                logger.info("action extraction blocked: %s", result.error)
-                source = "fallback"
+        if execution.source != "ai":
             batch_id = self._action_items.stage([])
             return ActionExtractionResult(
                 batch_id=batch_id,
                 items=[],
-                source=source,
-                elapsed_ms=result.elapsed_ms,
-                error=result.error,
+                source=execution.source,
+                elapsed_ms=execution.elapsed_ms,
+                error=execution.error,
             )
-        extracted = parse_action_items(result.text, request_id=request_id)
+        extracted = parse_action_items(execution.text, request_id=request_id)
         batch_id = self._action_items.stage(extracted)
         return ActionExtractionResult(
             batch_id=batch_id,
             items=extracted,
             source="ai",
-            elapsed_ms=result.elapsed_ms,
+            elapsed_ms=execution.elapsed_ms,
         )
 
     def pending_action_items(self, batch_id: str) -> list[ActionWorkItem]:
@@ -406,43 +423,28 @@ class DataDispatcher:
             summary_text=_fallback_summary(selected_messages),
         )
 
-        if not self._side_channel.enabled:
-            artifact = self._handoff_store.add(fallback_artifact)
-            return HandoffResult(
-                artifact=artifact,
-                markdown=render_handoff_markdown(artifact),
-                source="fallback",
-                elapsed_ms=0,
-            )
-
         context = _build_summary_context(selected_messages)
         prompt = _build_summary_prompt(context, spec)
-        result = self._side_channel.run(
+        execution = self._execute_side_channel(
             prompt=prompt,
             purpose=spec.purpose,
             prompt_version=spec.version,
-            timeout=None,
             source_provider=source_provider,
-            profile="ephemeral_default",
+            blocked_log_label="handoff",
         )
-        self._analytics.record(purpose=result.purpose)
-        if result.error is not None:
-            source = "error"
-            if result.error.startswith("Guardrail:"):
-                logger.info("handoff blocked: %s", result.error)
-                source = "fallback"
+        if execution.source != "ai":
             artifact = self._handoff_store.add(fallback_artifact)
             return HandoffResult(
                 artifact=artifact,
                 markdown=render_handoff_markdown(artifact),
-                source=source,
-                elapsed_ms=result.elapsed_ms,
-                error=result.error,
+                source=execution.source,
+                elapsed_ms=execution.elapsed_ms,
+                error=execution.error if execution.error != "side-channel disabled" else "",
             )
 
         artifact = self._handoff_store.add(
             parse_handoff_artifact(
-                result.text,
+                execution.text,
                 purpose=spec.purpose,
                 prompt_version=spec.version,
                 source_provider=source_provider,
@@ -455,7 +457,7 @@ class DataDispatcher:
             artifact=artifact,
             markdown=render_handoff_markdown(artifact),
             source="ai",
-            elapsed_ms=result.elapsed_ms,
+            elapsed_ms=execution.elapsed_ms,
         )
 
     def latest_handoff_note(self, source_provider: str = "") -> HandoffArtifact | None:
@@ -509,45 +511,30 @@ class DataDispatcher:
             fallback_answer=f"Fallback answer based on selected scope: {fallback_text}",
         )
 
-        if not self._side_channel.enabled:
-            return ConversationQAResult(
-                artifact=fallback,
-                markdown=render_qa_markdown(fallback),
-                source="fallback",
-                elapsed_ms=0,
-                estimate=estimate,
-                error="side-channel disabled",
-            )
-
         prepared = self.prepare_conversation_qa_prompt(
             question=question,
             selected_messages=selected_messages,
         )
         prompt = _resolve_prompt_override(prepared.prompt, prompt_override)
-        result = self._side_channel.run(
+        execution = self._execute_side_channel(
             prompt=prompt,
             purpose=prepared.purpose,
             prompt_version=prepared.prompt_version,
-            timeout=None,
             source_provider=source_provider,
-            profile="ephemeral_default",
+            blocked_log_label="conversation qa",
+            disabled_error="side-channel disabled",
         )
-        self._analytics.record(purpose=result.purpose)
-        if result.error is not None:
-            source = "error"
-            if result.error.startswith("Guardrail:"):
-                logger.info("conversation qa blocked: %s", result.error)
-                source = "fallback"
+        if execution.source != "ai":
             return ConversationQAResult(
                 artifact=fallback,
                 markdown=render_qa_markdown(fallback),
-                source=source,
-                elapsed_ms=result.elapsed_ms,
+                source=execution.source,
+                elapsed_ms=execution.elapsed_ms,
                 estimate=estimate,
-                error=result.error,
+                error=execution.error,
             )
         artifact = parse_qa_artifact(
-            result.text,
+            execution.text,
             purpose=spec.purpose,
             prompt_version=spec.version,
             question=question,
@@ -558,7 +545,7 @@ class DataDispatcher:
             artifact=artifact,
             markdown=render_qa_markdown(artifact),
             source="ai",
-            elapsed_ms=result.elapsed_ms,
+            elapsed_ms=execution.elapsed_ms,
             estimate=estimate,
         )
 
@@ -603,32 +590,26 @@ class DataDispatcher:
                 error=prepared.error,
             )
         prompt = _resolve_prompt_override(prepared.prompt, prompt_override)
-        result = self._side_channel.run(
+        execution = self._execute_side_channel(
             prompt=prompt,
             purpose=prepared.purpose,
             prompt_version=prepared.prompt_version,
-            timeout=None,
             source_provider=source_provider,
-            profile="ephemeral_default",
+            blocked_log_label="utility {}".format(utility_id),
         )
-        self._analytics.record(purpose=result.purpose)
-        if result.error is not None:
-            source = "error"
-            if result.error.startswith("Guardrail:"):
-                logger.info("utility blocked: %s (%s)", utility_id, result.error)
-                source = "fallback"
+        if execution.source != "ai":
             return UtilityResult(
                 utility_id=utility_id,
                 text=fallback_text,
-                source=source,
-                elapsed_ms=result.elapsed_ms,
-                error=result.error,
+                source=execution.source,
+                elapsed_ms=execution.elapsed_ms,
+                error=execution.error if execution.error != "side-channel disabled" else "",
             )
         return UtilityResult(
             utility_id=utility_id,
-            text=result.text,
+            text=execution.text,
             source="ai",
-            elapsed_ms=result.elapsed_ms,
+            elapsed_ms=execution.elapsed_ms,
         )
 
     def prepare_summary_prompt(self, messages: list[dict]) -> PreparedPrompt:

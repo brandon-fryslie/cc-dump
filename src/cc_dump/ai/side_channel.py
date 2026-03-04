@@ -22,6 +22,7 @@ from collections.abc import Callable
 from cc_dump.ai.side_channel_boundary import apply_boundary
 from cc_dump.ai.side_channel_marker import SideChannelMarker, prepend_marker
 from cc_dump.ai.prompt_registry import normalize_purpose, SIDE_CHANNEL_PURPOSES
+from cc_dump.core.coerce import coerce_optional_int
 
 
 DEFAULT_TIMEOUT_SECONDS = 60
@@ -36,18 +37,6 @@ DEFAULT_TIMEOUT_BY_PURPOSE.update({
     "conversation_qa": 90,
     "compaction": 90,
 })
-
-
-def _coerce_int(value: object) -> int | None:
-    """Best-effort integer conversion for settings payload values."""
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, (int, float, str, bytes, bytearray)):
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-    return None
 
 
 @dataclass
@@ -118,7 +107,7 @@ class SideChannelManager:
         """Set per-purpose timeout overrides (seconds)."""
         normalized: dict[str, int] = {}
         for key, val in values.items():
-            timeout = _coerce_int(val)
+            timeout = coerce_optional_int(val)
             if timeout is None:
                 continue
             normalized[normalize_purpose(str(key))] = max(1, min(MAX_TIMEOUT_SECONDS, timeout))
@@ -128,7 +117,7 @@ class SideChannelManager:
         """Set per-purpose token caps; <=0 removes cap."""
         normalized: dict[str, int] = {}
         for key, val in values.items():
-            cap = _coerce_int(val)
+            cap = coerce_optional_int(val)
             if cap is None:
                 continue
             if cap > 0:

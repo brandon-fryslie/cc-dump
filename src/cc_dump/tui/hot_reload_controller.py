@@ -17,6 +17,7 @@ import cc_dump.tui.search
 import cc_dump.tui.widget_factory
 import cc_dump.tui.info_panel
 import cc_dump.tui.keys_panel
+import cc_dump.tui.debug_settings_panel
 import cc_dump.tui.settings_panel
 import cc_dump.tui.custom_footer
 import cc_dump.app.settings_store
@@ -458,18 +459,25 @@ def _build_replacement_info(info_state: dict):
 
 async def _remove_ephemeral_panels(app) -> None:
     """Drop transient overlays before remounting persisted widgets."""
-    for panel in app.screen.query(cc_dump.tui.keys_panel.KeysPanel):
-        await panel.remove()
+    for ephemeral_panel_type in (
+        cc_dump.tui.keys_panel.KeysPanel,
+        cc_dump.tui.debug_settings_panel.DebugSettingsPanel,
+    ):
+        await _remove_panels_by_type(app, ephemeral_panel_type)
 
     removals = (
         (cc_dump.tui.settings_panel.SettingsPanel, "panel:settings"),
         (cc_dump.tui.launch_config_panel.LaunchConfigPanel, "panel:launch_config"),
         (cc_dump.tui.side_channel_panel.SideChannelPanel, "panel:side_channel"),
     )
-    for panel_type, store_key in removals:
-        for panel in app.screen.query(panel_type):
-            await panel.remove()
+    for removal_panel_type, store_key in removals:
+        await _remove_panels_by_type(app, removal_panel_type)
         app._view_store.set(store_key, False)
+
+
+async def _remove_panels_by_type(app, panel_type) -> None:
+    for panel in app.screen.query(panel_type):
+        await panel.remove()
 
 
 async def _remove_old_widgets(snapshot: _WidgetSwapSnapshot) -> None:

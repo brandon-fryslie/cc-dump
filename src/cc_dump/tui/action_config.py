@@ -48,4 +48,6 @@ VIS_TOGGLE_SPECS = {
 PANEL_TOGGLE_CONFIG = {
     "logs": "panel:logs",
     "info": "panel:info",
+    "keys": "panel:keys",
+    "debug_settings": "panel:debug_settings",
 }

@@ -19,8 +19,6 @@ import cc_dump.tui.rendering
 # [LAW:one-source-of-truth] Panel order derived from registry
 from cc_dump.tui.panel_registry import PANEL_ORDER
 from snarfx import transaction
-import cc_dump.tui.keys_panel
-import cc_dump.tui.debug_settings_panel
 import cc_dump.tui.widget_factory
 
 
@@ -165,13 +163,8 @@ def toggle_info(app) -> None:
 
 
 def toggle_keys(app) -> None:
-    """Toggle the keys panel via mount/remove."""
-    panel_class = cc_dump.tui.keys_panel.KeysPanel
-    existing = app.screen.query(panel_class)
-    if existing:
-        existing.first().remove()
-    else:
-        app.screen.mount(cc_dump.tui.keys_panel.create_keys_panel())
+    """Toggle the keys panel via canonical store state."""
+    _toggle_panel(app, "keys")
 
 
 def toggle_settings(app) -> None:
@@ -183,17 +176,8 @@ def toggle_settings(app) -> None:
 
 
 def toggle_debug_settings(app) -> None:
-    """Toggle the debug settings panel via mount/remove."""
-    panel_class = cc_dump.tui.debug_settings_panel.DebugSettingsPanel
-    existing = app.screen.query(panel_class)
-    if existing:
-        existing.first().remove()
-        conv = app._get_conv()
-        if conv is not None:
-            conv.focus()
-    else:
-        panel = cc_dump.tui.debug_settings_panel.create_debug_settings_panel(app_ref=app)
-        app.screen.mount(panel)
+    """Toggle debug settings panel via canonical store state."""
+    _toggle_panel(app, "debug_settings")
 
 
 def toggle_launch_config(app) -> None:

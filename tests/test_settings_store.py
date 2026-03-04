@@ -85,6 +85,16 @@ class TestSetupReactions:
         mgr.set_timeout_overrides.assert_called_with({})
         mgr.set_budget_caps.assert_called_with({})
 
+    def test_side_channel_max_concurrent_coerces_invalid_to_default(self, tmp_settings):
+        store = cc_dump.app.settings_store.create()
+        mgr = MagicMock()
+        context = {"side_channel_manager": mgr}
+        disposers = cc_dump.app.settings_store.setup_reactions(store, context)
+        store._reaction_disposers = disposers
+
+        store.set("side_channel_max_concurrent", "not-a-number")
+        mgr.set_max_concurrent.assert_called_with(1)
+
     def test_tmux_auto_zoom_sync(self, tmp_settings):
         store = cc_dump.app.settings_store.create()
         tmux = MagicMock()

@@ -10,8 +10,10 @@ cc_dump.tui.chip (same dependency profile: nothing).
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from typing import ClassVar
 
+from snarfx import Observable, reaction
 from rich.style import Style
 from rich.text import Text
 from textual.message import Message
@@ -35,6 +37,27 @@ _ZONE_DELTAS: dict[int, int] = {
     _ZONE_CENTER: 0,
     _ZONE_NEXT: +1,
 }
+
+
+@dataclass(frozen=True)
+class CycleSelectorState:
+    options: tuple[str, ...]
+    index: int = 0
+    editing: bool = False
+    zone: int = _ZONE_CENTER
+
+
+def _initial_cycle_selector_state(
+    options: Sequence[str],
+    value: str | None,
+) -> CycleSelectorState:
+    """Build initial reactive state from options/value inputs.
+
+    // [LAW:one-source-of-truth] Option normalization and initial index selection live here.
+    """
+    options_tuple = tuple(options) if options else ("",)
+    index = options_tuple.index(value) if value is not None and value in options_tuple else 0
+    return CycleSelectorState(options=options_tuple, index=index)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -116,56 +139,102 @@ class CycleSelector(Widget, can_focus=True):
         super().__init__(name=name, id=id, classes=classes, disabled=disabled)
         if tooltip is not None:
             self.tooltip = tooltip
-        # [LAW:one-source-of-truth] _options is the canonical option list.
-        self._options: list[str] = list(options)
-        # [LAW:one-source-of-truth] _index is the canonical selected index.
-        self._index: int = (
-            self._options.index(value)
-            if value is not None and value in self._options
-            else 0
+        self._state: Observable[CycleSelectorState] = Observable(
+            _initial_cycle_selector_state(options, value)
         )
-        self._editing: bool = False
-        self._zone: int = _ZONE_CENTER
+        # [LAW:single-enforcer] Local selector rendering is invalidated by a single state reaction.
+        self._state_reaction = reaction(
+            lambda: self._state.get(),
+            self._apply_state,
+            fire_immediately=False,
+        )
+
+    def on_unmount(self) -> None:
+        self._state_reaction.dispose()
+
+    def _apply_state(self, _state: CycleSelectorState) -> None:
+        self.refresh()
+
+    # [LAW:one-source-of-truth] exception: legacy private attributes are compatibility
+    # views over reactive state for existing tests/callers.
+    @property
+    def _options(self) -> list[str]:
+        return list(self._state.get().options)
+
+    @_options.setter
+    def _options(self, value: Sequence[str]) -> None:
+        state = self._state.get()
+        options = tuple(value) if value else ("",)
+        index = min(state.index, len(options) - 1)
+        self._state.set(replace(state, options=options, index=index))
+
+    @property
+    def _index(self) -> int:
+        return self._state.get().index
+
+    @_index.setter
+    def _index(self, value: int) -> None:
+        state = self._state.get()
+        self._state.set(replace(state, index=value % len(state.options)))
+
+    @property
+    def _editing(self) -> bool:
+        return self._state.get().editing
+
+    @_editing.setter
+    def _editing(self, value: bool) -> None:
+        state = self._state.get()
+        self._state.set(replace(state, editing=bool(value)))
+
+    @property
+    def _zone(self) -> int:
+        return self._state.get().zone
+
+    @_zone.setter
+    def _zone(self, value: int) -> None:
+        state = self._state.get()
+        self._state.set(replace(state, zone=max(_ZONE_PREV, min(_ZONE_NEXT, int(value)))))
 
     # -- Properties ----------------------------------------------------------
 
     @property
     def value(self) -> str:
         """Current selected option value."""
-        return self._options[self._index]
+        state = self._state.get()
+        return state.options[state.index]
 
     @value.setter
     def value(self, new_value: str) -> None:
         """Set value programmatically. Raises ValueError if not in options."""
-        self._index = self._options.index(new_value)
-        self.refresh()
+        state = self._state.get()
+        self._state.set(replace(state, index=state.options.index(new_value)))
 
     @property
     def index(self) -> int:
         """Current selected index."""
-        return self._index
+        return self._state.get().index
 
     @index.setter
     def index(self, new_index: int) -> None:
         """Set index programmatically (wraps around)."""
-        self._index = new_index % len(self._options)
-        self.refresh()
+        state = self._state.get()
+        self._state.set(replace(state, index=new_index % len(state.options)))
 
     def set_options(self, options: Sequence[str], *, value: str | None = None) -> None:
         """Replace options list and selected value.
 
         // [LAW:one-source-of-truth] Selection index is recomputed from new options.
         """
-        updated = list(options)
-        self._options = updated if updated else [""]
-        self._index = (
-            self._options.index(value)
-            if value is not None and value in self._options
-            else 0
+        updated = tuple(options) if options else ("",)
+        index = updated.index(value) if value is not None and value in updated else 0
+        self._state.set(
+            CycleSelectorState(
+                options=updated,
+                index=index,
+                editing=False,
+                zone=_ZONE_CENTER,
+            )
         )
-        self._editing = False
-        self._zone = _ZONE_CENTER
-        self.refresh()
 
     # -- Rendering -----------------------------------------------------------
 
@@ -175,16 +244,17 @@ class CycleSelector(Widget, can_focus=True):
         // [LAW:dataflow-not-control-flow] Always builds all 3 zones.
         // Editing varies the styling, not the structure.
         """
-        val = self._options[self._index]
+        state = self._state.get()
+        val = state.options[state.index]
         parts = [f" {_ARROW_PREV} ", f" {val} ", f" {_ARROW_NEXT} "]
 
         text = Text()
         reverse = Style(reverse=True)
         for i, part in enumerate(parts):
-            style = reverse if (self._editing and i == self._zone) else Style.null()
+            style = reverse if (state.editing and i == state.zone) else Style.null()
             text.append(part, style=style)
 
-        self.set_class(self._editing, "-editing")
+        self.set_class(state.editing, "-editing")
         return text
 
     # -- Zone management -----------------------------------------------------
@@ -195,13 +265,19 @@ class CycleSelector(Widget, can_focus=True):
         // [LAW:one-source-of-truth] Boundaries derived from content lengths.
         """
         prev_width = 3  # " ▾ "
-        center_width = len(self._options[self._index]) + 2  # " value "
+        state = self._state.get()
+        center_width = len(state.options[state.index]) + 2  # " value "
         return prev_width, prev_width + center_width
 
     def _move_zone(self, delta: int) -> None:
         """Move internal focus zone by delta, clamping to valid range."""
-        self._zone = max(_ZONE_PREV, min(_ZONE_NEXT, self._zone + delta))
-        self.refresh()
+        state = self._state.get()
+        self._state.set(
+            replace(
+                state,
+                zone=max(_ZONE_PREV, min(_ZONE_NEXT, state.zone + delta)),
+            )
+        )
 
     def _activate_zone(self, zone: int) -> None:
         """Activate a zone: cycle prev/next or confirm center.
@@ -209,27 +285,29 @@ class CycleSelector(Widget, can_focus=True):
         // [LAW:dataflow-not-control-flow] _ZONE_DELTAS drives behavior.
         """
         delta = _ZONE_DELTAS[zone]
-        old_index = self._index
-
-        self._index = (self._index + delta) % len(self._options)
+        state = self._state.get()
+        old_index = state.index
+        next_index = (state.index + delta) % len(state.options)
         # delta==0 means center (confirm) → exit editing
-        self._editing = self._editing and delta != 0
+        next_state = replace(
+            state,
+            index=next_index,
+            editing=state.editing and delta != 0,
+        )
+        self._state.set(next_state)
 
-        self.refresh()
-
-        if self._index != old_index:
-            self.post_message(self.Changed(self, self.value, self._index))
+        if next_index != old_index:
+            self.post_message(self.Changed(self, next_state.options[next_state.index], next_index))
 
     def _enter_editing(self) -> None:
         """Enter editing mode, starting with center zone focused."""
-        self._editing = True
-        self._zone = _ZONE_CENTER
-        self.refresh()
+        state = self._state.get()
+        self._state.set(replace(state, editing=True, zone=_ZONE_CENTER))
 
     def _exit_editing(self) -> None:
         """Exit editing mode."""
-        self._editing = False
-        self.refresh()
+        state = self._state.get()
+        self._state.set(replace(state, editing=False))
 
     # -- Event handlers ------------------------------------------------------
 
@@ -247,10 +325,9 @@ class CycleSelector(Widget, can_focus=True):
             else _ZONE_CENTER
         )
 
-        if not self._editing:
-            self._zone = zone
-            self._editing = True
-            self.refresh()
+        state = self._state.get()
+        if not state.editing:
+            self._state.set(replace(state, zone=zone, editing=True))
         else:
             self._activate_zone(zone)
 
@@ -259,7 +336,8 @@ class CycleSelector(Widget, can_focus=True):
         if self.disabled:
             return
 
-        if not self._editing:
+        state = self._state.get()
+        if not state.editing:
             if event.key in ("enter", "space"):
                 event.stop()
                 event.prevent_default()
@@ -277,7 +355,7 @@ class CycleSelector(Widget, can_focus=True):
         elif key == "right":
             self._move_zone(+1)
         elif key in ("enter", "space"):
-            self._activate_zone(self._zone)
+            self._activate_zone(state.zone)
         elif key == "escape":
             self._exit_editing()
 
