@@ -8,6 +8,7 @@
 import cc_dump.tui.widget_factory
 import cc_dump.tui.custom_footer
 import cc_dump.tui.side_channel_panel
+from textual.css.query import NoMatches
 from cc_dump.tui import action_handlers as _actions
 
 
@@ -30,19 +31,25 @@ def build_reaction_context(app) -> dict:
 
     def push_sc_panel(state):
         SideChannelPanelState = cc_dump.tui.side_channel_panel.SideChannelPanelState
-        app.screen.query(
-            cc_dump.tui.side_channel_panel.SideChannelPanel
-        ).first().update_display(SideChannelPanelState(**state))
+        try:
+            panel = app.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel).first()
+        except NoMatches:
+            return
+        panel.update_display(SideChannelPanelState(**state))
 
     def push_panel_change(value):
         app._sync_panel_display(value)
         _actions.refresh_active_panel(app, value)
+
+    def push_sidebar_state(value):
+        app._sync_sidebar_panels(value)
 
     return {
         "push_footer": push_footer,
         "push_errors": push_errors,
         "push_sc_panel": push_sc_panel,
         "push_panel_change": push_panel_change,
+        "push_sidebar_state": push_sidebar_state,
     }
 
 

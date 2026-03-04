@@ -155,6 +155,14 @@ def setup_reactions(store, context=None):
             # // [LAW:single-enforcer] Callback-based reactions — bridge provides push functions.
             for key, data_fn in [
                 ("push_panel_change", lambda: store.get("panel:active")),
+                (
+                    "push_sidebar_state",
+                    lambda: (
+                        bool(store.get("panel:settings")),
+                        bool(store.get("panel:launch_config")),
+                        bool(store.get("panel:side_channel")),
+                    ),
+                ),
                 ("push_footer", lambda: store.footer_state.get()),
                 ("push_errors", lambda: store.error_items.get()),
                 ("push_sc_panel", lambda: store.sc_panel_state.get()),

@@ -4,6 +4,7 @@ This module is RELOADABLE. It appears in _RELOAD_ORDER before its
 consumers (custom_footer, settings_panel, side_channel_panel).
 """
 
+from snarfx import Observable, reaction
 from textual.widgets import Static
 
 
@@ -15,6 +16,7 @@ class Chip(Static):
     """
 
     ALLOW_SELECT = False
+    can_focus = True
     DEFAULT_CSS = """
     Chip {
         width: auto;
@@ -58,9 +60,19 @@ class Chip(Static):
         super().__init__(label, **kwargs)
         self._action = action
 
-    async def on_click(self, event) -> None:
+    def _activate(self) -> None:
+        # [LAW:single-enforcer] One activation path serves click + keyboard input.
         if self._action:
-            await self.run_action(self._action)
+            self.call_later(self.run_action, self._action)
+
+    def on_click(self, event) -> None:
+        self._activate()
+
+    def on_key(self, event) -> None:
+        if event.key in ("enter", "space"):
+            event.stop()
+            event.prevent_default()
+            self._activate()
 
 
 class ToggleChip(Static):
@@ -110,16 +122,31 @@ class ToggleChip(Static):
     def __init__(self, label: str, *, value: bool = False, **kwargs):
         super().__init__("", **kwargs)
         self._base_label = label
-        self.value = value
-        self._refresh_label()
+        self._value = Observable(bool(value))
+        # [LAW:single-enforcer] One reactive projection owns ToggleChip label/CSS state.
+        self._value_reaction = reaction(
+            lambda: self._value.get(),
+            self._render_value,
+            fire_immediately=True,
+        )
 
-    def _refresh_label(self):
-        self.update(f" {self._base_label}  {'ON' if self.value else 'OFF'} ")
-        self.set_class(not self.value, "-off")
+    @property
+    def value(self) -> bool:
+        return bool(self._value.get())
+
+    @value.setter
+    def value(self, value: bool) -> None:
+        self._value.set(bool(value))
+
+    def _render_value(self, value: bool) -> None:
+        self.update(f" {self._base_label}  {'ON' if value else 'OFF'} ")
+        self.set_class(not value, "-off")
 
     def _toggle(self) -> None:
         self.value = not self.value
-        self._refresh_label()
+
+    def on_unmount(self) -> None:
+        self._value_reaction.dispose()
 
     async def on_click(self, event) -> None:
         self._toggle()
