@@ -1,4 +1,4 @@
-"""Tests for session management (HAR recording listing and metadata)."""
+"""Tests for HAR recording management (listing, metadata, and cleanup)."""
 
 import json
 import os
@@ -23,13 +23,12 @@ def recordings_dir(tmp_path):
     return recordings
 
 
-def create_har_file(path: Path, entry_count: int = 1, session_id: str = "test") -> None:
+def create_har_file(path: Path, entry_count: int = 1) -> None:
     """Create a minimal HAR file for testing.
 
     Args:
         path: Path to write the HAR file
         entry_count: Number of entries to include
-        session_id: Session ID (embedded in entries)
     """
     entries = []
     for i in range(entry_count):
@@ -105,12 +104,12 @@ def test_list_recordings_no_files(recordings_dir):
 def test_list_recordings_single_file(recordings_dir):
     """list_recordings finds single HAR file."""
     har_path = recordings_dir / "recording-abc123.har"
-    create_har_file(har_path, entry_count=5, session_id="abc123")
+    create_har_file(har_path, entry_count=5)
 
     recordings = list_recordings(str(recordings_dir))
     assert len(recordings) == 1
     assert recordings[0]["filename"] == "recording-abc123.har"
-    assert recordings[0]["session_id"] == "abc123"
+    assert recordings[0]["provider"] == "anthropic"
     assert recordings[0]["entry_count"] == 5
     assert recordings[0]["size_bytes"] > 0
     assert "2026-02-03" in recordings[0]["created"]
@@ -249,14 +248,9 @@ def test_cleanup_recordings_dry_run_keeps_files(recordings_dir):
 
 
 def test_cleanup_recordings_deletes_old_har_and_sidecar(recordings_dir):
-    """Cleanup removes old recordings, sidecars, and empty session dirs."""
-    session_old = recordings_dir / "old-session"
-    session_new = recordings_dir / "new-session"
-    session_old.mkdir()
-    session_new.mkdir()
-
-    har_old = session_old / "recording-old.har"
-    har_new = session_new / "recording-new.har"
+    """Cleanup removes old recordings and sidecars in flat recordings dir."""
+    har_old = recordings_dir / "ccdump-anthropic-20260201-100000Z-aaaaaaaa.har"
+    har_new = recordings_dir / "ccdump-openai-20260203-100000Z-bbbbbbbb.har"
     create_har_file(har_old)
     create_har_file(har_new)
     set_har_started(har_old, "2026-02-01T10:00:00")
@@ -271,9 +265,8 @@ def test_cleanup_recordings_deletes_old_har_and_sidecar(recordings_dir):
     assert result["removed"] == 1
     assert not har_old.exists()
     assert not sidecar_old.exists()
-    assert not session_old.exists()
     assert har_new.exists()
-    assert session_new.exists()
+    assert recordings_dir.exists()
 
 
 # Test: format_size handles various sizes
@@ -314,7 +307,7 @@ def test_get_recordings_dir():
     assert get_recordings_dir() == expected
 
 
-# Test: list_recordings handles HAR without session_id in filename
+# Test: list_recordings handles HAR with custom filename
 
 
 def test_list_recordings_custom_filename(recordings_dir):
@@ -325,7 +318,7 @@ def test_list_recordings_custom_filename(recordings_dir):
     recordings = list_recordings(str(recordings_dir))
     assert len(recordings) == 1
     assert recordings[0]["filename"] == "my-custom-recording.har"
-    assert recordings[0]["session_id"] is None  # Can't extract from filename
+    assert recordings[0]["provider"] == "anthropic"
 
 
 # Test: list_recordings handles HAR without startedDateTime
@@ -357,17 +350,10 @@ def test_list_recordings_no_timestamp(recordings_dir):
 
 
 def test_list_recordings_provider_layout(recordings_dir):
-    """New layout recordings/<session>/<provider>/*.har is discovered with provider context."""
-    anthropic_dir = recordings_dir / "session-a" / "anthropic"
-    openai_dir = recordings_dir / "session-a" / "openai"
-    copilot_dir = recordings_dir / "session-a" / "copilot"
-    anthropic_dir.mkdir(parents=True)
-    openai_dir.mkdir(parents=True)
-    copilot_dir.mkdir(parents=True)
-
-    har_a = anthropic_dir / "recording-1.har"
-    har_o = openai_dir / "recording-2.har"
-    har_c = copilot_dir / "recording-3.har"
+    """Flat ccdump filenames carry provider identity for list output."""
+    har_a = recordings_dir / "ccdump-anthropic-20260304-101530Z-a1b2c3d4.har"
+    har_o = recordings_dir / "ccdump-openai-20260304-101530Z-a5b6c7d8.har"
+    har_c = recordings_dir / "ccdump-copilot-20260304-101530Z-a9b0c1d2.har"
     create_har_file(har_a, entry_count=1)
     create_har_file(har_o, entry_count=2)
     create_har_file(har_c, entry_count=3)
@@ -375,9 +361,38 @@ def test_list_recordings_provider_layout(recordings_dir):
     recordings = list_recordings(str(recordings_dir))
     assert len(recordings) == 3
     by_name = {rec["filename"]: rec for rec in recordings}
-    assert by_name["recording-1.har"]["session_name"] == "session-a"
-    assert by_name["recording-1.har"]["provider"] == "anthropic"
-    assert by_name["recording-2.har"]["session_name"] == "session-a"
-    assert by_name["recording-2.har"]["provider"] == "openai"
-    assert by_name["recording-3.har"]["session_name"] == "session-a"
-    assert by_name["recording-3.har"]["provider"] == "copilot"
+    assert by_name["ccdump-anthropic-20260304-101530Z-a1b2c3d4.har"]["provider"] == "anthropic"
+    assert by_name["ccdump-openai-20260304-101530Z-a5b6c7d8.har"]["provider"] == "openai"
+    assert by_name["ccdump-copilot-20260304-101530Z-a9b0c1d2.har"]["provider"] == "copilot"
+
+
+def test_list_recordings_provider_inferred_from_openai_url(recordings_dir):
+    har = recordings_dir / "misc-openai.har"
+    create_har_file(har, entry_count=1)
+    with open(har, "r+", encoding="utf-8") as f:
+        payload = json.load(f)
+        payload["log"]["entries"][0]["request"]["url"] = "https://api.openai.com/v1/chat/completions"
+        payload["log"]["entries"][0].pop("_cc_dump", None)
+        f.seek(0)
+        json.dump(payload, f)
+        f.truncate()
+
+    recordings = list_recordings(str(recordings_dir))
+    assert len(recordings) == 1
+    assert recordings[0]["provider"] == "openai"
+
+
+def test_list_recordings_provider_metadata_overrides_url_fallback(recordings_dir):
+    har = recordings_dir / "misc-provider-metadata.har"
+    create_har_file(har, entry_count=1)
+    with open(har, "r+", encoding="utf-8") as f:
+        payload = json.load(f)
+        payload["log"]["entries"][0]["request"]["url"] = "https://api.anthropic.com/v1/messages"
+        payload["log"]["entries"][0]["_cc_dump"] = {"provider": "copilot"}
+        f.seek(0)
+        json.dump(payload, f)
+        f.truncate()
+
+    recordings = list_recordings(str(recordings_dir))
+    assert len(recordings) == 1
+    assert recordings[0]["provider"] == "copilot"

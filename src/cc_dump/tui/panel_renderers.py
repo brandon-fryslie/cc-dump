@@ -499,7 +499,6 @@ def info_panel_rows(info: dict) -> list[tuple[str, str, str]]:
 
     rows.extend(
         [
-            ("Session", str(info.get("session_name", "--")), str(info.get("session_name", "--"))),
             ("Session ID", str(info.get("session_id") or "--"), str(info.get("session_id") or "--")),
             ("Recording", str(info.get("recording_path") or "disabled"), str(info.get("recording_path") or "disabled")),
             ("Recordings Dir", str(info.get("recording_dir", "--")), str(info.get("recording_dir", "--"))),
@@ -522,7 +521,6 @@ def render_info_panel(info: dict) -> Text:
             - proxy_url: Full proxy URL (e.g., "http://127.0.0.1:12345")
             - proxy_mode: "reverse", "forward", or "mixed"
             - target: Upstream target URL (or None)
-            - session_name: Session name string
             - session_id: Session ID hex string (or None)
             - recording_path: HAR recording path (or None)
             - recording_dir: Directory containing recordings
