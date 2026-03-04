@@ -8,7 +8,7 @@
 
 import cc_dump.core.formatting
 import cc_dump.app.error_models
-from cc_dump.core.coerce import coerce_int
+import cc_dump.core.coerce
 
 from cc_dump.tui.category_config import CATEGORY_CONFIG
 from snarfx.hot_reload import HotReloadStore
@@ -176,7 +176,7 @@ def create():
         return {
             "text": str(store.get("workbench:text")),
             "source": str(store.get("workbench:source")),
-            "elapsed_ms": coerce_int(store.get("workbench:elapsed_ms"), 0),
+            "elapsed_ms": cc_dump.core.coerce.coerce_int(store.get("workbench:elapsed_ms"), 0),
             "action": str(store.get("workbench:action")),
             "context_session_id": str(store.get("workbench:context_session_id")),
         }
@@ -190,10 +190,10 @@ def create():
         return {
             "phase": phase,
             "query": str(store.get("search:query")),
-            "modes": coerce_int(store.get("search:modes"), 13),
-            "cursor_pos": coerce_int(store.get("search:cursor_pos"), 0),
-            "current_index": coerce_int(store.get("search:current_index"), 0),
-            "match_count": coerce_int(store.get("search:match_count"), 0),
+            "modes": cc_dump.core.coerce.coerce_int(store.get("search:modes"), 13),
+            "cursor_pos": cc_dump.core.coerce.coerce_int(store.get("search:cursor_pos"), 0),
+            "current_index": cc_dump.core.coerce.coerce_int(store.get("search:current_index"), 0),
+            "match_count": cc_dump.core.coerce.coerce_int(store.get("search:match_count"), 0),
             # [LAW:dataflow-not-control-flow] Footer visibility is a derived value from search phase.
             "footer_visible": phase == "inactive",
         }

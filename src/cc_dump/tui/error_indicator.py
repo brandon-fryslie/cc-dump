@@ -14,7 +14,7 @@ from rich.segment import Segment
 from rich.style import Style
 from textual.strip import Strip
 
-from cc_dump.app.error_models import ErrorItem
+import cc_dump.app.error_models
 
 # Visual constants
 _COLLAPSED_ICON = " \u274c "  # " ❌ "
@@ -31,7 +31,7 @@ class IndicatorState:
     __slots__ = ("items", "expanded")
 
     def __init__(self):
-        self.items: list[ErrorItem] = []
+        self.items: list[cc_dump.app.error_models.ErrorItem] = []
         self.expanded: bool = False
 
     def height(self) -> int:
@@ -81,7 +81,7 @@ class IndicatorState:
         return strips
 
 
-def _render_header(item: ErrorItem) -> str:
+def _render_header(item: cc_dump.app.error_models.ErrorItem) -> str:
     """Render the header line text for an error item."""
     return f" {item.icon} restart needed "
 

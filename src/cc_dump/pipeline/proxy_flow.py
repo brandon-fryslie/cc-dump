@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from collections.abc import Mapping
+from typing import cast
 from urllib.parse import urlparse
 
 
@@ -42,14 +43,21 @@ def resolve_proxy_target(path: str, target_host: str | None) -> ProxyTarget:
     )
 
 
-def parse_request_json(body_bytes: bytes, *, expects_json: bool) -> tuple[object | None, str]:
+def parse_request_json(
+    body_bytes: bytes,
+    *,
+    expects_json: bool,
+) -> tuple[dict[str, object] | None, str]:
     """Parse request body as JSON for API paths, returning parse error text when invalid."""
     if (not body_bytes) or (not expects_json):
         return None, ""
     try:
-        return json.loads(body_bytes), ""
+        parsed = json.loads(body_bytes)
     except json.JSONDecodeError as exc:
         return None, str(exc)
+    if not isinstance(parsed, dict):
+        return None, "Request JSON must be an object at the top level"
+    return cast(dict[str, object], parsed), ""
 
 
 def build_upstream_headers(headers: Mapping[str, str], *, content_length: int) -> dict[str, str]:
@@ -63,9 +71,12 @@ def build_upstream_headers(headers: Mapping[str, str], *, content_length: int) -
     return forwarded
 
 
-def decode_json_response_body(data: bytes) -> dict:
+def decode_json_response_body(data: bytes) -> dict[str, object]:
     """Best-effort JSON decode for response completion payloads."""
     try:
-        return json.loads(data)
+        parsed = json.loads(data)
     except (json.JSONDecodeError, UnicodeDecodeError):
         return {}
+    if isinstance(parsed, dict):
+        return cast(dict[str, object], parsed)
+    return {}
