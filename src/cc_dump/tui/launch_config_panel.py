@@ -441,9 +441,14 @@ class LaunchConfigPanel(VerticalScroll):
         except NoMatches:
             return
 
-        for child in tuple(container.children):
-            child.remove()
+        container.remove_children()
+        self.call_after_refresh(self._mount_tool_option_fields, copy.deepcopy(config))
 
+    def _mount_tool_option_fields(self, config) -> None:
+        try:
+            container = self.query_one("#lc-tool-fields", Vertical)
+        except NoMatches:
+            return
         option_values = cc_dump.app.launch_config.normalize_options(config.options)
         for option in cc_dump.app.launch_config.launcher_option_defs(config.launcher):
             value = option_values.get(option.key, option.default)

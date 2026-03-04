@@ -110,12 +110,21 @@ class ToggleChip(Static):
     def __init__(self, label: str, *, value: bool = False, **kwargs):
         super().__init__("", **kwargs)
         self._base_label = label
+        self._value = False
         self.value = value
+
+    @property
+    def value(self) -> bool:
+        return self._value
+
+    @value.setter
+    def value(self, value: bool) -> None:
+        self._value = bool(value)
         self._refresh_label()
 
     def _refresh_label(self):
-        self.update(f" {self._base_label}  {'ON' if self.value else 'OFF'} ")
-        self.set_class(not self.value, "-off")
+        self.update(f" {self._base_label}  {'ON' if self._value else 'OFF'} ")
+        self.set_class(not self._value, "-off")
 
     def _toggle(self) -> None:
         self.value = not self.value
