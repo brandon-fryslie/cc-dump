@@ -1,5 +1,6 @@
 """Custom Footer widget with composed Textual widgets."""
 
+from snarfx import Observable, reaction
 from textual.color import Color
 from textual.containers import Horizontal
 from textual.widget import Widget
@@ -103,6 +104,19 @@ class StatusFooter(Widget):
         ("6", "thinking"),
     ]
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._display_state: Observable[dict[str, object]] = Observable({})
+        # [LAW:single-enforcer] One reactive projection owns footer widget updates.
+        self._display_reaction = reaction(
+            lambda: self._display_state.get(),
+            self._apply_display_state,
+            fire_immediately=False,
+        )
+
+    def on_unmount(self) -> None:
+        self._display_reaction.dispose()
+
     def compose(self):
         # Line 1: category chips
         with Horizontal(id="footer-categories"):
@@ -163,10 +177,26 @@ class StatusFooter(Widget):
 
         // [LAW:dataflow-not-control-flow] State values determine rendering, no branching.
         """
+        self._display_state.set(dict(state))
+
+    def _apply_display_state(self, state: dict[str, object]) -> None:
+        # [LAW:dataflow-not-control-flow] exception: Textual update requires mounted widgets.
+        if not self.is_attached:
+            return
         runtime = cc_dump.tui.rendering.get_runtime_from_owner(self)
+        # [LAW:one-source-of-truth] exception: runtime/theme becomes authoritative only after app mount.
+        if runtime.theme_colors is None:
+            return
         tc = cc_dump.tui.rendering.get_theme_colors(runtime=runtime)
 
-        # Line 1: category chips — icon + color from state
+        bg_color = Color.parse(tc.background)
+        fg_color = Color.parse(tc.foreground)
+        self._apply_category_row(state, tc)
+        self._apply_follow_chip(state, bg_color, fg_color)
+        self._apply_filterset_indicator(state, bg_color, fg_color)
+        self._apply_tmux_controls(state)
+
+    def _apply_category_row(self, state: dict[str, object], tc) -> None:
         for key, name in self._CATEGORY_ITEMS:
             chip = self.query_one(f"#cat-{name}", Chip)
             vis = state.get(name, HIDDEN)
@@ -174,20 +204,16 @@ class StatusFooter(Widget):
             chip.update(f" {key} {name} {icon} ")
 
             _, bg_hex, fg_hex = tc.filter_colors[name]
-            # // [LAW:dataflow-not-control-flow] Style derived from vis.visible value
-            # Colors always set; CSS class -hidden dims via opacity.
+            # // [LAW:dataflow-not-control-flow] Style derived from vis.visible value.
             chip.set_class(not vis.visible, "-hidden")
             chip.styles.background = Color.parse(bg_hex)
             chip.styles.color = Color.parse(fg_hex)
 
-        # Line 2: follow chip — 3-state
+    def _apply_follow_chip(self, state: dict[str, object], bg_color: Color, fg_color: Color) -> None:
         # // [LAW:dataflow-not-control-flow] Style + label derived from follow_state via table.
         FollowState = cc_dump.tui.widget_factory.FollowState
         follow_state = state.get("follow_state", FollowState.ACTIVE)
         follow_chip = self.query_one("#cmd-follow", Chip)
-
-        bg_color = Color.parse(tc.background)
-        fg_color = Color.parse(tc.foreground)
         # [LAW:dataflow-not-control-flow] Table lookup, not branches.
         _FOLLOW_DISPLAY: dict = {
             FollowState.OFF: (" f off ", True, bg_color, fg_color),
@@ -200,13 +226,16 @@ class StatusFooter(Widget):
         follow_chip.styles.background = follow_bg
         follow_chip.styles.color = follow_fg
 
-        # Filterset indicator
+    def _apply_filterset_indicator(
+        self,
+        state: dict[str, object],
+        bg_color: Color,
+        fg_color: Color,
+    ) -> None:
         # [LAW:dataflow-not-control-flow] Always update; style varies by value.
         active_slot = state.get("active_filterset")
         filterset_label = self.query_one("#cmd-filterset", Static)
-        filterset_label.update(
-            f" F{active_slot} " if active_slot is not None else " F- "
-        )
+        filterset_label.update(f" F{active_slot} " if active_slot is not None else " F- ")
         # [LAW:dataflow-not-control-flow] Always set; values vary by state.
         has_filterset = active_slot is not None
         filterset_label.styles.background = bg_color if has_filterset else fg_color
@@ -214,30 +243,30 @@ class StatusFooter(Widget):
         filterset_label.styles.text_style = "bold" if has_filterset else None
         filterset_label.styles.opacity = 1.0 if has_filterset else 0.5
 
-        # Tmux indicators — show/hide based on availability
+    def _apply_tmux_controls(self, state: dict[str, object]) -> None:
         # // [LAW:dataflow-not-control-flow] Always run; state values vary style.
-        tmux_available = state.get("tmux_available", False)
-        tmux_auto = state.get("tmux_auto_zoom", False)
-        tmux_zoomed = state.get("tmux_zoomed", False)
-
+        tmux_available = bool(state.get("tmux_available", False))
+        tmux_auto = bool(state.get("tmux_auto_zoom", False))
+        tmux_zoomed = bool(state.get("tmux_zoomed", False))
         for widget in self.query(".tmux"):
             widget.set_class(tmux_available, "-available")
 
-        # Launcher chip
         launch_chip = self.query_one("#cmd-launch-tool", Chip)
         active_tool_key = str(state.get("active_launch_tool", "claude") or "claude")
         active_tool_label = active_tool_key.replace("_", " ")
         active_config_name = state.get("active_launch_config_name", "")
-        config_suffix = f" [{active_config_name}]" if (active_config_name and active_config_name != "default") else ""
+        config_suffix = (
+            f" [{active_config_name}]"
+            if (active_config_name and active_config_name != "default")
+            else ""
+        )
         launch_chip.update(f" c {active_tool_label}{config_suffix} ")
 
-        # Zoom chip
         zoom_chip = self.query_one("#cmd-zoom", Chip)
         zoom_chip.update(" z zoom ")
         zoom_chip.set_class(not tmux_zoomed, "-dim")
         zoom_chip.styles.text_style = "bold reverse" if tmux_zoomed else None
 
-        # Auto-zoom chip
         auto_chip = self.query_one("#cmd-auto-zoom", Chip)
         auto_chip.update(" Z auto ")
         auto_chip.set_class(not tmux_auto, "-dim")

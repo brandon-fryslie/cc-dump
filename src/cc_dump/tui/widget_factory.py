@@ -14,6 +14,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
+from snarfx import Observable, reaction
 from textual.dom import NoScreen
 from textual.widgets import RichLog, Static
 from textual.scroll_view import ScrollView
@@ -2381,8 +2382,23 @@ class StatsPanel(Static):
         super().__init__("")
         self._view_index = 0
         self._last_snapshot: dict = {"summary": {}, "timeline": [], "models": []}
+        self._render_state: Observable[tuple[int, dict[str, object]]] = Observable(
+            (self._view_index, self._last_snapshot)
+        )
+        # [LAW:single-enforcer] One reactive projection owns stats panel rendering.
+        self._render_reaction = reaction(
+            lambda: self._render_state.get(),
+            self._apply_render_state,
+            fire_immediately=False,
+        )
         self.request_count = 0
         self.models_seen: set = set()
+
+    def on_mount(self) -> None:
+        self._apply_render_state(self._render_state.get())
+
+    def on_unmount(self) -> None:
+        self._render_reaction.dispose()
 
     def update_stats(self, **kwargs):
         """Update statistics and refresh display.
@@ -2440,13 +2456,17 @@ class StatsPanel(Static):
         self._refresh_display()
 
     def _refresh_display(self):
+        self._render_state.set((self._view_index, self._last_snapshot))
+
+    def _apply_render_state(self, render_state: tuple[int, dict[str, object]]) -> None:
         """Rebuild the display text."""
         # // [LAW:dataflow-not-control-flow] exception: Textual update() requires an attached app context.
         if not self.is_attached:
             return
-        view_mode = self._VIEW_ORDER[self._view_index]
+        view_index, snapshot = render_state
+        view_mode = self._VIEW_ORDER[view_index]
         text = cc_dump.tui.panel_renderers.render_analytics_panel(
-            self._last_snapshot,
+            snapshot,
             view_mode,
         )
         # [LAW:single-enforcer] Normalize dashboard text to a styled Text object at one boundary.
@@ -2486,6 +2506,19 @@ class ToolEconomicsPanel(Static):
         super().__init__("")
         self._breakdown_mode = False  # Default to aggregate view
         self._store = None
+        self._rows_state: Observable[list[dict[str, object]]] = Observable([])
+        # [LAW:single-enforcer] One reactive projection owns economics table rendering.
+        self._rows_reaction = reaction(
+            lambda: self._rows_state.get(),
+            self._apply_rows_state,
+            fire_immediately=False,
+        )
+
+    def on_mount(self) -> None:
+        self._apply_rows_state(list(self._rows_state.get()))
+
+    def on_unmount(self) -> None:
+        self._rows_reaction.dispose()
 
     def refresh_from_store(self, store):
         """Refresh panel data from analytics store.
@@ -2516,7 +2549,13 @@ class ToolEconomicsPanel(Static):
         self.toggle_breakdown()
 
     def _refresh_display(self, rows):
+        self._rows_state.set(list(rows))
+
+    def _apply_rows_state(self, rows: list[dict[str, object]]) -> None:
         """Rebuild the economics table."""
+        # [LAW:dataflow-not-control-flow] exception: Textual update() requires mounted app context.
+        if not self.is_attached:
+            return
         text = cc_dump.tui.panel_renderers.render_economics_panel(rows)
         self.update(text)
 
@@ -2540,6 +2579,19 @@ class TimelinePanel(Static):
 
     def __init__(self):
         super().__init__("")
+        self._budgets_state: Observable[list[cc_dump.core.analysis.TurnBudget]] = Observable([])
+        # [LAW:single-enforcer] One reactive projection owns timeline table rendering.
+        self._budgets_reaction = reaction(
+            lambda: self._budgets_state.get(),
+            self._apply_budgets_state,
+            fire_immediately=False,
+        )
+
+    def on_mount(self) -> None:
+        self._apply_budgets_state(list(self._budgets_state.get()))
+
+    def on_unmount(self) -> None:
+        self._budgets_reaction.dispose()
 
     def refresh_from_store(self, store):
         """Refresh panel data from analytics store.
@@ -2574,7 +2626,13 @@ class TimelinePanel(Static):
         self._refresh_display(budgets)
 
     def _refresh_display(self, budgets: list[cc_dump.core.analysis.TurnBudget]):
+        self._budgets_state.set(list(budgets))
+
+    def _apply_budgets_state(self, budgets: list[cc_dump.core.analysis.TurnBudget]) -> None:
         """Rebuild the timeline table."""
+        # [LAW:dataflow-not-control-flow] exception: Textual update() requires mounted app context.
+        if not self.is_attached:
+            return
         text = cc_dump.tui.panel_renderers.render_timeline_panel(budgets)
         self.update(text)
 

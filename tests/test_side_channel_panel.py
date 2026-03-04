@@ -1,5 +1,6 @@
 from cc_dump.tui.side_channel_panel import (
     WORKBENCH_CONTROL_GROUPS,
+    SideChannelPanel,
     SideChannelPanelState,
     _utility_options,
     _render_control_label,
@@ -182,3 +183,22 @@ def test_utility_launcher_options_are_bounded():
     assert values
     assert len(values) <= 5
     assert len(values) == len(set(values))
+
+
+def test_side_channel_panel_update_display_is_safe_before_mount():
+    panel = SideChannelPanel()
+    panel.update_display(
+        SideChannelPanelState(
+            enabled=True,
+            loading=False,
+            active_action="qa_estimate",
+            result_text="preview",
+            result_source="preview",
+            result_elapsed_ms=1,
+            purpose_usage={},
+        )
+    )
+
+    state = panel._display_state.get()
+    assert state.active_action == "qa_estimate"
+    assert state.result_source == "preview"
