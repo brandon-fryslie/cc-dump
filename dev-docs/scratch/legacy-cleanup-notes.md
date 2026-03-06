@@ -22,10 +22,6 @@ Scope: named-session cleanup + HAR layout migration
     - UI tab/session routing (`_session_domain_stores`, `_session_conv_ids`, `_session_tab_ids`, `_request_session_keys`)
   - This is a lot of orchestration in one class and makes lifecycle/hot-reload behavior hard to reason about.
 
-- `src/cc_dump/tui/app.py` + `src/cc_dump/tui/action_handlers.py`
-  - `show_logs` / `show_info` are Textual reactives while most other UI visibility uses SnarFX view-store state.
-  - This split state model is inconsistent and invites drift.
-
 - `src/cc_dump/tui/panel_renderers.py`
   - `info_panel_rows()` still has backward-compat fallback branches for older info payload shapes.
   - Useful now, but should be dropped once all callers are guaranteed on the normalized `providers` payload.

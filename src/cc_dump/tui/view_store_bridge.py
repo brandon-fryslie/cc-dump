@@ -5,8 +5,6 @@
 // [LAW:single-enforcer] Each push callback is the single path from store → widget.
 """
 
-import cc_dump.tui.widget_factory
-import cc_dump.tui.custom_footer
 import cc_dump.tui.side_channel_panel
 import cc_dump.tui.search
 from textual.css.query import NoMatches
@@ -18,12 +16,6 @@ def build_reaction_context(app) -> dict:
 
     Returns dict to merge into store_context before setup_reactions().
     """
-
-    def push_footer(state):
-        FollowState = cc_dump.tui.widget_factory.FollowState
-        enriched = dict(state)
-        enriched["follow_state"] = FollowState(state["follow_state"])
-        app.query_one(cc_dump.tui.custom_footer.StatusFooter).update_display(enriched)
 
     def push_errors(items):
         conv = app._get_conv()
@@ -85,7 +77,6 @@ def build_reaction_context(app) -> dict:
             footer.display = bool(value.get("footer_visible", True))
 
     return {
-        "push_footer": push_footer,
         "push_errors": push_errors,
         "push_sc_panel": push_sc_panel,
         "push_panel_change": push_panel_change,
@@ -93,14 +84,3 @@ def build_reaction_context(app) -> dict:
         "push_chrome_panels": push_chrome_panels,
         "push_search_ui": push_search_ui,
     }
-
-
-def enrich_footer_state(state: dict) -> dict:
-    """Convert raw footer_state dict to widget-ready form (FollowState enum).
-
-    For direct reads that bypass the reaction (initial hydration, hot-reload).
-    """
-    FollowState = cc_dump.tui.widget_factory.FollowState
-    enriched = dict(state)
-    enriched["follow_state"] = FollowState(state["follow_state"])
-    return enriched
