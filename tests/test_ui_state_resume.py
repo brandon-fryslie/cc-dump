@@ -65,23 +65,23 @@ def test_export_ui_state_includes_view_and_app_fields(monkeypatch):
     exported = app.export_ui_state()
     assert exported["view_store"]["panel:active"] == "stats"
     assert exported["view_store"]["search:query"] == "hello"
-    assert exported["app"]["show_logs"] is True
-    assert exported["app"]["show_info"] is False
+    assert "app" not in exported
     assert exported["conv"]["follow_state"] == "active"
     assert exported["conversations"]["states"]["__default__"]["follow_state"] == "active"
     assert exported["conversations"]["states"]["sess-a"]["follow_state"] == "off"
     assert exported["conversations"]["active_session_key"] == "__default__"
 
 
-def test_apply_resume_ui_state_preload_updates_store_and_app_flags():
+def test_apply_resume_ui_state_preload_updates_store():
     app = _make_app()
     app._resume_ui_state = {
         "view_store": {
             "panel:active": "stats",
             "search:query": "resume me",
             "vis:user": False,
+            "panel:logs": True,
+            "panel:info": True,
         },
-        "app": {"show_logs": True, "show_info": True},
     }
 
     app._apply_resume_ui_state_preload()

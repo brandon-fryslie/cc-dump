@@ -11,7 +11,6 @@ import threading
 from cc_dump.io.stderr_tee import get_tee as _get_tee
 import cc_dump.providers
 import cc_dump.tui.rendering
-import cc_dump.tui.view_store_bridge
 import snarfx
 from snarfx import textual as stx
 
@@ -163,13 +162,6 @@ def _hydrate_footer(app) -> None:
     app._sync_active_launch_config_state()
     if app._resume_ui_state is not None:
         app._apply_resume_ui_state_preload()
-    footer = app._get_footer()
-    if footer is not None:
-        footer.update_display(
-            cc_dump.tui.view_store_bridge.enrich_footer_state(
-                app._view_store.footer_state.get()
-            )
-        )
     app._log_memory_snapshot("startup")
 
 

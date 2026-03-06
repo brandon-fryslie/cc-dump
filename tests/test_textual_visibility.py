@@ -189,12 +189,12 @@ async def test_cycle_vis_clears_overrides_and_filterset():
 async def test_next_filterset_applies_without_crash():
     """Pressing '=' applies next filterset and sets active slot."""
     async with run_app() as (pilot, app):
-        assert app._view_store.get("filter:active") is None
+        assert app._view_store.get("filter:active") == "1"  # default is F1
 
         # Apply next filterset via key press
         await press_and_settle(pilot, "=")
 
-        # Should have set an active slot
+        # Should have advanced to next slot
         assert app._view_store.get("filter:active") is not None
 
         # Visibility state should match the applied filterset defaults
