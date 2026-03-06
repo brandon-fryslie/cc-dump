@@ -558,11 +558,6 @@ async def _mount_replacement_widgets(
 
     new_footer = cc_dump.tui.custom_footer.StatusFooter()
     await app.mount(new_footer, after=new_info)
-    new_footer.update_display(
-        cc_dump.tui.view_store_bridge.enrich_footer_state(
-            app._view_store.footer_state.get()
-        )
-    )
 
 
 def _rehydrate_panels_from_store(app, new_panels: dict[str, object]) -> None:

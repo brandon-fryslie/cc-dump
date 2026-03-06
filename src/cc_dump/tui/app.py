@@ -1025,18 +1025,12 @@ class CcDumpApp(App):
                 "states": conversation_states,
                 "active_session_key": active_session_key,
             },
-            "app": {
-                # [LAW:one-source-of-truth] Back-compat app fields are derived from view-store panel keys.
-                "show_logs": bool(self._view_store.get("panel:logs")),
-                "show_info": bool(self._view_store.get("panel:info")),
-            },
         }
 
     def _apply_resume_ui_state_preload(self) -> None:
         """Apply store + app state before replay processing."""
         state = self._resume_ui_state or {}
         self._apply_resume_view_store_state(state.get("view_store", {}))
-        self._apply_resume_legacy_app_state(state.get("app", {}))
 
     def _apply_resume_view_store_state(self, view_state: object) -> None:
         if not isinstance(view_state, dict):
@@ -1049,22 +1043,6 @@ class CcDumpApp(App):
         if updates:
             self._view_store.update(updates)
 
-    def _apply_resume_legacy_app_state(self, app_state: object) -> None:
-        if not isinstance(app_state, dict):
-            return
-        # [LAW:one-source-of-truth] exception: Back-compat legacy app flags are translated into panel:* keys.
-        updates = self._legacy_resume_panel_updates(app_state)
-        if updates:
-            self._view_store.update(updates)
-
-    def _legacy_resume_panel_updates(self, app_state: dict) -> dict[str, bool]:
-        """Translate legacy sidecar app flags into canonical panel:* store keys."""
-        updates = {}
-        if "show_logs" in app_state:
-            updates["panel:logs"] = bool(app_state.get("show_logs"))
-        if "show_info" in app_state:
-            updates["panel:info"] = bool(app_state.get("show_info"))
-        return updates
 
     def _apply_resume_ui_state_postload(self) -> None:
         """Apply conversation-view state after replay/live initial hydration."""
