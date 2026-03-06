@@ -11,7 +11,6 @@ import threading
 from cc_dump.io.stderr_tee import get_tee as _get_tee
 import cc_dump.providers
 import cc_dump.tui.rendering
-import cc_dump.tui.view_store_bridge
 import snarfx
 from snarfx import textual as stx
 
