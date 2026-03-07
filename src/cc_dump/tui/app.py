@@ -170,9 +170,7 @@ class CcDumpApp(App):
         view_store=None,
         domain_store=None,
         store_context=None,
-        provider_endpoints: Optional[dict[str, dict[str, object]]] = None,
-        openai_port: Optional[int] = None,
-        openai_target: Optional[str] = None,
+        provider_endpoints: cc_dump.providers.ProviderEndpointMap | None = None,
         auto_launch_config: Optional[str] = None,
         auto_launch_extra_args: Optional[list[str]] = None,
     ):
@@ -188,33 +186,14 @@ class CcDumpApp(App):
         # // [LAW:one-source-of-truth] Active provider endpoints are owned here.
         if provider_endpoints is None:
             provider_endpoints = {
-                "anthropic": {
-                    "proxy_url": "http://{}:{}".format(host, port),
-                    "target": target,
-                },
+                cc_dump.providers.DEFAULT_PROVIDER_KEY: cc_dump.providers.default_provider_endpoint(
+                    host,
+                    port,
+                    target,
+                )
             }
-            if openai_port is not None:
-                provider_endpoints["openai"] = {
-                    "proxy_url": "http://{}:{}".format(host, openai_port),
-                    "target": openai_target,
-                }
-        normalized_endpoints: dict[str, dict[str, object]] = {}
-        for key, data in provider_endpoints.items():
-            if not isinstance(data, dict):
-                continue
-            spec = cc_dump.providers.get_provider_spec(key)
-            normalized: dict[str, object] = {
-                "proxy_url": str(data.get("proxy_url", "") or ""),
-                "target": str(data.get("target", "") or ""),
-            }
-            extras = {
-                extra_key: extra_value
-                for extra_key, extra_value in data.items()
-                if extra_key not in {"proxy_url", "target"}
-            }
-            normalized.update(extras)
-            normalized_endpoints[spec.key] = normalized
-        self._provider_endpoints = normalized_endpoints
+        # // [LAW:single-enforcer] Provider endpoint normalization is centralized in cc_dump.providers.
+        self._provider_endpoints = dict(provider_endpoints)
         self._replay_data = replay_data
         self._recording_path = recording_path
         self._replay_file = replay_file
@@ -903,16 +882,15 @@ class CcDumpApp(App):
 
     def _build_server_info(self) -> dict:
         """// [LAW:one-source-of-truth] All server info derived from constructor params."""
-        anthropic_endpoint = self._provider_endpoints.get(
-            cc_dump.providers.DEFAULT_PROVIDER_KEY,
-            {},
+        default_endpoint = self._provider_endpoints.get(
+            cc_dump.providers.DEFAULT_PROVIDER_KEY
         )
-        proxy_url = str(
-            anthropic_endpoint.get("proxy_url")
-            or "http://{}:{}".format(self._host, self._port)
+        proxy_url = (
+            default_endpoint.proxy_url
+            if default_endpoint is not None and default_endpoint.proxy_url
+            else "http://{}:{}".format(self._host, self._port)
         )
-        primary_target_raw = anthropic_endpoint.get("target", "")
-        primary_target = str(primary_target_raw or "") or None
+        primary_target = default_endpoint.target if default_endpoint is not None else None
         provider_modes: list[str] = []
 
         provider_rows: list[dict[str, str]] = []
@@ -920,16 +898,14 @@ class CcDumpApp(App):
             endpoint = self._provider_endpoints.get(spec.key)
             if endpoint is None:
                 continue
-            mode_hint = str(endpoint.get("proxy_mode", spec.proxy_type) or spec.proxy_type).strip().lower()
-            normalized_mode = mode_hint if mode_hint in {"forward", "reverse"} else spec.proxy_type
-            provider_modes.append(normalized_mode)
+            provider_modes.append(endpoint.proxy_mode)
             provider_rows.append(
                 {
                     "key": spec.key,
                     "name": spec.display_name,
-                    "proxy_url": str(endpoint.get("proxy_url", "") or ""),
-                    "target": str(endpoint.get("target", "") or ""),
-                    "proxy_mode": normalized_mode,
+                    "proxy_url": endpoint.proxy_url,
+                    "target": endpoint.target or "",
+                    "proxy_mode": endpoint.proxy_mode,
                     "base_url_env": spec.base_url_env,
                     "client_hint": spec.client_hint,
                 }
