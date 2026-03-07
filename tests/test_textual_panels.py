@@ -144,45 +144,198 @@ async def test_command_palette_includes_launch_presets():
             assert f"Launch preset: {key}" in titles
 
 
-async def test_launch_config_panel_uses_cycle_and_chip_controls():
-    """Launch config panel renders chip/cycle controls instead of OptionList/Switch/Select."""
-    from textual.widgets import OptionList, Select, Switch
+async def test_launch_config_select_changes_value_with_standard_select_keys():
+    """Launch config selection changes once via standard select keyboard controls."""
+    from textual.widgets import Select
     import cc_dump.tui.launch_config_panel
-    from cc_dump.tui.cycle_selector import CycleSelector
-    from cc_dump.tui.chip import ToggleChip
 
     async with run_app() as (pilot, app):
         app.action_toggle_launch_config()
         await pilot.pause()
 
         panel = app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
-        assert panel is not None
-        assert panel.query_one("#lc-config-selector", CycleSelector)
-        assert panel.query_one("#lc-field-launcher", CycleSelector)
-        assert panel.query(ToggleChip)
-        assert not panel.query(OptionList)
-        assert not panel.query(Select)
-        assert not panel.query(Switch)
+        panel.create_new_config()
+        await pilot.pause()
+        selector = panel.query_one("#lc-config-selector", Select)
+        original = str(selector.value)
+
+        selector.focus()
+        await pilot.pause()
+        await press_and_settle(pilot, "down")
+        assert selector.expanded is True
+
+        await press_and_settle(pilot, "down")
+        await press_and_settle(pilot, "enter")
+
+        changed = str(selector.value)
+        assert changed != original
+
+        await pilot.pause()
+        await pilot.pause()
+        assert str(selector.value) == changed
 
 
-async def test_launch_config_enter_save_keeps_app_responsive():
-    """Saving launch configs with Enter should close panel and preserve key handling."""
+async def test_launch_config_preset_select_round_trips_after_layout_change():
+    """Preset select should switch away and back even when the selected preset changes tool layout."""
+    from textual.widgets import Select
+    import cc_dump.tui.launch_config_panel
+
     async with run_app() as (pilot, app):
         app.action_toggle_launch_config()
         await pilot.pause()
 
-        for _ in range(5):
-            await press_and_settle(pilot, "tab")
+        panel = app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+        selector = panel.query_one("#lc-config-selector", Select)
+        original = str(selector.value)
+
+        selector.focus()
+        await pilot.pause()
+        await press_and_settle(pilot, "down")
+        await press_and_settle(pilot, "down")
+        await press_and_settle(pilot, "enter")
+        changed = str(selector.value)
+        assert changed != original
+
+        selector.focus()
+        await pilot.pause()
+        await press_and_settle(pilot, "down")
+        await press_and_settle(pilot, "up")
+        await press_and_settle(pilot, "enter")
+        assert str(selector.value) == original
+
+        await pilot.pause()
+        await pilot.pause()
+        assert str(selector.value) == original
+
+
+async def test_launch_config_launcher_select_handles_standard_keys_without_panel_shortcuts():
+    """Focused select should own enter and arrow keys instead of triggering panel actions."""
+    from textual.widgets import Select
+    import cc_dump.tui.launch_config_panel
+
+    async with run_app() as (pilot, app):
+        app.action_toggle_launch_config()
+        await pilot.pause()
+
+        panel = app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+        selector = panel.query_one("#lc-field-launcher", Select)
+        original = str(selector.value)
+        config_count = len(panel._configs)
+
+        selector.focus()
+        await pilot.pause()
+        await press_and_settle(pilot, "down")
+        assert selector.expanded is True
+
+        await press_and_settle(pilot, "down")
+        await press_and_settle(pilot, "enter")
+
+        changed = str(selector.value)
+        assert changed != original
+        assert len(panel._configs) == config_count
+
+        await pilot.pause()
+        await pilot.pause()
+        assert str(selector.value) == changed
+
+        await press_and_settle(pilot, "tab")
         focused = app.screen.focused
         assert focused is not None
-        assert getattr(focused, "id", "") == "lc-field-name"
+        assert getattr(focused, "id", "") != "lc-field-launcher"
 
+
+async def test_launch_config_select_allows_unclaimed_app_shortcuts():
+    """Focused select should keep its own keys but allow unrelated app shortcuts through."""
+    from textual.widgets import Select
+    import cc_dump.tui.launch_config_panel
+
+    async with run_app() as (pilot, app):
+        app.action_toggle_launch_config()
+        await pilot.pause()
+
+        panel = app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+        selector = panel.query_one("#lc-field-launcher", Select)
+        original = str(selector.value)
+        selector.focus()
+        await pilot.pause()
+
+        before = app.active_panel
+        await press_and_settle(pilot, ".")
+        assert app.active_panel != before
+        assert str(selector.value) == original
+
+
+async def test_launch_config_launcher_select_round_trips_and_reopens_stably():
+    """Launcher select should switch away, switch back, and reopen without oscillating."""
+    from textual.widgets import Select
+    import cc_dump.tui.launch_config_panel
+
+    async with run_app() as (pilot, app):
+        app.action_toggle_launch_config()
+        await pilot.pause()
+
+        panel = app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+        selector = panel.query_one("#lc-field-launcher", Select)
+        original = str(selector.value)
+
+        selector.focus()
+        await pilot.pause()
+        await press_and_settle(pilot, "down")
+        await press_and_settle(pilot, "down")
+        await press_and_settle(pilot, "enter")
+        changed = str(selector.value)
+        assert changed != original
+
+        selector.focus()
+        await pilot.pause()
+        await press_and_settle(pilot, "down")
+        await press_and_settle(pilot, "down")
+        await press_and_settle(pilot, "enter")
+        assert str(selector.value) == original
+
+        await pilot.pause()
+        await pilot.pause()
+        assert str(selector.value) == original
+
+        app.action_toggle_launch_config()
+        await pilot.pause()
+        app.action_toggle_launch_config()
+        await pilot.pause()
+
+        reopened_panel = app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+        reopened_selector = reopened_panel.query_one("#lc-field-launcher", Select)
+        assert str(reopened_selector.value) == original
+
+        await pilot.pause()
+        await pilot.pause()
+        assert str(reopened_selector.value) == original
+
+
+async def test_launch_config_save_chip_keeps_app_responsive():
+    """Saving launch configs via focused Save control should close panel and preserve key handling."""
+    async with run_app() as (pilot, app):
+        app.action_toggle_launch_config()
+        await pilot.pause()
+
+        save_chip = app.screen.query_one("#lc-action-save")
+        save_chip.focus()
+        await pilot.pause()
         await press_and_settle(pilot, "enter")
         assert not app._view_store.get("panel:launch_config")
 
         before = app.active_panel
         await press_and_settle(pilot, ".")
         assert app.active_panel != before
+
+
+async def test_launch_config_escape_closes_via_app_handler():
+    """Escape should close launch config through the app-level panel dispatcher."""
+    async with run_app() as (pilot, app):
+        app.action_toggle_launch_config()
+        await pilot.pause()
+
+        await press_and_settle(pilot, "escape")
+        assert not app._view_store.get("panel:launch_config")
 
 
 async def test_launch_config_toggle_reopens_hidden_panel():
