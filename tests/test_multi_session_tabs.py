@@ -188,7 +188,7 @@ async def test_side_channel_replay_routes_to_separate_lane_without_primary_conta
         ),
         _make_side_channel_replay_entry(
             session_id=session_a,
-            purpose="block_summary",
+            purpose="handoff_note",
             source_provider=session_a,
             content="side-request",
             response_text="side-response",
@@ -233,7 +233,7 @@ async def test_side_channel_replay_uses_single_workbench_session_tab():
         ),
         _make_side_channel_replay_entry(
             session_id=session_a,
-            purpose="block_summary",
+            purpose="handoff_note",
             source_provider=session_a,
             content="side-request-one",
             response_text="side-response-one",
@@ -266,7 +266,7 @@ async def test_side_channel_stream_progress_routes_to_side_lane_without_primary_
     main_request_id = "req-main-progress"
     side_marker = (
         "<<CC_DUMP_SIDE_CHANNEL:"
-        f'{{"run_id":"run-{session_a[:4]}","purpose":"block_summary","source_provider":"{session_a}"}}'
+        f'{{"run_id":"run-{session_a[:4]}","purpose":"handoff_note","source_provider":"{session_a}"}}'
         ">>\n"
     )
 

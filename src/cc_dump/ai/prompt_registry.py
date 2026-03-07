@@ -17,24 +17,6 @@ class PromptSpec:
 
 
 PROMPT_REGISTRY: dict[str, PromptSpec] = {
-    "block_summary": PromptSpec(
-        purpose="block_summary",
-        version="v1",
-        instruction=(
-            "Summarize this conversation concisely. "
-            "Focus on accomplishments and key decisions."
-        ),
-    ),
-    "action_extraction": PromptSpec(
-        purpose="action_extraction",
-        version="v1",
-        instruction=(
-            "Extract action and deferred items and return strict JSON only with shape "
-            "{\"items\":[{\"kind\":\"action|deferred\",\"text\":\"\",\"confidence\":0.0,"
-            "\"owner\":\"\",\"due_hint\":\"\",\"source_links\":[{\"message_index\":0}]}]}. "
-            "Only include explicit actions/deferred work. Use empty strings or arrays when unknown."
-        ),
-    ),
     "handoff_note": PromptSpec(
         purpose="handoff_note",
         version="v1",
@@ -77,8 +59,6 @@ _UTILITY_CUSTOM_PROMPT = PromptSpec(
 # Ordered for deterministic UI/report rendering.
 SIDE_CHANNEL_PURPOSES: tuple[str, ...] = (
     "core_debug_lane",
-    "block_summary",
-    "action_extraction",
     "handoff_note",
     "conversation_qa",
     "checkpoint_summary",

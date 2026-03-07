@@ -45,15 +45,6 @@ class QAComposerDraft:
 
 
 @dataclass(frozen=True)
-class ActionReviewDraft:
-    """Raw action/deferred review selections from panel widgets."""
-
-    accept_indices_text: str
-    reject_indices_text: str
-    create_beads: bool
-
-
-@dataclass(frozen=True)
 class UtilityLaunchDraft:
     """Selected utility from bounded launcher."""
 
@@ -78,19 +69,6 @@ class WorkbenchControlGroup:
 
 WORKBENCH_CONTROL_GROUPS: tuple[WorkbenchControlGroup, ...] = (
     WorkbenchControlGroup(
-        title="Summarize",
-        controls=(
-            WorkbenchControlSpec(
-                key="summarize_recent",
-                intent="summarize",
-                label="Summarize Recent",
-                action="app.sc_summarize_recent",
-                availability="ready",
-                owner_ticket="cc-dump-yv6.1",
-            ),
-        ),
-    ),
-    WorkbenchControlGroup(
         title="Ask",
         controls=(
             WorkbenchControlSpec(
@@ -108,27 +86,6 @@ WORKBENCH_CONTROL_GROUPS: tuple[WorkbenchControlGroup, ...] = (
                 action="app.sc_qa_submit",
                 availability="ready",
                 owner_ticket="cc-dump-mjb.1",
-            ),
-        ),
-    ),
-    WorkbenchControlGroup(
-        title="Extract",
-        controls=(
-            WorkbenchControlSpec(
-                key="action_extract",
-                intent="extract",
-                label="Extract Actions",
-                action="app.sc_action_extract",
-                availability="ready",
-                owner_ticket="cc-dump-mjb.3",
-            ),
-            WorkbenchControlSpec(
-                key="action_apply_review",
-                intent="extract",
-                label="Apply Review",
-                action="app.sc_action_apply_review",
-                availability="ready",
-                owner_ticket="cc-dump-mjb.3",
             ),
         ),
     ),
@@ -239,19 +196,6 @@ class SideChannelPanel(Widget):
         margin-bottom: 1;
     }
 
-    SideChannelPanel #sc-action-accept {
-        margin-top: 1;
-    }
-
-    SideChannelPanel #sc-action-reject {
-        margin-top: 1;
-    }
-
-    SideChannelPanel #sc-action-beads {
-        margin-top: 1;
-        margin-bottom: 1;
-    }
-
     SideChannelPanel #sc-utility-select {
         margin-top: 1;
         margin-bottom: 1;
@@ -311,10 +255,6 @@ class SideChannelPanel(Widget):
             yield Input(placeholder="end idx", id="sc-qa-end")
         yield Input(placeholder="indices (e.g. 0,4,7)", id="sc-qa-indices")
         yield Checkbox("Confirm whole-session scope", id="sc-qa-whole")
-        yield Static("Action Review", classes="sc-group-title")
-        yield Input(placeholder="accept indices (e.g. 0,2)", id="sc-action-accept")
-        yield Input(placeholder="reject indices (e.g. 1,3)", id="sc-action-reject")
-        yield Checkbox("Create beads for accepted items", id="sc-action-beads")
         yield Static("Utility Launcher", classes="sc-group-title")
         yield Select(
             _utility_options(),
@@ -416,14 +356,6 @@ class SideChannelPanel(Widget):
             explicit_whole_session=self.query_one("#sc-qa-whole", Checkbox).value,
         )
 
-    def read_action_review_draft(self) -> ActionReviewDraft:
-        """Read action review accept/reject + beads confirmation inputs."""
-        return ActionReviewDraft(
-            accept_indices_text=self.query_one("#sc-action-accept", Input).value.strip(),
-            reject_indices_text=self.query_one("#sc-action-reject", Input).value.strip(),
-            create_beads=self.query_one("#sc-action-beads", Checkbox).value,
-        )
-
     def read_utility_draft(self) -> UtilityLaunchDraft:
         """Read selected utility from bounded launcher select."""
         value = self.query_one("#sc-utility-select", Select).value
@@ -465,11 +397,8 @@ def _render_status_line(*, enabled: bool, loading: bool, active_action: str) -> 
         return "Status: Disabled (enable AI in Settings)"
     if loading:
         action_name = {
-            "summarize_recent": "Summarize Recent",
             "qa_estimate": "Q&A Estimate",
             "qa_submit": "Scoped Q&A",
-            "action_extract": "Action Extraction",
-            "action_apply_review": "Apply Review",
             "utility_run": "Utility Runner",
         }.get(active_action, "Workbench run")
         return f"Status: Running {action_name}"
@@ -572,22 +501,6 @@ def render_qa_estimate_line(
 def render_qa_scope_line(*, scope_mode: str, selected_indices: tuple[int, ...]) -> str:
     """Render selected scope summary for the panel result area."""
     return f"scope:{scope_mode} indices={list(selected_indices)}"
-
-
-def parse_review_indices(text: str) -> tuple[tuple[int, ...], str]:
-    """Parse comma-delimited review indexes from panel input."""
-    stripped = text.strip()
-    if not stripped:
-        return ((), "")
-    parts = [part.strip() for part in stripped.split(",") if part.strip()]
-    try:
-        parsed = tuple(sorted({int(part) for part in parts}))
-    except ValueError:
-        return ((), "review indices must be integers")
-    negative = [idx for idx in parsed if idx < 0]
-    if negative:
-        return ((), "review indices must be non-negative")
-    return (parsed, "")
 
 
 def _utility_specs():

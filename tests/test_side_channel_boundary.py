@@ -22,7 +22,7 @@ def test_boundary_redacts_sensitive_tokens():
         "aws=AKIAABCDEFGHIJKLMNOP\n"
         "anthropic=sk-ant-1234567890abcdef\n"
     )
-    result = apply_boundary(prompt, "block_summary")
+    result = apply_boundary(prompt, "handoff_note")
     assert "Bearer abcdef12345" not in result.prompt
     assert "x-api-key: xyz987" not in result.prompt
     assert "hunter2" not in result.prompt

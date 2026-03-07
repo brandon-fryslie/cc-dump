@@ -50,7 +50,7 @@ class SideChannelResult:
     error: str | None  # error message, or None for success
     elapsed_ms: int  # wall-clock time in milliseconds
     run_id: str = ""
-    purpose: str = "block_summary"
+    purpose: str = "utility_custom"
     prompt_version: str = "v1"
     policy_version: str = ""
     profile: str = "ephemeral_default"
@@ -140,7 +140,7 @@ class SideChannelManager:
         """Compatibility helper for existing callsites."""
         return self.run(
             prompt=prompt,
-            purpose="block_summary",
+            purpose="utility_custom",
             timeout=timeout,
             source_provider="",
             profile="ephemeral_default",
