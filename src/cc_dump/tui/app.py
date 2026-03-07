@@ -154,6 +154,7 @@ class CcDumpApp(App):
         event_queue,
         state,
         router,
+        provider_states: dict[str, dict[str, object]] | None = None,
         analytics_store=None,
         host: str = "127.0.0.1",
         port: int = 3344,
@@ -174,7 +175,10 @@ class CcDumpApp(App):
     ):
         super().__init__()
         self._event_queue = event_queue
-        self._state = state
+        # [LAW:one-source-of-truth] Default-provider state is an alias into canonical per-provider state.
+        self._provider_states = dict(provider_states or {})
+        self._provider_states.setdefault(cc_dump.providers.DEFAULT_PROVIDER_KEY, state)
+        self._state = self._provider_states[cc_dump.providers.DEFAULT_PROVIDER_KEY]
         self._router = router
         self._analytics_store = analytics_store
         self._session_id: str | None = None
@@ -187,7 +191,7 @@ class CcDumpApp(App):
                 cc_dump.providers.DEFAULT_PROVIDER_KEY: cc_dump.providers.default_provider_endpoint(
                     host,
                     port,
-                    target,
+                    target or "",
                 )
             }
         # // [LAW:single-enforcer] Provider endpoint normalization is centralized in cc_dump.providers.
@@ -354,6 +358,20 @@ class CcDumpApp(App):
     def _iter_domain_stores(self):
         return tuple(self._session_domain_stores.values())
 
+    def _provider_state(self, provider: str) -> dict[str, object]:
+        return self._provider_states.get(provider, self._state)
+
+    def _total_request_count(self) -> int:
+        return sum(
+            count
+            for count in (
+                state.get("request_counter", 0)
+                for state in self._provider_states.values()
+                if isinstance(state, dict)
+            )
+            if isinstance(count, int)
+        )
+
     def _session_tab_title(self, session_key: str) -> str:
         if session_key == self._default_session_key:
             return cc_dump.providers.get_provider_spec(
@@ -366,10 +384,7 @@ class CcDumpApp(App):
             suffix = parts[2] if len(parts) > 2 else session_key
             return "SC " + suffix[:8]
         # Provider-prefixed session keys: "<provider>:__default__" → provider tab title.
-        provider = cc_dump.providers.session_provider(
-            session_key,
-            default_session_key=self._default_session_key,
-        )
+        provider = cc_dump.providers.session_provider(session_key)
         if provider != cc_dump.providers.DEFAULT_PROVIDER_KEY:
             spec = cc_dump.providers.get_provider_spec(provider)
             _, _, suffix = session_key.partition(":")
@@ -479,10 +494,9 @@ class CcDumpApp(App):
         """
         return cc_dump.providers.provider_session_key(
             provider,
-            default_session_key=self._default_session_key,
         )
 
-    def _resolve_event_session_key(self, event) -> str:
+    def _resolve_event_session_key(self, event, *, provider: str | None = None) -> str:
         """Resolve session key for event routing.
 
         // [LAW:one-source-of-truth] request_id -> session routing is resolved once here.
@@ -490,11 +504,11 @@ class CcDumpApp(App):
         // Session identity preserved on blocks (block.session_id) and in
         // formatting state (state["current_session"]), not in tab routing.
         """
-        provider = self._resolve_event_provider(event)
-        provider_key = self._provider_tab_key(provider)
+        resolved_provider = provider or self._resolve_event_provider(event)
+        provider_key = self._provider_tab_key(resolved_provider)
 
         # Non-default providers: one tab per provider, no sub-session routing.
-        if provider != cc_dump.providers.DEFAULT_PROVIDER_KEY:
+        if resolved_provider != cc_dump.providers.DEFAULT_PROVIDER_KEY:
             self._bind_request_session(event.request_id, provider_key)
             self._ensure_session_surface(provider_key)
             return provider_key
@@ -984,7 +998,7 @@ class CcDumpApp(App):
 
             self._app_log(
                 "INFO",
-                f"Replay complete: {self._state['request_counter']} requests processed",
+                f"Replay complete: {self._total_request_count()} requests processed",
             )
         except Exception as e:
             self._app_log("ERROR", f"Fatal error in replay processing: {e}")
@@ -1033,7 +1047,9 @@ class CcDumpApp(App):
             return
 
         kind = event.kind
-        session_key = self._resolve_event_session_key(event)
+        provider = self._resolve_event_provider(event)
+        state = self._provider_state(provider)
+        session_key = self._resolve_event_session_key(event, provider=provider)
         conv = self._get_conv(session_key=session_key)
         stats = self._get_stats()
         if stats is None:
@@ -1070,7 +1086,7 @@ class CcDumpApp(App):
         )
         self._app_state = cast(
             AppState,
-            handler(event, self._state, widgets, self._app_state, self._app_log),
+            handler(event, state, widgets, self._app_state, self._app_log),
         )
         request_id = str(getattr(event, "request_id", "") or "")
         if request_id:
@@ -1084,7 +1100,8 @@ class CcDumpApp(App):
 
         # // [LAW:one-source-of-truth] Session ID comes from formatting state,
         # not from blocks or app_state side-channels.
-        current_session = self._state.get("current_session", "")
+        current_session = state.get("current_session", "")
+        current_session = current_session if isinstance(current_session, str) else ""
         if current_session and current_session != self._session_id:
             self._app_log("INFO", f"Session detected: {current_session}")
             self._session_id = current_session

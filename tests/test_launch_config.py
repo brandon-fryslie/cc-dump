@@ -255,6 +255,7 @@ class TestBuildLaunchProfile:
                 "copilot",
                 proxy_url="http://127.0.0.1:4567",
                 target="https://api.githubcopilot.com",
+                proxy_mode="forward",
             )
         }
         profile = build_launch_profile(config, provider_endpoints=endpoints, session_id="")
@@ -273,6 +274,7 @@ class TestBuildLaunchProfile:
                 "copilot",
                 proxy_url="http://127.0.0.1:4567",
                 target="https://api.githubcopilot.com",
+                proxy_mode="forward",
                 forward_proxy_ca_cert_path="/tmp/forward-ca.crt",
             )
         }
@@ -290,6 +292,7 @@ class TestBuildLaunchProfile:
                 cc_dump.providers.DEFAULT_PROVIDER_KEY,
                 proxy_url="http://127.0.0.1:3344",
                 target="https://api.anthropic.com",
+                proxy_mode="reverse",
             )
         }
         profile = build_launch_profile(config, provider_endpoints=endpoints, session_id="")
