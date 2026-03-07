@@ -21,7 +21,6 @@ from cc_dump.core.formatting import (
     HeaderBlock,
     MetadataBlock,
     SystemSection,
-    TrackedContentBlock,
     TextContentBlock,
     ToolUseBlock,
     TextDeltaBlock,
@@ -71,7 +70,6 @@ class TestBlockCategoryCompleteness:
         assert BLOCK_CATEGORY["MetadataBlock"] == Category.METADATA
         assert BLOCK_CATEGORY["TurnBudgetBlock"] == Category.METADATA
         assert BLOCK_CATEGORY["SystemSection"] == Category.SYSTEM
-        assert BLOCK_CATEGORY["TrackedContentBlock"] == Category.SYSTEM
         assert BLOCK_CATEGORY["ToolUseBlock"] == Category.TOOLS
         assert BLOCK_CATEGORY["ToolResultBlock"] == Category.TOOLS
         assert BLOCK_CATEGORY["ToolUseSummaryBlock"] == Category.TOOLS
@@ -556,7 +554,7 @@ class TestScrollPreservation:
             [TextContentBlock(content="Turn 0", indent="")],
             [
                 SystemSection(children=[]),
-                TrackedContentBlock(status="new", tag_id="sys", color_idx=0, content="System"),
+                TextContentBlock(content="System", category=Category.SYSTEM),
             ],
             [
                 TextContentBlock(content="Turn 2 text\nLine 2", indent=""),
@@ -675,7 +673,7 @@ class TestScrollPreservation:
         turns_blocks = [
             [TextContentBlock(content="Turn 0 visible", indent="")],
             [SystemSection(children=[]),
-             TrackedContentBlock(status="new", tag_id="sys", color_idx=0, content="System only")],
+             TextContentBlock(content="System only", category=Category.SYSTEM)],
             [TextContentBlock(content="Turn 2 visible", indent="")],
         ]
         filters = {"system": ALWAYS_VISIBLE}

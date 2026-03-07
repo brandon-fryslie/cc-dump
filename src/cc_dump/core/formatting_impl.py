@@ -4,8 +4,6 @@ Returns FormattedBlock dataclasses that can be rendered by different backends
 (e.g., tui/rendering.py for Rich renderables in TUI mode).
 """
 
-import difflib
-import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -28,7 +26,6 @@ from cc_dump.pipeline.event_types import (
 )
 
 from cc_dump.core.analysis import TurnBudget, compute_turn_budget, estimate_tokens, tool_result_breakdown
-from cc_dump.core.palette import TAG_COLOR_COUNT
 import cc_dump.core.segmentation
 import cc_dump.providers
 
@@ -326,19 +323,6 @@ class NewSessionBlock(FormattedBlock):
 
 
 @dataclass
-class TrackedContentBlock(FormattedBlock):
-    """Result of content tracking (new/ref/changed)."""
-
-    status: str = ""  # "new", "ref", "changed"
-    tag_id: str = ""
-    color_idx: int = 0
-    content: str = ""
-    old_content: str = ""
-    new_content: str = ""
-    indent: str = "    "
-
-
-@dataclass
 class TextContentBlock(FormattedBlock):
     """Plain text content."""
 
@@ -528,7 +512,7 @@ class MetadataSection(FormattedBlock):
 class SystemSection(FormattedBlock):
     """Container for the system field from the request body.
 
-    Children: TrackedContentBlock instances.
+    Children: TextContentBlock instances.
     """
 
     children: list[FormattedBlock] = field(default_factory=list)
@@ -587,122 +571,27 @@ class ResponseMetadataSection(FormattedBlock):
 
     children: list[FormattedBlock] = field(default_factory=list)
 
+def _make_system_prompt_children(system: object) -> list[FormattedBlock]:
+    """Return canonical system prompt blocks with no cross-request tracking.
 
-
-# ─── Content tracking (stateful) ─────────────────────────────────────────────
-
-
-def track_content(content, position_key, state, indent="    "):
+    // [LAW:one-source-of-truth] System prompt content is represented once as plain text blocks.
     """
-    Track a content block using the state dict. Returns TrackedContentBlock.
+    # // [LAW:dataflow-not-control-flow] Normalize to a text list, then map every item the same way.
+    if isinstance(system, str):
+        texts = [system] if system else []
+    elif isinstance(system, list):
+        texts = [
+            sblock.get("text", "") if isinstance(sblock, dict) else str(sblock)
+            for sblock in system
+        ]
+        texts = [text for text in texts if text]
+    else:
+        texts = []
 
-    State keys used:
-      positions: pos_key → {hash, content, id, color_idx}
-      known_hashes: hash → id
-      next_id: int
-      next_color: int
-    """
-    h = hashlib.sha256(content.encode()).hexdigest()[:8]
-    positions = state["positions"]
-    known_hashes = state["known_hashes"]
-
-    # Exact content seen before (by hash)
-    if h in known_hashes:
-        color_idx = None
-        for pos in positions.values():
-            if pos["hash"] == h:
-                color_idx = pos["color_idx"]
-                break
-        if color_idx is None:
-            color_idx = state["next_color"] % TAG_COLOR_COUNT
-            state["next_color"] += 1
-        tag_id = known_hashes[h]
-        positions[position_key] = {
-            "hash": h,
-            "content": content,
-            "id": tag_id,
-            "color_idx": color_idx,
-        }
-        # [LAW:one-source-of-truth] content is always the current text;
-        # renderers decide whether to show it or diff metadata.
-        return TrackedContentBlock(
-            status="ref",
-            tag_id=tag_id,
-            color_idx=color_idx,
-            content=content,
-            old_content="",
-            new_content="",
-            indent=indent,
-        )
-
-    # Check if this position had different content before
-    old_pos = positions.get(position_key)
-    if old_pos and old_pos["hash"] != h:
-        color_idx = old_pos["color_idx"]
-        state["next_id"] += 1
-        tag_id = "sp-{}".format(state["next_id"])
-        old_content_val = old_pos["content"]
-        known_hashes[h] = tag_id
-        positions[position_key] = {
-            "hash": h,
-            "content": content,
-            "id": tag_id,
-            "color_idx": color_idx,
-        }
-        # [LAW:one-source-of-truth] content is always the current text;
-        # old_content/new_content carry diff data for SUMMARY renderer.
-        return TrackedContentBlock(
-            status="changed",
-            tag_id=tag_id,
-            color_idx=color_idx,
-            content=content,
-            old_content=old_content_val,
-            new_content=content,
-            indent=indent,
-        )
-
-    # Completely new
-    color_idx = state["next_color"] % TAG_COLOR_COUNT
-    state["next_color"] += 1
-    state["next_id"] += 1
-    tag_id = "sp-{}".format(state["next_id"])
-    known_hashes[h] = tag_id
-    positions[position_key] = {
-        "hash": h,
-        "content": content,
-        "id": tag_id,
-        "color_idx": color_idx,
-    }
-    return TrackedContentBlock(
-        status="new",
-        tag_id=tag_id,
-        color_idx=color_idx,
-        content=content,
-        old_content="",
-        new_content="",
-        indent=indent,
-    )
-
-
-def make_diff_lines(old_text, new_text):
-    """Compute diff lines as (kind, text) tuples.
-
-    kind is one of: "hunk", "add", "remove"
-    """
-    old_lines = old_text.splitlines(keepends=True)
-    new_lines = new_text.splitlines(keepends=True)
-    diff = difflib.unified_diff(old_lines, new_lines, lineterm="", n=2)
-    lines = []
-    for line in diff:
-        if line.startswith("+++") or line.startswith("---"):
-            continue
-        elif line.startswith("@@"):
-            lines.append(("hunk", line.strip()))
-        elif line.startswith("+"):
-            lines.append(("add", line[1:].rstrip()))
-        elif line.startswith("-"):
-            lines.append(("remove", line[1:].rstrip()))
-    return lines
+    return [
+        TextContentBlock(content=text, indent="    ", category=Category.SYSTEM)
+        for text in texts
+    ]
 
 
 # ─── Formatting to structured blocks ─────────────────────────────────────────
@@ -1171,15 +1060,7 @@ def format_request(body, state, request_headers: dict | None = None):
     blocks.append(SeparatorBlock(style="thin"))
 
     # SystemSection container — groups system prompt blocks
-    system = body.get("system", "")
-    system_children: list[FormattedBlock] = []
-    if system:
-        if isinstance(system, str):
-            system_children.append(track_content(system, "system:0", state))
-        elif isinstance(system, list):
-            for i, sblock in enumerate(system):
-                text = sblock.get("text", "") if isinstance(sblock, dict) else str(sblock)
-                system_children.append(track_content(text, "system:{}".format(i), state))
+    system_children = _make_system_prompt_children(body.get("system", ""))
 
     # Emit SystemSection container (always — renderer handles empty children)
     blocks.append(SystemSection(
@@ -1504,12 +1385,14 @@ def format_openai_request(
     blocks.append(SeparatorBlock(style="thin"))
 
     # SystemSection — OpenAI system prompt is messages with role="system"
-    system_children: list[FormattedBlock] = []
-    for msg in messages:
-        if isinstance(msg, dict) and msg.get("role") == "system":
-            content = msg.get("content", "")
-            if isinstance(content, str) and content:
-                system_children.append(track_content(content, "system:0", state))
+    system_children = [
+        TextContentBlock(content=msg.get("content", ""), indent="    ", category=Category.SYSTEM)
+        for msg in messages
+        if isinstance(msg, dict)
+        and msg.get("role") == "system"
+        and isinstance(msg.get("content", ""), str)
+        and msg.get("content", "")
+    ]
 
     blocks.append(SystemSection(
         children=system_children,

@@ -1,8 +1,9 @@
-"""Unit tests for formatting.py - block generation and content tracking."""
+"""Unit tests for formatting.py block generation."""
 
 import pytest
 
 from cc_dump.core.formatting import (
+    Category,
     ConfigContentBlock,
     ErrorBlock,
     FormattedBlock,
@@ -29,7 +30,6 @@ from cc_dump.core.formatting import (
     ToolDefsSection,
     ToolResultBlock,
     ToolUseBlock,
-    TrackedContentBlock,
     TurnBudgetBlock,
     UnknownTypeBlock,
     format_request,
@@ -39,8 +39,6 @@ from cc_dump.core.formatting import (
     format_openai_complete_response,
     format_response_event,
     format_response_headers,
-    make_diff_lines,
-    track_content,
     _tool_detail,
     _front_ellipse_path,
 )
@@ -103,9 +101,12 @@ def test_format_request_with_system(fresh_state):
     has_system_section = any(isinstance(b, SystemSection) for b in blocks)
     assert has_system_section
 
-    # Should have tracked content inside SystemSection
-    has_tracked = _has_block(blocks, TrackedContentBlock)
-    assert has_tracked
+    text_blocks = _find_blocks(blocks, TextContentBlock)
+    assert any(
+        block.content == "You are a helpful assistant."
+        and block.category == Category.SYSTEM
+        for block in text_blocks
+    )
 
 
 def test_format_request_with_system_list(fresh_state):
@@ -125,9 +126,9 @@ def test_format_request_with_system_list(fresh_state):
     has_system_section = any(isinstance(b, SystemSection) for b in blocks)
     assert has_system_section
 
-    # Should have tracked content blocks inside SystemSection
-    tracked_blocks = _find_blocks(blocks, TrackedContentBlock)
-    assert len(tracked_blocks) >= 2
+    text_blocks = _find_blocks(blocks, TextContentBlock)
+    system_texts = [block.content for block in text_blocks if block.category == Category.SYSTEM]
+    assert system_texts == ["Block 1", "Block 2"]
 
 
 def test_format_request_with_messages(fresh_state):
@@ -320,10 +321,7 @@ def test_format_request_long_first_message_keeps_text_content(fresh_state):
     blocks = format_request(body, fresh_state)
 
     text_blocks = _find_blocks(blocks, TextContentBlock)
-    tracked_blocks = _find_blocks(blocks, TrackedContentBlock)
-
     assert any(tb.content == long_text for tb in text_blocks)
-    assert tracked_blocks == []
 
 
 def test_format_request_with_tool_use(fresh_state):
@@ -627,141 +625,6 @@ def test_http_headers_block_defaults():
     assert block.status_code == 0
 
 
-# ─── track_content Tests ──────────────────────────────────────────────────────
-
-
-def test_track_content_new(fresh_state):
-    """First occurrence tagged 'new'."""
-    result = track_content("Hello world", "system:0", fresh_state)
-
-    assert isinstance(result, TrackedContentBlock)
-    assert result.status == "new"
-    assert result.tag_id.startswith("sp-")
-    assert isinstance(result.color_idx, int)
-    assert result.content == "Hello world"
-
-    # State should be updated
-    assert "system:0" in fresh_state["positions"]
-    assert fresh_state["next_id"] == 1
-
-
-def test_track_content_ref(fresh_state):
-    """Second occurrence of same content tagged 'ref'."""
-    # First call
-    track_content("Hello", "system:0", fresh_state)
-
-    # Second call with same content at different position
-    result = track_content("Hello", "msg:1", fresh_state)
-
-    assert isinstance(result, TrackedContentBlock)
-    assert result.status == "ref"
-    assert result.tag_id.startswith("sp-")
-    assert isinstance(result.color_idx, int)
-
-
-def test_track_content_changed(fresh_state):
-    """Modified content at same position tagged 'changed'."""
-    # First call
-    track_content("Original", "system:0", fresh_state)
-
-    # Second call with different content at same position
-    result = track_content("Modified", "system:0", fresh_state)
-
-    assert isinstance(result, TrackedContentBlock)
-    assert result.status == "changed"
-    assert result.tag_id.startswith("sp-")
-    assert isinstance(result.color_idx, int)
-    assert result.old_content == "Original"
-    assert result.new_content == "Modified"
-
-
-def test_track_content_multiple_positions_same_content(fresh_state):
-    """Same content at multiple positions shares tag."""
-    result1 = track_content("Shared", "pos:1", fresh_state)
-    result2 = track_content("Shared", "pos:2", fresh_state)
-
-    # First is new
-    assert isinstance(result1, TrackedContentBlock)
-    assert result1.status == "new"
-    tag_id_1 = result1.tag_id
-
-    # Second is ref to same tag
-    assert isinstance(result2, TrackedContentBlock)
-    assert result2.status == "ref"
-    tag_id_2 = result2.tag_id
-
-    assert tag_id_1 == tag_id_2
-
-
-# ─── make_diff_lines Tests ────────────────────────────────────────────────────
-
-
-def test_make_diff_lines_no_change():
-    """Empty diff for identical content."""
-    old = "Hello\nWorld"
-    new = "Hello\nWorld"
-
-    diff_lines = make_diff_lines(old, new)
-
-    # No changes means no diff output (after filtering header lines)
-    assert len(diff_lines) == 0
-
-
-def test_make_diff_lines_with_changes():
-    """Proper diff output for changes."""
-    old = "Hello\nWorld\nFoo"
-    new = "Hello\nEarth\nFoo"
-
-    diff_lines = make_diff_lines(old, new)
-
-    # Should have changes
-    assert len(diff_lines) > 0
-
-    # Check for hunk marker, deletions, and additions
-    kinds = [kind for kind, _ in diff_lines]
-    assert "hunk" in kinds or "remove" in kinds or "add" in kinds
-
-
-def test_make_diff_lines_addition():
-    """Addition detected in diff."""
-    old = "Line 1"
-    new = "Line 1\nLine 2"
-
-    diff_lines = make_diff_lines(old, new)
-
-    # Should have addition
-    kinds = [kind for kind, _ in diff_lines]
-    assert "add" in kinds
-
-
-def test_make_diff_lines_deletion():
-    """Deletion detected in diff."""
-    old = "Line 1\nLine 2"
-    new = "Line 1"
-
-    diff_lines = make_diff_lines(old, new)
-
-    # Should have deletion
-    kinds = [kind for kind, _ in diff_lines]
-    assert "remove" in kinds
-
-
-def test_make_diff_lines_format():
-    """Diff lines are (kind, text) tuples."""
-    old = "A"
-    new = "B"
-
-    diff_lines = make_diff_lines(old, new)
-
-    # Each line should be a tuple
-    for item in diff_lines:
-        assert isinstance(item, tuple)
-        assert len(item) == 2
-        kind, text = item
-        assert kind in ("hunk", "add", "remove")
-        assert isinstance(text, str)
-
-
 # ─── Block Instantiation Tests ────────────────────────────────────────────────
 
 
@@ -787,25 +650,7 @@ def test_block_types_can_be_instantiated():
     assert isinstance(ErrorBlock(code=500), FormattedBlock)
     assert isinstance(ProxyErrorBlock(error="error"), FormattedBlock)
     assert isinstance(NewlineBlock(), FormattedBlock)
-    assert isinstance(TrackedContentBlock(status="new"), FormattedBlock)
     assert isinstance(TurnBudgetBlock(), FormattedBlock)
-
-
-def test_tracked_content_block_fields():
-    """TrackedContentBlock has expected fields."""
-    block = TrackedContentBlock(
-        status="new",
-        tag_id="sp-1",
-        color_idx=0,
-        content="test",
-        indent="  ",
-    )
-
-    assert block.status == "new"
-    assert block.tag_id == "sp-1"
-    assert block.color_idx == 0
-    assert block.content == "test"
-    assert block.indent == "  "
 
 
 # ─── Integration Tests ────────────────────────────────────────────────────────
@@ -823,20 +668,6 @@ def test_format_request_multiple_calls_increment_counter(fresh_state):
 
     format_request(body, fresh_state)
     assert fresh_state["request_counter"] == 3
-
-
-def test_content_tracking_preserves_color_across_refs(fresh_state):
-    """Content tracking preserves color index across references."""
-    # Track content first time
-    result1 = track_content("Shared content", "pos:1", fresh_state)
-    color1 = result1.color_idx
-
-    # Track same content at different position
-    result2 = track_content("Shared content", "pos:2", fresh_state)
-    color2 = result2.color_idx
-
-    # Should have same color
-    assert color1 == color2
 
 
 # ─── Tool Detail Tests ────────────────────────────────────────────────────────
@@ -1498,10 +1329,6 @@ class TestToolUseBlockDescription:
 def _fresh_openai_state():
     return {
         "request_counter": 0,
-        "positions": {},
-        "known_hashes": {},
-        "next_id": 1,
-        "next_color": 0,
     }
 
 
@@ -1571,8 +1398,12 @@ class TestFormatOpenAIRequest:
 
         system_sections = _find_blocks(blocks, SystemSection)
         assert len(system_sections) == 1
-        # System section should have tracked content
-        assert len(system_sections[0].children) > 0
+        # System section should have plain system text content
+        assert len(system_sections[0].children) == 1
+        child = system_sections[0].children[0]
+        assert isinstance(child, TextContentBlock)
+        assert child.content == "You are a helpful assistant."
+        assert child.category == Category.SYSTEM
 
         # System message should NOT appear as a conversation MessageBlock
         msg_blocks = _find_blocks(blocks, MessageBlock)

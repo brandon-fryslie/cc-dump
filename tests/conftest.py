@@ -233,11 +233,7 @@ def class_proc():
 
 @pytest.fixture
 def fresh_state():
-    """Fresh state dict for content tracking."""
+    """Fresh formatting state dict."""
     return {
-        "positions": {},
-        "known_hashes": {},
-        "next_id": 0,
-        "next_color": 0,
         "request_counter": 0,
     }
