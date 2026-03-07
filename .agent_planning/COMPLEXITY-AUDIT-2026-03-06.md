@@ -24,6 +24,7 @@
 - **State:** `ProxyHandler.target_host` class attribute
 - **Coupling:** Clean. `proxy.py` reads `providers.api_paths` for JSON body detection.
 - **Boundary erosion:** None.
+  VERDICT: CORE
 
 ### 2. Forward Proxy Mode (HTTP CONNECT)
 **Complexity: MODERATE | Value: MODERATE | Verdict: KEEP**
@@ -33,6 +34,7 @@
 - **State:** `ForwardProxyCertificateAuthority._host_contexts` (thread-safe cert cache), `_tmp_dir` (temp certs)
 - **Coupling:** `do_CONNECT()` mutates `self.provider` by calling back into providers registry — a single handler instance serves two providers' state during a tunnel lifetime.
 - **Boundary erosion:** `launcher_registry.py` reaches into `provider_endpoints["forward_proxy_ca_cert_path"]` — conditionally-present key couples launcher to TLS feature.
+VERDICT: CORE
 
 ### 3. HAR Recording
 **Complexity: MODERATE | Value: HIGH | Verdict: KEEP**
@@ -43,6 +45,8 @@
 - **Special-case logic:** 6 branches
 - **Coupling:** `har_recorder.py` imports `cc_dump.ai.side_channel_marker.extract_marker` — the recording subsystem reaches into the AI enrichment subsystem to label entries.
 - **Boundary erosion:** YES — pipeline (HAR recording) has compile-time dependency on AI (side channel). This is the most notable cross-domain coupling in the proxy layer.
+VERDICT: CORE
+
 
 ### 4. HAR Replay
 **Complexity: LOW | Value: HIGH | Verdict: KEEP**
@@ -51,6 +55,7 @@
 - **Files touched:** 5
 - **State:** `app._replay_data` (in-memory list), `_replay_complete` threading.Event
 - **Coupling:** `_drain_events()` in app.py blocks on `_replay_complete.wait()` — live event draining is coupled to replay feature through a threading event.
+VERDICT: CORE
 
 ### 6. 3-Level Visibility System
 **Complexity: MODERATE | Value: HIGH | Verdict: KEEP**
@@ -59,6 +64,7 @@
 - **Files touched:** 8
 - **State:** 18 store keys (6 categories × 3 axes: vis/full/exp), `ViewOverrides._blocks` dict
 - **Why it works:** Data-driven design with `CATEGORY_CONFIG`, `VIS_CYCLE`, `VIS_TOGGLE_SPECS`, `TRUNCATION_LIMITS` tables. `_resolve_visibility()` is the single enforcer.
+VERDICT: CORE
 
 ### 7. Click-to-Expand/Collapse
 **Complexity: MODERATE | Value: HIGH | Verdict: KEEP**
@@ -66,6 +72,7 @@
 - **Where:** `widget_factory.py` (click handler), `rendering_impl.py` (meta segments), `view_overrides.py`
 - **Files touched:** 3
 - **Boundary erosion:** `RegionViewState.strip_range` is renderer-internal data stored in a "view state" struct — the renderer writes rendering artifacts into shared state that the click handler reads. This is a clear mixed-responsibility in `ViewOverrides`.
+VERDICT: BROKEN
 
 ### 8. Rendering Pipeline (Markdown, Code Highlighting, XML Collapsible)
 **Complexity: HIGH | Value: HIGH | Verdict: KEEP (but note size)**
@@ -75,12 +82,14 @@
 - **Why it's complex:** The rendering file is the largest in the codebase. However, complexity is well-managed: dispatch tables replace if/else chains, renderers are per-block-type functions.
 - **Boundary erosion:** `rendering_impl.py` calls `populate_content_regions()` from `formatting_impl.py` during rendering — lazy evaluation blurs the two-stage pipeline boundary. `rendering_impl.py` also writes `expandable` and `strip_range` back to `ViewOverrides` as side effects of rendering.
 - **If removed:** N/A — this is the core rendering engine. Size could be reduced by extracting renderer functions into separate modules by block type.
+  VERDICT: CORE, but need refactor to solve boundary erosion
 
 ### 10. Tool Use Correlation and Summaries
 **Complexity: LOW | Value: HIGH | Verdict: KEEP**
 - **What:** At SUMMARY level, consecutive tool use/result pairs collapse into ToolUseSummaryBlock
 - **Where:** `rendering_impl.py` (`_collapse_children()`)
 - **Coupling:** `force_vis` in `BlockViewState` can prevent collapse — search feature overrides tool correlation.
+VERDICT: resolve
 
 ### 13. Search System
 **Complexity: HIGH | Value: HIGH | Verdict: KEEP (but decouple)**
@@ -92,12 +101,14 @@
 - **Why it's complex:** `search_controller.py` is the most heavily coupled module — it reaches into `ConversationView._turns` (private), `_view_overrides`, `_scroll_anchor`, `scroll_offset`, and calls `rerender()`, `mark_overrides_changed()`, `ensure_turn_rendered()`. 6+ private ConversationView members accessed directly.
 - **Boundary erosion:** `search_controller` directly manipulates `ViewOverrides._search_block_ids` and sets `BlockViewState.force_vis`. The controller is not a widget but accesses widget-internal objects.
 - **If simplified:** Extract a `ConversationNavigator` interface that exposes the needed operations without exposing private fields.
+  VERDICT: CORE, but needs refactor
 
 ### 14. Follow Mode
 **Complexity: MODERATE | Value: HIGH | Verdict: KEEP**
 - **What:** Auto-scroll with 3 states (ACTIVE/ENGAGED/OFF) driven by lookup tables
 - **Where:** `widget_factory.py` (4 state transition tables), `action_handlers.py`, `custom_footer.py`
 - **Coupling:** `action_handlers.go_top` imports `_FOLLOW_DEACTIVATE` (private table) from `widget_factory` — crosses into the follow-state machine's internals from navigation.
+VERDICT: CORE, but needs refactor
 
 ### 15. AI Workbench Panel
 **Complexity: HIGH | Value: MODERATE | Verdict: EVALUATE**
@@ -108,6 +119,7 @@
 - **Why it's complex:** `side_channel_controller.py` (918 lines) accepts `app` as omniscient parameter and reads from 10+ distinct app attributes. Two parallel usage tracking systems exist (`SideChannelAnalytics` in data_dispatcher vs `AnalyticsStore.get_side_channel_purpose_summary()`). Panel open resets action-item state (feature bleeding).
 - **Coupling:** Every controller function accepts `app` and reaches into `app._view_store`, `app._data_dispatcher`, `app._analytics_store`, `app._app_state`, `app._sc_action_batch_id`, etc. Capabilities-over-context violation.
 - **Boundary erosion:** Workbench results view receives data via two different mechanisms: sidebar preview through reactive store, full-width markdown through direct widget call. Two update paths for the same data.
+VERDICT: CUT TO MINIMUM: Handoff, Q&A, light utility features.  Enforce strict boundary
 
 ### 16. Handoff Note Draft
 **Complexity: MODERATE | Value: LOW | Verdict: CONSIDER REMOVING**
@@ -122,6 +134,7 @@
 - **Where:** `ai/side_channel_analytics.py` (56 lines), `ai/data_dispatcher.py`, `app/analytics_store.py`
 - **Dead code:** `SideChannelAnalytics` in `data_dispatcher.py` is structurally wired but all token fields remain 0 because callers never pass them. `DataDispatcher.side_channel_usage_snapshot()` is defined but never called from the TUI. The TUI uses `AnalyticsStore.get_side_channel_purpose_summary()` instead.
 - **If simplified:** Remove `SideChannelAnalytics` class and `side_channel_usage_snapshot()` method. ~60 lines removed. One source of truth (AnalyticsStore) remains.
+VERDICT: Important to track sidechannel costs.  But this should happen from standard analytics, not the other way around
 
 ### 18. Summary Cache
 **Complexity: LOW | Value: LOW | Verdict: EVALUATE**
@@ -129,6 +142,7 @@
 - **Where:** `ai/summary_cache.py` (135 lines)
 - **Coupling:** Only `summarize_messages` uses the cache. Q&A, action extraction, utilities, and checkpoints do NOT check the cache. Narrow scope limits value.
 - **If generalized:** Extend cache to all side-channel operations, or remove if hit rate is negligible.
+VERDICT: KILL
 
 ### 19. CycleSelector / MultiCycleSelector Widgets
 **Complexity: MODERATE | Value: LOW | Verdict: EVALUATE**
@@ -136,6 +150,7 @@
 - **Where:** `tui/cycle_selector.py` (529 lines)
 - **Coupling:** `CycleSelector` is used only in `LaunchConfigPanel` (config selector + launcher selector). `MultiCycleSelector` appears unused. The Q&A scope selector uses Textual's built-in `Select` widget instead, despite CycleSelector being documented as the intended widget.
 - **If removed/consolidated:** If MultiCycleSelector has no consumers, remove it (~200 lines). If CycleSelector's only consumer is launch_config_panel, consider whether a standard Select would suffice.
+  VERDICT: KILL
 
 ### 20. Launch Configuration System
 **Complexity: HIGH | Value: MODERATE | Verdict: SIMPLIFY**
