@@ -37,7 +37,6 @@ _MAX_PROMPT_CHARS_BY_PURPOSE: dict[str, int] = {
 }
 _MAX_PROMPT_CHARS_BY_PURPOSE.update({
     "core_debug_lane": 12_000,
-    "block_summary": 16_000,
     "conversation_qa": 24_000,
     "compaction": 40_000,
     "utility_custom": 12_000,

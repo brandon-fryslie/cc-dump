@@ -564,7 +564,7 @@ def test_get_state_restore_state_handles_old_format():
 def test_side_channel_purpose_summary_aggregates_marker_tagged_turns():
     store = AnalyticsStore()
     marker = (
-        '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"r1","purpose":"block_summary",'
+        '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"r1","purpose":"handoff_note",'
         '"source_session_id":"s1","prompt_version":"v1","policy_version":"redaction-v1"}>>\n'
     )
     request = {
@@ -589,8 +589,8 @@ def test_side_channel_purpose_summary_aggregates_marker_tagged_turns():
     )
 
     by_purpose = store.get_side_channel_purpose_summary()
-    assert "block_summary" in by_purpose
-    row = by_purpose["block_summary"]
+    assert "handoff_note" in by_purpose
+    row = by_purpose["handoff_note"]
     assert row["turns"] == 1
     assert row["input_tokens"] == 10
     assert row["cache_read_tokens"] == 20

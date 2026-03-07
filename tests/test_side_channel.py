@@ -5,27 +5,19 @@ from __future__ import annotations
 import subprocess
 import threading
 import time
-from dataclasses import dataclass
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from cc_dump.ai.side_channel import SideChannelManager, SideChannelResult
-from cc_dump.ai.data_dispatcher import DataDispatcher
 from cc_dump.ai.conversation_qa import QAScope, SCOPE_WHOLE_SESSION
-
-
-# ─── SideChannelManager tests ────────────────────────────────────────
+from cc_dump.ai.data_dispatcher import DataDispatcher
+from cc_dump.ai.side_channel import SideChannelManager, SideChannelResult
 
 
 class TestSideChannelManager:
     """Tests for SideChannelManager subprocess handling."""
 
     def test_query_success(self):
-        """Successful claude -p invocation returns text."""
         mgr = SideChannelManager(claude_command="claude")
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "  This is a summary.  \n"
-        mock_result.stderr = ""
+        mock_result = MagicMock(returncode=0, stdout="  This is a summary.  \n", stderr="")
 
         with patch("subprocess.run", return_value=mock_result) as mock_run:
             result = mgr.query("Summarize this")
@@ -34,7 +26,6 @@ class TestSideChannelManager:
         assert result.error is None
         assert result.elapsed_ms >= 0
         assert result.policy_version == "redaction-v1"
-        # Verify subprocess args
         args = mock_run.call_args
         assert args[0][0] == [
             "claude",
@@ -53,12 +44,8 @@ class TestSideChannelManager:
         assert args[1]["text"] is True
 
     def test_query_nonzero_exit(self):
-        """Nonzero exit code returns error with stderr."""
         mgr = SideChannelManager()
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stdout = ""
-        mock_result.stderr = "Some error occurred"
+        mock_result = MagicMock(returncode=1, stdout="", stderr="Some error occurred")
 
         with patch("subprocess.run", return_value=mock_result):
             result = mgr.query("test")
@@ -68,7 +55,6 @@ class TestSideChannelManager:
         assert "Some error occurred" in result.error
 
     def test_query_timeout(self):
-        """Timeout returns error."""
         mgr = SideChannelManager()
 
         with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("claude", 30)):
@@ -78,7 +64,6 @@ class TestSideChannelManager:
         assert "Timeout" in result.error
 
     def test_query_command_not_found(self):
-        """Missing command returns error."""
         mgr = SideChannelManager(claude_command="nonexistent-claude")
 
         with patch("subprocess.run", side_effect=FileNotFoundError):
@@ -89,7 +74,6 @@ class TestSideChannelManager:
         assert "nonexistent-claude" in result.error
 
     def test_enabled_property(self):
-        """Enabled can be toggled."""
         mgr = SideChannelManager()
         assert mgr.enabled is True
 
@@ -97,14 +81,10 @@ class TestSideChannelManager:
         assert mgr.enabled is False
 
     def test_set_claude_command(self):
-        """Claude command can be updated."""
         mgr = SideChannelManager(claude_command="claude")
         mgr.set_claude_command("/usr/local/bin/claude")
 
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "ok"
-        mock_result.stderr = ""
+        mock_result = MagicMock(returncode=0, stdout="ok", stderr="")
 
         with patch("subprocess.run", return_value=mock_result) as mock_run:
             mgr.query("test")
@@ -112,12 +92,8 @@ class TestSideChannelManager:
         assert mock_run.call_args[0][0][0] == "/usr/local/bin/claude"
 
     def test_query_empty_stderr_on_error(self):
-        """Nonzero exit with no stderr shows fallback message."""
         mgr = SideChannelManager()
-        mock_result = MagicMock()
-        mock_result.returncode = 2
-        mock_result.stdout = ""
-        mock_result.stderr = ""
+        mock_result = MagicMock(returncode=2, stdout="", stderr="")
 
         with patch("subprocess.run", return_value=mock_result):
             result = mgr.query("test")
@@ -129,7 +105,6 @@ class TestSideChannelManager:
         mgr.global_kill = True
         result = mgr.query("test")
         assert "kill switch" in str(result.error).lower()
-
 
     def test_unknown_purpose_normalized_to_utility_custom(self):
         mgr = SideChannelManager()
@@ -145,10 +120,10 @@ class TestSideChannelManager:
 
     def test_guardrail_blocks_disabled_purpose(self):
         mgr = SideChannelManager()
-        mgr.set_purpose_enabled_map({"block_summary": False})
+        mgr.set_purpose_enabled_map({"handoff_note": False})
         result = mgr.run(
             prompt="test",
-            purpose="block_summary",
+            purpose="handoff_note",
             profile="ephemeral_default",
         )
         assert result.error is not None
@@ -157,7 +132,7 @@ class TestSideChannelManager:
 
     def test_guardrail_budget_cap_blocks_run(self):
         mgr = SideChannelManager()
-        mgr.set_budget_caps({"block_summary": 10})
+        mgr.set_budget_caps({"handoff_note": 10})
         mgr.set_usage_provider(
             lambda _purpose: {
                 "input_tokens": 6,
@@ -169,7 +144,7 @@ class TestSideChannelManager:
         with patch("subprocess.run") as mock_run:
             result = mgr.run(
                 prompt="test",
-                purpose="block_summary",
+                purpose="handoff_note",
                 profile="ephemeral_default",
             )
         assert result.error is not None
@@ -191,12 +166,12 @@ class TestSideChannelManager:
 
     def test_run_uses_timeout_override_and_clamps_max(self):
         mgr = SideChannelManager()
-        mgr.set_timeout_overrides({"block_summary": 7})
+        mgr.set_timeout_overrides({"handoff_note": 7})
         mock_result = MagicMock(returncode=0, stdout="ok", stderr="")
         with patch("subprocess.run", return_value=mock_result) as mock_run:
             _ = mgr.run(
                 prompt="test",
-                purpose="block_summary",
+                purpose="handoff_note",
                 timeout=None,
                 profile="ephemeral_default",
             )
@@ -205,7 +180,7 @@ class TestSideChannelManager:
         with patch("subprocess.run", return_value=mock_result) as mock_run:
             _ = mgr.run(
                 prompt="test",
-                purpose="block_summary",
+                purpose="handoff_note",
                 timeout=9999,
                 profile="ephemeral_default",
             )
@@ -232,7 +207,9 @@ class TestSideChannelManager:
             threads = [
                 threading.Thread(
                     target=lambda: mgr.run(
-                        prompt="x", purpose="block_summary", profile="ephemeral_default"
+                        prompt="x",
+                        purpose="handoff_note",
+                        profile="ephemeral_default",
                     )
                 )
                 for _ in range(3)
@@ -250,7 +227,7 @@ class TestSideChannelManager:
         with patch("subprocess.run", return_value=mock_result) as mock_run:
             _ = mgr.run(
                 prompt="authorization: Bearer SECRET_TOKEN_123",
-                purpose="block_summary",
+                purpose="handoff_note",
                 profile="ephemeral_default",
             )
         sent_prompt = str(mock_run.call_args.kwargs["input"])
@@ -258,107 +235,17 @@ class TestSideChannelManager:
         assert "[REDACTED]" in sent_prompt
 
 
-# ─── DataDispatcher tests ────────────────────────────────────────────
-
-
 class TestDataDispatcher:
     """Tests for DataDispatcher routing and fallback."""
 
-    @dataclass
-    class _CacheEntry:
-        summary_text: str
-
-    class _MemorySummaryCache:
-        def __init__(self):
-            self._entries = {}
-
-        def make_key(self, *, purpose: str, prompt_version: str, content: str) -> str:
-            return f"{purpose}:{prompt_version}:{content}"
-
-        def get(self, key: str):
-            return self._entries.get(key)
-
-        def put(self, *, key: str, purpose: str, prompt_version: str, content: str, summary_text: str):
-            self._entries[key] = TestDataDispatcher._CacheEntry(summary_text=summary_text)
-
-    def _make_dispatcher(self, enabled=True, query_result=None, summary_cache=None):
-        """Helper to create a dispatcher with a mock side-channel."""
+    def _make_dispatcher(self, enabled=True, query_result=None):
         mgr = SideChannelManager()
         mgr.enabled = enabled
         if query_result is not None:
             mgr.run = MagicMock(return_value=query_result)
-        cache = summary_cache if summary_cache is not None else self._MemorySummaryCache()
-        return DataDispatcher(mgr, summary_cache=cache), mgr, cache
-
-    def test_summarize_when_enabled(self):
-        """Enabled dispatcher routes to AI."""
-        result = SideChannelResult(text="AI summary here", error=None, elapsed_ms=500)
-        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True, query_result=result)
-
-        messages = [{"role": "user", "content": "hello"}]
-        enriched = dispatcher.summarize_messages(messages)
-
-        assert enriched.source == "ai"
-        assert enriched.text == "AI summary here"
-        assert enriched.elapsed_ms == 500
-        mgr.run.assert_called_once()
-        call = mgr.run.call_args
-        assert call.kwargs["prompt_version"] == "v1"
-
-    def test_summarize_when_disabled(self):
-        """Disabled dispatcher returns fallback without calling AI."""
-        dispatcher, mgr, _cache = self._make_dispatcher(enabled=False)
-        mgr.run = MagicMock()
-
-        messages = [
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "hi there"},
-        ]
-        enriched = dispatcher.summarize_messages(messages)
-
-        assert enriched.source == "fallback"
-        assert "2 messages" in enriched.text
-        assert "1 assistant" in enriched.text
-        assert "1 user" in enriched.text
-        assert enriched.elapsed_ms == 0
-        mgr.run.assert_not_called()
-
-    def test_summarize_on_error(self):
-        """AI error returns error text with fallback appended."""
-        result = SideChannelResult(text="", error="Timeout (60s)", elapsed_ms=60000)
-        dispatcher, _, _cache = self._make_dispatcher(enabled=True, query_result=result)
-
-        messages = [{"role": "user", "content": "hello"}]
-        enriched = dispatcher.summarize_messages(messages)
-
-        assert enriched.source == "error"
-        assert "Timeout (60s)" in enriched.text
-        assert "1 messages" in enriched.text  # fallback appended
-
-    def test_summarize_guardrail_error_returns_fallback_source(self):
-        result = SideChannelResult(
-            text="",
-            error="Guardrail: budget cap reached for block_summary: used=120 cap=100",
-            elapsed_ms=0,
-        )
-        dispatcher, _, _cache = self._make_dispatcher(enabled=True, query_result=result)
-        messages = [{"role": "user", "content": "hello"}]
-        enriched = dispatcher.summarize_messages(messages)
-        assert enriched.source == "fallback"
-        assert "side-channel blocked" in enriched.text
-        assert "1 messages" in enriched.text
-
-    def test_fallback_summary_empty(self):
-        """Empty message list produces appropriate fallback."""
-        dispatcher, _, _cache = self._make_dispatcher(enabled=False)
-
-        enriched = dispatcher.summarize_messages([])
-
-        assert enriched.source == "fallback"
-        assert "No messages" in enriched.text
+        return DataDispatcher(mgr), mgr
 
     def test_prompt_construction_with_content_blocks(self):
-        """Content blocks (list format) are correctly extracted."""
         from cc_dump.ai.data_dispatcher import _build_summary_context, _build_summary_prompt
         from cc_dump.ai.prompt_registry import get_prompt_spec
 
@@ -372,40 +259,24 @@ class TestDataDispatcher:
             }
         ]
         context = _build_summary_context(messages)
-        prompt = _build_summary_prompt(context, get_prompt_spec("block_summary"))
+        prompt = _build_summary_prompt(context, get_prompt_spec("handoff_note"))
 
         assert "What is Python?" in prompt
         assert "[user]" in prompt
 
     def test_prompt_truncates_long_messages(self):
-        """Individual messages are truncated to 500 chars."""
         from cc_dump.ai.data_dispatcher import _build_summary_context, _build_summary_prompt
         from cc_dump.ai.prompt_registry import get_prompt_spec
 
         messages = [{"role": "assistant", "content": "x" * 1000}]
         context = _build_summary_context(messages)
-        prompt = _build_summary_prompt(context, get_prompt_spec("block_summary"))
+        prompt = _build_summary_prompt(context, get_prompt_spec("handoff_note"))
 
-        # Should be truncated to 500 + "..."
         assert "..." in prompt
-        # The full 1000 chars should NOT be present
         assert "x" * 1000 not in prompt
 
-    def test_repeated_summary_request_hits_cache(self):
-        result = SideChannelResult(text="AI summary here", error=None, elapsed_ms=500)
-        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True, query_result=result)
-        messages = [{"role": "user", "content": "hello"}]
-
-        first = dispatcher.summarize_messages(messages)
-        second = dispatcher.summarize_messages(messages)
-
-        assert first.source == "ai"
-        assert second.source == "cache"
-        assert second.text == "AI summary here"
-        mgr.run.assert_called_once()
-
     def test_create_checkpoint_with_selected_range_uses_checkpoint_purpose(self):
-        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        dispatcher, mgr = self._make_dispatcher(enabled=True)
         mgr.run = MagicMock(
             return_value=SideChannelResult(
                 text="Checkpoint summary text",
@@ -437,7 +308,7 @@ class TestDataDispatcher:
         assert run_call.kwargs["profile"] == "ephemeral_default"
 
     def test_create_checkpoint_disabled_uses_fallback_and_skips_ai(self):
-        dispatcher, mgr, _cache = self._make_dispatcher(enabled=False)
+        dispatcher, mgr = self._make_dispatcher(enabled=False)
         mgr.run = MagicMock()
         result = dispatcher.create_checkpoint(
             [{"role": "user", "content": "m0"}],
@@ -451,7 +322,7 @@ class TestDataDispatcher:
         mgr.run.assert_not_called()
 
     def test_create_checkpoint_guardrail_falls_back(self):
-        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        dispatcher, mgr = self._make_dispatcher(enabled=True)
         mgr.run = MagicMock(
             return_value=SideChannelResult(
                 text="",
@@ -470,7 +341,7 @@ class TestDataDispatcher:
         assert "1 messages" in result.artifact.summary_text
 
     def test_checkpoint_diff_links_ids_and_ranges(self):
-        dispatcher, mgr, _cache = self._make_dispatcher(enabled=False)
+        dispatcher, mgr = self._make_dispatcher(enabled=False)
         mgr.run = MagicMock()
 
         before = dispatcher.create_checkpoint(
@@ -495,87 +366,8 @@ class TestDataDispatcher:
         assert after.artifact.checkpoint_id in diff_text
         assert "source_ranges:0-0|0-1" in diff_text
 
-    def test_extract_action_items_stages_pending_without_auto_persist(self):
-        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
-        mgr.run = MagicMock(
-            return_value=SideChannelResult(
-                text=(
-                    '{"items":[{"kind":"action","text":"Write tests for extraction",'
-                    '"confidence":0.8,"source_links":[{"message_index":1}]}]}'
-                ),
-                error=None,
-                elapsed_ms=12,
-            )
-        )
-        result = dispatcher.extract_action_items(
-            [{"role": "user", "content": "next steps"}],
-            source_provider="anthropic",
-            request_id="req-1",
-        )
-        assert result.source == "ai"
-        assert len(result.items) == 1
-        assert dispatcher.accepted_action_items_snapshot() == []
-        pending = dispatcher.pending_action_items(result.batch_id)
-        assert len(pending) == 1
-        assert pending[0].text == "Write tests for extraction"
-
-    def test_accept_action_items_persists_selected_items(self):
-        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
-        mgr.run = MagicMock(
-            return_value=SideChannelResult(
-                text=(
-                    '{"items":[{"kind":"action","text":"Ship am0",'
-                    '"confidence":0.9,"source_links":[{"message_index":1}]}]}'
-                ),
-                error=None,
-                elapsed_ms=12,
-            )
-        )
-        extraction = dispatcher.extract_action_items(
-            [{"role": "user", "content": "next steps"}],
-            source_provider="anthropic",
-            request_id="req-1",
-        )
-        item_id = extraction.items[0].item_id
-        accepted = dispatcher.accept_action_items(
-            batch_id=extraction.batch_id,
-            item_ids=[item_id],
-            create_beads=True,
-            beads_hook=lambda _item: "cc-dump-901",
-        )
-        assert len(accepted) == 1
-        assert accepted[0].status == "accepted"
-        assert accepted[0].beads_issue_id == "cc-dump-901"
-        snapshot = dispatcher.accepted_action_items_snapshot()
-        assert len(snapshot) == 1
-        assert snapshot[0].item_id == item_id
-
-    def test_accept_action_items_ignores_beads_hook_without_confirmation(self):
-        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
-        mgr.run = MagicMock(
-            return_value=SideChannelResult(
-                text='{"items":[{"kind":"action","text":"Draft notes","source_links":[{"message_index":0}]}]}',
-                error=None,
-                elapsed_ms=12,
-            )
-        )
-        extraction = dispatcher.extract_action_items(
-            [{"role": "user", "content": "next steps"}],
-            source_provider="anthropic",
-            request_id="req-1",
-        )
-        item_id = extraction.items[0].item_id
-        accepted = dispatcher.accept_action_items(
-            batch_id=extraction.batch_id,
-            item_ids=[item_id],
-            create_beads=False,
-            beads_hook=lambda _item: "cc-dump-should-not-appear",
-        )
-        assert len(accepted) == 1
-        assert accepted[0].beads_issue_id == ""
-
     def test_generate_handoff_note_returns_required_sections(self):
-        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        dispatcher, mgr = self._make_dispatcher(enabled=True)
         mgr.run = MagicMock(
             return_value=SideChannelResult(
                 text=(
@@ -603,7 +395,7 @@ class TestDataDispatcher:
         assert "## next steps" in result.markdown
 
     def test_generate_handoff_note_fallback_when_disabled(self):
-        dispatcher, mgr, _cache = self._make_dispatcher(enabled=False)
+        dispatcher, mgr = self._make_dispatcher(enabled=False)
         mgr.run = MagicMock()
         result = dispatcher.generate_handoff_note(
             [{"role": "assistant", "content": "worked on cache"}],
@@ -618,7 +410,7 @@ class TestDataDispatcher:
         mgr.run.assert_not_called()
 
     def test_latest_handoff_note_available_for_resume_flow(self):
-        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        dispatcher, mgr = self._make_dispatcher(enabled=True)
         mgr.run = MagicMock(
             return_value=SideChannelResult(
                 text='{"sections":{"changed":[{"text":"A","source_links":[{"message_index":0}]}]}}',
@@ -638,7 +430,7 @@ class TestDataDispatcher:
         assert latest.handoff_id == result.artifact.handoff_id
 
     def test_ask_conversation_question_returns_sources_and_estimate(self):
-        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        dispatcher, mgr = self._make_dispatcher(enabled=True)
         mgr.run = MagicMock(
             return_value=SideChannelResult(
                 text=(
@@ -660,7 +452,7 @@ class TestDataDispatcher:
         assert result.estimate.estimated_total_tokens > 0
 
     def test_ask_conversation_question_whole_session_requires_explicit_selection(self):
-        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        dispatcher, mgr = self._make_dispatcher(enabled=True)
         mgr.run = MagicMock()
         result = dispatcher.ask_conversation_question(
             [{"role": "assistant", "content": "a"}, {"role": "assistant", "content": "b"}],
@@ -673,7 +465,7 @@ class TestDataDispatcher:
         mgr.run.assert_not_called()
 
     def test_ask_conversation_question_fallback_on_guardrail(self):
-        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        dispatcher, mgr = self._make_dispatcher(enabled=True)
         mgr.run = MagicMock(
             return_value=SideChannelResult(
                 text="",
@@ -690,13 +482,13 @@ class TestDataDispatcher:
         assert "Fallback answer based on selected scope" in result.markdown
 
     def test_list_utilities_returns_registered_catalog(self):
-        dispatcher, _mgr, _cache = self._make_dispatcher(enabled=False)
+        dispatcher, _mgr = self._make_dispatcher(enabled=False)
         utilities = dispatcher.list_utilities()
         assert len(utilities) >= 3
         assert any(spec.utility_id == "turn_title" for spec in utilities)
 
     def test_run_utility_uses_ai_when_enabled(self):
-        dispatcher, mgr, _cache = self._make_dispatcher(enabled=True)
+        dispatcher, mgr = self._make_dispatcher(enabled=True)
         mgr.run = MagicMock(
             return_value=SideChannelResult(
                 text="Debug lane rollout",
@@ -717,7 +509,7 @@ class TestDataDispatcher:
         assert call.kwargs["prompt_version"] == "v1"
 
     def test_run_utility_falls_back_when_disabled(self):
-        dispatcher, mgr, _cache = self._make_dispatcher(enabled=False)
+        dispatcher, mgr = self._make_dispatcher(enabled=False)
         mgr.run = MagicMock()
         result = dispatcher.run_utility(
             [{"role": "assistant", "content": "implemented debug lane"}],
@@ -728,7 +520,7 @@ class TestDataDispatcher:
         mgr.run.assert_not_called()
 
     def test_run_utility_unknown_id_returns_error(self):
-        dispatcher, _mgr, _cache = self._make_dispatcher(enabled=False)
+        dispatcher, _mgr = self._make_dispatcher(enabled=False)
         result = dispatcher.run_utility(
             [{"role": "assistant", "content": "implemented debug lane"}],
             utility_id="not_real",

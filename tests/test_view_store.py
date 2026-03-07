@@ -361,14 +361,14 @@ class TestScPanelStateComputed:
     def test_updates_from_store(self):
         store = cc_dump.app.view_store.create()
         store.set("sc:loading", True)
-        store.set("sc:active_action", "summarize_recent")
-        store.set("sc:result_text", "summary")
-        store.set("sc:purpose_usage", {"block_summary": {"turns": 1}})
+        store.set("sc:active_action", "qa_submit")
+        store.set("sc:result_text", "answer")
+        store.set("sc:purpose_usage", {"conversation_qa": {"turns": 1}})
         state = store.sc_panel_state.get()
         assert state["loading"] is True
-        assert state["active_action"] == "summarize_recent"
-        assert state["result_text"] == "summary"
-        assert state["purpose_usage"] == {"block_summary": {"turns": 1}}
+        assert state["active_action"] == "qa_submit"
+        assert state["result_text"] == "answer"
+        assert state["purpose_usage"] == {"conversation_qa": {"turns": 1}}
 
 
 class TestFooterReaction:
