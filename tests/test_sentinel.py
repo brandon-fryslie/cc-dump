@@ -276,7 +276,7 @@ class TestRequestPipeline:
                 {
                     "role": "user",
                     "content": (
-                        '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"run-1","purpose":"block_summary",'
+                        '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"run-1","purpose":"handoff_note",'
                         '"source_session_id":"sess-1"}>>\nSummarize this'
                     ),
                 }

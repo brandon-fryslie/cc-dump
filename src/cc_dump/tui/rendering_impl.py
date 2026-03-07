@@ -2758,12 +2758,12 @@ def _message_content_count(counts: Counter[str]) -> int:
     )
 
 
-def _render_message_block_summary_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
+def _render_message_compact_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render MessageBlock summary-collapsed header."""
     return _render_message_header(block, include_timestamp=False)
 
 
-def _render_message_block_summary_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
+def _render_message_compact_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render MessageBlock summary-expanded header with compact composition stats."""
     header = _render_message_header(block, include_timestamp=True)
     children = getattr(block, "children", None) or []
@@ -3250,8 +3250,8 @@ BLOCK_STATE_RENDERERS: dict[
     ("MetadataBlock", True, False, True): _render_metadata_summary_expanded,
     ("MetadataBlock", True, True, True): _render_metadata_full_expanded,
     # MessageBlock: compact summary-collapsed, richer summary-expanded, counted full-collapsed.
-    ("MessageBlock", True, False, False): _render_message_block_summary_collapsed,
-    ("MessageBlock", True, False, True): _render_message_block_summary_expanded,
+    ("MessageBlock", True, False, False): _render_message_compact_collapsed,
+    ("MessageBlock", True, False, True): _render_message_compact_expanded,
     ("MessageBlock", True, True, False): _render_message_block_full_collapsed,
     # Section containers: keep SC terse, enrich SE with composition hints.
     ("MetadataSection", True, False, True): _render_metadata_section_summary_expanded,
