@@ -154,6 +154,7 @@ class CcDumpApp(App):
         event_queue,
         state,
         router,
+        provider_states: dict[str, dict[str, object]] | None = None,
         analytics_store=None,
         host: str = "127.0.0.1",
         port: int = 3344,
@@ -168,15 +169,16 @@ class CcDumpApp(App):
         view_store=None,
         domain_store=None,
         store_context=None,
-        provider_endpoints: Optional[dict[str, dict[str, object]]] = None,
-        openai_port: Optional[int] = None,
-        openai_target: Optional[str] = None,
+        provider_endpoints: cc_dump.providers.ProviderEndpointMap | None = None,
         auto_launch_config: Optional[str] = None,
         auto_launch_extra_args: Optional[list[str]] = None,
     ):
         super().__init__()
         self._event_queue = event_queue
-        self._state = state
+        # [LAW:one-source-of-truth] Default-provider state is an alias into canonical per-provider state.
+        self._provider_states = dict(provider_states or {})
+        self._provider_states.setdefault(cc_dump.providers.DEFAULT_PROVIDER_KEY, state)
+        self._state = self._provider_states[cc_dump.providers.DEFAULT_PROVIDER_KEY]
         self._router = router
         self._analytics_store = analytics_store
         self._session_id: str | None = None
@@ -186,33 +188,14 @@ class CcDumpApp(App):
         # // [LAW:one-source-of-truth] Active provider endpoints are owned here.
         if provider_endpoints is None:
             provider_endpoints = {
-                "anthropic": {
-                    "proxy_url": "http://{}:{}".format(host, port),
-                    "target": target,
-                },
+                cc_dump.providers.DEFAULT_PROVIDER_KEY: cc_dump.providers.default_provider_endpoint(
+                    host,
+                    port,
+                    target or "",
+                )
             }
-            if openai_port is not None:
-                provider_endpoints["openai"] = {
-                    "proxy_url": "http://{}:{}".format(host, openai_port),
-                    "target": openai_target,
-                }
-        normalized_endpoints: dict[str, dict[str, object]] = {}
-        for key, data in provider_endpoints.items():
-            if not isinstance(data, dict):
-                continue
-            spec = cc_dump.providers.get_provider_spec(key)
-            normalized: dict[str, object] = {
-                "proxy_url": str(data.get("proxy_url", "") or ""),
-                "target": str(data.get("target", "") or ""),
-            }
-            extras = {
-                extra_key: extra_value
-                for extra_key, extra_value in data.items()
-                if extra_key not in {"proxy_url", "target"}
-            }
-            normalized.update(extras)
-            normalized_endpoints[spec.key] = normalized
-        self._provider_endpoints = normalized_endpoints
+        # // [LAW:single-enforcer] Provider endpoint normalization is centralized in cc_dump.providers.
+        self._provider_endpoints = dict(provider_endpoints)
         self._replay_data = replay_data
         self._recording_path = recording_path
         self._replay_file = replay_file
@@ -373,6 +356,20 @@ class CcDumpApp(App):
     def _iter_domain_stores(self):
         return tuple(self._session_domain_stores.values())
 
+    def _provider_state(self, provider: str) -> dict[str, object]:
+        return self._provider_states.get(provider, self._state)
+
+    def _total_request_count(self) -> int:
+        return sum(
+            count
+            for count in (
+                state.get("request_counter", 0)
+                for state in self._provider_states.values()
+                if isinstance(state, dict)
+            )
+            if isinstance(count, int)
+        )
+
     def _session_tab_title(self, session_key: str) -> str:
         if session_key == self._default_session_key:
             return cc_dump.providers.get_provider_spec(
@@ -385,10 +382,7 @@ class CcDumpApp(App):
             suffix = parts[2] if len(parts) > 2 else session_key
             return "SC " + suffix[:8]
         # Provider-prefixed session keys: "<provider>:__default__" → provider tab title.
-        provider = cc_dump.providers.session_provider(
-            session_key,
-            default_session_key=self._default_session_key,
-        )
+        provider = cc_dump.providers.session_provider(session_key)
         if provider != cc_dump.providers.DEFAULT_PROVIDER_KEY:
             spec = cc_dump.providers.get_provider_spec(provider)
             _, _, suffix = session_key.partition(":")
@@ -498,10 +492,49 @@ class CcDumpApp(App):
         """
         return cc_dump.providers.provider_session_key(
             provider,
-            default_session_key=self._default_session_key,
         )
 
-    def _resolve_event_session_key(self, event) -> str:
+    def _resolve_default_provider_session_key(self, event) -> str:
+        request_id = str(getattr(event, "request_id", "") or "")
+        session_key = self._default_session_key
+        if event.kind == cc_dump.pipeline.event_types.PipelineEventKind.REQUEST:
+            body = getattr(event, "body", {})
+            if isinstance(body, dict) and cc_dump.ai.side_channel_marker.extract_marker(body):
+                # [LAW:one-type-per-behavior] Workbench AI traffic is one inspectable lane.
+                session_key = self._workbench_session_key
+        elif request_id:
+            session_key = self._request_session_keys.get(request_id, session_key)
+        self._bind_request_session(request_id, session_key)
+        self._ensure_session_surface(session_key)
+        return session_key
+
+    def _track_request_activity(self, request_id: str) -> None:
+        if not request_id:
+            return
+        resolved_key = self._session_key_for_request_id(request_id)
+        self._ensure_session_surface(resolved_key)
+        per_session = self._app_state.get("last_message_time_by_session", {})
+        if not isinstance(per_session, dict):
+            per_session = {}
+        per_session[resolved_key] = time.monotonic()
+        self._app_state["last_message_time_by_session"] = per_session
+
+    def _sync_detected_session(self, state: dict[str, object]) -> None:
+        # // [LAW:one-source-of-truth] Session ID comes from formatting state,
+        # not from blocks or app_state side-channels.
+        current_session = state.get("current_session", "")
+        current_session = current_session if isinstance(current_session, str) else ""
+        if not current_session or current_session == self._session_id:
+            return
+        self._app_log("INFO", f"Session detected: {current_session}")
+        self._session_id = current_session
+        self.post_message(NewSession(current_session))
+        self.notify(f"New session: {current_session[:8]}...")
+        info = self._get_info()
+        if info is not None:
+            info.update_info(self._build_server_info())
+
+    def _resolve_event_session_key(self, event, *, provider: str | None = None) -> str:
         """Resolve session key for event routing.
 
         // [LAW:one-source-of-truth] request_id -> session routing is resolved once here.
@@ -509,37 +542,13 @@ class CcDumpApp(App):
         // Session identity preserved on blocks (block.session_id) and in
         // formatting state (state["current_session"]), not in tab routing.
         """
-        provider = self._resolve_event_provider(event)
-        provider_key = self._provider_tab_key(provider)
-
-        # Non-default providers: one tab per provider, no sub-session routing.
-        if provider != cc_dump.providers.DEFAULT_PROVIDER_KEY:
+        resolved_provider = provider or self._resolve_event_provider(event)
+        provider_key = self._provider_tab_key(resolved_provider)
+        if resolved_provider != cc_dump.providers.DEFAULT_PROVIDER_KEY:
             self._bind_request_session(event.request_id, provider_key)
             self._ensure_session_surface(provider_key)
             return provider_key
-
-        # Anthropic: one tab per instance. Side-channel goes to workbench tab.
-        # // [LAW:one-source-of-truth] All non-side-channel Anthropic traffic routes
-        # to default tab. Session boundaries shown via NewSessionBlock separators.
-        # // [LAW:single-enforcer] Binding is set on REQUEST only; subsequent events
-        # for the same request_id reuse the existing binding.
-        request_id = str(getattr(event, "request_id", "") or "")
-        key = self._default_session_key
-        if event.kind == cc_dump.pipeline.event_types.PipelineEventKind.REQUEST:
-            body = getattr(event, "body", {})
-            marker = (
-                cc_dump.ai.side_channel_marker.extract_marker(body)
-                if isinstance(body, dict)
-                else None
-            )
-            if marker is not None:
-                # [LAW:one-type-per-behavior] Workbench AI traffic is one inspectable lane.
-                key = self._workbench_session_key
-        elif request_id:
-            key = self._request_session_keys.get(request_id, key)
-        self._bind_request_session(request_id, key)
-        self._ensure_session_surface(key)
-        return key
+        return self._resolve_default_provider_session_key(event)
 
     def _get_active_session_panel_state(self) -> tuple[str | None, float | None]:
         """Return session panel identity + last activity for active tab context."""
@@ -898,16 +907,15 @@ class CcDumpApp(App):
 
     def _build_server_info(self) -> dict:
         """// [LAW:one-source-of-truth] All server info derived from constructor params."""
-        anthropic_endpoint = self._provider_endpoints.get(
-            cc_dump.providers.DEFAULT_PROVIDER_KEY,
-            {},
+        default_endpoint = self._provider_endpoints.get(
+            cc_dump.providers.DEFAULT_PROVIDER_KEY
         )
-        proxy_url = str(
-            anthropic_endpoint.get("proxy_url")
-            or "http://{}:{}".format(self._host, self._port)
+        proxy_url = (
+            default_endpoint.proxy_url
+            if default_endpoint is not None and default_endpoint.proxy_url
+            else "http://{}:{}".format(self._host, self._port)
         )
-        primary_target_raw = anthropic_endpoint.get("target", "")
-        primary_target = str(primary_target_raw or "") or None
+        primary_target = default_endpoint.target if default_endpoint is not None else None
         provider_modes: list[str] = []
 
         provider_rows: list[dict[str, str]] = []
@@ -915,16 +923,14 @@ class CcDumpApp(App):
             endpoint = self._provider_endpoints.get(spec.key)
             if endpoint is None:
                 continue
-            mode_hint = str(endpoint.get("proxy_mode", spec.proxy_type) or spec.proxy_type).strip().lower()
-            normalized_mode = mode_hint if mode_hint in {"forward", "reverse"} else spec.proxy_type
-            provider_modes.append(normalized_mode)
+            provider_modes.append(endpoint.proxy_mode)
             provider_rows.append(
                 {
                     "key": spec.key,
                     "name": spec.display_name,
-                    "proxy_url": str(endpoint.get("proxy_url", "") or ""),
-                    "target": str(endpoint.get("target", "") or ""),
-                    "proxy_mode": normalized_mode,
+                    "proxy_url": endpoint.proxy_url,
+                    "target": endpoint.target or "",
+                    "proxy_mode": endpoint.proxy_mode,
                     "base_url_env": spec.base_url_env,
                     "client_hint": spec.client_hint,
                 }
@@ -1006,7 +1012,7 @@ class CcDumpApp(App):
 
             self._app_log(
                 "INFO",
-                f"Replay complete: {self._state['request_counter']} requests processed",
+                f"Replay complete: {self._total_request_count()} requests processed",
             )
         except Exception as e:
             self._app_log("ERROR", f"Fatal error in replay processing: {e}")
@@ -1055,7 +1061,9 @@ class CcDumpApp(App):
             return
 
         kind = event.kind
-        session_key = self._resolve_event_session_key(event)
+        provider = self._resolve_event_provider(event)
+        state = self._provider_state(provider)
+        session_key = self._resolve_event_session_key(event, provider=provider)
         conv = self._get_conv(session_key=session_key)
         stats = self._get_stats()
         if stats is None:
@@ -1092,29 +1100,10 @@ class CcDumpApp(App):
         )
         self._app_state = cast(
             AppState,
-            handler(event, self._state, widgets, self._app_state, self._app_log),
+            handler(event, state, widgets, self._app_state, self._app_log),
         )
-        request_id = str(getattr(event, "request_id", "") or "")
-        if request_id:
-            resolved_key = self._session_key_for_request_id(request_id)
-            self._ensure_session_surface(resolved_key)
-            per_session = self._app_state.get("last_message_time_by_session", {})
-            if not isinstance(per_session, dict):
-                per_session = {}
-            per_session[resolved_key] = time.monotonic()
-            self._app_state["last_message_time_by_session"] = per_session
-
-        # // [LAW:one-source-of-truth] Session ID comes from formatting state,
-        # not from blocks or app_state side-channels.
-        current_session = self._state.get("current_session", "")
-        if current_session and current_session != self._session_id:
-            self._app_log("INFO", f"Session detected: {current_session}")
-            self._session_id = current_session
-            self.post_message(NewSession(current_session))
-            self.notify(f"New session: {current_session[:8]}...")
-            info = self._get_info()
-            if info is not None:
-                info.update_info(self._build_server_info())
+        self._track_request_activity(str(getattr(event, "request_id", "") or ""))
+        self._sync_detected_session(state)
 
     def on_tabbed_content_tab_activated(
         self, event: TabbedContent.TabActivated
@@ -1486,7 +1475,13 @@ class CcDumpApp(App):
         if side_panel is not None:
             side_panel.display = side_open
 
-        focus_target = side_panel if side_open else launch_panel if launch_open else settings_panel if settings_open else None
+        focus_target = None
+        if side_open:
+            focus_target = side_panel
+        elif launch_open:
+            focus_target = launch_panel
+        elif settings_open:
+            focus_target = settings_panel
         if focus_target is not None:
             focus_default = getattr(focus_target, "focus_default_control", None)
             if callable(focus_default):

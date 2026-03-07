@@ -78,23 +78,25 @@ def save_setting(key: str, value) -> None:
 
 
 # [LAW:one-source-of-truth] Built-in filterset defaults.
-_H = VisState(False, False, False)  # hidden
-_SC = VisState(True, False, False)  # summary, collapsed
-_FC = VisState(True, True, False)   # full, collapsed
+_H = VisState(False, False, False)   # hidden
+_SC = VisState(True, False, False)   # summary, collapsed
+_SE = VisState(True, False, True)    # summary, expanded
+_FC = VisState(True, True, False)    # full, collapsed
+_FE = VisState(True, True, True)     # full, expanded
 
 def _fs(user, assistant, tools, system, metadata, thinking):
     return {"user": user, "assistant": assistant, "tools": tools,
             "system": system, "metadata": metadata, "thinking": thinking}
 
 DEFAULT_FILTERSETS: dict[str, dict[str, VisState]] = {
-    "1": _fs(_FC, _FC, _H,  _H,  _H,  _H),    # Conversation
+    "1": _fs(_FE, _FE, _SC, _SC, _H,  _SC),    # Conversation
     "2": _fs(_SC, _SC, _SC, _SC, _SC, _SC),     # Overview
-    "4": _fs(_SC, _SC, _FC, _H,  _H,  _H),     # Tools
-    "5": _fs(_SC, _SC, _H,  _FC, _FC, _H),      # System
-    "6": _fs(_SC, _SC, _SC, _H,  _FC, _H),      # Cost
-    "7": _fs(_FC, _FC, _FC, _FC, _FC, _FC),     # Full Debug
-    "8": _fs(_H,  _FC, _H,  _H,  _H,  _H),     # Assistant
-    "9": _fs(_SC, _SC, _SC, _H,  _H,  _H),      # Minimal
+    "4": _fs(_SC, _SC, _FE, _H,  _H,  _H),     # Tools
+    "5": _fs(_SC, _SC, _H,  _FE, _FE, _H),     # System
+    "6": _fs(_SC, _SC, _SC, _H,  _FE, _H),     # Cost
+    "7": _fs(_FE, _FE, _FE, _FE, _FE, _FE),    # Full Debug
+    "8": _fs(_H,  _FE, _H,  _H,  _H,  _H),     # Assistant
+    "9": _fs(_SC, _SC, _SC, _H,  _H,  _H),     # Minimal
 }
 
 

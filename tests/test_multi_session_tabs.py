@@ -84,7 +84,7 @@ async def test_all_sessions_route_to_default_tab():
         non_side_channel_tabs = [
             k for k in app._session_tab_ids
             if not app._is_side_channel_session_key(k)
-            and cc_dump.providers.session_provider(k, default_session_key=app._default_session_key)
+            and cc_dump.providers.session_provider(k)
             == cc_dump.providers.DEFAULT_PROVIDER_KEY
         ]
         assert len(non_side_channel_tabs) == 1

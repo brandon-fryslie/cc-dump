@@ -387,10 +387,7 @@ def action_sc_qa_submit(app) -> None:
     )
 
     dispatcher = app._data_dispatcher
-    source_provider = cc_dump.providers.session_provider(
-        app._active_session_key_from_tabs(),
-        default_session_key=app._default_session_key,
-    )
+    source_provider = cc_dump.providers.session_provider(app._active_session_key_from_tabs())
     request_id = f"sc-qa-{int(time.time() * 1000)}"
 
     def _do_qa() -> None:
@@ -481,10 +478,7 @@ def action_sc_utility_run(app) -> None:
     )
 
     dispatcher = app._data_dispatcher
-    source_provider = cc_dump.providers.session_provider(
-        app._active_session_key_from_tabs(),
-        default_session_key=app._default_session_key,
-    )
+    source_provider = cc_dump.providers.session_provider(app._active_session_key_from_tabs())
 
     def _do_utility_run() -> None:
         result = dispatcher.run_utility(
