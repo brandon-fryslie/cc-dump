@@ -159,11 +159,8 @@ def is_known_provider(provider: str) -> bool:
 
 
 def get_provider_spec(provider: str) -> ProviderSpec:
-    """Return provider spec or raise for unknown provider keys."""
-    key = normalize_provider(provider)
-    if key not in _PROVIDERS:
-        raise ValueError(f"unknown provider: {provider!r}")
-    return _PROVIDERS[key]
+    """Return provider spec from the canonical registry."""
+    return _PROVIDERS[normalize_provider(provider)]
 
 
 def all_provider_specs() -> tuple[ProviderSpec, ...]:
