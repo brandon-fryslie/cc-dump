@@ -37,7 +37,7 @@ SCHEMA["panel:debug_settings"] = False
 SCHEMA["nav:follow"] = "active"
 
 # Footer inputs (previously app attributes or external reads)
-SCHEMA["filter:active"] = None              # str|None — was app._active_filterset_slot
+SCHEMA["filter:active"] = "1"               # str|None — default to F1 (Conversation)
 SCHEMA["tmux:available"] = False            # bool — mirrored from tmux controller
 SCHEMA["tmux:auto_zoom"] = False            # bool — mirrored from tmux controller
 SCHEMA["tmux:zoomed"] = False               # bool — mirrored from tmux controller
@@ -226,7 +226,6 @@ def setup_reactions(store, context=None):
                 ("push_sidebar_state", lambda: store.sidebar_panel_state.get()),
                 ("push_chrome_panels", lambda: store.chrome_panel_state.get()),
                 ("push_aux_panels", lambda: store.aux_panel_state.get()),
-                ("push_footer", lambda: store.footer_state.get()),
                 ("push_errors", lambda: store.error_items.get()),
                 ("push_sc_panel", lambda: store.sc_panel_state.get()),
                 ("push_workbench", lambda: store.workbench_state.get()),
