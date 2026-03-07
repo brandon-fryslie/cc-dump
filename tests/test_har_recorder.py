@@ -720,7 +720,7 @@ def test_har_subscriber_side_channel_metadata_annotation(tmp_path):
     har_path = tmp_path / "test.har"
     subscriber = HARRecordingSubscriber(str(har_path))
     marker = (
-        '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"run-1","purpose":"block_summary",'
+        '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"run-1","purpose":"handoff_note",'
         '"source_provider":"sess-1","prompt_version":"v1","policy_version":"redaction-v1"}>>\n'
     )
 
@@ -740,12 +740,12 @@ def test_har_subscriber_side_channel_metadata_annotation(tmp_path):
     with open(har_path, "r") as f:
         har = json.load(f)
     entry = har["log"]["entries"][0]
-    assert "cc-dump side-channel run=run-1 purpose=block_summary" in entry["comment"]
+    assert "cc-dump side-channel run=run-1 purpose=handoff_note" in entry["comment"]
     assert "prompt_version=v1" in entry["comment"]
     assert "policy_version=redaction-v1" in entry["comment"]
     assert entry["_cc_dump"]["category"] == "side_channel"
     assert entry["_cc_dump"]["run_id"] == "run-1"
-    assert entry["_cc_dump"]["purpose"] == "block_summary"
+    assert entry["_cc_dump"]["purpose"] == "handoff_note"
     assert entry["_cc_dump"]["prompt_version"] == "v1"
     assert entry["_cc_dump"]["policy_version"] == "redaction-v1"
     assert entry["_cc_dump"]["source_provider"] == "sess-1"

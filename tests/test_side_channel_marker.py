@@ -10,7 +10,7 @@ from cc_dump.ai.side_channel_marker import (
 def test_encode_and_extract_marker_from_string_content():
     marker = SideChannelMarker(
         run_id="abc123",
-        purpose="block_summary",
+        purpose="handoff_note",
         source_provider="anthropic",
     )
     body = {
@@ -21,7 +21,7 @@ def test_encode_and_extract_marker_from_string_content():
     parsed = extract_marker(body)
     assert parsed is not None
     assert parsed.run_id == "abc123"
-    assert parsed.purpose == "block_summary"
+    assert parsed.purpose == "handoff_note"
     assert parsed.source_provider == "anthropic"
     assert parsed.prompt_version == "v1"
     assert parsed.policy_version == ""
@@ -30,7 +30,7 @@ def test_encode_and_extract_marker_from_string_content():
 def test_strip_marker_from_body_removes_prefix_line():
     marker = SideChannelMarker(
         run_id="abc123",
-        purpose="block_summary",
+        purpose="handoff_note",
         source_provider="anthropic",
     )
     body = {
@@ -46,7 +46,7 @@ def test_strip_marker_from_body_removes_prefix_line():
 def test_extract_marker_from_block_content():
     marker = SideChannelMarker(
         run_id="abc123",
-        purpose="action_extraction",
+        purpose="conversation_qa",
         source_provider="openai",
     )
     body = {
@@ -61,12 +61,12 @@ def test_extract_marker_from_block_content():
     }
     parsed = extract_marker(body)
     assert parsed is not None
-    assert parsed.purpose == "action_extraction"
+    assert parsed.purpose == "conversation_qa"
     assert parsed.source_provider == "openai"
 
 
 def test_encode_marker_has_expected_delimiters():
-    marker = SideChannelMarker(run_id="x", purpose="block_summary")
+    marker = SideChannelMarker(run_id="x", purpose="handoff_note")
     encoded = encode_marker(marker)
     assert encoded.startswith("<<CC_DUMP_SIDE_CHANNEL:")
     assert encoded.endswith(">>")
@@ -94,7 +94,7 @@ def test_extract_marker_reads_policy_version():
             {
                 "role": "user",
                 "content": (
-                    '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"abc","purpose":"block_summary",'
+                    '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"abc","purpose":"handoff_note",'
                     '"source_session_id":"s1","prompt_version":"v1",'
                     '"policy_version":"redaction-v1"}>>\nhello'
                 ),

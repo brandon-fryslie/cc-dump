@@ -2,10 +2,10 @@ from cc_dump.ai.prompt_registry import get_prompt_spec
 
 
 def test_known_purpose_returns_registered_spec():
-    spec = get_prompt_spec("block_summary")
-    assert spec.purpose == "block_summary"
+    spec = get_prompt_spec("handoff_note")
+    assert spec.purpose == "handoff_note"
     assert spec.version == "v1"
-    assert "Summarize" in spec.instruction
+    assert "handoff note" in spec.instruction
 
 
 def test_unknown_purpose_falls_back_to_utility_custom():
@@ -19,14 +19,6 @@ def test_lookup_is_deterministic_for_unknown_purpose():
     spec_a = get_prompt_spec("x")
     spec_b = get_prompt_spec("x")
     assert spec_a == spec_b
-
-
-def test_action_extraction_prompt_requires_strict_json():
-    spec = get_prompt_spec("action_extraction")
-    assert spec.purpose == "action_extraction"
-    assert "strict JSON" in spec.instruction
-    assert "\"kind\":\"action|deferred\"" in spec.instruction
-
 
 def test_handoff_prompt_requires_fixed_sections():
     spec = get_prompt_spec("handoff_note")
@@ -42,5 +34,4 @@ def test_conversation_qa_prompt_declares_answer_with_sources():
     assert "strict JSON" in spec.instruction
     assert "\"answer\"" in spec.instruction
     assert "\"source_links\"" in spec.instruction
-
 

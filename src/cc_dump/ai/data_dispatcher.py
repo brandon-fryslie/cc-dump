@@ -1,11 +1,11 @@
-"""Data dispatcher — routes enrichment requests to AI or fallback.
+"""Data dispatcher — routes typed AI workbench requests to AI or fallback.
 
 This module is a STABLE BOUNDARY — not hot-reloadable.
 Holds reference to SideChannelManager.
 Import as: import cc_dump.ai.data_dispatcher
 
 // [LAW:single-enforcer] Sole decision point for AI vs fallback routing.
-// [LAW:dataflow-not-control-flow] Always returns EnrichedResult;
+// [LAW:dataflow-not-control-flow] Always returns a typed result object;
 //   source field indicates origin, not branching at the caller.
 """
 
@@ -13,10 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
-from collections.abc import Callable
 
-from cc_dump.ai.action_items import ActionItemStore, ActionWorkItem, parse_action_items
-from cc_dump.ai.action_items_beads import create_beads_issue_for_item
 from cc_dump.ai.checkpoints import (
     CheckpointArtifact,
     CheckpointStore,
@@ -44,22 +41,9 @@ from cc_dump.ai.handoff_notes import (
 from cc_dump.ai.prompt_registry import get_prompt_spec, PromptSpec, UTILITY_CUSTOM_PURPOSE
 from cc_dump.ai.side_channel import SideChannelManager
 from cc_dump.ai.side_channel_analytics import SideChannelAnalytics
-from cc_dump.ai.summary_cache import SummaryCache
 from cc_dump.ai.utility_catalog import UtilityRegistry, UtilitySpec, fallback_utility_output, utility_prompt
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class EnrichedResult:
-    """Result from data enrichment, whether AI or fallback.
-
-    // [LAW:dataflow-not-control-flow] Always present. source indicates origin.
-    """
-
-    text: str
-    source: str  # "ai" | "cache" | "fallback" | "error"
-    elapsed_ms: int
 
 
 @dataclass
@@ -68,16 +52,6 @@ class CheckpointCreateResult:
     source: str  # "ai" | "fallback" | "error"
     elapsed_ms: int
     error: str = ""
-
-
-@dataclass
-class ActionExtractionResult:
-    batch_id: str
-    items: list[ActionWorkItem]
-    source: str  # "ai" | "fallback" | "error"
-    elapsed_ms: int
-    error: str = ""
-
 
 @dataclass
 class HandoffResult:
@@ -128,17 +102,15 @@ class SideChannelExecution:
 class DataDispatcher:
     """Routes enrichment requests to AI or fallback.
 
-    Widgets call methods here and get EnrichedResult back,
+    Widgets call methods here and get typed result objects back,
     agnostic to whether AI was used. When side-channel is disabled,
     fallback data is returned immediately.
     """
 
-    def __init__(self, side_channel: SideChannelManager, summary_cache: SummaryCache | None = None) -> None:
+    def __init__(self, side_channel: SideChannelManager) -> None:
         self._side_channel = side_channel
         self._analytics = SideChannelAnalytics()
-        self._summary_cache = summary_cache if summary_cache is not None else SummaryCache()
         self._checkpoint_store = CheckpointStore()
-        self._action_items = ActionItemStore()
         self._handoff_store = HandoffStore()
         self._utility_registry = UtilityRegistry()
 
@@ -192,76 +164,6 @@ class DataDispatcher:
             text="",
             elapsed_ms=result.elapsed_ms,
             error=result.error,
-        )
-
-    def summarize_messages(
-        self,
-        messages: list[dict],
-        source_provider: str = "",
-        prompt_override: str | None = None,
-    ) -> EnrichedResult:
-        """Summarize a list of API messages.
-
-        BLOCKING — must be called from a worker thread, never from the TUI thread.
-
-        When side-channel is disabled, returns fallback summary.
-        On error, returns error text with fallback appended.
-        """
-        fallback_text = _fallback_summary(messages)
-        fallback = EnrichedResult(
-            text=fallback_text,
-            source="fallback",
-            elapsed_ms=0,
-        )
-
-        prepared = self.prepare_summary_prompt(messages)
-        context = _build_summary_context(messages)
-        cache_key = self._summary_cache.make_key(
-            purpose=prepared.purpose,
-            prompt_version=prepared.prompt_version,
-            content=context,
-        )
-        cached = self._summary_cache.get(cache_key)
-        if cached is not None and cached.summary_text:
-            return EnrichedResult(
-                text=cached.summary_text,
-                source="cache",
-                elapsed_ms=0,
-            )
-
-        prompt = _resolve_prompt_override(prepared.prompt, prompt_override)
-        execution = self._execute_side_channel(
-            prompt=prompt,
-            purpose=prepared.purpose,
-            prompt_version=prepared.prompt_version,
-            source_provider=source_provider,
-            blocked_log_label="side-channel",
-        )
-        if execution.source == "fallback":
-            if execution.error.startswith("Guardrail:"):
-                return EnrichedResult(
-                    text=f"{fallback.text}\n\n[side-channel blocked] {execution.error}",
-                    source="fallback",
-                    elapsed_ms=execution.elapsed_ms,
-                )
-            return fallback
-        if execution.source == "error":
-            return EnrichedResult(
-                text=f"AI error: {execution.error}\n\n---\n\n{fallback.text}",
-                source="error",
-                elapsed_ms=execution.elapsed_ms,
-            )
-        self._summary_cache.put(
-            key=cache_key,
-            purpose=prepared.purpose,
-            prompt_version=prepared.prompt_version,
-            content=context,
-            summary_text=execution.text,
-        )
-        return EnrichedResult(
-            text=execution.text,
-            source="ai",
-            elapsed_ms=execution.elapsed_ms,
         )
 
     def side_channel_usage_snapshot(self) -> dict[str, dict[str, int]]:
@@ -333,68 +235,6 @@ class DataDispatcher:
             ]
             return "missing_checkpoints:" + ",".join(missing_ids)
         return render_checkpoint_diff(before=before, after=after)
-
-    def extract_action_items(
-        self,
-        messages: list[dict],
-        *,
-        source_provider: str = "",
-        request_id: str = "",
-        prompt_override: str | None = None,
-    ) -> ActionExtractionResult:
-        """Extract action/deferred candidates and stage them for explicit review."""
-        prepared = self.prepare_action_extraction_prompt(messages)
-        prompt = _resolve_prompt_override(prepared.prompt, prompt_override)
-        execution = self._execute_side_channel(
-            prompt=prompt,
-            purpose=prepared.purpose,
-            prompt_version=prepared.prompt_version,
-            source_provider=source_provider,
-            blocked_log_label="action extraction",
-            disabled_error="side-channel disabled",
-        )
-        if execution.source != "ai":
-            batch_id = self._action_items.stage([])
-            return ActionExtractionResult(
-                batch_id=batch_id,
-                items=[],
-                source=execution.source,
-                elapsed_ms=execution.elapsed_ms,
-                error=execution.error,
-            )
-        extracted = parse_action_items(execution.text, request_id=request_id)
-        batch_id = self._action_items.stage(extracted)
-        return ActionExtractionResult(
-            batch_id=batch_id,
-            items=extracted,
-            source="ai",
-            elapsed_ms=execution.elapsed_ms,
-        )
-
-    def pending_action_items(self, batch_id: str) -> list[ActionWorkItem]:
-        return self._action_items.pending(batch_id)
-
-    def accept_action_items(
-        self,
-        *,
-        batch_id: str,
-        item_ids: list[str],
-        create_beads: bool = False,
-        beads_hook: Callable[[ActionWorkItem], str] | None = None,
-    ) -> list[ActionWorkItem]:
-        """Persist accepted action/deferred items, optionally linking beads issues."""
-        # [LAW:single-enforcer] create_beads gate is enforced only here.
-        resolved_beads_hook = None
-        if create_beads:
-            resolved_beads_hook = beads_hook if beads_hook is not None else create_beads_issue_for_item
-        return self._action_items.accept(
-            batch_id=batch_id,
-            item_ids=item_ids,
-            beads_hook=resolved_beads_hook,
-        )
-
-    def accepted_action_items_snapshot(self) -> list[ActionWorkItem]:
-        return self._action_items.accepted_snapshot()
 
     def generate_handoff_note(
         self,
@@ -610,26 +450,6 @@ class DataDispatcher:
             text=execution.text,
             source="ai",
             elapsed_ms=execution.elapsed_ms,
-        )
-
-    def prepare_summary_prompt(self, messages: list[dict]) -> PreparedPrompt:
-        """Build canonical prompt payload for summary actions."""
-        spec = get_prompt_spec("block_summary")
-        context = _build_summary_context(messages)
-        return PreparedPrompt(
-            prompt=_build_summary_prompt(context, spec),
-            purpose=spec.purpose,
-            prompt_version=spec.version,
-        )
-
-    def prepare_action_extraction_prompt(self, messages: list[dict]) -> PreparedPrompt:
-        """Build canonical prompt payload for action extraction."""
-        spec = get_prompt_spec("action_extraction")
-        context = _build_summary_context(messages)
-        return PreparedPrompt(
-            prompt=_build_summary_prompt(context, spec),
-            purpose=spec.purpose,
-            prompt_version=spec.version,
         )
 
     def prepare_conversation_qa_prompt(

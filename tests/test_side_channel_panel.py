@@ -9,7 +9,6 @@ from cc_dump.tui.side_channel_panel import (
     _render_status_line,
     _render_usage_summary,
     _resolve_action,
-    parse_review_indices,
     render_qa_estimate_line,
     render_qa_scope_line,
 )
@@ -21,7 +20,7 @@ def test_render_purpose_usage_empty():
 
 def test_render_purpose_usage_masks_token_totals():
     usage = {
-        "block_summary": {
+        "handoff_note": {
             "turns": 2,
             "input_tokens": 10,
             "cache_read_tokens": 20,
@@ -31,7 +30,7 @@ def test_render_purpose_usage_masks_token_totals():
     }
     rendered = _render_purpose_usage(usage)
     assert "Purpose usage:" in rendered
-    assert "block_summary" in rendered
+    assert "handoff_note" in rendered
     assert "runs=2" in rendered
     assert "in=x" in rendered
     assert "cache_read=x" in rendered
@@ -40,12 +39,11 @@ def test_render_purpose_usage_masks_token_totals():
 
 
 def test_workbench_controls_are_grouped_by_intent():
-    assert len(WORKBENCH_CONTROL_GROUPS) >= 4
+    assert len(WORKBENCH_CONTROL_GROUPS) == 3
     titles = [group.title for group in WORKBENCH_CONTROL_GROUPS]
-    assert "Summarize" in titles
     assert "Ask" in titles
-    assert "Extract" in titles
     assert "Draft" in titles
+    assert "Utilities" in titles
 
 
 def test_workbench_controls_exclude_global_enable_toggle():
@@ -66,8 +64,8 @@ def test_status_line_reflects_disabled_loading_ready_states():
     assert _render_status_line(
         enabled=True,
         loading=True,
-        active_action="summarize_recent",
-    ) == "Status: Running Summarize Recent"
+        active_action="qa_submit",
+    ) == "Status: Running Scoped Q&A"
     assert _render_status_line(enabled=True, loading=False, active_action="") == "Status: Ready"
 
 
@@ -75,7 +73,7 @@ def test_usage_summary_totals_runs():
     assert _render_usage_summary({}) == "Usage: no runs yet"
     assert _render_usage_summary(
         {
-            "block_summary": {"turns": 2},
+            "handoff_note": {"turns": 2},
             "conversation_qa": {"turns": 1},
         }
     ) == "Usage: 3 runs across 2 purposes"
@@ -91,7 +89,7 @@ def test_result_preview_is_bounded():
 
 
 def test_ready_control_disabled_when_ai_disabled():
-    summarize = WORKBENCH_CONTROL_GROUPS[0].controls[0]
+    estimate = WORKBENCH_CONTROL_GROUPS[0].controls[0]
     state = SideChannelPanelState(
         enabled=False,
         loading=False,
@@ -101,9 +99,9 @@ def test_ready_control_disabled_when_ai_disabled():
         result_elapsed_ms=0,
         purpose_usage={},
     )
-    action = _resolve_action(control=summarize, state=state, is_active=False)
+    action = _resolve_action(control=estimate, state=state, is_active=False)
     label = _render_control_label(
-        control=summarize,
+        control=estimate,
         state=state,
         is_active=False,
         actionable=action is not None,
@@ -113,8 +111,8 @@ def test_ready_control_disabled_when_ai_disabled():
 
 
 def test_qa_controls_disabled_when_ai_disabled():
-    estimate_control = WORKBENCH_CONTROL_GROUPS[1].controls[0]
-    submit_control = WORKBENCH_CONTROL_GROUPS[1].controls[1]
+    estimate_control = WORKBENCH_CONTROL_GROUPS[0].controls[0]
+    submit_control = WORKBENCH_CONTROL_GROUPS[0].controls[1]
     state = SideChannelPanelState(
         enabled=False,
         loading=False,
@@ -159,23 +157,6 @@ def test_render_qa_scope_line_shows_selected_indices():
     assert render_qa_scope_line(scope_mode="selected_indices", selected_indices=(1, 3, 5)) == (
         "scope:selected_indices indices=[1, 3, 5]"
     )
-
-
-def test_parse_review_indices_valid_and_deduplicated():
-    parsed, error = parse_review_indices("3, 1,3,0")
-    assert parsed == (0, 1, 3)
-    assert error == ""
-
-
-def test_parse_review_indices_rejects_invalid_values():
-    parsed, error = parse_review_indices("a,2")
-    assert parsed == ()
-    assert "integers" in error
-
-    parsed, error = parse_review_indices("-1,2")
-    assert parsed == ()
-    assert "non-negative" in error
-
 
 def test_utility_launcher_options_are_bounded():
     options = _utility_options()

@@ -259,8 +259,6 @@ class CcDumpApp(App):
         self._active_session_key = self._default_session_key
         self._last_primary_session_key = self._default_session_key
         # [LAW:one-source-of-truth] Side-channel action review state is owned by app boundary.
-        self._sc_action_batch_id: str = ""
-        self._sc_action_items: list[object] = []
         # [LAW:one-source-of-truth] Panel IDs derived from registry
         self._panel_ids = dict(PANEL_CSS_IDS)
         self._logs_id = "logs-panel"
@@ -1359,15 +1357,6 @@ class CcDumpApp(App):
     def _close_side_channel(self):
         _side_channel.close_side_channel(self)
 
-    def _on_side_channel_result(self, result, context_session_key: str):
-        _side_channel.on_side_channel_result(self, result, context_session_key)
-
-    def action_sc_summarize_recent(self) -> None:
-        _side_channel.action_sc_summarize_recent(self)
-
-    def action_sc_summarize(self) -> None:
-        _side_channel.action_sc_summarize(self)
-
     def action_sc_qa_estimate(self) -> None:
         _side_channel.action_sc_qa_estimate(self)
 
@@ -1377,15 +1366,6 @@ class CcDumpApp(App):
     def _on_side_channel_qa_result(self, result, question: str, context_session_key: str) -> None:
         _side_channel.on_side_channel_qa_result(self, result, question, context_session_key)
 
-    def action_sc_action_extract(self) -> None:
-        _side_channel.action_sc_action_extract(self)
-
-    def _on_side_channel_action_extract_result(self, result, context_session_key: str) -> None:
-        _side_channel.on_side_channel_action_extract_result(self, result, context_session_key)
-
-    def action_sc_action_apply_review(self) -> None:
-        _side_channel.action_sc_action_apply_review(self)
-
     def action_sc_utility_run(self) -> None:
         _side_channel.action_sc_utility_run(self)
 
@@ -1394,9 +1374,6 @@ class CcDumpApp(App):
 
     def action_sc_preview_qa(self) -> None:
         _side_channel.action_sc_preview_qa(self)
-
-    def action_sc_preview_action_review(self) -> None:
-        _side_channel.action_sc_preview_action_review(self)
 
     def action_sc_preview_handoff(self) -> None:
         _side_channel.action_sc_preview_handoff(self)
