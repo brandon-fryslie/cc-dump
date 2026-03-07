@@ -217,7 +217,7 @@ def prev_filterset(app) -> None:
 
 
 def apply_filterset(app, slot: str) -> None:
-    """Apply a saved filterset slot to the current visibility state."""
+    """Apply a built-in filterset slot to the current visibility state."""
     filters = cc_dump.io.settings.get_filterset(slot)
     if filters is None:
         app.notify(f"Preset F{slot} is empty", severity="warning")
@@ -230,7 +230,7 @@ def apply_filterset(app, slot: str) -> None:
         updates[f"exp:{name}"] = vs.expanded
     app._view_store.update(updates)
     app._view_store.set("filter:active", slot)
-    # Show name for built-in presets, just slot number for user-defined
+    # [LAW:one-source-of-truth] Filterset labels come from built-in slot names only.
     name = cc_dump.tui.action_config.FILTERSET_NAMES.get(slot, "")
     label = f"F{slot} {name}" if name else f"F{slot}"
     app.notify(label)
