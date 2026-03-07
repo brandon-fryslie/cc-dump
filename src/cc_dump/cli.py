@@ -10,6 +10,7 @@ import signal
 import sys
 import threading
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -115,6 +116,20 @@ def _recording_path_for_provider(recordings_dir: Path, provider: str, timestamp:
     return str(recordings_dir / filename)
 
 
+@dataclass(frozen=True)
+class ProviderProxyBinding:
+    """Runtime proxy binding for one provider.
+
+    // [LAW:one-type-per-behavior] One binding type owns server, handler, and endpoint state.
+    """
+
+    spec: cc_dump.providers.ProviderSpec
+    server: http.server.ThreadingHTTPServer
+    handler_class: type[ProxyHandler]
+    port: int
+    endpoint: cc_dump.providers.ProviderEndpoint
+
+
 def main():
     auto_launch_config, _argv, auto_launch_extra_args = _detect_run_subcommand(sys.argv[1:])
 
@@ -126,7 +141,12 @@ def main():
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    target = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+    default_provider_key = cc_dump.providers.DEFAULT_PROVIDER_KEY
+    default_provider_spec = cc_dump.providers.require_provider_spec(default_provider_key)
+    target = os.environ.get(
+        default_provider_spec.base_url_env,
+        default_provider_spec.default_target,
+    )
     parser.add_argument(
         "--host",
         type=str,
@@ -138,7 +158,10 @@ def main():
         "--target",
         type=str,
         default=target,
-        help="Upstream API URL for reverse proxy mode (default: https://api.anthropic.com)",
+        help=(
+            "Upstream API URL for reverse proxy mode "
+            f"(default: {default_provider_spec.default_target})"
+        ),
     )
     parser.add_argument(
         "--record", type=str, default=None, help="HAR recording output directory"
@@ -292,15 +315,8 @@ def main():
         t.start()
         return srv, ap, t
 
-    proxy_servers: dict[str, http.server.ThreadingHTTPServer] = {}
-    # // [LAW:one-source-of-truth] Handler classes keyed by provider for shared runtime wiring.
-    proxy_handlers: dict[str, type[ProxyHandler]] = {}
-    proxy_ports: dict[str, int] = {}
-    proxy_targets: dict[str, str | None] = {}
-    provider_endpoints: dict[str, dict[str, str]] = {}
-
     active_specs: list[cc_dump.providers.ProviderSpec] = [
-        cc_dump.providers.require_provider_spec(cc_dump.providers.DEFAULT_PROVIDER_KEY)
+        default_provider_spec
     ]
     active_specs.extend(
         spec
@@ -315,10 +331,14 @@ def main():
         ca_dir = Path(args.forward_proxy_ca_dir) if args.forward_proxy_ca_dir else None
         forward_proxy_ca = ForwardProxyCertificateAuthority(ca_dir=ca_dir)
 
+    bindings: dict[str, ProviderProxyBinding] = {}
     for spec in active_specs:
-        bind_port = args.port if spec.key == cc_dump.providers.DEFAULT_PROVIDER_KEY else int(getattr(args, f"{spec.key}_port"))
-        configured_target = args.target if spec.key == cc_dump.providers.DEFAULT_PROVIDER_KEY else str(getattr(args, f"{spec.key}_target"))
-        target_host = configured_target if spec.proxy_type == "reverse" else None
+        bind_port = args.port if spec.key == default_provider_key else int(getattr(args, f"{spec.key}_port"))
+        configured_target = (
+            args.target if spec.key == default_provider_key else str(getattr(args, f"{spec.key}_target"))
+        )
+        normalized_target = configured_target.rstrip("/") if configured_target else None
+        target_host = normalized_target if spec.proxy_type == "reverse" else None
         ca_for_provider = forward_proxy_ca if spec.proxy_type == "forward" else None
 
         handler = make_handler_class(
@@ -328,39 +348,50 @@ def main():
             forward_proxy_ca=ca_for_provider,
         )
         srv, port, _ = _start_proxy_server(args.host, bind_port, handler)
-        proxy_servers[spec.key] = srv
-        proxy_handlers[spec.key] = handler
-        proxy_ports[spec.key] = port
-        proxy_targets[spec.key] = configured_target.rstrip("/") if configured_target else None
+        endpoint = cc_dump.providers.build_provider_endpoint(
+            spec.key,
+            proxy_url=f"http://{args.host}:{port}",
+            target=normalized_target,
+            proxy_mode=spec.proxy_type,
+            forward_proxy_ca_cert_path=(
+                str(ca_for_provider.ca_cert_path) if ca_for_provider is not None else None
+            ),
+        )
+        bindings[spec.key] = ProviderProxyBinding(
+            spec=spec,
+            server=srv,
+            handler_class=handler,
+            port=port,
+            endpoint=endpoint,
+        )
 
-    actual_port = proxy_ports[cc_dump.providers.DEFAULT_PROVIDER_KEY]
-    anthropic_target = proxy_targets.get(cc_dump.providers.DEFAULT_PROVIDER_KEY)
-    server = proxy_servers[cc_dump.providers.DEFAULT_PROVIDER_KEY]
+    provider_endpoints: cc_dump.providers.ProviderEndpointMap = {
+        provider: binding.endpoint for provider, binding in bindings.items()
+    }
+    default_binding = bindings[default_provider_key]
+    actual_port = default_binding.port
+    default_target = default_binding.endpoint.target
+    server = default_binding.server
 
     print("🚀 cc-dump proxy started")
-    for spec in active_specs:
-        proxy_url = f"http://{args.host}:{proxy_ports[spec.key]}"
-        provider_target = proxy_targets.get(spec.key)
-        print(f"   {spec.display_name} endpoint: {proxy_url}")
-        print(f"     Proxy type: {spec.proxy_type}")
-        if spec.proxy_type == "reverse":
-            if provider_target:
-                print(f"     Target: {provider_target}")
-            print(f"     Usage: {spec.base_url_env}={proxy_url} {spec.client_hint}")
+    for binding in bindings.values():
+        spec = binding.spec
+        endpoint = binding.endpoint
+        print(f"   {spec.display_name} endpoint: {endpoint.proxy_url}")
+        print(f"     Proxy type: {endpoint.proxy_mode}")
+        if endpoint.proxy_mode == "reverse":
+            if endpoint.target:
+                print(f"     Target: {endpoint.target}")
+            print(f"     Usage: {spec.base_url_env}={endpoint.proxy_url} {spec.client_hint}")
         else:
             print(
-                f"     Usage: HTTP_PROXY={proxy_url} HTTPS_PROXY={proxy_url} NODE_EXTRA_CA_CERTS={forward_proxy_ca.ca_cert_path if forward_proxy_ca else ''} {spec.client_hint}"
+                "     Usage: "
+                f"HTTP_PROXY={endpoint.proxy_url} HTTPS_PROXY={endpoint.proxy_url} "
+                f"NODE_EXTRA_CA_CERTS={endpoint.forward_proxy_ca_cert_path or ''} "
+                f"{spec.client_hint}"
             )
 
-        provider_endpoints[spec.key] = {
-            "proxy_url": proxy_url,
-            "target": (provider_target or "") if spec.proxy_type == "reverse" else "",
-            "proxy_mode": spec.proxy_type,
-        }
-        if spec.proxy_type == "forward" and forward_proxy_ca is not None:
-            provider_endpoints[spec.key]["forward_proxy_ca_cert_path"] = str(forward_proxy_ca.ca_cert_path)
-
-    # State dict for formatting pipeline coordination.
+    # [LAW:one-source-of-truth] Default-state alias points at canonical per-provider state.
     state = {
         "request_counter": 0,
         "current_session": None,  # Track Claude Code session ID for change detection
@@ -386,7 +417,7 @@ def main():
         recordings_dir = _recordings_output_dir(args.record)
         recordings_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
-        active_providers = list(proxy_ports.keys())
+        active_providers = list(bindings.keys())
 
         for provider in active_providers:
             record_path = _recording_path_for_provider(recordings_dir, provider, timestamp)
@@ -398,7 +429,10 @@ def main():
             har_recorders.append(recorder)
             router.add_subscriber(DirectSubscriber(recorder.on_event))
             print(f"   Recording ({provider}): {record_path} (created on first API call)")
-        primary_record_path = recording_paths.get("anthropic") or next(iter(recording_paths.values()), None)
+        primary_record_path = recording_paths.get(default_provider_key) or next(
+            iter(recording_paths.values()),
+            None,
+        )
     else:
         print("   Recording: disabled (--no-record)")
 
@@ -443,7 +477,7 @@ def main():
     sc_enabled = bool(settings_store.get("side_channel_enabled"))
     side_channel_mgr = cc_dump.ai.side_channel.SideChannelManager()
     side_channel_mgr.enabled = sc_enabled
-    side_channel_mgr.set_base_url(f"http://{args.host}:{actual_port}")
+    side_channel_mgr.set_base_url(default_binding.endpoint.proxy_url)
 
     def _coerce_token_count(value: object) -> int:
         if isinstance(value, bool):
@@ -482,8 +516,8 @@ def main():
         interceptors=[cc_dump.pipeline.sentinel.make_interceptor(tmux_ctrl)],
     )
     # // [LAW:single-enforcer] One shared request pipeline is applied at every provider handler boundary.
-    for handler_cls in proxy_handlers.values():
-        handler_cls.request_pipeline = pipeline
+    for binding in bindings.values():
+        binding.handler_class.request_pipeline = pipeline
 
     router.start()
 
@@ -516,7 +550,7 @@ def main():
         analytics_store=analytics_store,
         host=args.host,
         port=actual_port,
-        target=anthropic_target,
+        target=default_target,
         replay_data=replay_data,
         recording_path=primary_record_path,
         replay_file=args.replay,
@@ -569,9 +603,10 @@ def main():
             server.server_close()
 
         # Shutdown optional provider servers
-        for provider, srv in proxy_servers.items():
-            if provider == "anthropic":
+        for provider, binding in bindings.items():
+            if provider == default_provider_key:
                 continue
+            srv = binding.server
             shutdown_thread = threading.Thread(target=srv.shutdown, daemon=True)
             shutdown_thread.start()
             try:
@@ -585,15 +620,20 @@ def main():
         for recorder in har_recorders:
             recorder.close()
 
+        # Persist UI sidecar next to active HAR (recording path or replay file).
+        sidecar_target = _sidecar_target_path(tuple(bindings.values()), recording_paths, args.replay)
+        if sidecar_target:
+            try:
+                ui_state = app.export_ui_state()
+                sidecar_path = cc_dump.io.session_sidecar.save_ui_state(sidecar_target, ui_state)
+                logger.info("UI state saved: %s", sidecar_path)
+            except Exception as e:
+                logger.exception("UI state save failed: %s", e)
         # Print restart command — unstoppable (mask SIGINT so Ctrl+C can't suppress it)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
-        replay_path = (
-            primary_record_path if primary_record_path and os.path.exists(primary_record_path)
-            else args.replay if args.replay and os.path.exists(args.replay)
-            else None
-        )
+        replay_path = _resume_path(primary_record_path, args.replay)
         cmd = f"{sys.argv[0]} --port {actual_port}"
         if replay_path:
-            cmd += f" --replay {replay_path}"
-        logger.info("To replay: %s", cmd)
+            cmd += f" --resume {replay_path}"
+        logger.info("To resume: %s", cmd)
         signal.signal(signal.SIGINT, signal.SIG_DFL)
