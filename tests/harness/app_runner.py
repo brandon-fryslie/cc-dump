@@ -40,10 +40,6 @@ async def run_app(
     # Router NOT started — no background thread
 
     state = {
-        "positions": {},
-        "known_hashes": {},
-        "next_id": 0,
-        "next_color": 0,
         "request_counter": 0,
     }
 

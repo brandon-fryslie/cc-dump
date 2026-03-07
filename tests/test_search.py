@@ -20,7 +20,6 @@ from cc_dump.core.formatting import (
     HttpHeadersBlock,
     MetadataBlock,
     SystemSection,
-    TrackedContentBlock,
     TextContentBlock,
     ToolUseBlock,
     ToolResultBlock,
@@ -69,21 +68,6 @@ SEARCHABLE_TEXT_CASES = [
         SystemSection(children=[]),
         ["SYSTEM"],
         id="system_section",
-    ),
-    pytest.param(
-        TrackedContentBlock(status="new", content="hello world"),
-        ["hello world"],
-        id="tracked_content_new",
-    ),
-    pytest.param(
-        TrackedContentBlock(status="changed", new_content="new stuff", old_content="old"),
-        ["new stuff"],
-        id="tracked_content_changed",
-    ),
-    pytest.param(
-        TrackedContentBlock(status="ref"),
-        [],
-        id="tracked_content_ref",
     ),
     pytest.param(
         MessageBlock(role="assistant", msg_index=3, children=[]),

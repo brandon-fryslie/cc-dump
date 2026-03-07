@@ -46,18 +46,6 @@ def _write_metadata_block(f: TextIO, block: fmt.MetadataBlock) -> None:
         f.write(f"  Tool count: {block.tool_count}\n")
 
 
-def _write_tracked_content_block(f: TextIO, block: fmt.TrackedContentBlock) -> None:
-    f.write(f"  Status: {block.status}\n")
-    if block.tag_id:
-        f.write(f"  Tag ID: {block.tag_id}\n")
-    if block.content:
-        f.write(f"  Content: {block.content}\n")
-    if block.old_content:
-        f.write(f"  Old: {block.old_content}\n")
-    if block.new_content:
-        f.write(f"  New: {block.new_content}\n")
-
-
 def _write_text_content_block(f: TextIO, block: fmt.TextContentBlock) -> None:
     if block.content:
         f.write(f"  {block.content}\n")
@@ -199,7 +187,6 @@ BLOCK_WRITERS: dict[type[object], BlockWriter] = {
     fmt.HeaderBlock: _write_header_block,
     fmt.HttpHeadersBlock: _write_http_headers_block,
     fmt.MetadataBlock: _write_metadata_block,
-    fmt.TrackedContentBlock: _write_tracked_content_block,
     fmt.TextContentBlock: _write_text_content_block,
     fmt.ToolUseBlock: _write_tool_use_block,
     fmt.ToolResultBlock: _write_tool_result_block,

@@ -386,12 +386,8 @@ def main():
         if spec.proxy_type == "forward" and forward_proxy_ca is not None:
             provider_endpoints[spec.key]["forward_proxy_ca_cert_path"] = str(forward_proxy_ca.ca_cert_path)
 
-    # State dict for content tracking (used by formatting layer)
+    # State dict for formatting pipeline coordination.
     state = {
-        "positions": {},
-        "known_hashes": {},
-        "next_id": 0,
-        "next_color": 0,
         "request_counter": 0,
         "current_session": None,  # Track Claude Code session ID for change detection
     }
