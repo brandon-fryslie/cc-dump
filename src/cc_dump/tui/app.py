@@ -496,6 +496,46 @@ class CcDumpApp(App):
             provider,
         )
 
+    def _resolve_default_provider_session_key(self, event) -> str:
+        request_id = str(getattr(event, "request_id", "") or "")
+        session_key = self._default_session_key
+        if event.kind == cc_dump.pipeline.event_types.PipelineEventKind.REQUEST:
+            body = getattr(event, "body", {})
+            if isinstance(body, dict) and cc_dump.ai.side_channel_marker.extract_marker(body):
+                # [LAW:one-type-per-behavior] Workbench AI traffic is one inspectable lane.
+                session_key = self._workbench_session_key
+        elif request_id:
+            session_key = self._request_session_keys.get(request_id, session_key)
+        self._bind_request_session(request_id, session_key)
+        self._ensure_session_surface(session_key)
+        return session_key
+
+    def _track_request_activity(self, request_id: str) -> None:
+        if not request_id:
+            return
+        resolved_key = self._session_key_for_request_id(request_id)
+        self._ensure_session_surface(resolved_key)
+        per_session = self._app_state.get("last_message_time_by_session", {})
+        if not isinstance(per_session, dict):
+            per_session = {}
+        per_session[resolved_key] = time.monotonic()
+        self._app_state["last_message_time_by_session"] = per_session
+
+    def _sync_detected_session(self, state: dict[str, object]) -> None:
+        # // [LAW:one-source-of-truth] Session ID comes from formatting state,
+        # not from blocks or app_state side-channels.
+        current_session = state.get("current_session", "")
+        current_session = current_session if isinstance(current_session, str) else ""
+        if not current_session or current_session == self._session_id:
+            return
+        self._app_log("INFO", f"Session detected: {current_session}")
+        self._session_id = current_session
+        self.post_message(NewSession(current_session))
+        self.notify(f"New session: {current_session[:8]}...")
+        info = self._get_info()
+        if info is not None:
+            info.update_info(self._build_server_info())
+
     def _resolve_event_session_key(self, event, *, provider: str | None = None) -> str:
         """Resolve session key for event routing.
 
@@ -506,35 +546,11 @@ class CcDumpApp(App):
         """
         resolved_provider = provider or self._resolve_event_provider(event)
         provider_key = self._provider_tab_key(resolved_provider)
-
-        # Non-default providers: one tab per provider, no sub-session routing.
         if resolved_provider != cc_dump.providers.DEFAULT_PROVIDER_KEY:
             self._bind_request_session(event.request_id, provider_key)
             self._ensure_session_surface(provider_key)
             return provider_key
-
-        # Anthropic: one tab per instance. Side-channel goes to workbench tab.
-        # // [LAW:one-source-of-truth] All non-side-channel Anthropic traffic routes
-        # to default tab. Session boundaries shown via NewSessionBlock separators.
-        # // [LAW:single-enforcer] Binding is set on REQUEST only; subsequent events
-        # for the same request_id reuse the existing binding.
-        request_id = str(getattr(event, "request_id", "") or "")
-        key = self._default_session_key
-        if event.kind == cc_dump.pipeline.event_types.PipelineEventKind.REQUEST:
-            body = getattr(event, "body", {})
-            marker = (
-                cc_dump.ai.side_channel_marker.extract_marker(body)
-                if isinstance(body, dict)
-                else None
-            )
-            if marker is not None:
-                # [LAW:one-type-per-behavior] Workbench AI traffic is one inspectable lane.
-                key = self._workbench_session_key
-        elif request_id:
-            key = self._request_session_keys.get(request_id, key)
-        self._bind_request_session(request_id, key)
-        self._ensure_session_surface(key)
-        return key
+        return self._resolve_default_provider_session_key(event)
 
     def _get_active_session_panel_state(self) -> tuple[str | None, float | None]:
         """Return session panel identity + last activity for active tab context."""
@@ -1088,28 +1104,8 @@ class CcDumpApp(App):
             AppState,
             handler(event, state, widgets, self._app_state, self._app_log),
         )
-        request_id = str(getattr(event, "request_id", "") or "")
-        if request_id:
-            resolved_key = self._session_key_for_request_id(request_id)
-            self._ensure_session_surface(resolved_key)
-            per_session = self._app_state.get("last_message_time_by_session", {})
-            if not isinstance(per_session, dict):
-                per_session = {}
-            per_session[resolved_key] = time.monotonic()
-            self._app_state["last_message_time_by_session"] = per_session
-
-        # // [LAW:one-source-of-truth] Session ID comes from formatting state,
-        # not from blocks or app_state side-channels.
-        current_session = state.get("current_session", "")
-        current_session = current_session if isinstance(current_session, str) else ""
-        if current_session and current_session != self._session_id:
-            self._app_log("INFO", f"Session detected: {current_session}")
-            self._session_id = current_session
-            self.post_message(NewSession(current_session))
-            self.notify(f"New session: {current_session[:8]}...")
-            info = self._get_info()
-            if info is not None:
-                info.update_info(self._build_server_info())
+        self._track_request_activity(str(getattr(event, "request_id", "") or ""))
+        self._sync_detected_session(state)
 
     def on_tabbed_content_tab_activated(
         self, event: TabbedContent.TabActivated
