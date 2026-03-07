@@ -45,6 +45,16 @@ def _line_click_zone(x: int, line_length: int) -> int:
     return _ZONE_CENTER
 
 
+def _clamp_row(row: int, size: int) -> int:
+    return max(0, min(row, size - 1))
+
+
+def _selected_indices(options: Sequence[str], values: set[str] | None) -> set[int]:
+    normalized = list(options) or [""]
+    selected_values = values or set()
+    return {normalized.index(value) for value in selected_values if value in normalized}
+
+
 @dataclass(frozen=True)
 class CycleSelectorState:
     options: tuple[str, ...]
@@ -238,10 +248,41 @@ class CycleSelector(Widget, can_focus=True):
     def _inactive_line(self, label: str) -> str:
         return f"   {label}   "
 
-    def _zone_boundaries(self, label: str | None = None) -> tuple[int, int]:
-        active_label = self.value if label is None else label
-        line_length = len(self._active_line(active_label))
-        return 3, line_length - 3
+    def _zone_boundaries(self) -> tuple[int, int]:
+        return self._boundaries_for_label(self.value)
+
+    def _boundaries_for_label(self, label: str) -> tuple[int, int]:
+        return 3, len(self._active_line(label)) - 3
+
+    def _render_expanded(self, state: CycleSelectorState) -> Text:
+        text = Text()
+        for row, option in enumerate(state.options):
+            line = self._active_line(option) if row == state.cursor else self._inactive_line(option)
+            style = Style(reverse=row == state.cursor, bold=row == state.index)
+            text.append(line, style=style)
+            if row < len(state.options) - 1:
+                text.append("\n")
+        return text
+
+    def _handle_collapsed_click(self, x: int) -> None:
+        zone = _line_click_zone(x, len(self._active_line(self.value)))
+        delta = {_ZONE_PREV: -1, _ZONE_CENTER: 0, _ZONE_NEXT: +1}[zone]
+        if delta:
+            self._move_selection(delta)
+
+    def _handle_expanded_click(self, x: int, row: int) -> None:
+        state = self._state.get()
+        if row == state.cursor and self._handle_cursor_arrow_click(x, state.options[row]):
+            return
+        self._select_row(row)
+
+    def _handle_cursor_arrow_click(self, x: int, label: str) -> bool:
+        zone = _line_click_zone(x, len(self._active_line(label)))
+        delta = {_ZONE_PREV: -1, _ZONE_CENTER: 0, _ZONE_NEXT: +1}[zone]
+        if delta:
+            self._move_selection(delta)
+            return True
+        return False
 
     def render(self) -> Text:
         """Render the widget as a single line or expanded vertical option list.
@@ -251,25 +292,8 @@ class CycleSelector(Widget, can_focus=True):
         """
         state = self._state.get()
         expanded = self._expanded()
-        text = Text()
-
-        if not expanded:
-            text.append(self._active_line(state.options[state.index]))
-            self.set_class(False, "-editing")
-            return text
-
-        self.set_class(True, "-editing")
-        for row, option in enumerate(state.options):
-            line = (
-                self._active_line(option)
-                if row == state.cursor
-                else self._inactive_line(option)
-            )
-            style = Style(reverse=row == state.cursor, bold=row == state.index)
-            text.append(line, style=style)
-            if row < len(state.options) - 1:
-                text.append("\n")
-        return text
+        self.set_class(expanded, "-editing")
+        return self._render_expanded(state) if expanded else Text(self._active_line(state.options[state.index]))
 
     def on_focus(self, _event) -> None:
         state = self._state.get()
@@ -284,24 +308,11 @@ class CycleSelector(Widget, can_focus=True):
             return
 
         if not self._expanded():
-            zone = _line_click_zone(event.x, len(self._active_line(self.value)))
-            if zone == _ZONE_PREV:
-                self._move_selection(-1)
-            elif zone == _ZONE_NEXT:
-                self._move_selection(+1)
+            self._handle_collapsed_click(event.x)
             return
 
-        state = self._state.get()
-        row = max(0, min(int(event.y), len(state.options) - 1))
-        if row == state.cursor:
-            zone = _line_click_zone(event.x, len(self._active_line(state.options[row])))
-            if zone == _ZONE_PREV:
-                self._move_selection(-1)
-                return
-            if zone == _ZONE_NEXT:
-                self._move_selection(+1)
-                return
-        self._select_row(row)
+        row = _clamp_row(int(event.y), len(self._state.get().options))
+        self._handle_expanded_click(event.x, row)
 
     def on_key(self, event) -> None:
         if self.disabled:
@@ -390,11 +401,7 @@ class MultiCycleSelector(Widget, can_focus=True):
         if tooltip is not None:
             self.tooltip = tooltip
         self._options: list[str] = list(options) or [""]
-        self._selected: set[int] = (
-            {self._options.index(value) for value in values if value in self._options}
-            if values
-            else set()
-        )
+        self._selected: set[int] = _selected_indices(self._options, values)
         self._cursor: int = min(self._selected) if self._selected else 0
         self._editing: bool = False
 
@@ -420,6 +427,23 @@ class MultiCycleSelector(Widget, can_focus=True):
         if row == self._cursor:
             return f" {_ARROW_PREV} {marker} {label} {_ARROW_NEXT} "
         return f"   {marker} {label}   "
+
+    def _render_expanded(self) -> Text:
+        text = Text()
+        for row in range(len(self._options)):
+            style = Style(reverse=row == self._cursor, bold=row in self._selected)
+            text.append(self._row_line(row), style=style)
+            if row < len(self._options) - 1:
+                text.append("\n")
+        return text
+
+    def _handle_cursor_arrow_click(self, x: int, row: int) -> bool:
+        zone = _line_click_zone(x, len(self._row_line(row)))
+        delta = {_ZONE_PREV: -1, _ZONE_CENTER: 0, _ZONE_NEXT: +1}[zone]
+        if delta:
+            self._move_cursor(delta)
+            return True
+        return False
 
     def _set_cursor(self, index: int) -> None:
         self._cursor = _wrap_index(index, len(self._options))
@@ -465,12 +489,7 @@ class MultiCycleSelector(Widget, can_focus=True):
             text.append(self._collapsed_line())
             return text
 
-        for row in range(len(self._options)):
-            style = Style(reverse=row == self._cursor, bold=row in self._selected)
-            text.append(self._row_line(row), style=style)
-            if row < len(self._options) - 1:
-                text.append("\n")
-        return text
+        return self._render_expanded()
 
     def on_focus(self, _event) -> None:
         self._editing = True
@@ -487,15 +506,9 @@ class MultiCycleSelector(Widget, can_focus=True):
         if not self._expanded():
             return
 
-        row = max(0, min(int(event.y), len(self._options) - 1))
-        if row == self._cursor:
-            zone = _line_click_zone(event.x, len(self._row_line(row)))
-            if zone == _ZONE_PREV:
-                self._move_cursor(-1)
-                return
-            if zone == _ZONE_NEXT:
-                self._move_cursor(+1)
-                return
+        row = _clamp_row(int(event.y), len(self._options))
+        if row == self._cursor and self._handle_cursor_arrow_click(event.x, row):
+            return
         self._toggle_index(row)
 
     def on_key(self, event) -> None:
