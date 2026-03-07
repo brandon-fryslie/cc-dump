@@ -1502,7 +1502,13 @@ class CcDumpApp(App):
         if side_panel is not None:
             side_panel.display = side_open
 
-        focus_target = side_panel if side_open else launch_panel if launch_open else settings_panel if settings_open else None
+        focus_target = None
+        if side_open:
+            focus_target = side_panel
+        elif launch_open:
+            focus_target = launch_panel
+        elif settings_open:
+            focus_target = settings_panel
         if focus_target is not None:
             focus_default = getattr(focus_target, "focus_default_control", None)
             if callable(focus_default):

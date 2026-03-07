@@ -366,7 +366,11 @@ class LaunchConfigPanel(VerticalScroll):
         self._configs = incoming or cc_dump.app.launch_config.default_configs()
         self._active_name = active_config_name
         names = [config.name for config in self._configs]
-        target_name = self._active_name if self._active_name in names else (names[0] if names else "")
+        target_name = ""
+        if self._active_name in names:
+            target_name = self._active_name
+        elif names:
+            target_name = names[0]
         self._selected_idx = names.index(target_name) if target_name in names else 0
         self._emit_panel_state()
 
