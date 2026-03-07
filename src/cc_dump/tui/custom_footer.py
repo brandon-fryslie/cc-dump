@@ -3,7 +3,6 @@
 from snarfx import textual as stx
 from textual.color import Color
 from textual.containers import Horizontal
-from textual.widgets import Static
 
 import cc_dump.tui.rendering
 import cc_dump.tui.widget_factory
