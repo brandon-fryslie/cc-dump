@@ -11,7 +11,6 @@ import threading
 from cc_dump.io.stderr_tee import get_tee as _get_tee
 import cc_dump.providers
 import cc_dump.tui.rendering
-import cc_dump.tui.view_store_bridge
 import snarfx
 from snarfx import textual as stx
 
@@ -56,46 +55,37 @@ def _connect_stderr_tee(app) -> None:
     tee.connect(_drain)
 
 
-def _endpoint_mode(spec, endpoint: dict[str, object]) -> str:
-    """Return normalized endpoint mode."""
-    raw = endpoint.get("proxy_mode", spec.proxy_type)
-    return str(raw or spec.proxy_type).strip().lower()
-
-
 def _endpoint_usage_line(
     spec,
     *,
-    mode: str,
-    proxy_url: str,
-    target: str,
-    ca_path: str,
+    endpoint: cc_dump.providers.ProviderEndpoint,
 ) -> str:
     """Build provider usage line preserving existing reverse-target behavior."""
-    if mode == "reverse" and target:
-        return f"  Usage: {spec.base_url_env}={proxy_url} {spec.client_hint}"
-    suffix = f" NODE_EXTRA_CA_CERTS={ca_path}" if ca_path else ""
+    if endpoint.proxy_mode == "reverse" and endpoint.target:
+        return f"  Usage: {spec.base_url_env}={endpoint.proxy_url} {spec.client_hint}"
+    suffix = (
+        f" NODE_EXTRA_CA_CERTS={endpoint.forward_proxy_ca_cert_path}"
+        if endpoint.forward_proxy_ca_cert_path
+        else ""
+    )
     return (
-        f"  Usage: HTTP_PROXY={proxy_url} HTTPS_PROXY={proxy_url}{suffix} "
+        f"  Usage: HTTP_PROXY={endpoint.proxy_url} HTTPS_PROXY={endpoint.proxy_url}{suffix} "
         f"{spec.client_hint}"
     )
 
 
-def _endpoint_detail_lines(spec, endpoint: dict[str, object]) -> list[str]:
+def _endpoint_detail_lines(
+    spec,
+    endpoint: cc_dump.providers.ProviderEndpoint,
+) -> list[str]:
     """Return detail lines for one provider endpoint."""
-    proxy_url = str(endpoint.get("proxy_url", "") or "")
-    mode = _endpoint_mode(spec, endpoint)
-    target = str(endpoint.get("target", "") or "")
-    ca_path = str(endpoint.get("forward_proxy_ca_cert_path", "") or "")
-    details = [f"{spec.display_name} endpoint ({mode}): {proxy_url}"]
-    if mode == "reverse" and target:
-        details.append(f"  Target: {target}")
+    details = [f"{spec.display_name} endpoint ({endpoint.proxy_mode}): {endpoint.proxy_url}"]
+    if endpoint.proxy_mode == "reverse" and endpoint.target:
+        details.append(f"  Target: {endpoint.target}")
     details.append(
         _endpoint_usage_line(
             spec,
-            mode=mode,
-            proxy_url=proxy_url,
-            target=target,
-            ca_path=ca_path,
+            endpoint=endpoint,
         )
     )
     return details
@@ -108,8 +98,7 @@ def _log_proxy_endpoints(app) -> None:
         endpoint = app._provider_endpoints.get(spec.key)
         if endpoint is None:
             continue
-        proxy_url = str(endpoint.get("proxy_url", "") or "")
-        if not proxy_url:
+        if not endpoint.proxy_url:
             continue
         # // [LAW:dataflow-not-control-flow] Endpoint logging is derived line data.
         for line in _endpoint_detail_lines(spec, endpoint):
@@ -161,13 +150,6 @@ def _wire_reactive_runtime(app) -> None:
 def _hydrate_footer(app) -> None:
     app._sync_tmux_to_store()
     app._sync_active_launch_config_state()
-    footer = app._get_footer()
-    if footer is not None:
-        footer.update_display(
-            cc_dump.tui.view_store_bridge.enrich_footer_state(
-                app._view_store.footer_state.get()
-            )
-        )
     app._log_memory_snapshot("startup")
 
 

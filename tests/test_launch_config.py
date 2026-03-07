@@ -5,6 +5,7 @@ import json
 import pytest
 
 import cc_dump.app.launcher_registry
+import cc_dump.providers
 from cc_dump.app.launch_config import (
     LaunchConfig,
     build_full_command,
@@ -250,7 +251,12 @@ class TestBuildLaunchProfile:
     def test_profile_sets_provider_env_for_copilot(self):
         config = LaunchConfig(launcher="copilot", command="")
         endpoints = {
-            "copilot": {"proxy_url": "http://127.0.0.1:4567", "target": "https://api.githubcopilot.com"}
+            "copilot": cc_dump.providers.build_provider_endpoint(
+                "copilot",
+                proxy_url="http://127.0.0.1:4567",
+                target="https://api.githubcopilot.com",
+                proxy_mode="forward",
+            )
         }
         profile = build_launch_profile(config, provider_endpoints=endpoints, session_id="")
         assert profile.launcher_key == "copilot"
@@ -264,11 +270,13 @@ class TestBuildLaunchProfile:
     def test_profile_sets_forward_proxy_env_for_copilot(self):
         config = LaunchConfig(launcher="copilot", command="")
         endpoints = {
-            "copilot": {
-                "proxy_url": "http://127.0.0.1:4567",
-                "target": "https://api.githubcopilot.com",
-                "forward_proxy_ca_cert_path": "/tmp/forward-ca.crt",
-            }
+            "copilot": cc_dump.providers.build_provider_endpoint(
+                "copilot",
+                proxy_url="http://127.0.0.1:4567",
+                target="https://api.githubcopilot.com",
+                proxy_mode="forward",
+                forward_proxy_ca_cert_path="/tmp/forward-ca.crt",
+            )
         }
         profile = build_launch_profile(config, provider_endpoints=endpoints, session_id="")
         assert profile.environment == {
@@ -280,10 +288,12 @@ class TestBuildLaunchProfile:
     def test_profile_sets_reverse_proxy_env_for_claude(self):
         config = LaunchConfig(launcher="claude", command="")
         endpoints = {
-            "anthropic": {
-                "proxy_url": "http://127.0.0.1:3344",
-                "target": "https://api.anthropic.com",
-            }
+            cc_dump.providers.DEFAULT_PROVIDER_KEY: cc_dump.providers.build_provider_endpoint(
+                cc_dump.providers.DEFAULT_PROVIDER_KEY,
+                proxy_url="http://127.0.0.1:3344",
+                target="https://api.anthropic.com",
+                proxy_mode="reverse",
+            )
         }
         profile = build_launch_profile(config, provider_endpoints=endpoints, session_id="")
         assert profile.environment == {
