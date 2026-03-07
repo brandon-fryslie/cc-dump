@@ -20,6 +20,17 @@ from cc_dump.pipeline.event_types import (
 
 logger = logging.getLogger(__name__)
 
+
+def _load_json_object(text: str, *, entry_index: int, field_name: str) -> dict[str, object]:
+    """Decode a JSON object payload or raise a boundary-localized ValueError.
+
+    // [LAW:single-enforcer] HAR replay owns JSON-object validation at the file boundary.
+    """
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Entry {entry_index}: {field_name} must decode to a JSON object")
+    return payload
+
 def load_har(path: str) -> list[tuple[dict, dict, int, dict, dict, str]]:
     """Load HAR file and extract request/response pairs.
 
@@ -64,7 +75,11 @@ def load_har(path: str) -> list[tuple[dict, dict, int, dict, dict, str]]:
             if "text" not in post_data:
                 raise ValueError(f"Entry {i}: missing 'request.postData.text' key")
 
-            request_body = json.loads(post_data["text"])
+            request_body = _load_json_object(
+                post_data["text"],
+                entry_index=i,
+                field_name="request.postData.text",
+            )
 
             # Extract response body
             if "response" not in entry:
@@ -78,7 +93,11 @@ def load_har(path: str) -> list[tuple[dict, dict, int, dict, dict, str]]:
             if "text" not in content:
                 raise ValueError(f"Entry {i}: missing 'response.content.text' key")
 
-            complete_message = json.loads(content["text"])
+            complete_message = _load_json_object(
+                content["text"],
+                entry_index=i,
+                field_name="response.content.text",
+            )
 
             # Extract request headers
             request_headers = {}

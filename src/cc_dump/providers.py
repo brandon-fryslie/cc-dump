@@ -211,9 +211,11 @@ def infer_provider_from_url(url: str) -> str:
 def infer_provider_from_complete_message(message: dict[str, object]) -> str:
     """Best-effort provider inference from complete response shape."""
     # // [LAW:dataflow-not-control-flow] Provider family is derived from response markers.
-    is_anthropic = message.get("type") == "message"
-    is_openai = message.get("object") == "chat.completion"
-    return "anthropic" if is_anthropic else "openai" if is_openai else DEFAULT_PROVIDER_KEY
+    if message.get("type") == "message":
+        return "anthropic"
+    if message.get("object") == "chat.completion":
+        return "openai"
+    return DEFAULT_PROVIDER_KEY
 
 
 def is_complete_response_for_provider(provider: str, message: dict[str, object]) -> bool:
