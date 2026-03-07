@@ -120,26 +120,13 @@ Currently, `get_state()` returns dicts containing `FormattedBlock` objects (data
 - (b) Use `pickle` for disk persistence (fast but fragile across code changes)
 - (c) Don't persist blocks at all — re-derive them from HAR on restart
 
-Option (c) is the most architecturally sound: HAR files are already the source of truth. On restart, replay the HAR into the formatting pipeline to reconstruct blocks, then restore the lightweight UI state (scroll position, visibility filters, follow mode) from a small JSON sidecar.
+Option (c) is the most architecturally sound: HAR files are already the source of truth. On restart, replay the HAR into the formatting pipeline to reconstruct blocks instead of persisting separate UI-state files.
 
-**Step 2: Save UI state on exit.**
-On `on_unmount()`, write a `~/.config/cc-dump/session-state.json`:
-```json
-{
-  "har_path": "/path/to/recording.har",
-  "scroll_position": 4523,
-  "follow_mode": false,
-  "visibility": {"headers": [false, false, false], "user": [true, true, false], ...},
-  "search_query": "error",
-  "panel_visibility": {"economics": true, "timeline": false, "logs": false}
-}
-```
+**Step 2: Restore on startup.**
+If `--replay latest` (or `--replay <path>`) is used, replay the HAR and re-derive visible state from the canonical transcript data.
 
-**Step 3: Restore on startup.**
-If `--replay latest` (or a new `--resume` flag) is used and a session-state file exists for that HAR, replay the HAR (already works) and then apply the UI state from the sidecar.
-
-**Step 4: Hot-reload uses the same state shape.**
-`get_state()` already returns this shape (minus the HAR path). The only difference is that hot-reload preserves blocks in memory (no serialization needed), while disk persistence re-derives blocks from HAR. The UI state (scroll, filters, panels) is identical.
+**Step 3: Hot-reload uses the same state shape.**
+Hot-reload can preserve in-memory widget state, while restart should rebuild from HAR rather than from extra persisted UI state.
 
 ### How much can hot-reload actually reload?
 
@@ -192,4 +179,4 @@ This is ~200 bytes of JSON. The existing `settings.py` with its atomic-write mec
 4. **Detect new files on first sight** — Treat `path not in _mtimes` as change. ~5 min.
 5. **Address `widgets.py` stale references** — Either delete or document the trap. ~15 min.
 6. **State roundtrip tests** — Test that scroll position, block expansion, and panel visibility survive get_state/restore_state. ~30 min.
-7. **Session resume from HAR + sidecar** — The big feature. Replay HAR + apply UI state. ~half day.
+7. **Session resume from HAR replay only** — The big feature. Replay HAR and rebuild state from canonical data. ~half day.

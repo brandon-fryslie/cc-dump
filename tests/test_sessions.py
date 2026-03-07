@@ -247,8 +247,8 @@ def test_cleanup_recordings_dry_run_keeps_files(recordings_dir):
     assert har_new.exists()
 
 
-def test_cleanup_recordings_deletes_old_har_and_sidecar(recordings_dir):
-    """Cleanup removes old recordings and sidecars in flat recordings dir."""
+def test_cleanup_recordings_deletes_old_har(recordings_dir):
+    """Cleanup removes old recordings in flat recordings dir."""
     har_old = recordings_dir / "ccdump-anthropic-20260201-100000Z-aaaaaaaa.har"
     har_new = recordings_dir / "ccdump-openai-20260203-100000Z-bbbbbbbb.har"
     create_har_file(har_old)
@@ -256,15 +256,11 @@ def test_cleanup_recordings_deletes_old_har_and_sidecar(recordings_dir):
     set_har_started(har_old, "2026-02-01T10:00:00")
     set_har_started(har_new, "2026-02-03T10:00:00")
 
-    sidecar_old = Path(str(har_old) + ".ui.json")
-    sidecar_old.write_text('{"version":1}', encoding="utf-8")
-
     result = cleanup_recordings(str(recordings_dir), keep=1, dry_run=False)
 
     assert result["dry_run"] is False
     assert result["removed"] == 1
     assert not har_old.exists()
-    assert not sidecar_old.exists()
     assert har_new.exists()
     assert recordings_dir.exists()
 

@@ -112,7 +112,6 @@ app/settings_store.py                     Support          2026-02-23 15:54:23  
 app/tmux_controller.py                    Support          2026-02-23 15:54:23  Tmux integration for cc-dump — split panes, auto-zoom on API activity.
 app/view_store.py                         Support          2026-02-23 15:54:23  View store — category visibility + panel/follow + footer/error/side-channel state. RELOADABLE.
 io/__init__.py                            Support          2026-02-23 15:55:59  I/O package.
-io/session_sidecar.py                     Support          2026-02-21 22:07:34  UI state sidecar I/O for HAR recordings.
 io/sessions.py                            Support          2026-02-21 22:33:05  Session management for HAR recordings.
 io/settings.py                            Support          2026-02-23 15:54:23  Settings file I/O for cc-dump.
 io/stderr_tee.py                          Support          2026-02-20 23:39:59  Tee stderr to both the real terminal and the TUI LogsPanel.
@@ -128,4 +127,3 @@ experiments/memory_soak.py                Eval/Harness     2026-02-23 15:54:23  
 experiments/perf_metrics.py               Eval/Harness     2026-02-23 15:54:23  Lightweight streaming-latency instrumentation for the cc-dump pipeline.
 experiments/subagent_enrichment.py        Eval/Harness     2026-02-23 15:54:23  Offline subagent parent-log enrichment for historical analysis.
 ```
-

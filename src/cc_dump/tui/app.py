@@ -162,7 +162,6 @@ class CcDumpApp(App):
         replay_data: Optional[list] = None,
         recording_path: Optional[str] = None,
         replay_file: Optional[str] = None,
-        resume_ui_state: Optional[dict] = None,
         tmux_controller=None,
         side_channel_manager=None,
         data_dispatcher=None,
@@ -218,7 +217,6 @@ class CcDumpApp(App):
         self._replay_data = replay_data
         self._recording_path = recording_path
         self._replay_file = replay_file
-        self._resume_ui_state = resume_ui_state if isinstance(resume_ui_state, dict) else None
         self._tmux_controller = tmux_controller
         self._side_channel_manager = side_channel_manager
         self._data_dispatcher = data_dispatcher
@@ -973,134 +971,6 @@ class CcDumpApp(App):
         ]
         pairs = [f"{key}={snapshot.get(key, 0)}" for key in ordered_keys]
         self._app_log("INFO", f"[memory:{phase}] " + " ".join(pairs))
-
-    def export_ui_state(self) -> dict:
-        """Capture durable UI state for sidecar persistence.
-
-        // [LAW:one-source-of-truth] Sidecar export shape is defined here.
-        """
-        view_state = {}
-        for key in (
-            "panel:active",
-            "panel:side_channel",
-            "panel:settings",
-            "panel:launch_config",
-            "panel:logs",
-            "panel:info",
-            "panel:keys",
-            "panel:debug_settings",
-            "nav:follow",
-            "filter:active",
-            "search:phase",
-            "search:query",
-            "search:modes",
-            "search:cursor_pos",
-            "search:current_index",
-            "search:match_count",
-        ):
-            view_state[key] = self._view_store.get(key)
-
-        for _, name, _, _ in CATEGORY_CONFIG:
-            view_state[f"vis:{name}"] = self._view_store.get(f"vis:{name}")
-            view_state[f"full:{name}"] = self._view_store.get(f"full:{name}")
-            view_state[f"exp:{name}"] = self._view_store.get(f"exp:{name}")
-
-        conversation_states: dict[str, dict] = {}
-        for session_key in self._session_conv_ids:
-            conv = self._get_conv(session_key=session_key)
-            if conv is None:
-                continue
-            conversation_states[session_key] = conv.get_state()
-        active_session_key = self._active_session_key_from_tabs()
-        conv_state = conversation_states.get(active_session_key, {})
-        if not conv_state:
-            conv = self._get_conv()
-            if conv is not None:
-                conv_state = conv.get_state()
-
-        return {
-            "view_store": view_state,
-            "conv": conv_state,
-            "conversations": {
-                "states": conversation_states,
-                "active_session_key": active_session_key,
-            },
-            "app": {
-                # [LAW:one-source-of-truth] Back-compat app fields are derived from view-store panel keys.
-                "show_logs": bool(self._view_store.get("panel:logs")),
-                "show_info": bool(self._view_store.get("panel:info")),
-            },
-        }
-
-    def _apply_resume_ui_state_preload(self) -> None:
-        """Apply store + app state before replay processing."""
-        state = self._resume_ui_state or {}
-        self._apply_resume_view_store_state(state.get("view_store", {}))
-        self._apply_resume_legacy_app_state(state.get("app", {}))
-
-    def _apply_resume_view_store_state(self, view_state: object) -> None:
-        if not isinstance(view_state, dict):
-            return
-        updates = {
-            key: value
-            for key, value in view_state.items()
-            if isinstance(key, str)
-        }
-        if updates:
-            self._view_store.update(updates)
-
-    def _apply_resume_legacy_app_state(self, app_state: object) -> None:
-        if not isinstance(app_state, dict):
-            return
-        # [LAW:one-source-of-truth] exception: Back-compat legacy app flags are translated into panel:* keys.
-        updates = self._legacy_resume_panel_updates(app_state)
-        if updates:
-            self._view_store.update(updates)
-
-    def _legacy_resume_panel_updates(self, app_state: dict) -> dict[str, bool]:
-        """Translate legacy sidecar app flags into canonical panel:* store keys."""
-        updates = {}
-        if "show_logs" in app_state:
-            updates["panel:logs"] = bool(app_state.get("show_logs"))
-        if "show_info" in app_state:
-            updates["panel:info"] = bool(app_state.get("show_info"))
-        return updates
-
-    def _apply_resume_ui_state_postload(self) -> None:
-        """Apply conversation-view state after replay/live initial hydration."""
-        state = self._resume_ui_state or {}
-        conversations = state.get("conversations", {})
-        if isinstance(conversations, dict):
-            states = conversations.get("states", {})
-            active_session_key = conversations.get("active_session_key", "")
-            restored_any = False
-            if isinstance(states, dict):
-                for session_key, conv_state in states.items():
-                    if not isinstance(session_key, str):
-                        continue
-                    if not isinstance(conv_state, dict) or not conv_state:
-                        continue
-                    self._ensure_session_surface(session_key)
-                    conv = self._get_conv(session_key=session_key)
-                    if conv is None:
-                        continue
-                    conv.restore_state(conv_state)
-                    conv.rerender(self.active_filters)
-                    restored_any = True
-            if isinstance(active_session_key, str) and active_session_key in self._session_tab_ids:
-                tabs = self._get_conv_tabs()
-                if tabs is not None:
-                    tabs.active = self._session_tab_ids[active_session_key]
-                self._active_session_key = active_session_key
-                self._domain_store = self._get_active_domain_store()
-            if restored_any:
-                return
-
-        conv_state = state.get("conv", {})
-        conv = self._get_conv()
-        if conv is not None and isinstance(conv_state, dict) and conv_state:
-            conv.restore_state(conv_state)
-            conv.rerender(self.active_filters)
 
     def _rerender_if_mounted(self):
 
