@@ -17,6 +17,7 @@ from typing import Literal
 
 import cc_dump.app.launcher_registry
 import cc_dump.io.settings
+import cc_dump.providers
 
 
 SHELL_OPTIONS = ("", "bash", "zsh")
@@ -413,7 +414,7 @@ def _derive_process_names(config: LaunchConfig) -> tuple[str, ...]:
 
 def build_launch_profile(
     config: LaunchConfig,
-    provider_endpoints: dict[str, dict[str, object]] | None = None,
+    provider_endpoints: cc_dump.providers.ProviderEndpointMap | None = None,
     session_id: str = "",
 ) -> LaunchProfile:
     """Build runtime launch profile for tmux.
