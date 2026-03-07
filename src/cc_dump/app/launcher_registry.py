@@ -34,7 +34,7 @@ _LAUNCHERS: dict[str, LauncherSpec] = {
         display_name="Claude",
         default_command="claude",
         process_names=("claude", "clod"),
-        provider_key="anthropic",
+        provider_key=cc_dump.providers.DEFAULT_PROVIDER_KEY,
         supports_model_flag=True,
         supports_resume_flag=True,
     ),
@@ -70,7 +70,7 @@ def launcher_keys() -> tuple[str, ...]:
 
 def build_proxy_env(
     spec: LauncherSpec,
-    provider_endpoints: dict[str, dict[str, object]] | None,
+    provider_endpoints: cc_dump.providers.ProviderEndpointMap | None,
 ) -> dict[str, str]:
     """Build environment mapping for launcher from available proxy endpoints.
 
@@ -81,22 +81,6 @@ def build_proxy_env(
         return {}
 
     endpoint = provider_endpoints.get(spec.provider_key)
-    if not isinstance(endpoint, dict):
+    if endpoint is None:
         return {}
-
-    proxy_url = str(endpoint.get("proxy_url", "") or "").strip()
-    if not proxy_url:
-        return {}
-
-    provider = cc_dump.providers.get_provider_spec(spec.provider_key)
-    if provider.proxy_type == "forward":
-        forward_ca_cert_path = str(endpoint.get("forward_proxy_ca_cert_path", "") or "").strip()
-        forward_env = {
-            "HTTP_PROXY": proxy_url,
-            "HTTPS_PROXY": proxy_url,
-        }
-        if forward_ca_cert_path:
-            forward_env["NODE_EXTRA_CA_CERTS"] = forward_ca_cert_path
-        return forward_env
-
-    return {provider.base_url_env: proxy_url}
+    return cc_dump.providers.build_provider_proxy_env(endpoint)
