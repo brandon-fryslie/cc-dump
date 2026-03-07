@@ -280,39 +280,20 @@ def _base_field_display_value(field: BaseFieldDef, config) -> str:
     return str(getattr(config, field.key, "") or "")
 
 
-class LaunchActionChip(Chip):
-    """Focusable chip that posts a local action message on click/Enter/Space."""
+def _action_chip(
+    label: str,
+    action_key: str,
+    on_activate: Callable[[str], object],
+) -> Chip:
+    # [LAW:one-type-per-behavior] Launch actions are Chip instances with different activation data.
+    def _activate(_chip: Chip) -> object:
+        return on_activate(action_key)
 
-    can_focus = True
-
-    class Pressed(Message):
-        def __init__(self, action_key: str) -> None:
-            self.action_key = action_key
-            super().__init__()
-
-    def __init__(self, label: str, *, action_key: str, **kwargs) -> None:
-        super().__init__(label, **kwargs)
-        self._action_key = action_key
-
-    def _emit(self) -> None:
-        self.post_message(self.Pressed(self._action_key))
-
-    def on_click(self, event) -> None:
-        event.stop()
-        self._emit()
-
-    def on_key(self, event) -> None:
-        if event.key in ("enter", "space"):
-            event.stop()
-            event.prevent_default()
-            self._emit()
-
-
-def _action_chip(label: str, action_key: str) -> LaunchActionChip:
-    return LaunchActionChip(
+    return Chip(
         label,
-        action_key=action_key,
+        on_activate=_activate,
         id="lc-action-{}".format(action_key),
+        classes="action-chip",
     )
 
 
@@ -365,7 +346,7 @@ class LaunchConfigPanel(VerticalScroll):
         margin-top: 1;
         color: $text-muted;
     }
-    LaunchConfigPanel LaunchActionChip {
+    LaunchConfigPanel .action-chip {
         margin-right: 1;
     }
     LaunchConfigPanel ToggleChip {
@@ -511,14 +492,14 @@ class LaunchConfigPanel(VerticalScroll):
             yield _select_widget(preset_options, preset_options[0], "lc-config-selector")
 
         with Horizontal(classes="chip-row"):
-            yield _action_chip(" New ", "new")
-            yield _action_chip(" Delete ", "delete")
-            yield _action_chip(" Activate ", "activate")
-            yield _action_chip(" Launch ", "launch")
+            yield _action_chip(" New ", "new", self._handle_action_chip)
+            yield _action_chip(" Delete ", "delete", self._handle_action_chip)
+            yield _action_chip(" Activate ", "activate", self._handle_action_chip)
+            yield _action_chip(" Launch ", "launch", self._handle_action_chip)
 
         with Horizontal(classes="chip-row"):
-            yield _action_chip(" Save ", "save")
-            yield _action_chip(" Close ", "close")
+            yield _action_chip(" Save ", "save", self._handle_action_chip)
+            yield _action_chip(" Close ", "close", self._handle_action_chip)
 
         yield Static("", id="lc-active", classes="field-desc")
 
@@ -901,9 +882,8 @@ class LaunchConfigPanel(VerticalScroll):
             "close": lambda: self.post_message(self.Cancelled()),
         }
 
-    def on_launch_action_chip_pressed(self, event: LaunchActionChip.Pressed) -> None:
-        event.stop()
-        handler = self._action_handlers().get(event.action_key)
+    def _handle_action_chip(self, action_key: str) -> None:
+        handler = self._action_handlers().get(action_key)
         if handler is not None:
             handler()
 
