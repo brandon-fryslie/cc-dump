@@ -32,6 +32,7 @@ import cc_dump.ai.side_channel
 import cc_dump.ai.data_dispatcher
 import cc_dump.pipeline.sentinel
 import cc_dump.ai.side_channel_marker
+import cc_dump.io.session_sidecar
 from cc_dump.pipeline.proxy import RequestPipeline
 import cc_dump.app.view_store
 import cc_dump.app.hot_reload
@@ -130,6 +131,214 @@ class ProviderProxyBinding:
     endpoint: cc_dump.providers.ProviderEndpoint
 
 
+@dataclass(frozen=True)
+class ProxyRuntime:
+    """Runtime-owned provider bindings and derived state.
+
+    // [LAW:one-source-of-truth] Active provider topology is owned by one value.
+    """
+
+    bindings: tuple[ProviderProxyBinding, ...]
+    provider_endpoints: cc_dump.providers.ProviderEndpointMap
+    provider_states: dict[str, "ProviderRuntimeState"]
+
+
+ProviderRuntimeState = dict[str, object]
+
+
+def _new_provider_state() -> ProviderRuntimeState:
+    return {
+        "request_counter": 0,
+        "current_session": None,
+    }
+
+
+def _active_provider_specs(
+    args: argparse.Namespace,
+    default_provider_spec: cc_dump.providers.ProviderSpec,
+) -> tuple[cc_dump.providers.ProviderSpec, ...]:
+    optional_specs = tuple(
+        spec
+        for spec in cc_dump.providers.optional_proxy_provider_specs()
+        if not getattr(args, f"no_{spec.key}")
+    )
+    return (default_provider_spec, *optional_specs)
+
+
+def _create_forward_proxy_ca(
+    args: argparse.Namespace,
+    active_specs: tuple[cc_dump.providers.ProviderSpec, ...],
+):
+    has_forward_proxy = any(spec.proxy_type == "forward" for spec in active_specs)
+    if not has_forward_proxy:
+        return None
+    from cc_dump.pipeline.forward_proxy_tls import ForwardProxyCertificateAuthority
+    ca_dir = Path(args.forward_proxy_ca_dir) if args.forward_proxy_ca_dir else None
+    return ForwardProxyCertificateAuthority(ca_dir=ca_dir)
+
+
+def _provider_bind_port(
+    args: argparse.Namespace,
+    spec: cc_dump.providers.ProviderSpec,
+) -> int:
+    attr_name = "port" if spec.key == cc_dump.providers.DEFAULT_PROVIDER_KEY else f"{spec.key}_port"
+    return int(getattr(args, attr_name))
+
+
+def _provider_target(
+    args: argparse.Namespace,
+    spec: cc_dump.providers.ProviderSpec,
+) -> str:
+    attr_name = "target" if spec.key == cc_dump.providers.DEFAULT_PROVIDER_KEY else f"{spec.key}_target"
+    raw_target = str(getattr(args, attr_name))
+    return raw_target.rstrip("/") if spec.proxy_type == "reverse" else ""
+
+
+def _start_proxy_server(host, port, handler_class):
+    """Create and start an HTTP proxy server. Returns (server, actual_port, thread)."""
+    srv = http.server.ThreadingHTTPServer((host, port), handler_class)
+    ap = srv.server_address[1]
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    return srv, ap, t
+
+
+def _start_provider_binding(
+    *,
+    args: argparse.Namespace,
+    spec: cc_dump.providers.ProviderSpec,
+    event_q: queue.Queue[PipelineEvent],
+    forward_proxy_ca,
+) -> ProviderProxyBinding:
+    provider_target = _provider_target(args, spec)
+    provider_ca = forward_proxy_ca if spec.proxy_type == "forward" else None
+    handler = make_handler_class(
+        provider=spec.key,
+        target_host=provider_target if spec.proxy_type == "reverse" else None,
+        event_queue=event_q,
+        forward_proxy_ca=provider_ca,
+    )
+    server, port, _thread = _start_proxy_server(
+        args.host,
+        _provider_bind_port(args, spec),
+        handler,
+    )
+    endpoint = cc_dump.providers.build_provider_endpoint(
+        spec.key,
+        proxy_url=f"http://{args.host}:{port}",
+        target=provider_target,
+        proxy_mode=spec.proxy_type,
+        forward_proxy_ca_cert_path=(
+            str(provider_ca.ca_cert_path) if provider_ca is not None else ""
+        ),
+    )
+    return ProviderProxyBinding(
+        spec=spec,
+        server=server,
+        handler_class=handler,
+        port=port,
+        endpoint=endpoint,
+    )
+
+
+def _build_proxy_runtime(
+    *,
+    args: argparse.Namespace,
+    default_provider_spec: cc_dump.providers.ProviderSpec,
+    event_q: queue.Queue[PipelineEvent],
+) -> ProxyRuntime:
+    active_specs = _active_provider_specs(args, default_provider_spec)
+    forward_proxy_ca = _create_forward_proxy_ca(args, active_specs)
+    # [LAW:dataflow-not-control-flow] Binding order is fixed; variability lives in active_specs.
+    bindings = tuple(
+        _start_provider_binding(
+            args=args,
+            spec=spec,
+            event_q=event_q,
+            forward_proxy_ca=forward_proxy_ca,
+        )
+        for spec in active_specs
+    )
+    return ProxyRuntime(
+        bindings=bindings,
+        provider_endpoints={binding.spec.key: binding.endpoint for binding in bindings},
+        provider_states={binding.spec.key: _new_provider_state() for binding in bindings},
+    )
+
+
+def _configure_side_channel_runtime(
+    *,
+    settings_store,
+    analytics_store: AnalyticsStore,
+    base_url: str,
+) -> tuple[cc_dump.ai.side_channel.SideChannelManager, cc_dump.ai.data_dispatcher.DataDispatcher]:
+    side_channel_mgr = cc_dump.ai.side_channel.SideChannelManager()
+    side_channel_mgr.enabled = bool(settings_store.get("side_channel_enabled"))
+    side_channel_mgr.set_base_url(base_url)
+    side_channel_mgr.set_usage_provider(
+        lambda purpose: dict(analytics_store.get_side_channel_purpose_summary().get(purpose, {}))
+    )
+    return side_channel_mgr, cc_dump.ai.data_dispatcher.DataDispatcher(side_channel_mgr)
+
+
+def _base_store_context(
+    *,
+    side_channel_manager,
+    tmux_controller,
+    settings_store,
+    view_store,
+) -> dict[str, object]:
+    return {
+        "side_channel_manager": side_channel_manager,
+        "tmux_controller": tmux_controller,
+        "settings_store": settings_store,
+        "view_store": view_store,
+    }
+
+
+def _app_store_context(base_context: dict[str, object], app: CcDumpApp) -> dict[str, object]:
+    return {
+        **base_context,
+        "app": app,
+        **cc_dump.tui.view_store_bridge.build_reaction_context(app),
+    }
+
+
+def _shutdown_binding(binding: ProviderProxyBinding, *, timeout: float) -> None:
+    shutdown_thread = threading.Thread(target=binding.server.shutdown, daemon=True)
+    shutdown_thread.start()
+    try:
+        shutdown_thread.join(timeout=timeout)
+    except KeyboardInterrupt:
+        pass
+    if shutdown_thread.is_alive():
+        logger.warning("Timeout during shutdown for %s - forcing close", binding.spec.key)
+    binding.server.server_close()
+
+
+def _existing_path(path: str | None) -> str | None:
+    return path if path and os.path.exists(path) else None
+
+
+def _sidecar_target_path(
+    bindings: tuple[ProviderProxyBinding, ...],
+    recording_paths: dict[str, str],
+    replay_path: str | None,
+) -> str | None:
+    candidate_paths = (
+        *(recording_paths.get(binding.spec.key) for binding in bindings),
+        replay_path,
+    )
+    return next(
+        (existing for existing in map(_existing_path, candidate_paths) if existing is not None),
+        None,
+    )
+
+
+def _resume_path(primary_record_path: str | None, replay_path: str | None) -> str | None:
+    return _existing_path(primary_record_path) or _existing_path(replay_path)
+
+
 def main():
     auto_launch_config, _argv, auto_launch_extra_args = _detect_run_subcommand(sys.argv[1:])
 
@@ -142,7 +351,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     default_provider_key = cc_dump.providers.DEFAULT_PROVIDER_KEY
-    default_provider_spec = cc_dump.providers.require_provider_spec(default_provider_key)
+    default_provider_spec = cc_dump.providers.get_provider_spec(default_provider_key)
     target = os.environ.get(
         default_provider_spec.base_url_env,
         default_provider_spec.default_target,
@@ -181,6 +390,13 @@ def main():
         action="store_true",
         default=False,
         help="Continue from most recent recording (replay + live proxy)",
+    )
+    parser.add_argument(
+        "--resume",
+        nargs="?",
+        const="latest",
+        default=None,
+        help="Resume UI state sidecar. Optional path; defaults to latest recording.",
     )
     parser.add_argument(
         "--list-recordings",
@@ -277,7 +493,18 @@ def main():
                 print(f"  - {path}")
         return
 
-    # Resolve --continue to load latest recording.
+    # Resolve --continue / --resume to load latest recording
+    if args.resume is not None:
+        if args.resume == "latest":
+            latest = cc_dump.io.sessions.get_latest_recording()
+            if latest is None:
+                print("No recordings found to resume from.")
+                return
+            args.replay = latest
+        else:
+            args.replay = args.resume
+        print(f"🔄 Resuming from: {args.replay}")
+
     if args.continue_session:
         latest = cc_dump.io.sessions.get_latest_recording()
         if latest is None:
@@ -289,9 +516,9 @@ def main():
     event_q: queue.Queue[PipelineEvent] = queue.Queue()
 
     # Load replay data if specified, but always start proxy
-    server = None
     replay_data = None
 
+    resume_ui_state = None
     if args.replay:
         # Load HAR file (complete messages, NO event conversion)
         print(f"   Loading replay: {args.replay}")
@@ -299,6 +526,12 @@ def main():
         try:
             replay_data = cc_dump.pipeline.har_replayer.load_har(args.replay)
             print(f"   Found {len(replay_data)} request/response pairs")
+            sidecar_payload = cc_dump.io.session_sidecar.load_ui_state(args.replay)
+            if isinstance(sidecar_payload, dict):
+                loaded_ui = sidecar_payload.get("ui_state", {})
+                if isinstance(loaded_ui, dict):
+                    resume_ui_state = loaded_ui
+                    print(f"   Loaded UI sidecar: {cc_dump.io.session_sidecar.sidecar_path_for_har(args.replay)}")
 
         except Exception as e:
             print(f"   Error loading HAR file: {e}")
@@ -306,75 +539,20 @@ def main():
 
     # ─── Start proxy servers ────────────────────────────────────────────────
     # // [LAW:one-type-per-behavior] All providers share ProxyHandler, parameterized by factory.
-
-    def _start_proxy_server(host, port, handler_class):
-        """Create and start an HTTP proxy server. Returns (server, actual_port, thread)."""
-        srv = http.server.ThreadingHTTPServer((host, port), handler_class)
-        ap = srv.server_address[1]
-        t = threading.Thread(target=srv.serve_forever, daemon=True)
-        t.start()
-        return srv, ap, t
-
-    active_specs: list[cc_dump.providers.ProviderSpec] = [
-        default_provider_spec
-    ]
-    active_specs.extend(
-        spec
-        for spec in cc_dump.providers.optional_proxy_provider_specs()
-        if not getattr(args, f"no_{spec.key}")
+    proxy_runtime = _build_proxy_runtime(
+        args=args,
+        default_provider_spec=default_provider_spec,
+        event_q=event_q,
     )
-
-    # Forward proxy certificate authority for CONNECT interception.
-    forward_proxy_ca = None
-    if any(spec.proxy_type == "forward" for spec in active_specs):
-        from cc_dump.pipeline.forward_proxy_tls import ForwardProxyCertificateAuthority
-        ca_dir = Path(args.forward_proxy_ca_dir) if args.forward_proxy_ca_dir else None
-        forward_proxy_ca = ForwardProxyCertificateAuthority(ca_dir=ca_dir)
-
-    bindings: dict[str, ProviderProxyBinding] = {}
-    for spec in active_specs:
-        bind_port = args.port if spec.key == default_provider_key else int(getattr(args, f"{spec.key}_port"))
-        configured_target = (
-            args.target if spec.key == default_provider_key else str(getattr(args, f"{spec.key}_target"))
-        )
-        normalized_target = configured_target.rstrip("/") if configured_target else None
-        target_host = normalized_target if spec.proxy_type == "reverse" else None
-        ca_for_provider = forward_proxy_ca if spec.proxy_type == "forward" else None
-
-        handler = make_handler_class(
-            provider=spec.key,
-            target_host=target_host,
-            event_queue=event_q,
-            forward_proxy_ca=ca_for_provider,
-        )
-        srv, port, _ = _start_proxy_server(args.host, bind_port, handler)
-        endpoint = cc_dump.providers.build_provider_endpoint(
-            spec.key,
-            proxy_url=f"http://{args.host}:{port}",
-            target=normalized_target,
-            proxy_mode=spec.proxy_type,
-            forward_proxy_ca_cert_path=(
-                str(ca_for_provider.ca_cert_path) if ca_for_provider is not None else None
-            ),
-        )
-        bindings[spec.key] = ProviderProxyBinding(
-            spec=spec,
-            server=srv,
-            handler_class=handler,
-            port=port,
-            endpoint=endpoint,
-        )
-
-    provider_endpoints: cc_dump.providers.ProviderEndpointMap = {
-        provider: binding.endpoint for provider, binding in bindings.items()
-    }
-    default_binding = bindings[default_provider_key]
+    bindings = proxy_runtime.bindings
+    provider_endpoints = proxy_runtime.provider_endpoints
+    provider_states = proxy_runtime.provider_states
+    default_binding = bindings[0]
     actual_port = default_binding.port
     default_target = default_binding.endpoint.target
-    server = default_binding.server
 
     print("🚀 cc-dump proxy started")
-    for binding in bindings.values():
+    for binding in bindings:
         spec = binding.spec
         endpoint = binding.endpoint
         print(f"   {spec.display_name} endpoint: {endpoint.proxy_url}")
@@ -390,12 +568,8 @@ def main():
                 f"NODE_EXTRA_CA_CERTS={endpoint.forward_proxy_ca_cert_path or ''} "
                 f"{spec.client_hint}"
             )
-
     # [LAW:one-source-of-truth] Default-state alias points at canonical per-provider state.
-    state = {
-        "request_counter": 0,
-        "current_session": None,  # Track Claude Code session ID for change detection
-    }
+    state = provider_states[default_provider_key]
 
     # Set up event router with subscribers
     router = EventRouter(event_q)
@@ -417,7 +591,7 @@ def main():
         recordings_dir = _recordings_output_dir(args.record)
         recordings_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
-        active_providers = list(bindings.keys())
+        active_providers = [binding.spec.key for binding in bindings]
 
         for provider in active_providers:
             record_path = _recording_path_for_provider(recordings_dir, provider, timestamp)
@@ -429,8 +603,12 @@ def main():
             har_recorders.append(recorder)
             router.add_subscriber(DirectSubscriber(recorder.on_event))
             print(f"   Recording ({provider}): {record_path} (created on first API call)")
-        primary_record_path = recording_paths.get(default_provider_key) or next(
-            iter(recording_paths.values()),
+        primary_record_path = next(
+            (
+                recording_paths.get(binding.spec.key)
+                for binding in bindings
+                if recording_paths.get(binding.spec.key)
+            ),
             None,
         )
     else:
@@ -473,40 +651,11 @@ def main():
     tmux_state = tmux_ctrl.state if tmux_ctrl else None
     print(f"   Tmux: {_TMUX_STATUS[tmux_state]}")
 
-    # Side channel (AI enrichment via claude -p)
-    sc_enabled = bool(settings_store.get("side_channel_enabled"))
-    side_channel_mgr = cc_dump.ai.side_channel.SideChannelManager()
-    side_channel_mgr.enabled = sc_enabled
-    side_channel_mgr.set_base_url(default_binding.endpoint.proxy_url)
-
-    def _coerce_token_count(value: object) -> int:
-        if isinstance(value, bool):
-            return int(value)
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            return int(value)
-        if isinstance(value, str):
-            try:
-                return int(value)
-            except ValueError:
-                return 0
-        return 0
-
-    def _side_channel_usage_for_purpose(purpose: str) -> dict[str, int]:
-        usage_rows = analytics_store.get_side_channel_purpose_summary()
-        row = usage_rows.get(purpose)
-        if not isinstance(row, dict):
-            return {}
-        return {
-            "input_tokens": _coerce_token_count(row.get("input_tokens", 0)),
-            "cache_read_tokens": _coerce_token_count(row.get("cache_read_tokens", 0)),
-            "cache_creation_tokens": _coerce_token_count(row.get("cache_creation_tokens", 0)),
-            "output_tokens": _coerce_token_count(row.get("output_tokens", 0)),
-        }
-
-    side_channel_mgr.set_usage_provider(_side_channel_usage_for_purpose)
-    data_dispatcher = cc_dump.ai.data_dispatcher.DataDispatcher(side_channel_mgr)
+    side_channel_mgr, data_dispatcher = _configure_side_channel_runtime(
+        settings_store=settings_store,
+        analytics_store=analytics_store,
+        base_url=default_binding.endpoint.proxy_url,
+    )
 
     # Request pipeline — transforms + interceptors run before forwarding
     pipeline = RequestPipeline(
@@ -516,7 +665,7 @@ def main():
         interceptors=[cc_dump.pipeline.sentinel.make_interceptor(tmux_ctrl)],
     )
     # // [LAW:single-enforcer] One shared request pipeline is applied at every provider handler boundary.
-    for binding in bindings.values():
+    for binding in bindings:
         binding.handler_class.request_pipeline = pipeline
 
     router.start()
@@ -528,12 +677,12 @@ def main():
     domain_store = cc_dump.app.domain_store.DomainStore()
 
     # Wire settings store reactions (after all consumers are created)
-    store_context = {
-        "side_channel_manager": side_channel_mgr,
-        "tmux_controller": tmux_ctrl,
-        "settings_store": settings_store,
-        "view_store": view_store,
-    }
+    store_context = _base_store_context(
+        side_channel_manager=side_channel_mgr,
+        tmux_controller=tmux_ctrl,
+        settings_store=settings_store,
+        view_store=view_store,
+    )
     settings_store._reaction_disposers = cc_dump.app.settings_store.setup_reactions(
         settings_store, store_context
     )
@@ -546,7 +695,8 @@ def main():
     app = CcDumpApp(
         display_sub.queue,
         state,
-        router,
+        router=router,
+        provider_states=provider_states,
         analytics_store=analytics_store,
         host=args.host,
         port=actual_port,
@@ -554,6 +704,7 @@ def main():
         replay_data=replay_data,
         recording_path=primary_record_path,
         replay_file=args.replay,
+        resume_ui_state=resume_ui_state,
         tmux_controller=tmux_ctrl,
         side_channel_manager=side_channel_mgr,
         data_dispatcher=data_dispatcher,
@@ -566,9 +717,7 @@ def main():
         auto_launch_extra_args=auto_launch_extra_args,
     )
 
-    # Store context is finalized here; view-store reactions are bound on app mount.
-    store_context["app"] = app
-    store_context.update(cc_dump.tui.view_store_bridge.build_reaction_context(app))
+    app._store_context = _app_store_context(store_context, app)
     try:
         app.run()
     finally:
@@ -582,38 +731,10 @@ def main():
         if tmux_ctrl:
             tmux_ctrl.cleanup()
         # Graceful shutdown with timeout for in-flight requests
-        if server:
+        if bindings:
             logger.info("Shutting down gracefully (press Ctrl+C again to force quit)...")
-
-            # Try graceful shutdown with 3 second timeout
-            shutdown_thread = threading.Thread(target=server.shutdown, daemon=True)
-            shutdown_thread.start()
-            try:
-                shutdown_thread.join(timeout=3.0)
-            except KeyboardInterrupt:
-                pass  # User forced quit during shutdown
-
-            if shutdown_thread.is_alive():
-                # Timeout or interrupted - force close
-                logger.warning("Timeout during shutdown - forcing close")
-            else:
-                # Graceful shutdown succeeded
-                logger.info("Server stopped")
-
-            server.server_close()
-
-        # Shutdown optional provider servers
-        for provider, binding in bindings.items():
-            if provider == default_provider_key:
-                continue
-            srv = binding.server
-            shutdown_thread = threading.Thread(target=srv.shutdown, daemon=True)
-            shutdown_thread.start()
-            try:
-                shutdown_thread.join(timeout=2.0)
-            except KeyboardInterrupt:
-                pass
-            srv.server_close()
+        for binding in bindings:
+            _shutdown_binding(binding, timeout=3.0)
 
         # Clean up other resources
         router.stop()
@@ -621,7 +742,7 @@ def main():
             recorder.close()
 
         # Persist UI sidecar next to active HAR (recording path or replay file).
-        sidecar_target = _sidecar_target_path(tuple(bindings.values()), recording_paths, args.replay)
+        sidecar_target = _sidecar_target_path(bindings, recording_paths, args.replay)
         if sidecar_target:
             try:
                 ui_state = app.export_ui_state()
@@ -629,6 +750,7 @@ def main():
                 logger.info("UI state saved: %s", sidecar_path)
             except Exception as e:
                 logger.exception("UI state save failed: %s", e)
+
         # Print restart command — unstoppable (mask SIGINT so Ctrl+C can't suppress it)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         replay_path = _resume_path(primary_record_path, args.replay)

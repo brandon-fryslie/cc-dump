@@ -99,10 +99,7 @@ def side_channel_summarize(app) -> None:
         app._view_store.set("sc:active_action", "summarize_recent")
 
     dispatcher = app._data_dispatcher
-    source_provider = cc_dump.providers.session_provider(
-        app._active_session_key_from_tabs(),
-        default_session_key=app._default_session_key,
-    )
+    source_provider = cc_dump.providers.session_provider(app._active_session_key_from_tabs())
 
     def _do_summarize() -> None:
         result = dispatcher.summarize_messages(messages, source_provider=source_provider)
@@ -449,10 +446,7 @@ def action_sc_qa_submit(app) -> None:
     )
 
     dispatcher = app._data_dispatcher
-    source_provider = cc_dump.providers.session_provider(
-        app._active_session_key_from_tabs(),
-        default_session_key=app._default_session_key,
-    )
+    source_provider = cc_dump.providers.session_provider(app._active_session_key_from_tabs())
     request_id = f"sc-qa-{int(time.time() * 1000)}"
 
     def _do_qa() -> None:
@@ -593,10 +587,7 @@ def action_sc_action_extract(app) -> None:
         context_session_key=context_session_key,
     )
     dispatcher = app._data_dispatcher
-    source_provider = cc_dump.providers.session_provider(
-        app._active_session_key_from_tabs(),
-        default_session_key=app._default_session_key,
-    )
+    source_provider = cc_dump.providers.session_provider(app._active_session_key_from_tabs())
     request_id = f"sc-action-{int(time.time() * 1000)}"
 
     def _do_action_extract() -> None:
@@ -855,10 +846,7 @@ def action_sc_utility_run(app) -> None:
     )
 
     dispatcher = app._data_dispatcher
-    source_provider = cc_dump.providers.session_provider(
-        app._active_session_key_from_tabs(),
-        default_session_key=app._default_session_key,
-    )
+    source_provider = cc_dump.providers.session_provider(app._active_session_key_from_tabs())
 
     def _do_utility_run() -> None:
         result = dispatcher.run_utility(

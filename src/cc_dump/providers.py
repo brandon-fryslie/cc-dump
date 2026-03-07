@@ -39,15 +39,16 @@ class ProviderEndpoint:
 
     provider_key: str
     proxy_url: str
-    target: str | None
+    target: str
     proxy_mode: ProxyMode
-    forward_proxy_ca_cert_path: str | None = None
+    forward_proxy_ca_cert_path: str = ""
 
 
 ProviderEndpointMap: TypeAlias = dict[str, ProviderEndpoint]
 
 
 DEFAULT_PROVIDER_KEY = "anthropic"
+DEFAULT_SESSION_KEY = "__default__"
 
 
 # // [LAW:one-source-of-truth] All supported providers are declared in this registry.
@@ -98,55 +99,38 @@ _PROVIDERS: dict[str, ProviderSpec] = {
     ),
 }
 
-
-def _normalize_optional_text(value: object) -> str | None:
-    text = str(value or "").strip()
-    return text or None
-
-
-def _normalize_proxy_mode(value: object, default: ProxyMode) -> ProxyMode:
-    normalized = str(value or default).strip().lower()
-    if normalized == "forward":
-        return "forward"
-    if normalized == "reverse":
-        return "reverse"
-    return default
-
-
 def build_provider_endpoint(
     provider: str,
     *,
     proxy_url: str,
-    target: str | None = None,
-    proxy_mode: ProxyMode | str | None = None,
-    forward_proxy_ca_cert_path: str | None = None,
+    target: str,
+    proxy_mode: ProxyMode,
+    forward_proxy_ca_cert_path: str = "",
 ) -> ProviderEndpoint:
     """Build normalized endpoint metadata for one provider.
 
     // [LAW:single-enforcer] Endpoint normalization lives at this boundary so
     // CLI, TUI, and launchers consume one typed shape.
     """
-    spec = require_provider_spec(provider)
-    mode = _normalize_proxy_mode(proxy_mode, spec.proxy_type)
-    normalized_target = _normalize_optional_text(target) if mode == "reverse" else None
-    normalized_ca_path = (
-        _normalize_optional_text(forward_proxy_ca_cert_path) if mode == "forward" else None
-    )
+    spec = get_provider_spec(provider)
+    normalized_target = target.strip() if proxy_mode == "reverse" else ""
+    normalized_ca_path = forward_proxy_ca_cert_path.strip() if proxy_mode == "forward" else ""
     return ProviderEndpoint(
         provider_key=spec.key,
-        proxy_url=str(proxy_url or "").strip(),
+        proxy_url=proxy_url.strip(),
         target=normalized_target,
-        proxy_mode=mode,
+        proxy_mode=proxy_mode,
         forward_proxy_ca_cert_path=normalized_ca_path,
     )
 
 
-def default_provider_endpoint(host: str, port: int, target: str | None = None) -> ProviderEndpoint:
+def default_provider_endpoint(host: str, port: int, target: str) -> ProviderEndpoint:
     """Build endpoint metadata for the canonical default provider."""
     return build_provider_endpoint(
         DEFAULT_PROVIDER_KEY,
         proxy_url=f"http://{host}:{port}",
         target=target,
+        proxy_mode=get_provider_spec(DEFAULT_PROVIDER_KEY).proxy_type,
     )
 
 
@@ -154,7 +138,7 @@ def build_provider_proxy_env(endpoint: ProviderEndpoint) -> dict[str, str]:
     """Build launcher env vars for one provider endpoint."""
     if not endpoint.proxy_url:
         return {}
-    spec = require_provider_spec(endpoint.provider_key)
+    spec = get_provider_spec(endpoint.provider_key)
     if endpoint.proxy_mode == "forward":
         env = {
             "HTTP_PROXY": endpoint.proxy_url,
@@ -167,7 +151,7 @@ def build_provider_proxy_env(endpoint: ProviderEndpoint) -> dict[str, str]:
 
 
 def normalize_provider(provider: str) -> str:
-    return str(provider or "").strip().lower()
+    return provider.strip().lower()
 
 
 def is_known_provider(provider: str) -> bool:
@@ -175,12 +159,6 @@ def is_known_provider(provider: str) -> bool:
 
 
 def get_provider_spec(provider: str) -> ProviderSpec:
-    """Return provider spec with explicit default fallback."""
-    key = normalize_provider(provider)
-    return _PROVIDERS.get(key, _PROVIDERS[DEFAULT_PROVIDER_KEY])
-
-
-def require_provider_spec(provider: str) -> ProviderSpec:
     """Return provider spec or raise for unknown provider keys."""
     key = normalize_provider(provider)
     if key not in _PROVIDERS:
@@ -196,56 +174,53 @@ def optional_proxy_provider_specs() -> tuple[ProviderSpec, ...]:
     return tuple(spec for spec in _PROVIDERS.values() if spec.optional_proxy)
 
 
-def provider_session_key(provider: str, default_session_key: str = "__default__") -> str:
+def provider_session_key(provider: str) -> str:
     """Map provider key to its default tab/session key."""
     spec = get_provider_spec(provider)
-    if spec.key == DEFAULT_PROVIDER_KEY:
-        return default_session_key
-    return f"{spec.key}:__default__"
+    return (
+        DEFAULT_SESSION_KEY
+        if spec.key == DEFAULT_PROVIDER_KEY
+        else f"{spec.key}:{DEFAULT_SESSION_KEY}"
+    )
 
 
-def session_provider(
-    session_key: str,
-    default_session_key: str = "__default__",
-) -> str:
+def session_provider(session_key: str) -> str:
     """Resolve provider key from a session key."""
-    if session_key == default_session_key:
-        return DEFAULT_PROVIDER_KEY
     prefix, sep, suffix = session_key.partition(":")
-    if sep and suffix == "__default__" and prefix in _PROVIDERS:
-        return prefix
-    return DEFAULT_PROVIDER_KEY
+    is_provider_session = (
+        sep == ":"
+        and suffix == DEFAULT_SESSION_KEY
+        and prefix in _PROVIDERS
+    )
+    return prefix if is_provider_session else DEFAULT_PROVIDER_KEY
 
 
 def infer_provider_from_url(url: str) -> str:
     """Best-effort provider inference from request URL."""
-    url_lc = str(url or "").strip().lower()
-    for spec in _PROVIDERS.values():
-        if any(marker in url_lc for marker in spec.url_markers):
-            return spec.key
-    return DEFAULT_PROVIDER_KEY
+    url_lc = url.strip().lower()
+    return next(
+        (
+            spec.key
+            for spec in _PROVIDERS.values()
+            if any(marker in url_lc for marker in spec.url_markers)
+        ),
+        DEFAULT_PROVIDER_KEY,
+    )
 
 
-def infer_provider_from_complete_message(message: object) -> str:
+def infer_provider_from_complete_message(message: dict[str, object]) -> str:
     """Best-effort provider inference from complete response shape."""
-    if not isinstance(message, dict):
-        return DEFAULT_PROVIDER_KEY
-    if message.get("type") == "message":
-        return "anthropic"
-    if message.get("object") == "chat.completion":
-        # OpenAI-family payloads are ambiguous across providers; use the
-        # canonical family representative for fallback classification.
-        return "openai"
-    return DEFAULT_PROVIDER_KEY
+    # // [LAW:dataflow-not-control-flow] Provider family is derived from response markers.
+    is_anthropic = message.get("type") == "message"
+    is_openai = message.get("object") == "chat.completion"
+    return "anthropic" if is_anthropic else "openai" if is_openai else DEFAULT_PROVIDER_KEY
 
 
-def is_complete_response_for_provider(provider: str, message: object) -> bool:
+def is_complete_response_for_provider(provider: str, message: dict[str, object]) -> bool:
     """Validate complete-response shape for the provider family."""
-    if not isinstance(message, dict):
-        return False
     family = get_provider_spec(provider).protocol_family
-    if family == "anthropic":
-        return message.get("type") == "message"
-    if family == "openai":
-        return message.get("object") == "chat.completion"
-    return False
+    checks = {
+        "anthropic": message.get("type") == "message",
+        "openai": message.get("object") == "chat.completion",
+    }
+    return checks.get(family, False)
