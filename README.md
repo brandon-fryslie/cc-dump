@@ -181,10 +181,9 @@ When running inside tmux with `libtmux` installed:
 
 ### Filterset Presets
 
-Save and recall visibility configurations:
+Apply and cycle built-in visibility presets:
 
 - `F1`–`F9` — Apply a filterset preset (F3 reserved)
-- `Shift+F1`–`Shift+F9` — Save current visibility state to a slot
 - `=` / `-` — Cycle forward/backward through presets
 
 **Built-in defaults:**
@@ -199,8 +198,6 @@ Save and recall visibility configurations:
 | F7 | Full Debug | Everything at full |
 | F8 | Assistant | Assistant only at full |
 | F9 | Minimal | User + assistant + tools at summary |
-
-User-saved filtersets override built-in defaults for the same slot.
 
 ### Theme Cycling
 
@@ -286,7 +283,6 @@ Each press cycles: current → next visibility level.
 | Key | Action |
 |-----|--------|
 | `F1`–`F9` | Apply preset (F3 skipped) |
-| `Shift+F1`–`Shift+F9` | Save current state to slot |
 | `=` / `-` | Cycle forward / backward through presets |
 
 ### Theme
@@ -315,7 +311,7 @@ Each press cycles: current → next visibility level.
 | Path | Contents |
 |------|----------|
 | `~/.local/share/cc-dump/recordings/` | HAR recordings (flat directory; provider encoded in filename) |
-| `~/.config/cc-dump/settings.json` | Persisted settings (filtersets, theme) |
+| `~/.config/cc-dump/settings.json` | Persisted app settings (theme, launch configs, defaults) |
 
 ## Environment Variables
 

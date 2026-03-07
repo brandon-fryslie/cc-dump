@@ -8,7 +8,6 @@ Import as: import cc_dump.io.settings
 """
 
 import json
-import logging
 import os
 import tempfile
 from pathlib import Path
@@ -99,20 +98,7 @@ DEFAULT_FILTERSETS: dict[str, dict[str, VisState]] = {
 }
 
 
-# [LAW:one-source-of-truth] Valid category keys derived from defaults
-_VALID_CATEGORY_KEYS = frozenset(next(iter(DEFAULT_FILTERSETS.values())).keys())
-
-
 def get_filterset(slot: str) -> Optional[dict[str, VisState]]:
-    """Return built-in filterset for slot. Logs warning if stale saved data exists."""
-    # Check for stale saved data and log clearly
-    saved = load_settings().get("filtersets", {}).get(slot)
-    if saved is not None:
-        saved_keys = {k for k, v in saved.items() if isinstance(v, list) and len(v) == 3}
-        if saved_keys != _VALID_CATEGORY_KEYS:
-            logging.getLogger(__name__).warning(
-                "Ignoring stale filterset slot %s: expected keys %s, got %s",
-                slot, sorted(_VALID_CATEGORY_KEYS), sorted(saved_keys),
-            )
-    # [LAW:one-source-of-truth] Always return built-in defaults
+    """Return the built-in filterset for a slot."""
+    # [LAW:one-source-of-truth] Filterset slots are defined only by built-in defaults.
     return DEFAULT_FILTERSETS.get(slot)
