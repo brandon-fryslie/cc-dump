@@ -35,10 +35,6 @@ Scope: named-session cleanup + HAR layout migration
   - Auto-resume logic still depends on `_active_resume_session_id()` from app-level session context.
   - Worth validating whether this should be a dedicated boundary/service rather than app method reach-through.
 
-- `src/cc_dump/tui/search_controller.py`
-  - Search UI updates are manually pushed from many call sites (`update_search_bar()` imperative fanout).
-  - Candidate for a single SnarFX projection path to reduce scatter and mismatch risk.
-
 ## Suggested Follow-Up Sequence
 1. Unify `show_logs`/`show_info` under view-store state.
 2. Remove `source_session_id` marker fallback after compatibility window.
