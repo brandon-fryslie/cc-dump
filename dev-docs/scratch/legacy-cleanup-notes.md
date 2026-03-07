@@ -36,6 +36,6 @@ Scope: named-session cleanup + HAR layout migration
   - Worth validating whether this should be a dedicated boundary/service rather than app method reach-through.
 
 ## Suggested Follow-Up Sequence
-1. Unify `show_logs`/`show_info` under view-store state.
+1. ~~Unify `show_logs`/`show_info` under view-store state.~~ (done)
 2. Remove `source_session_id` marker fallback after compatibility window.
 3. Split session routing responsibilities out of `CcDumpApp` into a focused coordinator.
