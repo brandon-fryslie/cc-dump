@@ -32,7 +32,6 @@ import cc_dump.ai.side_channel
 import cc_dump.ai.data_dispatcher
 import cc_dump.pipeline.sentinel
 import cc_dump.ai.side_channel_marker
-import cc_dump.io.session_sidecar
 from cc_dump.pipeline.proxy import RequestPipeline
 import cc_dump.app.view_store
 import cc_dump.app.hot_reload
@@ -320,21 +319,6 @@ def _existing_path(path: str | None) -> str | None:
     return path if path and os.path.exists(path) else None
 
 
-def _sidecar_target_path(
-    bindings: tuple[ProviderProxyBinding, ...],
-    recording_paths: dict[str, str],
-    replay_path: str | None,
-) -> str | None:
-    candidate_paths = (
-        *(recording_paths.get(binding.spec.key) for binding in bindings),
-        replay_path,
-    )
-    return next(
-        (existing for existing in map(_existing_path, candidate_paths) if existing is not None),
-        None,
-    )
-
-
 def _resume_path(primary_record_path: str | None, replay_path: str | None) -> str | None:
     return _existing_path(primary_record_path) or _existing_path(replay_path)
 
@@ -396,7 +380,7 @@ def main():
         nargs="?",
         const="latest",
         default=None,
-        help="Resume UI state sidecar. Optional path; defaults to latest recording.",
+        help="Replay latest recording. Optional path; defaults to latest recording.",
     )
     parser.add_argument(
         "--list-recordings",
@@ -518,7 +502,6 @@ def main():
     # Load replay data if specified, but always start proxy
     replay_data = None
 
-    resume_ui_state = None
     if args.replay:
         # Load HAR file (complete messages, NO event conversion)
         print(f"   Loading replay: {args.replay}")
@@ -526,13 +509,6 @@ def main():
         try:
             replay_data = cc_dump.pipeline.har_replayer.load_har(args.replay)
             print(f"   Found {len(replay_data)} request/response pairs")
-            sidecar_payload = cc_dump.io.session_sidecar.load_ui_state(args.replay)
-            if isinstance(sidecar_payload, dict):
-                loaded_ui = sidecar_payload.get("ui_state", {})
-                if isinstance(loaded_ui, dict):
-                    resume_ui_state = loaded_ui
-                    print(f"   Loaded UI sidecar: {cc_dump.io.session_sidecar.sidecar_path_for_har(args.replay)}")
-
         except Exception as e:
             print(f"   Error loading HAR file: {e}")
             return
@@ -704,7 +680,6 @@ def main():
         replay_data=replay_data,
         recording_path=primary_record_path,
         replay_file=args.replay,
-        resume_ui_state=resume_ui_state,
         tmux_controller=tmux_ctrl,
         side_channel_manager=side_channel_mgr,
         data_dispatcher=data_dispatcher,
@@ -740,16 +715,6 @@ def main():
         router.stop()
         for recorder in har_recorders:
             recorder.close()
-
-        # Persist UI sidecar next to active HAR (recording path or replay file).
-        sidecar_target = _sidecar_target_path(bindings, recording_paths, args.replay)
-        if sidecar_target:
-            try:
-                ui_state = app.export_ui_state()
-                sidecar_path = cc_dump.io.session_sidecar.save_ui_state(sidecar_target, ui_state)
-                logger.info("UI state saved: %s", sidecar_path)
-            except Exception as e:
-                logger.exception("UI state save failed: %s", e)
 
         # Print restart command — unstoppable (mask SIGINT so Ctrl+C can't suppress it)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
