@@ -218,8 +218,7 @@ async def test_dump_all_block_types():
             assert "SystemSection" in content
             assert "SYSTEM" in content
 
-            assert "TrackedContentBlock" in content
-            assert "Status:" in content
+            assert "TextContentBlock" in content
 
             assert "MessageBlock" in content
             assert "USER [" in content or "ASSISTANT [" in content
@@ -374,12 +373,7 @@ async def test_dump_handles_blocks_without_optional_fields():
                 detail=""
             ))
 
-            # TrackedContentBlock with old/new content
-            turn.blocks.append(fmt.TrackedContentBlock(
-                status="changed",
-                old_content="old",
-                new_content="new"
-            ))
+            turn.blocks.append(fmt.TextContentBlock(content="new"))
 
         # Should not crash
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:

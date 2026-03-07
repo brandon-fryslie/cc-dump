@@ -258,9 +258,6 @@ _TEXT_EXTRACTORS: dict[str, Callable] = {
     ),
     "MetadataBlock": lambda b: f"model: {b.model} max_tokens: {b.max_tokens}",
     "SystemSection": lambda b: "SYSTEM",
-    "TrackedContentBlock": lambda b: (
-        b.content if b.status == "new" else b.new_content if b.status == "changed" else ""
-    ),
     "MessageBlock": lambda b: f"{b.role} {b.msg_index}",
     "TextContentBlock": lambda b: b.content,
     "ToolUseBlock": lambda b: f"{b.name} {b.detail}",

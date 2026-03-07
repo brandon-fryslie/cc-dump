@@ -6,7 +6,6 @@ from cc_dump.core.formatting import (
     Category,
     NewlineBlock,
     TextContentBlock,
-    TrackedContentBlock,
     VisState,
 )
 from cc_dump.tui.rendering import render_turn_to_strips
@@ -16,10 +15,7 @@ def test_render_turn_to_strips_hides_empty_leaf_block_output():
     """Empty leaf output is filtered out of strips/flat block mapping."""
     console = Console()
     filters = {"system": VisState(True, False, True)}
-    block = TrackedContentBlock(
-        status="unknown-status",
-        category=Category.SYSTEM,
-    )
+    block = TextContentBlock(content="", category=Category.SYSTEM)
 
     strips, block_map, flat_blocks = render_turn_to_strips(
         [block],
