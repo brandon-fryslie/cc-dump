@@ -117,8 +117,6 @@ def _apply_edit_action(state, action: str) -> tuple[bool, bool]:
 def _post_search_edit(app, *, text_changed: bool, cursor_changed: bool) -> None:
     """Run shared post-edit side effects for search query editing."""
     # [LAW:dataflow-not-control-flow] SearchBar projection reacts to store-backed fields.
-    if text_changed or cursor_changed:
-        pass
     if text_changed and app._search_state.modes & cc_dump.tui.search.SearchMode.INCREMENTAL:
         schedule_incremental_search(app)
 
