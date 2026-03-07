@@ -727,7 +727,7 @@ def make_handler_class(
     // [LAW:one-type-per-behavior] All providers share one handler type,
     // parameterized by class attributes set here.
     """
-    spec = cc_dump.providers.require_provider_spec(provider)
+    spec = cc_dump.providers.get_provider_spec(provider)
     return type(
         f"ProxyHandler_{spec.key}",
         (ProxyHandler,),

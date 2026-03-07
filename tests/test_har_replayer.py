@@ -239,6 +239,37 @@ def test_load_har_malformed_entry_skipped(tmp_path, caplog):
     assert "skipping HAR entry 1" in caplog.text
 
 
+def test_load_har_non_object_response_skipped(tmp_path, caplog):
+    """Non-object response payloads are rejected at the HAR boundary."""
+    har_path = tmp_path / "test.har"
+    har = {
+        "log": {
+            "entries": [
+                {
+                    "request": {
+                        "headers": [],
+                        "postData": {"text": json.dumps({"model": "test"})},
+                    },
+                    "response": {
+                        "status": 200,
+                        "headers": [],
+                        "content": {"text": json.dumps(["not", "an", "object"])},
+                    },
+                },
+            ],
+        }
+    }
+
+    with open(har_path, "w") as f:
+        json.dump(har, f)
+
+    with caplog.at_level(logging.WARNING, logger="cc_dump.pipeline.har_replayer"):
+        with pytest.raises(ValueError, match="no valid entries"):
+            load_har(str(har_path))
+
+    assert "response.content.text must decode to a JSON object" in caplog.text
+
+
 def test_load_har_file_not_found():
     """FileNotFoundError for missing file."""
     with pytest.raises(FileNotFoundError):
