@@ -1,23 +1,22 @@
 """Custom Footer widget with composed Textual widgets."""
 
-from snarfx import Observable, reaction
+from snarfx import textual as stx
 from textual.color import Color
 from textual.containers import Horizontal
-from textual.widget import Widget
-from textual.widgets import Static
 
 import cc_dump.tui.rendering
 import cc_dump.tui.widget_factory
 import cc_dump.io.logging_setup
 from cc_dump.core.formatting import VisState, HIDDEN
 from cc_dump.tui.chip import Chip
+from cc_dump.tui.store_widget import StoreWidget
 
 
-class StatusFooter(Widget):
+class StatusFooter(StoreWidget):
     """Data-driven footer built from composed widgets.
 
     // [LAW:dataflow-not-control-flow] Render pipeline is fixed; data determines style.
-    // [LAW:single-enforcer] update_display() is the sole render entry.
+    // [LAW:single-enforcer] _setup_store_reactions() is the sole subscription entry.
     // [LAW:one-source-of-truth] Icons from _VIS_ICONS, colors from palette.
     """
 
@@ -104,18 +103,16 @@ class StatusFooter(Widget):
         ("6", "thinking"),
     ]
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._display_state: Observable[dict[str, object]] = Observable({})
-        # [LAW:single-enforcer] One reactive projection owns footer widget updates.
-        self._display_reaction = reaction(
-            lambda: self._display_state.get(),
-            self._apply_display_state,
-            fire_immediately=False,
-        )
-
-    def on_unmount(self) -> None:
-        self._display_reaction.dispose()
+    def _setup_store_reactions(self) -> list:
+        # [LAW:single-enforcer] Footer self-subscribes to footer_state; fires immediately
+        # on mount (post-compose) so children are guaranteed ready.
+        store = self.app._view_store
+        return [stx.reaction(
+            self.app,
+            lambda: store.footer_state.get(),
+            self._apply_footer_state,
+            fire_immediately=True,
+        )]
 
     def compose(self):
         # Line 1: category chips
@@ -138,7 +135,6 @@ class StatusFooter(Widget):
                 action="app.toggle_follow",
                 id="cmd-follow",
             )
-            yield Static(" F- ", id="cmd-filterset")
             yield Chip(
                 " c launch ",
                 action="app.launch_tool",
@@ -157,44 +153,50 @@ class StatusFooter(Widget):
                 id="cmd-auto-zoom",
                 classes="tmux",
             )
+        # Line 3: log row
+        runtime = cc_dump.io.logging_setup.get_runtime()
+        log_path = runtime.file_path if runtime is not None else ""
+        copy_action = "app.copy_log_path" if log_path else None
+        with Horizontal(id="footer-log-row"):
+            yield Chip(
+                " log: ",
+                action=copy_action,
+                hover_label=" copy ",
+                id="footer-log-label",
+                classes="-copyable",
+            )
             yield Chip(
                 " L tail ",
                 action="app.open_tmux_log_tail",
                 id="cmd-tail-log",
                 classes="tmux",
             )
-        # Line 3: log file path (computed during compose)
-        runtime = cc_dump.io.logging_setup.get_runtime()
-        log_path = runtime.file_path if runtime is not None else ""
-        yield Chip(
-            f" log: {log_path} " if log_path else " log: (unavailable) ",
-            action="app.copy_log_path" if log_path else None,
-            id="footer-log",
-        )
+            yield Chip(
+                f" {log_path} " if log_path else " (unavailable) ",
+                action=copy_action,
+                id="footer-log",
+                classes="-copyable",
+            )
 
-    def update_display(self, state: dict) -> None:
-        """Render footer from state dict. Called by footer_state reaction.
-
-        // [LAW:dataflow-not-control-flow] State values determine rendering, no branching.
-        """
-        self._display_state.set(dict(state))
-
-    def _apply_display_state(self, state: dict[str, object]) -> None:
-        # [LAW:dataflow-not-control-flow] exception: Textual update requires mounted widgets.
+    def _apply_footer_state(self, state: dict[str, object]) -> None:
+        # [LAW:dataflow-not-control-flow] State values determine rendering, no branching.
+        # [LAW:one-source-of-truth] exception: runtime/theme becomes authoritative only after app mount.
         if not self.is_attached:
             return
         runtime = cc_dump.tui.rendering.get_runtime_from_owner(self)
-        # [LAW:one-source-of-truth] exception: runtime/theme becomes authoritative only after app mount.
         if runtime.theme_colors is None:
             return
         tc = cc_dump.tui.rendering.get_theme_colors(runtime=runtime)
+        # Enrich raw store value (follow_state string → FollowState enum)
+        FollowState = cc_dump.tui.widget_factory.FollowState
+        enriched = dict(state)
+        enriched["follow_state"] = FollowState(state["follow_state"])
 
         bg_color = Color.parse(tc.background)
         fg_color = Color.parse(tc.foreground)
-        self._apply_category_row(state, tc)
-        self._apply_follow_chip(state, bg_color, fg_color)
-        self._apply_filterset_indicator(state, bg_color, fg_color)
-        self._apply_tmux_controls(state)
+        self._apply_category_row(enriched, tc)
+        self._apply_follow_chip(enriched, bg_color, fg_color)
+        self._apply_tmux_controls(enriched)
 
     def _apply_category_row(self, state: dict[str, object], tc) -> None:
         for key, name in self._CATEGORY_ITEMS:
@@ -225,23 +227,6 @@ class StatusFooter(Widget):
         follow_chip.set_class(is_dim, "-dim")
         follow_chip.styles.background = follow_bg
         follow_chip.styles.color = follow_fg
-
-    def _apply_filterset_indicator(
-        self,
-        state: dict[str, object],
-        bg_color: Color,
-        fg_color: Color,
-    ) -> None:
-        # [LAW:dataflow-not-control-flow] Always update; style varies by value.
-        active_slot = state.get("active_filterset")
-        filterset_label = self.query_one("#cmd-filterset", Static)
-        filterset_label.update(f" F{active_slot} " if active_slot is not None else " F- ")
-        # [LAW:dataflow-not-control-flow] Always set; values vary by state.
-        has_filterset = active_slot is not None
-        filterset_label.styles.background = bg_color if has_filterset else fg_color
-        filterset_label.styles.color = fg_color if has_filterset else bg_color
-        filterset_label.styles.text_style = "bold" if has_filterset else None
-        filterset_label.styles.opacity = 1.0 if has_filterset else 0.5
 
     def _apply_tmux_controls(self, state: dict[str, object]) -> None:
         # // [LAW:dataflow-not-control-flow] Always run; state values vary style.

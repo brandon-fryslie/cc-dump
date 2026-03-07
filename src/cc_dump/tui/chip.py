@@ -54,11 +54,24 @@ class Chip(Static):
     Chip.-hidden:hover {
         background: $surface-darken-1;
     }
+
+    Chip.-copyable:hover {
+        background: $accent-lighten-3;
+    }
     """
 
-    def __init__(self, label: str, *, action: str | None = None, **kwargs):
+    def __init__(
+        self,
+        label: str,
+        *,
+        action: str | None = None,
+        hover_label: str | None = None,
+        **kwargs,
+    ):
         super().__init__(label, **kwargs)
         self._action = action
+        self._base_label = label
+        self._hover_label = hover_label
 
     def _activate(self) -> None:
         # [LAW:single-enforcer] One activation path serves click + keyboard input.
@@ -73,6 +86,14 @@ class Chip(Static):
             event.stop()
             event.prevent_default()
             self._activate()
+
+    def on_enter(self, event) -> None:
+        if self._hover_label is not None:
+            self.update(self._hover_label)
+
+    def on_leave(self, event) -> None:
+        if self._hover_label is not None:
+            self.update(self._base_label)
 
 
 class ToggleChip(Static):

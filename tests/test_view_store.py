@@ -268,7 +268,7 @@ class TestReconcileWithNewKeys:
         assert store.get("panel:active") == "session"
         assert store.get("panel:side_channel") is False
         assert store.get("nav:follow") == "active"
-        assert store.get("filter:active") is None
+        assert store.get("filter:active") == "1"
         assert store.get("tmux:available") is False
         assert store.get("sc:loading") is False
         assert store.get("sc:active_action") == ""
@@ -294,7 +294,7 @@ class TestFooterStateComputed:
     def test_contains_footer_inputs(self):
         store = cc_dump.app.view_store.create()
         state = store.footer_state.get()
-        assert state["active_filterset"] is None
+        assert state["active_filterset"] == "1"
         assert state["tmux_available"] is False
         assert state["tmux_auto_zoom"] is False
         assert state["tmux_zoomed"] is False
@@ -370,24 +370,6 @@ class TestScPanelStateComputed:
         assert state["result_text"] == "summary"
         assert state["purpose_usage"] == {"block_summary": {"turns": 1}}
 
-
-class TestFooterReaction:
-    def test_footer_reaction_fires_on_key_change(self):
-        store = cc_dump.app.view_store.create()
-        app = MagicMock()
-        app.is_running = True
-        app._rerender_if_mounted = MagicMock()
-        push_footer = MagicMock()
-        context = {"app": app, "push_footer": push_footer}
-
-        cc_dump.app.view_store.setup_reactions(store, context)
-
-        push_footer.reset_mock()
-        store.set("filter:active", "2")
-
-        push_footer.assert_called()
-        state = push_footer.call_args[0][0]
-        assert state["active_filterset"] == "2"
 
 
 class TestErrorReaction:

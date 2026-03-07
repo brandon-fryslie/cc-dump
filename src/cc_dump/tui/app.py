@@ -44,7 +44,6 @@ import cc_dump.tui.workbench_results_view
 
 # Extracted controller modules (module-object imports — safe for hot-reload)
 from cc_dump.tui import action_handlers as _actions
-from cc_dump.tui.category_config import CATEGORY_CONFIG
 from cc_dump.tui.panel_registry import PANEL_REGISTRY, PANEL_ORDER, PANEL_CSS_IDS
 from cc_dump.tui import search_controller as _search
 from cc_dump.tui import dump_export as _dump
