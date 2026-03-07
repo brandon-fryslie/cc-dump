@@ -312,7 +312,7 @@ async def test_launch_config_launcher_select_round_trips_and_reopens_stably():
 
 
 async def test_launch_config_save_chip_keeps_app_responsive():
-    """Saving launch configs via focused Save control should close panel and preserve key handling."""
+    """Focused action chips should allow unrelated shortcuts and still handle activation keys."""
     async with run_app() as (pilot, app):
         app.action_toggle_launch_config()
         await pilot.pause()
@@ -320,12 +320,14 @@ async def test_launch_config_save_chip_keeps_app_responsive():
         save_chip = app.screen.query_one("#lc-action-save")
         save_chip.focus()
         await pilot.pause()
-        await press_and_settle(pilot, "enter")
-        assert not app._view_store.get("panel:launch_config")
 
         before = app.active_panel
         await press_and_settle(pilot, ".")
         assert app.active_panel != before
+        assert app._view_store.get("panel:launch_config")
+
+        await press_and_settle(pilot, "enter")
+        assert not app._view_store.get("panel:launch_config")
 
 
 async def test_launch_config_escape_closes_via_app_handler():

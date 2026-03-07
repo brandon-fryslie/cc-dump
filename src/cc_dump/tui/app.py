@@ -24,7 +24,7 @@ import textual.filter as _textual_filter
 from textual.app import App, ComposeResult, SystemCommand
 from textual.css.query import NoMatches
 from textual.message import Message
-from textual.widgets import Checkbox, Header, Input, OptionList, Select, TabbedContent, TabPane
+from textual.widgets import Header, TabbedContent, TabPane
 from rich.style import Style
 
 
@@ -41,8 +41,6 @@ import cc_dump.tui.info_panel
 import cc_dump.tui.custom_footer
 import cc_dump.tui.session_panel
 import cc_dump.tui.workbench_results_view
-import cc_dump.tui.chip
-
 # Extracted controller modules (module-object imports — safe for hot-reload)
 from cc_dump.tui import action_handlers as _actions
 from cc_dump.tui.panel_registry import PANEL_REGISTRY, PANEL_ORDER, PANEL_CSS_IDS
@@ -79,35 +77,10 @@ from snarfx import textual as stx
 logger = logging.getLogger(__name__)
 
 
-_NON_TEXT_CONTROL_OWNED_KEYS = {
-    "up",
-    "down",
-    "left",
-    "right",
-    "home",
-    "end",
-    "enter",
-    "space",
-    "tab",
-    "shift+tab",
-}
-
-
 def _focused_widget_owns_key(widget: object | None, event) -> bool:
-    if isinstance(widget, Input):
-        return True
-    if isinstance(
-        widget,
-        (
-            Select,
-            OptionList,
-            Checkbox,
-            cc_dump.tui.chip.Chip,
-            cc_dump.tui.chip.ToggleChip,
-        ),
-    ):
-        return event.key in _NON_TEXT_CONTROL_OWNED_KEYS
-    return False
+    # [LAW:single-enforcer] Focused widgets are the sole authority on which keys they consume.
+    check_consume_key = getattr(widget, "check_consume_key", None)
+    return bool(check_consume_key and check_consume_key(event.key, event.character))
 
 
 def _patch_textual_monochrome_style() -> None:
