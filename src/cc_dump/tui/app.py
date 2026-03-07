@@ -24,7 +24,7 @@ import textual.filter as _textual_filter
 from textual.app import App, ComposeResult, SystemCommand
 from textual.css.query import NoMatches
 from textual.message import Message
-from textual.widgets import Header, TabbedContent, TabPane
+from textual.widgets import Checkbox, Header, Input, OptionList, Select, TabbedContent, TabPane
 from rich.style import Style
 
 
@@ -41,6 +41,7 @@ import cc_dump.tui.info_panel
 import cc_dump.tui.custom_footer
 import cc_dump.tui.session_panel
 import cc_dump.tui.workbench_results_view
+import cc_dump.tui.chip
 
 # Extracted controller modules (module-object imports — safe for hot-reload)
 from cc_dump.tui import action_handlers as _actions
@@ -76,6 +77,37 @@ import cc_dump.app.domain_store
 from snarfx import textual as stx
 
 logger = logging.getLogger(__name__)
+
+
+_NON_TEXT_CONTROL_OWNED_KEYS = {
+    "up",
+    "down",
+    "left",
+    "right",
+    "home",
+    "end",
+    "enter",
+    "space",
+    "tab",
+    "shift+tab",
+}
+
+
+def _focused_widget_owns_key(widget: object | None, event) -> bool:
+    if isinstance(widget, Input):
+        return True
+    if isinstance(
+        widget,
+        (
+            Select,
+            OptionList,
+            Checkbox,
+            cc_dump.tui.chip.Chip,
+            cc_dump.tui.chip.ToggleChip,
+        ),
+    ):
+        return event.key in _NON_TEXT_CONTROL_OWNED_KEYS
+    return False
 
 
 def _patch_textual_monochrome_style() -> None:
@@ -1553,6 +1585,27 @@ class CcDumpApp(App):
             return True
         return False
 
+    def _handle_pre_keymap_event(self, event, mode) -> bool:
+        InputMode = cc_dump.tui.input_modes.InputMode
+
+        if mode == InputMode.SEARCH_EDIT:
+            event.prevent_default()
+            self._handle_search_editing_key(event)
+            return True
+        if mode == InputMode.SEARCH_NAV and self._handle_search_nav_special_keys(event):
+            event.prevent_default()
+            return True
+        if event.key == "escape" and self._close_topmost_panel():
+            event.prevent_default()
+            return True
+        if _focused_widget_owns_key(self.screen.focused, event):
+            return True
+        if mode == InputMode.NORMAL and event.character == "/":
+            event.prevent_default()
+            self._start_search()
+            return True
+        return False
+
     async def on_key(self, event) -> None:
         """// [LAW:single-enforcer] on_key is the sole key dispatcher.
 
@@ -1564,27 +1617,8 @@ class CcDumpApp(App):
         mode = self._input_mode
         MODE_KEYMAP = cc_dump.tui.input_modes.MODE_KEYMAP
         InputMode = cc_dump.tui.input_modes.InputMode
-
-        # Search modes consume keys first (Escape exits search before closing panels)
-        if mode == InputMode.SEARCH_EDIT:
-            event.prevent_default()
-            self._handle_search_editing_key(event)
+        if self._handle_pre_keymap_event(event, mode):
             return
-        if mode == InputMode.SEARCH_NAV:
-            if self._handle_search_nav_special_keys(event):
-                event.prevent_default()
-                return
-
-        # Generic Escape: close topmost panel (when focus is outside the panel)
-        if event.key == "escape" and self._close_topmost_panel():
-            event.prevent_default()
-            return
-
-        if mode == InputMode.NORMAL:
-            if event.character == "/":
-                event.prevent_default()
-                self._start_search()
-                return
 
         keymap = MODE_KEYMAP.get(mode, MODE_KEYMAP[InputMode.NORMAL])
         action_name = keymap.get(event.key)
