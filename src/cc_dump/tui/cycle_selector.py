@@ -1,7 +1,8 @@
-"""Compact inline cycle selectors — space-efficient dropdown alternatives.
+"""Compact inline cycle selectors.
 
 Single-select (CycleSelector) and multi-select (MultiCycleSelector) variants.
-Both render as ▾ value ▴ with two-state editing behavior.
+Both render as a compact single line when blurred and expand into a vertical
+option list when focused.
 
 This module is RELOADABLE. It appears in _RELOAD_ORDER right after
 cc_dump.tui.chip (same dependency profile: nothing).
@@ -19,32 +20,37 @@ from rich.text import Text
 from textual.message import Message
 from textual.widget import Widget
 
-# ---------------------------------------------------------------------------
-# Zone constants — internal focus zones within editing mode
-# ---------------------------------------------------------------------------
 _ZONE_PREV = 0
 _ZONE_CENTER = 1
 _ZONE_NEXT = 2
 
-# Arrow characters
-_ARROW_PREV = "\u25be"  # ▾ (down-pointing small triangle)
-_ARROW_NEXT = "\u25b4"  # ▴ (up-pointing small triangle)
+_ARROW_PREV = "▾"
+_ARROW_NEXT = "▴"
+_CHECKMARK = "✓"
 
-# [LAW:dataflow-not-control-flow] Zone activation deltas as data.
-# Center delta=0 is a sentinel: single-select exits editing, multi-select toggles.
-_ZONE_DELTAS: dict[int, int] = {
-    _ZONE_PREV: -1,
-    _ZONE_CENTER: 0,
-    _ZONE_NEXT: +1,
-}
+
+def _normalize_options(options: Sequence[str]) -> tuple[str, ...]:
+    return tuple(options) if options else ("",)
+
+
+def _wrap_index(index: int, size: int) -> int:
+    return index % size
+
+
+def _line_click_zone(x: int, line_length: int) -> int:
+    if x < 3:
+        return _ZONE_PREV
+    if x >= line_length - 3:
+        return _ZONE_NEXT
+    return _ZONE_CENTER
 
 
 @dataclass(frozen=True)
 class CycleSelectorState:
     options: tuple[str, ...]
     index: int = 0
+    cursor: int = 0
     editing: bool = False
-    zone: int = _ZONE_CENTER
 
 
 def _initial_cycle_selector_state(
@@ -53,35 +59,23 @@ def _initial_cycle_selector_state(
 ) -> CycleSelectorState:
     """Build initial reactive state from options/value inputs.
 
-    // [LAW:one-source-of-truth] Option normalization and initial index selection live here.
+    # [LAW:one-source-of-truth] Option normalization and initial selection live here.
     """
-    options_tuple = tuple(options) if options else ("",)
-    index = options_tuple.index(value) if value is not None and value in options_tuple else 0
-    return CycleSelectorState(options=options_tuple, index=index)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# CycleSelector — single-select
-# ═══════════════════════════════════════════════════════════════════════════
+    normalized = _normalize_options(options)
+    index = normalized.index(value) if value is not None and value in normalized else 0
+    return CycleSelectorState(options=normalized, index=index, cursor=index)
 
 
 class CycleSelector(Widget, can_focus=True):
-    """Compact inline single-select option selector with cycling behavior.
-
-    Three zones: prev arrow (▾), current value, next arrow (▴).
-    Two modes: non-editing (single focusable unit) and editing
-    (internal zone navigation with arrow keys).
-
-    // [LAW:one-source-of-truth] _options is the canonical option list.
-    // _index is the canonical selected index. .value is derived.
-    """
+    """Compact inline single-select option selector."""
 
     ALLOW_SELECT: ClassVar[bool] = False
 
     DEFAULT_CSS = """
     CycleSelector {
         width: auto;
-        height: 1;
+        height: auto;
+        min-height: 1;
         text-style: bold;
         background: $panel-lighten-2;
         color: $text;
@@ -92,25 +86,17 @@ class CycleSelector(Widget, can_focus=True):
     }
 
     CycleSelector:focus {
-        text-style: bold underline;
         background: $surface-darken-1;
     }
 
     CycleSelector.-editing {
-        text-style: bold;
         background: $accent;
         color: $text;
     }
     """
 
     class Changed(Message):
-        """Posted when the selected value changes (on prev/next activation).
-
-        Attributes:
-            cycle_selector: The CycleSelector that changed.
-            value: The new selected value.
-            index: The new selected index.
-        """
+        """Posted when the selected value changes."""
 
         def __init__(
             self, cycle_selector: CycleSelector, value: str, index: int
@@ -122,7 +108,6 @@ class CycleSelector(Widget, can_focus=True):
 
         @property
         def control(self) -> CycleSelector:
-            """The CycleSelector widget that posted this message."""
             return self.cycle_selector
 
     def __init__(
@@ -142,7 +127,6 @@ class CycleSelector(Widget, can_focus=True):
         self._state: Observable[CycleSelectorState] = Observable(
             _initial_cycle_selector_state(options, value)
         )
-        # [LAW:single-enforcer] Local selector rendering is invalidated by a single state reaction.
         self._state_reaction = reaction(
             lambda: self._state.get(),
             self._apply_state,
@@ -155,8 +139,6 @@ class CycleSelector(Widget, can_focus=True):
     def _apply_state(self, _state: CycleSelectorState) -> None:
         self.refresh()
 
-    # [LAW:one-source-of-truth] exception: legacy private attributes are compatibility
-    # views over reactive state for existing tests/callers.
     @property
     def _options(self) -> list[str]:
         return list(self._state.get().options)
@@ -164,9 +146,9 @@ class CycleSelector(Widget, can_focus=True):
     @_options.setter
     def _options(self, value: Sequence[str]) -> None:
         state = self._state.get()
-        options = tuple(value) if value else ("",)
+        options = _normalize_options(value)
         index = min(state.index, len(options) - 1)
-        self._state.set(replace(state, options=options, index=index))
+        self._state.set(replace(state, options=options, index=index, cursor=index))
 
     @property
     def _index(self) -> int:
@@ -174,8 +156,16 @@ class CycleSelector(Widget, can_focus=True):
 
     @_index.setter
     def _index(self, value: int) -> None:
+        self._set_index(int(value))
+
+    @property
+    def _cursor(self) -> int:
+        return self._state.get().cursor
+
+    @_cursor.setter
+    def _cursor(self, value: int) -> None:
         state = self._state.get()
-        self._state.set(replace(state, index=value % len(state.options)))
+        self._state.set(replace(state, cursor=_wrap_index(int(value), len(state.options))))
 
     @property
     def _editing(self) -> bool:
@@ -184,204 +174,164 @@ class CycleSelector(Widget, can_focus=True):
     @_editing.setter
     def _editing(self, value: bool) -> None:
         state = self._state.get()
-        self._state.set(replace(state, editing=bool(value)))
-
-    @property
-    def _zone(self) -> int:
-        return self._state.get().zone
-
-    @_zone.setter
-    def _zone(self, value: int) -> None:
-        state = self._state.get()
-        self._state.set(replace(state, zone=max(_ZONE_PREV, min(_ZONE_NEXT, int(value)))))
-
-    # -- Properties ----------------------------------------------------------
+        cursor = state.index if value else state.cursor
+        self._state.set(replace(state, editing=bool(value), cursor=cursor))
 
     @property
     def value(self) -> str:
-        """Current selected option value."""
         state = self._state.get()
         return state.options[state.index]
 
     @value.setter
     def value(self, new_value: str) -> None:
-        """Set value programmatically. Raises ValueError if not in options."""
-        state = self._state.get()
-        self._state.set(replace(state, index=state.options.index(new_value)))
-
-    @property
-    def index(self) -> int:
-        """Current selected index."""
-        return self._state.get().index
-
-    @index.setter
-    def index(self, new_index: int) -> None:
-        """Set index programmatically (wraps around)."""
-        state = self._state.get()
-        self._state.set(replace(state, index=new_index % len(state.options)))
-
-    def set_options(self, options: Sequence[str], *, value: str | None = None) -> None:
-        """Replace options list and selected value.
-
-        // [LAW:one-source-of-truth] Selection index is recomputed from new options.
-        """
-        updated = tuple(options) if options else ("",)
-        index = updated.index(value) if value is not None and value in updated else 0
-        self._state.set(
-            CycleSelectorState(
-                options=updated,
-                index=index,
-                editing=False,
-                zone=_ZONE_CENTER,
-            )
-        )
-
-    # -- Rendering -----------------------------------------------------------
-
-    def render(self) -> Text:
-        """Render the widget as a Rich Text with zone-specific styling.
-
-        // [LAW:dataflow-not-control-flow] Always builds all 3 zones.
-        // Editing varies the styling, not the structure.
-        """
-        state = self._state.get()
-        val = state.options[state.index]
-        parts = [f" {_ARROW_PREV} ", f" {val} ", f" {_ARROW_NEXT} "]
-
-        text = Text()
-        reverse = Style(reverse=True)
-        for i, part in enumerate(parts):
-            style = reverse if (state.editing and i == state.zone) else Style.null()
-            text.append(part, style=style)
-
-        self.set_class(state.editing, "-editing")
-        return text
-
-    # -- Zone management -----------------------------------------------------
-
-    def _zone_boundaries(self) -> tuple[int, int]:
-        """Return (prev_end, next_start) x-offsets for click zone detection.
-
-        // [LAW:one-source-of-truth] Boundaries derived from content lengths.
-        """
-        prev_width = 3  # " ▾ "
-        state = self._state.get()
-        center_width = len(state.options[state.index]) + 2  # " value "
-        return prev_width, prev_width + center_width
-
-    def _move_zone(self, delta: int) -> None:
-        """Move internal focus zone by delta, clamping to valid range."""
         state = self._state.get()
         self._state.set(
             replace(
                 state,
-                zone=max(_ZONE_PREV, min(_ZONE_NEXT, state.zone + delta)),
+                index=state.options.index(new_value),
+                cursor=state.options.index(new_value),
             )
         )
 
-    def _activate_zone(self, zone: int) -> None:
-        """Activate a zone: cycle prev/next or confirm center.
+    @property
+    def index(self) -> int:
+        return self._state.get().index
 
-        // [LAW:dataflow-not-control-flow] _ZONE_DELTAS drives behavior.
-        """
-        delta = _ZONE_DELTAS[zone]
-        state = self._state.get()
-        old_index = state.index
-        next_index = (state.index + delta) % len(state.options)
-        # delta==0 means center (confirm) → exit editing
-        next_state = replace(
-            state,
-            index=next_index,
-            editing=state.editing and delta != 0,
+    @index.setter
+    def index(self, new_index: int) -> None:
+        self._set_index(new_index)
+
+    def set_options(self, options: Sequence[str], *, value: str | None = None) -> None:
+        """Replace options list and selected value."""
+        normalized = _normalize_options(options)
+        index = normalized.index(value) if value is not None and value in normalized else 0
+        self._state.set(
+            CycleSelectorState(
+                options=normalized,
+                index=index,
+                cursor=index,
+                editing=False,
+            )
         )
+
+    def _set_index(self, new_index: int) -> None:
+        state = self._state.get()
+        next_index = _wrap_index(new_index, len(state.options))
+        next_state = replace(state, index=next_index, cursor=next_index)
         self._state.set(next_state)
+        if next_index != state.index:
+            self.post_message(self.Changed(self, next_state.options[next_index], next_index))
 
-        if next_index != old_index:
-            self.post_message(self.Changed(self, next_state.options[next_state.index], next_index))
-
-    def _enter_editing(self) -> None:
-        """Enter editing mode, starting with center zone focused."""
+    def _move_selection(self, delta: int) -> None:
         state = self._state.get()
-        self._state.set(replace(state, editing=True, zone=_ZONE_CENTER))
+        self._set_index(state.index + delta)
 
-    def _exit_editing(self) -> None:
-        """Exit editing mode."""
+    def _select_row(self, row: int) -> None:
+        self._set_index(row)
+
+    def _expanded(self) -> bool:
+        return self.has_focus or self._state.get().editing
+
+    def _active_line(self, label: str) -> str:
+        return f" {_ARROW_PREV} {label} {_ARROW_NEXT} "
+
+    def _inactive_line(self, label: str) -> str:
+        return f"   {label}   "
+
+    def _zone_boundaries(self, label: str | None = None) -> tuple[int, int]:
+        active_label = self.value if label is None else label
+        line_length = len(self._active_line(active_label))
+        return 3, line_length - 3
+
+    def render(self) -> Text:
+        """Render the widget as a single line or expanded vertical option list.
+
+        # [LAW:dataflow-not-control-flow] exception: focus intentionally changes the
+        # rendered structure to match standard select affordances.
+        """
         state = self._state.get()
-        self._state.set(replace(state, editing=False))
+        expanded = self._expanded()
+        text = Text()
 
-    # -- Event handlers ------------------------------------------------------
+        if not expanded:
+            text.append(self._active_line(state.options[state.index]))
+            self.set_class(False, "-editing")
+            return text
+
+        self.set_class(True, "-editing")
+        for row, option in enumerate(state.options):
+            line = (
+                self._active_line(option)
+                if row == state.cursor
+                else self._inactive_line(option)
+            )
+            style = Style(reverse=row == state.cursor, bold=row == state.index)
+            text.append(line, style=style)
+            if row < len(state.options) - 1:
+                text.append("\n")
+        return text
+
+    def on_focus(self, _event) -> None:
+        state = self._state.get()
+        self._state.set(replace(state, editing=True, cursor=state.index))
+
+    def on_blur(self, _event) -> None:
+        state = self._state.get()
+        self._state.set(replace(state, editing=False, cursor=state.index))
 
     def on_click(self, event) -> None:
-        """Handle click: enter editing or activate zone."""
         if self.disabled:
             return
 
-        prev_end, next_start = self._zone_boundaries()
-        zone = (
-            _ZONE_PREV
-            if event.x < prev_end
-            else _ZONE_NEXT
-            if event.x >= next_start
-            else _ZONE_CENTER
-        )
+        if not self._expanded():
+            zone = _line_click_zone(event.x, len(self._active_line(self.value)))
+            if zone == _ZONE_PREV:
+                self._move_selection(-1)
+            elif zone == _ZONE_NEXT:
+                self._move_selection(+1)
+            return
 
         state = self._state.get()
-        if not state.editing:
-            self._state.set(replace(state, zone=zone, editing=True))
-        else:
-            self._activate_zone(zone)
+        row = max(0, min(int(event.y), len(state.options) - 1))
+        if row == state.cursor:
+            zone = _line_click_zone(event.x, len(self._active_line(state.options[row])))
+            if zone == _ZONE_PREV:
+                self._move_selection(-1)
+                return
+            if zone == _ZONE_NEXT:
+                self._move_selection(+1)
+                return
+        self._select_row(row)
 
     def on_key(self, event) -> None:
-        """Handle keyboard: Enter/Space toggle editing, arrows navigate zones."""
         if self.disabled:
             return
 
-        state = self._state.get()
-        if not state.editing:
-            if event.key in ("enter", "space"):
-                event.stop()
-                event.prevent_default()
-                self._enter_editing()
+        key = event.key
+        if key not in ("up", "down", "enter", "space"):
             return
 
-        # Editing mode — consume all handled keys
-        key = event.key
-        if key in ("left", "right", "enter", "space", "escape"):
-            event.stop()
-            event.prevent_default()
+        event.stop()
+        event.prevent_default()
 
-        if key == "left":
-            self._move_zone(-1)
-        elif key == "right":
-            self._move_zone(+1)
-        elif key in ("enter", "space"):
-            self._activate_zone(state.zone)
-        elif key == "escape":
-            self._exit_editing()
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# MultiCycleSelector — multi-select
-# ═══════════════════════════════════════════════════════════════════════════
+        if key == "up":
+            self._move_selection(-1)
+        elif key == "down":
+            self._move_selection(+1)
+        else:
+            self._select_row(self._state.get().cursor)
 
 
 class MultiCycleSelector(Widget, can_focus=True):
-    """Compact inline multi-select option selector with cycling behavior.
-
-    Non-editing: shows comma-joined selected values.
-    Editing: shows current cursor item with selection indicator (✓ / space).
-    Center activates toggle, Escape exits editing.
-
-    // [LAW:one-source-of-truth] _options is the canonical option list.
-    // _selected (set of indices) is the canonical selection state.
-    """
+    """Compact inline multi-select option selector."""
 
     ALLOW_SELECT: ClassVar[bool] = False
 
     DEFAULT_CSS = """
     MultiCycleSelector {
         width: auto;
-        height: 1;
+        height: auto;
+        min-height: 1;
         text-style: bold;
         background: $panel-lighten-2;
         color: $text;
@@ -392,12 +342,10 @@ class MultiCycleSelector(Widget, can_focus=True):
     }
 
     MultiCycleSelector:focus {
-        text-style: bold underline;
         background: $surface-darken-1;
     }
 
     MultiCycleSelector.-editing {
-        text-style: bold;
         background: $accent;
         color: $text;
     }
@@ -410,13 +358,7 @@ class MultiCycleSelector(Widget, can_focus=True):
     """
 
     class Changed(Message):
-        """Posted when the selection set changes (on center toggle).
-
-        Attributes:
-            multi_cycle_selector: The MultiCycleSelector that changed.
-            values: The new set of selected values.
-            indices: The new set of selected indices.
-        """
+        """Posted when the selection set changes."""
 
         def __init__(
             self,
@@ -431,7 +373,6 @@ class MultiCycleSelector(Widget, can_focus=True):
 
         @property
         def control(self) -> MultiCycleSelector:
-            """The MultiCycleSelector widget that posted this message."""
             return self.multi_cycle_selector
 
     def __init__(
@@ -448,160 +389,131 @@ class MultiCycleSelector(Widget, can_focus=True):
         super().__init__(name=name, id=id, classes=classes, disabled=disabled)
         if tooltip is not None:
             self.tooltip = tooltip
-        self._options: list[str] = list(options)
-        # [LAW:one-source-of-truth] _selected is the canonical selection state.
+        self._options: list[str] = list(options) or [""]
         self._selected: set[int] = (
-            {self._options.index(v) for v in values if v in self._options}
+            {self._options.index(value) for value in values if value in self._options}
             if values
             else set()
         )
-        self._cursor: int = 0
+        self._cursor: int = min(self._selected) if self._selected else 0
         self._editing: bool = False
-        self._zone: int = _ZONE_CENTER
-
-    # -- Properties ----------------------------------------------------------
 
     @property
     def values(self) -> frozenset[str]:
-        """Set of currently selected option values."""
-        return frozenset(self._options[i] for i in self._selected)
+        return frozenset(self._options[index] for index in self._selected)
 
     @property
     def indices(self) -> frozenset[int]:
-        """Set of currently selected indices."""
         return frozenset(self._selected)
 
-    # -- Rendering -----------------------------------------------------------
+    def _expanded(self) -> bool:
+        return self.has_focus or self._editing
+
+    def _collapsed_line(self) -> str:
+        selected_names = [self._options[index] for index in sorted(self._selected)]
+        display = ", ".join(selected_names) if selected_names else "(none)"
+        return f" {_ARROW_PREV} {display} {_ARROW_NEXT} "
+
+    def _row_line(self, row: int) -> str:
+        marker = _CHECKMARK if row in self._selected else " "
+        label = self._options[row]
+        if row == self._cursor:
+            return f" {_ARROW_PREV} {marker} {label} {_ARROW_NEXT} "
+        return f"   {marker} {label}   "
+
+    def _set_cursor(self, index: int) -> None:
+        self._cursor = _wrap_index(index, len(self._options))
+        self.refresh()
+
+    def _move_cursor(self, delta: int) -> None:
+        self._set_cursor(self._cursor + delta)
+
+    def _emit_changed(self) -> None:
+        self.post_message(self.Changed(self, self.values, self.indices))
+
+    def _toggle_index(self, index: int) -> None:
+        if index in self._selected:
+            self._selected.discard(index)
+        else:
+            self._selected.add(index)
+        self._cursor = index
+        self.refresh()
+        self._emit_changed()
+
+    def _select_index(self, index: int) -> None:
+        if index in self._selected:
+            self._cursor = index
+            self.refresh()
+            return
+        self._selected.add(index)
+        self._cursor = index
+        self.refresh()
+        self._emit_changed()
 
     def render(self) -> Text:
-        """Render the widget.
+        """Render the widget as collapsed summary or expanded option list.
 
-        Non-editing: ▾ Alpha, Beta ▴ (comma-joined selected)
-        Editing: ▾ ✓ Alpha ▴ (cursor item with selection indicator)
+        # [LAW:dataflow-not-control-flow] exception: focus intentionally changes the
+        # rendered structure to match standard select affordances.
         """
-        center = self._render_center()
-        parts = [f" {_ARROW_PREV} ", center, f" {_ARROW_NEXT} "]
-
         text = Text()
-        reverse = Style(reverse=True)
-        for i, part in enumerate(parts):
-            style = reverse if (self._editing and i == self._zone) else Style.null()
-            text.append(part, style=style)
+        expanded = self._expanded()
+        self.set_class(expanded, "-editing")
+        self.set_class(expanded and self._cursor in self._selected, "-selected")
 
-        self.set_class(self._editing, "-editing")
-        self.set_class(
-            self._editing and self._cursor in self._selected, "-selected"
-        )
+        if not expanded:
+            text.append(self._collapsed_line())
+            return text
+
+        for row in range(len(self._options)):
+            style = Style(reverse=row == self._cursor, bold=row in self._selected)
+            text.append(self._row_line(row), style=style)
+            if row < len(self._options) - 1:
+                text.append("\n")
         return text
 
-    def _render_center(self) -> str:
-        """Build the center zone text content."""
-        if not self._editing:
-            # Non-editing: comma-joined selected values
-            selected_names = [
-                self._options[i]
-                for i in sorted(self._selected)
-            ]
-            display = ", ".join(selected_names) if selected_names else "(none)"
-            return f" {display} "
-
-        # Editing: show cursor item with selection indicator
-        name = self._options[self._cursor]
-        marker = "\u2713" if self._cursor in self._selected else " "  # ✓ or space
-        return f" {marker} {name} "
-
-    # -- Zone management -----------------------------------------------------
-
-    def _zone_boundaries(self) -> tuple[int, int]:
-        """Return (prev_end, next_start) x-offsets for click zone detection."""
-        prev_width = 3  # " ▾ "
-        center_text = self._render_center()
-        return prev_width, prev_width + len(center_text)
-
-    def _move_zone(self, delta: int) -> None:
-        """Move internal focus zone by delta, clamping."""
-        self._zone = max(_ZONE_PREV, min(_ZONE_NEXT, self._zone + delta))
-        self.refresh()
-
-    def _activate_zone(self, zone: int) -> None:
-        """Activate a zone: cycle cursor or toggle selection.
-
-        // [LAW:dataflow-not-control-flow] _ZONE_DELTAS drives cursor movement.
-        // Center (delta==0) toggles selection instead of exiting.
-        """
-        delta = _ZONE_DELTAS[zone]
-
-        if delta != 0:
-            # Prev/Next: move cursor through options
-            self._cursor = (self._cursor + delta) % len(self._options)
-        else:
-            # Center: toggle selection of current cursor item
-            if self._cursor in self._selected:
-                self._selected.discard(self._cursor)
-            else:
-                self._selected.add(self._cursor)
-            self.post_message(self.Changed(self, self.values, self.indices))
-
-        self.refresh()
-
-    def _enter_editing(self) -> None:
-        """Enter editing mode, cursor starts at first option."""
+    def on_focus(self, _event) -> None:
         self._editing = True
-        self._cursor = 0
-        self._zone = _ZONE_CENTER
         self.refresh()
 
-    def _exit_editing(self) -> None:
-        """Exit editing mode (keeps current selections)."""
+    def on_blur(self, _event) -> None:
         self._editing = False
         self.refresh()
 
-    # -- Event handlers ------------------------------------------------------
-
     def on_click(self, event) -> None:
-        """Handle click: enter editing or activate zone."""
         if self.disabled:
             return
 
-        prev_end, next_start = self._zone_boundaries()
-        zone = (
-            _ZONE_PREV
-            if event.x < prev_end
-            else _ZONE_NEXT
-            if event.x >= next_start
-            else _ZONE_CENTER
-        )
+        if not self._expanded():
+            return
 
-        if not self._editing:
-            self._zone = zone
-            self._editing = True
-            self.refresh()
-        else:
-            self._activate_zone(zone)
+        row = max(0, min(int(event.y), len(self._options) - 1))
+        if row == self._cursor:
+            zone = _line_click_zone(event.x, len(self._row_line(row)))
+            if zone == _ZONE_PREV:
+                self._move_cursor(-1)
+                return
+            if zone == _ZONE_NEXT:
+                self._move_cursor(+1)
+                return
+        self._toggle_index(row)
 
     def on_key(self, event) -> None:
-        """Handle keyboard: Enter/Space enter editing, Escape exits."""
         if self.disabled:
             return
 
-        if not self._editing:
-            if event.key in ("enter", "space"):
-                event.stop()
-                event.prevent_default()
-                self._enter_editing()
+        key = event.key
+        if key not in ("up", "down", "enter", "space"):
             return
 
-        # Editing mode
-        key = event.key
-        if key in ("left", "right", "enter", "space", "escape"):
-            event.stop()
-            event.prevent_default()
+        event.stop()
+        event.prevent_default()
 
-        if key == "left":
-            self._move_zone(-1)
-        elif key == "right":
-            self._move_zone(+1)
-        elif key in ("enter", "space"):
-            self._activate_zone(self._zone)
-        elif key == "escape":
-            self._exit_editing()
+        if key == "up":
+            self._move_cursor(-1)
+        elif key == "down":
+            self._move_cursor(+1)
+        elif key == "space":
+            self._toggle_index(self._cursor)
+        else:
+            self._select_index(self._cursor)
