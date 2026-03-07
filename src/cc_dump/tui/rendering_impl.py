@@ -35,7 +35,6 @@ from cc_dump.core.formatting import (
     HttpHeadersBlock,
     MetadataBlock,
     NewSessionBlock,
-    TrackedContentBlock,
     TextContentBlock,
     ToolUseBlock,
     ToolResultBlock,
@@ -50,7 +49,6 @@ from cc_dump.core.formatting import (
     ProxyErrorBlock,
     NewlineBlock,
     TurnBudgetBlock,
-    make_diff_lines,
     Category,
     VisState,
     ALWAYS_VISIBLE,
@@ -451,7 +449,6 @@ BLOCK_CATEGORY: dict[str, Category | None] = {
     "MetadataBlock": Category.METADATA,
     "NewSessionBlock": Category.METADATA,
     "TurnBudgetBlock": Category.METADATA,
-    "TrackedContentBlock": Category.SYSTEM,
     "ToolUseBlock": Category.TOOLS,
     "ToolResultBlock": Category.TOOLS,
     "ToolUseSummaryBlock": Category.TOOLS,
@@ -929,103 +926,6 @@ def _render_new_session_full_collapsed(block: NewSessionBlock) -> Text | None:
     t.append("═" * 24, style=f"bold {tc.info}")
     return t
 
-
-def _render_tracked_new(
-    block: TrackedContentBlock, tag_style: str
-) -> ConsoleRenderable:
-    """Render a TrackedContentBlock with status='new'."""
-    content_len = len(block.content.splitlines())
-    header = Text(block.indent + "  ")
-    header.append(" {} ".format(block.tag_id), style=tag_style)
-    header.append(" NEW ({} lines):".format(content_len))
-
-    preview = _render_full_collapsed_snippet(block.content, max_lines=5)
-    if preview is None:
-        return header
-    return Group(header, preview)
-
-
-def _render_tracked_ref(block: TrackedContentBlock, tag_style: str) -> Text:
-    """Render a TrackedContentBlock with status='ref'."""
-    t = Text(block.indent + "  ")
-    t.append(" {} ".format(block.tag_id), style=tag_style)
-    t.append(" (unchanged)")
-    return t
-
-
-def _render_tracked_changed(
-    block: TrackedContentBlock, tag_style: str
-) -> ConsoleRenderable:
-    """Render a TrackedContentBlock with status='changed'."""
-    old_len = len(block.old_content.splitlines())
-    new_len = len(block.new_content.splitlines())
-    t = Text(block.indent + "  ")
-    t.append(" {} ".format(block.tag_id), style=tag_style)
-    t.append(" CHANGED ({} -> {} lines):".format(old_len, new_len))
-    diff_lines = make_diff_lines(block.old_content, block.new_content)
-    shown = diff_lines[:5]
-    hidden = max(len(diff_lines) - len(shown), 0)
-    if not shown:
-        return t
-
-    preview = _render_diff(shown, block.indent + "    ")
-    if hidden > 0:
-        preview.append("\n")
-        preview.append(
-            "{}    ··· {} more diff lines".format(block.indent, hidden),
-            style="dim italic",
-        )
-    return Group(t, preview)
-
-
-# [LAW:dataflow-not-control-flow] TrackedContentBlock status dispatch
-_TRACKED_STATUS_RENDERERS = {
-    "new": _render_tracked_new,
-    "ref": _render_tracked_ref,
-    "changed": _render_tracked_changed,
-}
-
-
-def _render_tracked_content_summary(
-    block: TrackedContentBlock,
-) -> ConsoleRenderable | None:
-    """Render a TrackedContentBlock at SUMMARY level — tag colors + diff-aware display."""
-    fg, bg = _tag_styles()[block.color_idx % len(_tag_styles())]
-    tag_style = "bold {} on {}".format(fg, bg)
-
-    renderer = _TRACKED_STATUS_RENDERERS.get(block.status)
-    if renderer:
-        return renderer(block, tag_style)
-    return Text("")
-
-
-def _render_tracked_content_full(
-    block: TrackedContentBlock,
-) -> ConsoleRenderable | None:
-    """Render TrackedContentBlock at FULL level — just the content, like any text block.
-
-    // [LAW:one-source-of-truth] block.content is always the current text.
-    // No status dispatch, no diff, no tag styling — renderers decide presentation.
-    """
-    if not block.content:
-        return None
-    return _render_text_as_markdown(block.content)
-
-
-def _render_tracked_content_full_collapsed(
-    block: TrackedContentBlock,
-) -> ConsoleRenderable | None:
-    """Render TrackedContentBlock at FULL collapsed as title + bounded snippet.
-
-    // [LAW:one-source-of-truth] Snippet is derived from canonical block.content.
-    """
-    title = _render_tracked_content_title(block)
-    preview = _render_full_collapsed_snippet(block.content, max_lines=3)
-    if preview is None:
-        return title
-    return Group(title, preview)
-
-
 def _get_or_segment(block):
     """Lazy segmentation, cached on the block object."""
     if block._segment_result is None:
@@ -1038,7 +938,7 @@ def _render_text_as_markdown(text: str, seg=None) -> ConsoleRenderable:
 
     // [LAW:dataflow-not-control-flow] Dispatch via cc_dump.core.segmentation.SubBlockKind match.
 
-    Extracted from _render_segmented_block to enable reuse for TrackedContentBlock.
+    Extracted from _render_segmented_block to enable reuse across text-like blocks.
     Accepts optional pre-computed segmentation to avoid double work.
     """
 
@@ -2494,52 +2394,6 @@ def _render_turn_budget(block: TurnBudgetBlock) -> Text | None:
 # When absent, BLOCK_RENDERERS output is truncated to TRUNCATION_LIMITS.
 
 
-def _render_tracked_new_title(block: TrackedContentBlock, tag_style: str) -> Text:
-    """Render title for TrackedContentBlock with status='new'."""
-    t = Text(block.indent + "  ")
-    t.append(" {} ".format(block.tag_id), style=tag_style)
-    t.append(" NEW ({} lines)".format(len(block.content.splitlines())))
-    return t
-
-
-def _render_tracked_ref_title(block: TrackedContentBlock, tag_style: str) -> Text:
-    """Render title for TrackedContentBlock with status='ref'."""
-    t = Text(block.indent + "  ")
-    t.append(" {} ".format(block.tag_id), style=tag_style)
-    t.append(" (unchanged)")
-    return t
-
-
-def _render_tracked_changed_title(block: TrackedContentBlock, tag_style: str) -> Text:
-    """Render title for TrackedContentBlock with status='changed'."""
-    t = Text(block.indent + "  ")
-    t.append(" {} ".format(block.tag_id), style=tag_style)
-    t.append(
-        " CHANGED ({} -> {} lines)".format(
-            len(block.old_content.splitlines()), len(block.new_content.splitlines())
-        )
-    )
-    return t
-
-
-# [LAW:dataflow-not-control-flow] TrackedContentBlock title status dispatch
-_TRACKED_STATUS_TITLE_RENDERERS = {
-    "new": _render_tracked_new_title,
-    "ref": _render_tracked_ref_title,
-    "changed": _render_tracked_changed_title,
-}
-
-
-def _render_tracked_content_title(block: TrackedContentBlock) -> Text | None:
-    """Title-only for TrackedContentBlock at EXISTENCE level."""
-    fg, bg = _tag_styles()[block.color_idx % len(_tag_styles())]
-    tag_style = "bold {} on {}".format(fg, bg)
-    renderer = _TRACKED_STATUS_TITLE_RENDERERS.get(block.status)
-    if renderer:
-        return renderer(block, tag_style)
-    return Text(block.indent + "  ")
-
-
 def _render_turn_budget_oneliner(block: TurnBudgetBlock) -> Text | None:
     """One-line context total for TurnBudgetBlock at EXISTENCE level."""
     b = block.budget
@@ -3037,32 +2891,9 @@ def _render_system_section(block: FormattedBlock) -> ConsoleRenderable | None:
 
 
 def _render_system_section_summary_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
-    """Render system section summary-expanded with status composition."""
+    """Render system section summary-expanded with child counts."""
     children = getattr(block, "children", None) or []
-    t = _render_section_with_counts("SYSTEM", children)
-
-    status_counts: Counter[str] = Counter()
-    for child in children:
-        status = getattr(child, "status", "")
-        if isinstance(status, str) and status:
-            status_counts[status] += 1
-    if status_counts:
-        ordered = ["new", "changed", "ref"]
-        parts = [
-            "{}:{}".format(status, status_counts[status])
-            for status in ordered
-            if status_counts.get(status, 0) > 0
-        ]
-        remaining = [
-            "{}:{}".format(status, count)
-            for status, count in sorted(status_counts.items())
-            if status not in ordered
-        ]
-        all_parts = parts + remaining
-        if all_parts:
-            t.append("\n    ", style="dim")
-            t.append("status " + " ".join(all_parts), style="dim")
-    return t
+    return _render_section_with_counts("SYSTEM", children)
 
 
 def _render_system_section_full_collapsed(block: FormattedBlock) -> ConsoleRenderable | None:
@@ -3072,27 +2903,9 @@ def _render_system_section_full_collapsed(block: FormattedBlock) -> ConsoleRende
 
 
 def _render_system_section_full_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
-    """Render system section full-expanded with status and tag previews."""
+    """Render system section full-expanded with child type composition."""
     children = getattr(block, "children", None) or []
-    base = _render_system_section_summary_expanded(block)
-    if not children:
-        return base
-
-    tag_ids = [
-        tag_id
-        for tag_id in (getattr(child, "tag_id", "") for child in children)
-        if isinstance(tag_id, str) and tag_id
-    ]
-    if not tag_ids:
-        return base
-
-    shown = tag_ids[:5]
-    hidden = max(len(tag_ids) - len(shown), 0)
-    detail = Text("    ")
-    detail.append("tags " + ", ".join(shown), style="dim italic")
-    if hidden > 0:
-        detail.append(f" (+{hidden} more)", style="dim italic")
-    return Group(base, detail)
+    return _render_section_with_all_types("SYSTEM", children)
 
 
 def _render_tool_defs_section(block: FormattedBlock) -> ConsoleRenderable | None:
@@ -3363,7 +3176,6 @@ BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], ConsoleRenderable | None]]
     "MetadataBlock": _render_metadata,
     "NewSessionBlock": _render_new_session,
     "TurnBudgetBlock": _render_turn_budget,
-    "TrackedContentBlock": _render_tracked_content_full,
     "TextContentBlock": _render_text_content,
     "ToolUseBlock": _render_tool_use_full,
     "ToolResultBlock": _render_tool_result_full,
@@ -3455,10 +3267,6 @@ BLOCK_STATE_RENDERERS: dict[
     ("ToolDefsSection", True, True, True): _render_tool_defs_section_full_expanded,
     ("ResponseMetadataSection", True, True, False): _render_response_metadata_section_full_collapsed,
     ("ResponseMetadataSection", True, True, True): _render_response_metadata_section_full_expanded,
-    # TrackedContentBlock: title-only at summary level collapsed, diff-aware at summary expanded
-    ("TrackedContentBlock", True, False, False): _render_tracked_content_title,
-    ("TrackedContentBlock", True, False, True): _render_tracked_content_summary,
-    ("TrackedContentBlock", True, True, False): _render_tracked_content_full_collapsed,
     # HttpHeadersBlock: one-liner at summary level collapsed
     ("HttpHeadersBlock", True, False, False): _render_http_headers_summary,
     ("HttpHeadersBlock", True, False, True): _render_http_headers_summary_expanded,
@@ -4319,29 +4127,6 @@ def combine_rendered_texts(texts: list[Text]) -> Text:
             combined.append("\n")
         combined.append(t)
     return combined
-
-
-# ─── Rendering helpers ─────────────────────────────────────────────────────────
-
-
-def _render_diff(diff_lines: list, indent: str) -> Text:
-    """Render diff lines with color-coded additions/deletions."""
-    tc = get_theme_colors()
-    # [LAW:dataflow-not-control-flow] Diff kind dispatch
-    specs = {
-        "hunk": ("", "dim"),
-        "add": ("+ ", tc.success),
-        "remove": ("- ", tc.error),
-        # // [LAW:locality-or-seam] Legacy support for pre-rename persisted tuples.
-        "del": ("- ", tc.error),
-    }
-    t = Text()
-    for i, (kind, text) in enumerate(diff_lines):
-        if i > 0:
-            t.append("\n")
-        prefix, style = specs.get(kind, ("", ""))
-        t.append(indent + prefix + text, style=style)
-    return t
 
 
 def _indent_text(text: str, indent: str) -> Text:

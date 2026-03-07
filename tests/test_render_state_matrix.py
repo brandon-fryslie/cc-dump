@@ -37,7 +37,6 @@ from cc_dump.core.formatting import (
     ToolResultBlock,
     ToolUseSummaryBlock,
     ToolUseBlock,
-    TrackedContentBlock,
     UnknownTypeBlock,
     ProxyErrorBlock,
     AgentDefChild,
@@ -99,7 +98,6 @@ def test_content_block_renderer_registry_has_four_distinct_visible_states():
         "ToolDefBlock",
         "SkillDefChild",
         "AgentDefChild",
-        "TrackedContentBlock",
         "ThinkingBlock",
         "ConfigContentBlock",
         "HookOutputBlock",
@@ -178,13 +176,10 @@ def test_core_content_blocks_respect_state_line_budgets():
             "tools",
         ),
         (
-            "TrackedContentBlock",
-            TrackedContentBlock(
-                status="changed",
-                tag_id="sp-1",
+            "TextContentBlock(system)",
+            TextContentBlock(
                 content="\n".join(f"tracked {i}" for i in range(1, 60)),
-                old_content="\n".join(f"old {i}" for i in range(1, 60)),
-                new_content="\n".join(f"new {i}" for i in range(1, 60)),
+                category=Category.SYSTEM,
             ),
             "system",
         ),
@@ -400,15 +395,9 @@ def test_container_blocks_keep_summary_views_bounded():
     )
     system_section = SystemSection(
         children=[
-            TrackedContentBlock(status="new", tag_id="sp-1", content="\n".join(f"n{i}" for i in range(40))),
-            TrackedContentBlock(
-                status="changed",
-                tag_id="sp-2",
-                content="\n".join(f"c{i}" for i in range(40)),
-                old_content="\n".join(f"old{i}" for i in range(40)),
-                new_content="\n".join(f"new{i}" for i in range(40)),
-            ),
-            TrackedContentBlock(status="ref", tag_id="sp-3", content="same"),
+            TextContentBlock(content="\n".join(f"n{i}" for i in range(40)), category=Category.SYSTEM),
+            TextContentBlock(content="\n".join(f"c{i}" for i in range(40)), category=Category.SYSTEM),
+            TextContentBlock(content="same", category=Category.SYSTEM),
         ]
     )
     tool_defs_section = ToolDefsSection(
@@ -551,10 +540,9 @@ def test_container_full_collapsed_hides_child_content():
 
     system_section = SystemSection(
         children=[
-            TrackedContentBlock(
-                status="new",
-                tag_id="sp-9",
+            TextContentBlock(
                 content=f"intro\n{unique_text}\noutro",
+                category=Category.SYSTEM,
             )
         ]
     )
@@ -839,15 +827,15 @@ def test_section_headers_summary_expanded_are_enriched():
 
     system_section = SystemSection(
         children=[
-            TrackedContentBlock(status="new", content="a"),
-            TrackedContentBlock(status="changed", content="b"),
-            TrackedContentBlock(status="ref", content="c"),
+            TextContentBlock(content="a", category=Category.SYSTEM),
+            TextContentBlock(content="b", category=Category.SYSTEM),
+            TextContentBlock(content="c", category=Category.SYSTEM),
         ]
     )
     sys_sc_text, _ = _render_plain(system_section, "system", SUMMARY_COLLAPSED)
     sys_se_text, _ = _render_plain(system_section, "system", SUMMARY_EXPANDED)
     assert "SYSTEM" in sys_sc_text
-    assert "status new:1 changed:1 ref:1" in sys_se_text
+    assert "(3 blocks)" in sys_se_text
 
     tool_defs = ToolDefsSection(tool_count=5, total_tokens=4200, children=[])
     td_sc_text, _ = _render_plain(tool_defs, "tools", SUMMARY_COLLAPSED)
@@ -982,8 +970,8 @@ def test_section_full_collapsed_and_expanded_renderers_are_distinct():
 
     system_section = SystemSection(
         children=[
-            TrackedContentBlock(status="new", content="a"),
-            TrackedContentBlock(status="changed", content="b"),
+            TextContentBlock(content="a", category=Category.SYSTEM),
+            TextContentBlock(content="b", category=Category.SYSTEM),
         ]
     )
     sys_fc = RENDERERS[("SystemSection", True, True, False)](system_section)
@@ -993,7 +981,7 @@ def test_section_full_collapsed_and_expanded_renderers_are_distinct():
     sys_fc_plain = _renderable_plain(sys_fc)
     sys_fe_plain = _renderable_plain(sys_fe)
     assert "(2 blocks)" in sys_fc_plain
-    assert "status" in sys_fe_plain
+    assert "TextContent" in sys_fe_plain
     assert sys_fc_plain != sys_fe_plain
 
     tool_defs = ToolDefsSection(
@@ -1052,15 +1040,17 @@ def test_section_summary_expanded_and_full_expanded_are_distinct():
 
     system_section = SystemSection(
         children=[
-            TrackedContentBlock(status="new", tag_id="sp-1", content="a"),
-            TrackedContentBlock(status="changed", tag_id="sp-2", content="b"),
-            TrackedContentBlock(status="ref", tag_id="sp-3", content="c"),
+            TextContentBlock(content="a", category=Category.SYSTEM),
+            TextContentBlock(content="b", category=Category.SYSTEM),
+            TextContentBlock(content="c", category=Category.SYSTEM),
         ]
     )
     sys_se, _ = _render_plain(system_section, "system", SUMMARY_EXPANDED)
     sys_fe, _ = _render_plain(system_section, "system", FULL_EXPANDED)
-    assert "status new:1 changed:1 ref:1" in sys_se
-    assert "tags sp-1, sp-2, sp-3" in sys_fe
+    assert "(3 blocks)" in sys_se
+    assert "a" in sys_fe
+    assert "b" in sys_fe
+    assert "c" in sys_fe
     assert sys_se != sys_fe
 
     response_metadata = ResponseMetadataSection(
@@ -1205,29 +1195,6 @@ def test_thinking_summary_expanded_shows_preview():
     assert se_text != sc_text
     assert fc_text != fe_text
     assert se_text != fe_text
-
-
-def test_tracked_content_full_collapsed_uses_bounded_snippet():
-    content = "\n".join(f"tracked line {i}" for i in range(1, 12))
-    block = TrackedContentBlock(
-        status="changed",
-        tag_id="sp-42",
-        content=content,
-        old_content="old 1\nold 2",
-        new_content=content,
-    )
-
-    sc_text, _ = _render_plain(block, "system", SUMMARY_COLLAPSED)
-    fc_text, _ = _render_plain(block, "system", FULL_COLLAPSED)
-    fe_text, _ = _render_plain(block, "system", FULL_EXPANDED)
-
-    assert "CHANGED" in sc_text
-    assert "tracked line 1" not in sc_text
-    assert "tracked line 1" in fc_text
-    assert "[snippet]" in fc_text
-    assert "tracked line 6" not in fc_text
-    assert "tracked line 6" in fe_text
-    assert fc_text != fe_text
 
 
 def test_text_delta_state_matrix_is_distinct():
