@@ -72,7 +72,6 @@ This proposal defines how `cc-dump` moves from one active conversation stream to
 - Replay loader can:
   - open as standalone session tab
   - optionally attach to existing matching session key.
-- Sidecar UI state becomes per-session (`<har>.ui.json` already compatible with this model).
 
 ## Side-Channel Debug Lane (Integration)
 

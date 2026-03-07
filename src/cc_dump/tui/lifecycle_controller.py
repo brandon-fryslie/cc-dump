@@ -161,8 +161,6 @@ def _wire_reactive_runtime(app) -> None:
 def _hydrate_footer(app) -> None:
     app._sync_tmux_to_store()
     app._sync_active_launch_config_state()
-    if app._resume_ui_state is not None:
-        app._apply_resume_ui_state_preload()
     footer = app._get_footer()
     if footer is not None:
         footer.update_display(
@@ -176,5 +174,3 @@ def _hydrate_footer(app) -> None:
 def _resume_or_replay(app) -> None:
     if app._replay_data:
         app._process_replay_data()
-    if app._resume_ui_state is not None:
-        app._apply_resume_ui_state_postload()

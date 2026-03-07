@@ -187,7 +187,7 @@ def cleanup_recordings(
     keep: int = 20,
     dry_run: bool = False,
 ) -> CleanupResult:
-    """Delete older HAR recordings and UI sidecars, keeping newest N.
+    """Delete older HAR recordings, keeping newest N.
 
     Args:
         recordings_dir: Base recordings directory (default: ~/.local/share/cc-dump/recordings)
@@ -219,16 +219,13 @@ def cleanup_recordings(
 
     for rec in to_remove:
         har_path = Path(rec["path"])
-        sidecar_path = Path(str(har_path) + ".ui.json")
-
-        for candidate in (har_path, sidecar_path):
-            if not candidate.exists():
-                continue
-            size = candidate.stat().st_size
-            bytes_freed += size
-            removed_paths.append(str(candidate))
-            if not dry_run:
-                candidate.unlink()
+        if not har_path.exists():
+            continue
+        size = har_path.stat().st_size
+        bytes_freed += size
+        removed_paths.append(str(har_path))
+        if not dry_run:
+            har_path.unlink()
 
     return {
         "kept": len(survivors),

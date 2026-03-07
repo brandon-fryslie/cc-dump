@@ -31,7 +31,6 @@ import cc_dump.ai.side_channel
 import cc_dump.ai.data_dispatcher
 import cc_dump.pipeline.sentinel
 import cc_dump.ai.side_channel_marker
-import cc_dump.io.session_sidecar
 from cc_dump.pipeline.proxy import RequestPipeline
 import cc_dump.app.view_store
 import cc_dump.app.hot_reload
@@ -161,13 +160,6 @@ def main():
         help="Continue from most recent recording (replay + live proxy)",
     )
     parser.add_argument(
-        "--resume",
-        nargs="?",
-        const="latest",
-        default=None,
-        help="Resume UI state sidecar. Optional path; defaults to latest recording.",
-    )
-    parser.add_argument(
         "--list-recordings",
         action="store_true",
         default=False,
@@ -262,18 +254,7 @@ def main():
                 print(f"  - {path}")
         return
 
-    # Resolve --continue / --resume to load latest recording
-    if args.resume is not None:
-        if args.resume == "latest":
-            latest = cc_dump.io.sessions.get_latest_recording()
-            if latest is None:
-                print("No recordings found to resume from.")
-                return
-            args.replay = latest
-        else:
-            args.replay = args.resume
-        print(f"🔄 Resuming from: {args.replay}")
-
+    # Resolve --continue to load latest recording.
     if args.continue_session:
         latest = cc_dump.io.sessions.get_latest_recording()
         if latest is None:
@@ -288,7 +269,6 @@ def main():
     server = None
     replay_data = None
 
-    resume_ui_state = None
     if args.replay:
         # Load HAR file (complete messages, NO event conversion)
         print(f"   Loading replay: {args.replay}")
@@ -296,12 +276,6 @@ def main():
         try:
             replay_data = cc_dump.pipeline.har_replayer.load_har(args.replay)
             print(f"   Found {len(replay_data)} request/response pairs")
-            sidecar_payload = cc_dump.io.session_sidecar.load_ui_state(args.replay)
-            if isinstance(sidecar_payload, dict):
-                loaded_ui = sidecar_payload.get("ui_state", {})
-                if isinstance(loaded_ui, dict):
-                    resume_ui_state = loaded_ui
-                    print(f"   Loaded UI sidecar: {cc_dump.io.session_sidecar.sidecar_path_for_har(args.replay)}")
 
         except Exception as e:
             print(f"   Error loading HAR file: {e}")
@@ -546,7 +520,6 @@ def main():
         replay_data=replay_data,
         recording_path=primary_record_path,
         replay_file=args.replay,
-        resume_ui_state=resume_ui_state,
         tmux_controller=tmux_ctrl,
         side_channel_manager=side_channel_mgr,
         data_dispatcher=data_dispatcher,
@@ -612,25 +585,6 @@ def main():
         for recorder in har_recorders:
             recorder.close()
 
-        # Persist UI sidecar next to active HAR (recording path or replay file).
-        candidate_record_paths = [
-            recording_paths.get("anthropic"),
-            *[path for provider, path in recording_paths.items() if provider != "anthropic"],
-        ]
-        sidecar_target = next(
-            (path for path in candidate_record_paths if path and os.path.exists(path)),
-            None,
-        )
-        if sidecar_target is None and args.replay and os.path.exists(args.replay):
-            sidecar_target = args.replay
-        if sidecar_target:
-            try:
-                ui_state = app.export_ui_state()
-                sidecar_path = cc_dump.io.session_sidecar.save_ui_state(sidecar_target, ui_state)
-                logger.info("UI state saved: %s", sidecar_path)
-            except Exception as e:
-                logger.exception("UI state save failed: %s", e)
-
         # Print restart command — unstoppable (mask SIGINT so Ctrl+C can't suppress it)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         replay_path = (
@@ -640,6 +594,6 @@ def main():
         )
         cmd = f"{sys.argv[0]} --port {actual_port}"
         if replay_path:
-            cmd += f" --resume {replay_path}"
-        logger.info("To resume: %s", cmd)
+            cmd += f" --replay {replay_path}"
+        logger.info("To replay: %s", cmd)
         signal.signal(signal.SIGINT, signal.SIG_DFL)
