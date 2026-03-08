@@ -382,9 +382,10 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         content_len = int(self.headers.get("Content-Length", 0))
         body_bytes = self.rfile.read(content_len) if content_len else b""
 
-        target = cc_dump.pipeline.proxy_flow.resolve_proxy_target(
+        target = cc_dump.pipeline.proxy_flow.resolve_proxy_target_for_origin(
             self.path,
             self._active_target_host(),
+            required_origin=getattr(self, "_connect_target_host", None),
         )
         request_path = target.request_path
         url = target.upstream_url
