@@ -56,7 +56,7 @@ class StatusFooter(StoreWidget):
         opacity: 0.7;
     }
 
-    /* Dim chips (follow off, zoom/auto off): same hover pattern */
+    /* Dim chips: same hover pattern */
     StatusFooter Chip.-dim {
         opacity: 0.5;
     }
@@ -141,18 +141,6 @@ class StatusFooter(StoreWidget):
                 id="cmd-launch-tool",
                 classes="tmux",
             )
-            yield Chip(
-                " z zoom ",
-                action="app.toggle_tmux_zoom",
-                id="cmd-zoom",
-                classes="tmux",
-            )
-            yield Chip(
-                " Z auto ",
-                action="app.toggle_auto_zoom",
-                id="cmd-auto-zoom",
-                classes="tmux",
-            )
         # Line 3: log row
         runtime = cc_dump.io.logging_setup.get_runtime()
         log_path = runtime.file_path if runtime is not None else ""
@@ -231,8 +219,6 @@ class StatusFooter(StoreWidget):
     def _apply_tmux_controls(self, state: dict[str, object]) -> None:
         # // [LAW:dataflow-not-control-flow] Always run; state values vary style.
         tmux_available = bool(state.get("tmux_available", False))
-        tmux_auto = bool(state.get("tmux_auto_zoom", False))
-        tmux_zoomed = bool(state.get("tmux_zoomed", False))
         for widget in self.query(".tmux"):
             widget.set_class(tmux_available, "-available")
 
@@ -246,13 +232,3 @@ class StatusFooter(StoreWidget):
             else ""
         )
         launch_chip.update(f" c {active_tool_label}{config_suffix} ")
-
-        zoom_chip = self.query_one("#cmd-zoom", Chip)
-        zoom_chip.update(" z zoom ")
-        zoom_chip.set_class(not tmux_zoomed, "-dim")
-        zoom_chip.styles.text_style = "bold reverse" if tmux_zoomed else None
-
-        auto_chip = self.query_one("#cmd-auto-zoom", Chip)
-        auto_chip.update(" Z auto ")
-        auto_chip.set_class(not tmux_auto, "-dim")
-        auto_chip.styles.text_style = "bold reverse" if tmux_auto else None

@@ -96,13 +96,9 @@ def _wire_reactive_runtime(app) -> None:
     def _tmux_projection():
         tmux = app._tmux_controller
         if tmux is None:
-            return (False, False, False)
+            return False
         pane_alive = tmux.pane_alive.get() if hasattr(tmux, "pane_alive") else False
-        auto_obs = getattr(tmux, "auto_zoom_state", None)
-        zoom_obs = getattr(tmux, "zoomed_state", None)
-        auto_zoom = auto_obs.get() if auto_obs is not None else bool(getattr(tmux, "auto_zoom", False))
-        zoomed = zoom_obs.get() if zoom_obs is not None else bool(getattr(tmux, "_is_zoomed", False))
-        return (pane_alive, auto_zoom, zoomed)
+        return pane_alive
 
     stx.reaction(
         app,

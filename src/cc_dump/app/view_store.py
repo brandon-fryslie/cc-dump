@@ -39,8 +39,6 @@ SCHEMA["nav:follow"] = "active"
 # Footer inputs (previously app attributes or external reads)
 SCHEMA["filter:active"] = "1"               # str|None — default to F1 (Conversation)
 SCHEMA["tmux:available"] = False            # bool — mirrored from tmux controller
-SCHEMA["tmux:auto_zoom"] = False            # bool — mirrored from tmux controller
-SCHEMA["tmux:zoomed"] = False               # bool — mirrored from tmux controller
 SCHEMA["launch:active_name"] = ""           # str — was load_active_name() file I/O each call
 SCHEMA["launch:active_tool"] = "claude"     # str — active launcher key for footer chip label
 SCHEMA["theme:generation"] = 0              # int — bumped on theme change to invalidate footer
@@ -104,8 +102,6 @@ def create():
             "follow_state": store.get("nav:follow"),
             "active_filterset": store.get("filter:active"),
             "tmux_available": store.get("tmux:available"),
-            "tmux_auto_zoom": store.get("tmux:auto_zoom"),
-            "tmux_zoomed": store.get("tmux:zoomed"),
             "active_launch_config_name": store.get("launch:active_name"),
             "active_launch_tool": store.get("launch:active_tool"),
             "_gen": store.get("theme:generation"),

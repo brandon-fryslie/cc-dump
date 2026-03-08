@@ -296,8 +296,6 @@ class TestFooterStateComputed:
         state = store.footer_state.get()
         assert state["active_filterset"] == "1"
         assert state["tmux_available"] is False
-        assert state["tmux_auto_zoom"] is False
-        assert state["tmux_zoomed"] is False
         assert state["active_launch_config_name"] == ""
 
     def test_updates_on_store_change(self):
