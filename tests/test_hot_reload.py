@@ -751,9 +751,14 @@ class TestHotReloadModuleStructure:
 
         assert isinstance(_EXCLUDED_MODULES, set)
 
-        required_exclusions = ["tui/app.py"]
+        required_exclusions = ["tui/app.py", "tui/hot_reload_controller.py"]
         for exc in required_exclusions:
             assert exc in _EXCLUDED_MODULES, f"Expected {exc} to be excluded"
+
+        # [LAW:locality-or-seam] Pure/controller modules should remain reloadable.
+        assert "tui/search_controller.py" not in _EXCLUDED_MODULES
+        assert "tui/category_config.py" not in _EXCLUDED_MODULES
+        assert "tui/panel_registry.py" not in _EXCLUDED_MODULES
 
     def test_no_widgets_reexport_module(self):
         """tui/widgets.py re-export shim must not exist (regression guard)."""
@@ -813,6 +818,9 @@ class TestHotReloadFileDetection:
         assert hr.is_reloadable(str(test_dir / "core" / "palette.py")) is True
         assert hr.is_reloadable(str(test_dir / "core" / "formatting.py")) is True
         assert hr.is_reloadable(str(test_dir / "tui" / "rendering.py")) is True
+        assert hr.is_reloadable(str(test_dir / "tui" / "search_controller.py")) is True
+        assert hr.is_reloadable(str(test_dir / "tui" / "category_config.py")) is True
+        assert hr.is_reloadable(str(test_dir / "tui" / "panel_registry.py")) is True
 
     def test_is_reloadable_rejects_excluded(self):
         import cc_dump.app.hot_reload as hr

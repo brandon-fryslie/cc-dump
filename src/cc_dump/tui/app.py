@@ -44,7 +44,7 @@ import cc_dump.tui.session_panel
 import cc_dump.tui.workbench_results_view
 # Extracted controller modules (module-object imports — safe for hot-reload)
 from cc_dump.tui import action_handlers as _actions
-from cc_dump.tui.panel_registry import PANEL_REGISTRY, PANEL_ORDER, PANEL_CSS_IDS
+import cc_dump.tui.panel_registry
 from cc_dump.tui import search_controller as _search
 from cc_dump.tui import dump_export as _dump
 from cc_dump.tui import theme_controller as _theme
@@ -283,7 +283,7 @@ class CcDumpApp(App):
         self._last_primary_session_key = self._default_session_key
         # [LAW:one-source-of-truth] Side-channel action review state is owned by app boundary.
         # [LAW:one-source-of-truth] Panel IDs derived from registry
-        self._panel_ids = dict(PANEL_CSS_IDS)
+        self._panel_ids = dict(cc_dump.tui.panel_registry.PANEL_CSS_IDS)
         self._logs_id = "logs-panel"
         self._info_id = "info-panel"
 
@@ -751,7 +751,7 @@ class CcDumpApp(App):
         yield Header()
 
         # [LAW:one-source-of-truth] Cycling panels from registry
-        for spec in PANEL_REGISTRY:
+        for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
             widget = _resolve_factory(spec.factory)()
             widget.id = self._panel_ids[spec.name]
             yield widget
@@ -1448,8 +1448,8 @@ class CcDumpApp(App):
     # ─── Reactive watchers ─────────────────────────────────────────────
 
     def _sync_panel_display(self, active: str):
-        """// [LAW:one-source-of-truth] Panel visibility driven by PANEL_ORDER from registry."""
-        for name in PANEL_ORDER:
+        """// [LAW:one-source-of-truth] Panel visibility driven by panel registry order."""
+        for name in cc_dump.tui.panel_registry.PANEL_ORDER:
             widget = self._get_panel(name)
             if widget is not None:
                 widget.display = (name == active)

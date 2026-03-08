@@ -4,7 +4,7 @@
 // [LAW:locality-or-seam] All search logic here — app.py keeps thin delegates.
 // [LAW:single-enforcer] Search key handling is centralized in this controller.
 
-Not hot-reloadable (accesses app state and widgets).
+Hot-reloadable — all entrypoints are pure functions over explicit app seams.
 """
 
 import cc_dump.tui.search
