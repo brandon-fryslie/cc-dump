@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from collections.abc import Iterable
 
 from cc_dump.core.formatting import Category, VisState, FormattedBlock
+import cc_dump.tui.rendering
 
 
 @dataclass
@@ -62,11 +63,8 @@ class ViewOverrides:
     def clear_category(self, blocks: Iterable[FormattedBlock], category: Category) -> None:
         """Reset expanded overrides for all blocks matching a category.
 
-        Imports get_category at call time for hot-reload safety.
         Recursively walks children.
         """
-        import cc_dump.tui.rendering
-
         def _walk(block_list):
             for block in block_list:
                 block_cat = cc_dump.tui.rendering.get_category(block)
