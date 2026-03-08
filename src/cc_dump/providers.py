@@ -30,6 +30,7 @@ class ProviderSpec:
     default_target: str
     optional_proxy: bool
     url_markers: tuple[str, ...]
+    forward_proxy_hosts: tuple[str, ...] = ()
     client_hint: str = "<your-tool>"
 
 
@@ -42,6 +43,14 @@ class ProviderEndpoint:
     target: str
     proxy_mode: ProxyMode
     forward_proxy_ca_cert_path: str = ""
+
+
+@dataclass(frozen=True)
+class ForwardProxyConnectRoute:
+    """Resolved upstream route for one validated CONNECT tunnel."""
+
+    provider_key: str
+    upstream_origin: str
 
 
 ProviderEndpointMap: TypeAlias = dict[str, ProviderEndpoint]
@@ -96,6 +105,7 @@ _PROVIDERS: dict[str, ProviderSpec] = {
         default_target="https://api.githubcopilot.com",
         optional_proxy=True,
         url_markers=("api.githubcopilot.com", "githubcopilot.com"),
+        forward_proxy_hosts=("api.githubcopilot.com",),
     ),
 }
 
@@ -136,18 +146,50 @@ def default_provider_endpoint(host: str, port: int, target: str) -> ProviderEndp
 
 def build_provider_proxy_env(endpoint: ProviderEndpoint) -> dict[str, str]:
     """Build launcher env vars for one provider endpoint."""
-    if not endpoint.proxy_url:
-        return {}
+    return dict(_provider_proxy_env_items(endpoint))
+
+
+def build_provider_usage_hint(endpoint: ProviderEndpoint) -> str:
+    """Build one human-facing usage line suffix for a provider endpoint."""
     spec = get_provider_spec(endpoint.provider_key)
-    if endpoint.proxy_mode == "forward":
-        env = {
-            "HTTP_PROXY": endpoint.proxy_url,
-            "HTTPS_PROXY": endpoint.proxy_url,
-        }
-        if endpoint.forward_proxy_ca_cert_path:
-            env["NODE_EXTRA_CA_CERTS"] = endpoint.forward_proxy_ca_cert_path
-        return env
-    return {spec.base_url_env: endpoint.proxy_url}
+    env_text = " ".join(
+        f"{key}={value}"
+        for key, value in _provider_proxy_env_items(endpoint)
+    )
+    return f"{env_text} {spec.client_hint}".strip()
+
+
+def build_provider_endpoint_detail_lines(endpoint: ProviderEndpoint) -> tuple[str, ...]:
+    """Build human-facing detail lines for one provider endpoint."""
+    spec = get_provider_spec(endpoint.provider_key)
+    details = [f"{spec.display_name} endpoint ({endpoint.proxy_mode}): {endpoint.proxy_url}"]
+    if endpoint.proxy_mode == "reverse" and endpoint.target:
+        details.append(f"  Target: {endpoint.target}")
+    details.append(f"  Usage: {build_provider_usage_hint(endpoint)}")
+    return tuple(details)
+
+
+def resolve_forward_proxy_connect_route(
+    provider: str,
+    *,
+    host: str,
+    port: int,
+) -> ForwardProxyConnectRoute | None:
+    """Resolve and validate CONNECT routing for a forward-proxy provider.
+
+    // [LAW:single-enforcer] CONNECT host validation lives at the provider boundary.
+    """
+    spec = get_provider_spec(provider)
+    if spec.proxy_type != "forward":
+        return None
+    normalized_host = _normalize_connect_host(host)
+    if normalized_host not in spec.forward_proxy_hosts:
+        return None
+    authority_host = "[{}]".format(host) if ":" in host and not host.startswith("[") else host
+    return ForwardProxyConnectRoute(
+        provider_key=spec.key,
+        upstream_origin="https://{}".format(authority_host) + (":{}".format(port) if port != 443 else ""),
+    )
 
 
 def normalize_provider(provider: str) -> str:
@@ -203,6 +245,28 @@ def infer_provider_from_url(url: str) -> str:
         ),
         DEFAULT_PROVIDER_KEY,
     )
+
+
+def _provider_proxy_env_items(endpoint: ProviderEndpoint) -> tuple[tuple[str, str], ...]:
+    if not endpoint.proxy_url:
+        return ()
+    spec = get_provider_spec(endpoint.provider_key)
+    if endpoint.proxy_mode == "forward":
+        node_extra_ca = (
+            (("NODE_EXTRA_CA_CERTS", endpoint.forward_proxy_ca_cert_path),)
+            if endpoint.forward_proxy_ca_cert_path
+            else ()
+        )
+        return (
+            ("HTTP_PROXY", endpoint.proxy_url),
+            ("HTTPS_PROXY", endpoint.proxy_url),
+            *node_extra_ca,
+        )
+    return ((spec.base_url_env, endpoint.proxy_url),)
+
+
+def _normalize_connect_host(host: str) -> str:
+    return str(host or "").strip().strip("[]").rstrip(".").lower()
 
 
 def infer_provider_from_complete_message(message: dict[str, object]) -> str:
