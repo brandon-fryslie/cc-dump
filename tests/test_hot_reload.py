@@ -630,27 +630,6 @@ class TestWidgetStatePreservation:
         assert new_widget._view_overrides.get_block(block_a.block_id).expanded is True
         assert new_widget._view_overrides.get_block(block_b.block_id).expanded is False
 
-    def test_conversation_view_blocks_preserve_force_vis(self):
-        """force_vis is transient (search state) — not serialized across hot-reload."""
-        from cc_dump.core.formatting import TextContentBlock, ALWAYS_VISIBLE
-        from cc_dump.tui.widget_factory import ConversationView, TurnData
-
-        block = TextContentBlock(content="test")
-
-        widget = ConversationView()
-        td = TurnData(turn_index=0, blocks=[block], strips=[])
-        widget._turns.append(td)
-
-        # Set force_vis via ViewOverrides (search mode)
-        widget._view_overrides.get_block(block.block_id).force_vis = ALWAYS_VISIBLE
-
-        state = widget.get_state()
-        new_widget = ConversationView()
-        new_widget.restore_state(state)
-
-        # force_vis is transient — not serialized
-        assert new_widget._view_overrides.get_block(block.block_id).force_vis is None
-
     def test_conversation_view_follow_state_active_roundtrip(self):
         """follow_state=ACTIVE explicitly survives roundtrip."""
         from cc_dump.tui.widget_factory import ConversationView, FollowState
@@ -903,7 +882,7 @@ class TestSearchStateHotReload:
         assert new_state.phase == SearchPhase.NAVIGATING
 
     def test_transient_fields_reset_on_new_state(self):
-        """matches, expanded_blocks, debounce_timer reset to defaults on new SearchState."""
+        """Transient fields reset to defaults on new SearchState."""
         import cc_dump.app.view_store
         from cc_dump.tui.search import SearchState, SearchPhase, SearchMatch
 
@@ -912,7 +891,6 @@ class TestSearchStateHotReload:
         old_state.phase = SearchPhase.NAVIGATING
         old_state.query = "test"
         old_state.matches = [SearchMatch(0, 0, 0, 4)]
-        old_state.expanded_blocks = [(0, 0)]
         old_state.debounce_timer = "fake_timer"
 
         # New SearchState on same store — transient fields are fresh
@@ -924,7 +902,6 @@ class TestSearchStateHotReload:
 
         # Transient fields are fresh defaults
         assert new_state.matches == []
-        assert new_state.expanded_blocks == []
         assert new_state.debounce_timer is None
         assert new_state.saved_filters == {}
         assert new_state.saved_scroll_y is None

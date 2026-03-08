@@ -173,16 +173,14 @@ async def _do_hot_reload(app) -> None:
 
     # // [LAW:one-source-of-truth] Identity fields (phase, query, modes, cursor_pos)
     # live in the view store — they survive reconcile() automatically.
-    # Only transient fields (matches, expanded_blocks, debounce_timer) need reset.
+    # Only transient fields (matches, debounce_timer, cache) need reset.
     SearchPhase = cc_dump.tui.search.SearchPhase
     old_search = app._search_state
     search_was_active = old_search.phase != SearchPhase.INACTIVE
 
-    # Cancel debounce timer and clear expansion overrides on old blocks
+    # Cancel debounce timer before replacing state.
     if old_search.debounce_timer is not None:
         old_search.debounce_timer.stop()
-    if search_was_active:
-        cc_dump.tui.search_controller.clear_search_expand(app)
 
     # Fresh SearchState connected to same store — identity fields survive,
     # transient fields get fresh defaults
@@ -241,7 +239,6 @@ async def _do_hot_reload(app) -> None:
     # Identity fields (query, modes, cursor_pos, phase) already in store.
     if search_was_active and app._search_state.query:
         state = app._search_state
-        saved_phase = state.phase
 
         # Capture fresh filter state and scroll position from new widgets
         store = app._view_store
@@ -254,14 +251,10 @@ async def _do_hot_reload(app) -> None:
             for _, name, _, _ in CATEGORY_CONFIG
         }
         conv = app._get_conv()
-        state.saved_scroll_y = conv.scroll_offset.y if conv is not None else None
+        state.saved_scroll_y = conv.current_scroll_y() if conv is not None else None
 
         # Re-execute search against fresh blocks
         cc_dump.tui.search_controller.run_search(app)
-
-        # Navigate if we were navigating and have results
-        if saved_phase == SearchPhase.NAVIGATING and state.matches:
-            cc_dump.tui.search_controller.navigate_to_current(app)
 
 
 async def replace_all_widgets(app) -> None:

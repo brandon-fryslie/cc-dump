@@ -465,6 +465,17 @@ class ConversationView(ScrollView):
         """Public accessor for ViewOverrides — used by search_controller and action_handlers."""
         return self._view_overrides
 
+    def get_search_turns_snapshot(self) -> list[TurnData]:
+        """Return the current rendered turns for search consumers.
+
+        // [LAW:locality-or-seam] Search reads turns through this seam, not `_turns`.
+        """
+        return self._turns
+
+    def current_scroll_y(self) -> float:
+        """Return current vertical scroll offset."""
+        return float(self.scroll_offset.y)
+
     def _blank_line(self, width: int) -> Strip:
         return Strip.blank(width, self.rich_style)
 
@@ -1752,7 +1763,7 @@ class ConversationView(ScrollView):
         """Force-render a specific turn, then recalculate offsets.
 
         Used before scroll_to_block() to ensure the target turn has accurate
-        block_strip_map and line_offset after _force_vis changes or deferred renders.
+        block_strip_map and line_offset after deferred renders.
         """
         if turn_index >= len(self._turns):
             return
@@ -1852,6 +1863,18 @@ class ConversationView(ScrollView):
         self._follow_state = _FOLLOW_SCROLL_BOTTOM[self._follow_state]
         with self._programmatic_scroll():
             self.scroll_end(animate=False)
+
+    def capture_scroll_anchor(self) -> None:
+        """Capture the current block-level anchor for later restore.
+
+        // [LAW:one-source-of-truth] ConversationView owns `_scroll_anchor` lifecycle.
+        """
+        self._scroll_anchor = self._compute_anchor_from_scroll()
+
+    def restore_scroll_y(self, y: float) -> None:
+        """Restore absolute vertical scroll position without animation."""
+        with self._programmatic_scroll():
+            self.scroll_to(y=y, animate=False)
 
     def scroll_to_block(self, turn_index: int, block_index: int) -> None:
         """Scroll to center a specific block in the viewport."""

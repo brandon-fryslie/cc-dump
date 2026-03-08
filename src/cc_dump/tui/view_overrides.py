@@ -12,23 +12,23 @@ from __future__ import annotations
 from dataclasses import dataclass
 from collections.abc import Iterable
 
-from cc_dump.core.formatting import Category, VisState, FormattedBlock
-import cc_dump.tui.rendering
+from cc_dump.core.formatting import Category, FormattedBlock
 
 
 @dataclass
 class BlockViewState:
     """Per-block view state, keyed by block_id."""
 
-    expanded: bool | None = None  # per-block expansion override
-    force_vis: VisState | None = None  # search override
+    expanded: bool | None = None  # click toggle override
+    expandable: bool = False  # renderer-computed
 
 
 @dataclass
 class RegionViewState:
     """Per-region view state, keyed by (block_id, region_index)."""
 
-    expanded: bool | None = None  # per-region expansion override
+    expanded: bool | None = None  # click toggle override
+    strip_range: tuple[int, int] | None = None  # renderer-computed
 
 
 class ViewOverrides:
@@ -41,7 +41,6 @@ class ViewOverrides:
     def __init__(self):
         self._blocks: dict[int, BlockViewState] = {}
         self._regions: dict[tuple[int, int], RegionViewState] = {}
-        self._search_block_ids: set[int] = set()
 
     def get_block(self, block_id: int) -> BlockViewState:
         """Get or create BlockViewState for a block_id."""
@@ -63,8 +62,11 @@ class ViewOverrides:
     def clear_category(self, blocks: Iterable[FormattedBlock], category: Category) -> None:
         """Reset expanded overrides for all blocks matching a category.
 
+        Imports get_category at call time for hot-reload safety.
         Recursively walks children.
         """
+        import cc_dump.tui.rendering
+
         def _walk(block_list):
             for block in block_list:
                 block_cat = cc_dump.tui.rendering.get_category(block)
@@ -82,24 +84,18 @@ class ViewOverrides:
 
         _walk(list(blocks))
 
-    def clear_search(self) -> None:
-        """Bulk-clear all force_vis set during search."""
-        for block_id in self._search_block_ids:
-            bvs = self._blocks.get(block_id)
-            if bvs is not None:
-                bvs.force_vis = None
-        self._search_block_ids.clear()
-
     def to_dict(self) -> dict:
         """Serialize for hot-reload state transfer.
 
-        force_vis is not serialized — search state is transient and cleared on reload.
+        Search navigation runtime state is not serialized.
         """
         blocks = {}
         for bid, bvs in self._blocks.items():
             entry = {}
             if bvs.expanded is not None:
                 entry["expanded"] = bvs.expanded
+            if bvs.expandable:
+                entry["expandable"] = True
             if entry:
                 blocks[bid] = entry
 
@@ -108,6 +104,7 @@ class ViewOverrides:
             entry = {}
             if rvs.expanded is not None:
                 entry["expanded"] = rvs.expanded
+            # strip_range is renderer-computed, transient — not serialized
             if entry:
                 regions[f"{bid},{idx}"] = entry
 
@@ -121,6 +118,7 @@ class ViewOverrides:
             bid = int(bid_str) if isinstance(bid_str, str) else bid_str
             bvs = BlockViewState(
                 expanded=entry.get("expanded"),
+                expandable=entry.get("expandable", False),
             )
             vo._blocks[bid] = bvs
 

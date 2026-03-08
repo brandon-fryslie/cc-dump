@@ -1,7 +1,4 @@
-"""Tests for ViewOverrides — block identity, override store, serialization.
-
-Covers AC1–AC6 from the plan.
-"""
+"""Tests for ViewOverrides — block identity, override store, serialization."""
 
 
 from textual.theme import BUILTIN_THEMES
@@ -82,33 +79,7 @@ def test_view_overrides_clear_category():
     assert vo.get_block(tool_block.block_id).expanded is True  # untouched
 
 
-# ─── AC4: clear_search ────────────────────────────────────────────────────
-
-
-def test_view_overrides_clear_search():
-    """Set force_vis on 5 blocks, clear → all force_vis is None."""
-    vo = ViewOverrides()
-
-    block_ids = []
-    for i in range(5):
-        b = TextContentBlock(content=f"block {i}")
-        block_ids.append(b.block_id)
-        vo.get_block(b.block_id).force_vis = ALWAYS_VISIBLE
-        vo._search_block_ids.add(b.block_id)
-
-    # All should be set
-    for bid in block_ids:
-        assert vo.get_block(bid).force_vis is ALWAYS_VISIBLE
-
-    # Clear
-    vo.clear_search()
-
-    for bid in block_ids:
-        assert vo.get_block(bid).force_vis is None
-    assert len(vo._search_block_ids) == 0
-
-
-# ─── AC5: serialization round-trip ────────────────────────────────────────
+# ─── AC4: serialization round-trip ────────────────────────────────────────
 
 
 def test_view_overrides_serialization():
@@ -119,6 +90,7 @@ def test_view_overrides_serialization():
     b2 = TextContentBlock(content="two")
 
     vo.get_block(b1.block_id).expanded = True
+    vo.get_block(b1.block_id).expandable = True
     vo.get_block(b2.block_id).expanded = False
 
     vo.get_region(b1.block_id, 0).expanded = False
@@ -129,25 +101,21 @@ def test_view_overrides_serialization():
 
     # Block state
     assert restored.get_block(b1.block_id).expanded is True
+    assert restored.get_block(b1.block_id).expandable is True
     assert restored.get_block(b2.block_id).expanded is False
 
     # Region state
     assert restored.get_region(b1.block_id, 0).expanded is False
 
-    # force_vis is NOT serialized (transient search state)
-    vo.get_block(b1.block_id).force_vis = ALWAYS_VISIBLE
-    data2 = vo.to_dict()
-    restored2 = ViewOverrides.from_dict(data2)
-    assert restored2.get_block(b1.block_id).force_vis is None
-
-
-# ─── AC6: blocks not mutated by render ────────────────────────────────────
+# ─── AC5: blocks not mutated by render ────────────────────────────────────
 
 
 def test_blocks_not_mutated_by_render():
     """render_turn_to_strips() with overrides does not mutate block fields.
 
-    AC6: Verifies overrides parameter does not mutate block domain fields.
+    AC6: Verifies overrides parameter routes view mutations to ViewOverrides.
+    When overrides is provided, block domain fields (category, block_id) are unchanged
+    and expandable is written to overrides instead of monkey-patched onto the block.
     """
     from rich.console import Console
     from cc_dump.tui.rendering import render_turn_to_strips
@@ -177,8 +145,12 @@ def test_blocks_not_mutated_by_render():
     # Domain fields unchanged
     assert block.category == pre_category
     assert block.block_id == pre_block_id
-    # Render pass should not attach renderer artifacts to block objects.
+    # No _expandable attribute on block — lives in overrides
     assert "_expandable" not in vars(block)
+
+    # expandable written to overrides
+    bvs = vo.get_block(block.block_id)
+    assert isinstance(bvs.expandable, bool)
 
 
 def test_auto_create_on_miss():
@@ -187,15 +159,9 @@ def test_auto_create_on_miss():
     bvs = vo.get_block(999)
     assert isinstance(bvs, BlockViewState)
     assert bvs.expanded is None
-    assert bvs.force_vis is None
+    assert bvs.expandable is False
 
     rvs = vo.get_region(999, 0)
     assert isinstance(rvs, RegionViewState)
     assert rvs.expanded is None
-
-
-def test_clear_search_empty_is_noop():
-    """clear_search on empty overrides is a no-op."""
-    vo = ViewOverrides()
-    vo.clear_search()  # should not raise
-    assert len(vo._search_block_ids) == 0
+    assert rvs.strip_range is None
