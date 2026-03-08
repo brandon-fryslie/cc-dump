@@ -20,7 +20,7 @@ class _Conv:
 
     def get_search_turns_snapshot(self):
         self.snapshot_calls += 1
-        return self._turns_snapshot
+        return types.SimpleNamespace(turns=tuple(self._turns_snapshot))
 
     def capture_scroll_anchor(self) -> None:
         self.anchor_calls += 1

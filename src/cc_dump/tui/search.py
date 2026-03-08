@@ -368,7 +368,7 @@ def _collect_descendants(block, hier_idx: int) -> list[tuple[int, object]]:
 
 
 def find_all_matches(
-    turns: list,
+    turns: Sequence[object],
     pattern: re.Pattern,
     text_cache: SearchTextCache | dict[tuple[str, int], str] | None = None,
 ) -> list[SearchMatch]:

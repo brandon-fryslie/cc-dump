@@ -230,6 +230,13 @@ class ScrollAnchor:
     line_in_block: int   # line offset within block's rendered strips
 
 
+@dataclass(frozen=True)
+class SearchTurnsSnapshot:
+    """Immutable snapshot of turns exposed to search consumers."""
+
+    turns: tuple[TurnData, ...]
+
+
 class ConversationView(ScrollView):
     """Virtual-rendering conversation display using Line API.
 
@@ -465,12 +472,13 @@ class ConversationView(ScrollView):
         """Public accessor for ViewOverrides — used by search_controller and action_handlers."""
         return self._view_overrides
 
-    def get_search_turns_snapshot(self) -> list[TurnData]:
-        """Return the current rendered turns for search consumers.
+    def get_search_turns_snapshot(self) -> SearchTurnsSnapshot:
+        """Return an immutable turns snapshot for search consumers.
 
         // [LAW:locality-or-seam] Search reads turns through this seam, not `_turns`.
+        // [LAW:one-source-of-truth] ConversationView is canonical owner of turn storage.
         """
-        return self._turns
+        return SearchTurnsSnapshot(turns=tuple(self._turns))
 
     def current_scroll_y(self) -> float:
         """Return current vertical scroll offset."""
@@ -1875,6 +1883,9 @@ class ConversationView(ScrollView):
         """Restore absolute vertical scroll position without animation."""
         with self._programmatic_scroll():
             self.scroll_to(y=y, animate=False)
+        # // [LAW:one-source-of-truth] Refresh anchor after programmatic restore
+        # because watch_scroll_y skips recompute while the guard is active.
+        self.capture_scroll_anchor()
 
     def scroll_to_block(self, turn_index: int, block_index: int) -> None:
         """Scroll to center a specific block in the viewport."""

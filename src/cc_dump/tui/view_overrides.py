@@ -2,7 +2,7 @@
 
 // [LAW:one-source-of-truth] View overrides have exactly one store — ViewOverrides.
 // [LAW:single-enforcer] Visibility resolution reads overrides at one site.
-// [LAW:one-way-deps] Depends on formatting types only.
+// [LAW:one-way-deps] Depends on formatting types plus rendering category seam.
 
 Owned by ConversationView. Serializable for hot-reload via to_dict/from_dict.
 """
@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from collections.abc import Iterable
 
 from cc_dump.core.formatting import Category, FormattedBlock
+from cc_dump.tui.rendering import get_category
 
 
 @dataclass
@@ -62,14 +63,11 @@ class ViewOverrides:
     def clear_category(self, blocks: Iterable[FormattedBlock], category: Category) -> None:
         """Reset expanded overrides for all blocks matching a category.
 
-        Imports get_category at call time for hot-reload safety.
         Recursively walks children.
         """
-        import cc_dump.tui.rendering
-
         def _walk(block_list):
             for block in block_list:
-                block_cat = cc_dump.tui.rendering.get_category(block)
+                block_cat = get_category(block)
                 if block_cat == category:
                     bvs = self._blocks.get(block.block_id)
                     if bvs is not None:
