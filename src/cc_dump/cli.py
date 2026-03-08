@@ -529,21 +529,9 @@ def main():
 
     print("🚀 cc-dump proxy started")
     for binding in bindings:
-        spec = binding.spec
         endpoint = binding.endpoint
-        print(f"   {spec.display_name} endpoint: {endpoint.proxy_url}")
-        print(f"     Proxy type: {endpoint.proxy_mode}")
-        if endpoint.proxy_mode == "reverse":
-            if endpoint.target:
-                print(f"     Target: {endpoint.target}")
-            print(f"     Usage: {spec.base_url_env}={endpoint.proxy_url} {spec.client_hint}")
-        else:
-            print(
-                "     Usage: "
-                f"HTTP_PROXY={endpoint.proxy_url} HTTPS_PROXY={endpoint.proxy_url} "
-                f"NODE_EXTRA_CA_CERTS={endpoint.forward_proxy_ca_cert_path or ''} "
-                f"{spec.client_hint}"
-            )
+        for line in cc_dump.providers.build_provider_endpoint_detail_lines(endpoint):
+            print(f"   {line}")
     # [LAW:one-source-of-truth] Default-state alias points at canonical per-provider state.
     state = provider_states[default_provider_key]
 
