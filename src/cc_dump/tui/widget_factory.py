@@ -440,10 +440,9 @@ class ConversationView(ScrollView):
         self,
         event: FollowEvent,
         *,
-        at_bottom: bool | None = None,
+        at_bottom: bool,
     ) -> None:
-        resolved_at_bottom = self.is_vertical_scroll_end if at_bottom is None else at_bottom
-        self._follow_store.dispatch(event, at_bottom=bool(resolved_at_bottom))
+        self._follow_store.dispatch(event, at_bottom=bool(at_bottom))
 
     def _apply_follow_transition(self, payload: tuple[int, FollowTransition]) -> None:
         _seq, transition = payload
