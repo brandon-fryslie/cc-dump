@@ -100,7 +100,6 @@ HAR files are the source of truth for events. Replay mode loads previous data, t
 | `--continue` | — | Continue from most recent recording (replay + live proxy) |
 | `--record PATH` | auto | Custom HAR recording output directory |
 | `--no-record` | — | Disable HAR recording |
-| `--seed-hue HUE` | `190` (cyan) | Base hue (0–360) for the color palette. Also settable via `CC_DUMP_SEED_HUE` env var |
 
 ## Features
 
@@ -318,7 +317,7 @@ Each press cycles: current → next visibility level.
 | Variable | Description |
 |----------|-------------|
 | `ANTHROPIC_BASE_URL` | Default upstream target (overridden by `--target`) |
-| `CC_DUMP_SEED_HUE` | Base hue (0–360) for the color palette (overridden by `--seed-hue`) |
+| `CC_DUMP_SEED_HUE` | Base hue (0–360) for the color palette |
 
 ## Development
 
