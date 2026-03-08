@@ -302,24 +302,6 @@ class TestCollapseChildren:
         result = _collapse_children(blocks, tools_on=False)
         assert len(result) == 0
 
-    def test_force_vis_override_emits_individual(self):
-        """Blocks with force_vis override in ViewOverrides are emitted individually."""
-        from cc_dump.tui.view_overrides import ViewOverrides
-
-        blocks = [
-            ToolUseBlock(name="Bash", input_size=100, msg_color_idx=0),
-            ToolUseBlock(name="Read", input_size=200, msg_color_idx=1),
-        ]
-        # Simulate search mode: set force_vis via ViewOverrides
-        overrides = ViewOverrides()
-        overrides.get_block(blocks[0].block_id).force_vis = ALWAYS_VISIBLE
-        result = _collapse_children(blocks, tools_on=False, overrides=overrides)
-
-        # Both blocks emitted individually, no ToolUseSummaryBlock
-        assert len(result) == 2
-        assert type(result[0]).__name__ == "ToolUseBlock"
-        assert type(result[1]).__name__ == "ToolUseBlock"
-
     def test_input_not_mutated(self):
         """Input list is never mutated."""
         blocks = [

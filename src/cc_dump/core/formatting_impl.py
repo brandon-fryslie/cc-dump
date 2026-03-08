@@ -237,7 +237,7 @@ class FormattedBlock:
     - category: overrides static BLOCK_CATEGORY for context-dependent blocks
       (e.g., TextContentBlock can be USER or ASSISTANT depending on the message).
 
-    Per-block view state (expanded, _expandable, _force_vis) lives in
+    Per-block view state (expanded, _expandable) lives in
     ViewOverrides, owned by ConversationView — not on the block itself.
 
     Sub-region axis:
