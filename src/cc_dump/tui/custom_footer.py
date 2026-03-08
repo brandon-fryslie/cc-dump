@@ -5,9 +5,9 @@ from textual.color import Color
 from textual.containers import Horizontal
 
 import cc_dump.tui.rendering
-import cc_dump.tui.widget_factory
 import cc_dump.io.logging_setup
 from cc_dump.core.formatting import VisState, HIDDEN
+from cc_dump.tui.follow_mode import FollowState
 from cc_dump.tui.chip import Chip
 from cc_dump.tui.store_widget import StoreWidget
 
@@ -176,7 +176,6 @@ class StatusFooter(StoreWidget):
             return
         tc = cc_dump.tui.rendering.get_theme_colors(runtime=runtime)
         # Enrich raw store value (follow_state string → FollowState enum)
-        FollowState = cc_dump.tui.widget_factory.FollowState
         enriched = dict(state)
         enriched["follow_state"] = FollowState(state["follow_state"])
 
@@ -201,7 +200,6 @@ class StatusFooter(StoreWidget):
 
     def _apply_follow_chip(self, state: dict[str, object], bg_color: Color, fg_color: Color) -> None:
         # // [LAW:dataflow-not-control-flow] Style + label derived from follow_state via table.
-        FollowState = cc_dump.tui.widget_factory.FollowState
         follow_state = state.get("follow_state", FollowState.ACTIVE)
         follow_chip = self.query_one("#cmd-follow", Chip)
         # [LAW:dataflow-not-control-flow] Table lookup, not branches.
