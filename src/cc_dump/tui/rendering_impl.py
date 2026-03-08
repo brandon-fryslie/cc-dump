@@ -3568,7 +3568,7 @@ def _is_coalesced_continuation(
 
 
 def _collapse_children(
-    children: list[FormattedBlock], tools_on: bool, overrides=None,
+    children: list[FormattedBlock], tools_on: bool,
 ) -> list[FormattedBlock]:
     """Return new list with consecutive ToolUse/ToolResult runs collapsed.
 
@@ -3797,7 +3797,7 @@ def _recurse_visible_children(
     if not children or not (vis.visible and vis.full and vis.expanded):
         return
     tools_filter = ctx.filters.get("tools", ALWAYS_VISIBLE)
-    collapsed = _collapse_children(children, tools_filter.full, overrides=ctx.overrides)
+    collapsed = _collapse_children(children, tools_filter.full)
     for child in collapsed:
         _render_block_tree(child, ctx)
 

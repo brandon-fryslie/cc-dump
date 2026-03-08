@@ -366,7 +366,7 @@ def run_search(app) -> None:
         state.matches = []
         _sync_search_match_summary(app)
         return
-    turns = conv.get_search_turns_snapshot()
+    turns = conv.get_search_turns_snapshot().turns
 
     # // [LAW:no-shared-mutable-globals] Cache is state-owned and locally bounded.
     cache = state.text_cache
