@@ -73,8 +73,6 @@ async def run_app(
             if callable(bind_reactions):
                 bind_reactions()
             else:
-                view_store._reaction_disposers = cc_dump.app.view_store.setup_reactions(
-                    view_store, {"app": app}
-                )
+                view_store._reaction_disposers = []
 
         yield pilot, app

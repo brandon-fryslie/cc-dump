@@ -213,7 +213,7 @@ async def _do_hot_reload(app) -> None:
         try:
             view_store.reconcile(
                 cc_dump.app.view_store.SCHEMA,
-                lambda store: cc_dump.app.view_store.setup_reactions(store, None),
+                lambda store: [],
             )
             app._bind_view_store_reactions()
         except Exception as e:
