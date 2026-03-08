@@ -309,6 +309,8 @@ class SideChannelPanel(StoreWidget):
         self.display = bool(visible)
         if visible:
             self.call_after_refresh(self.focus_default_control)
+        elif self.has_focus_within:
+            self.call_after_refresh(self.screen.focus_next)
 
     def on_mount(self) -> None:
         super().on_mount()

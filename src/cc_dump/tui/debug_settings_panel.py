@@ -129,9 +129,12 @@ class DebugSettingsPanel(VerticalScroll):
     def _apply_panel_visibility(self, visible: bool) -> None:
         self.display = bool(visible)
         if visible:
-            focusable = self.query("Select, ToggleChip")
-            if focusable:
-                self.call_after_refresh(focusable.first().focus)
+            self.call_after_refresh(self.focus_default_control)
+        elif self.has_focus_within:
+            self.call_after_refresh(self.screen.focus_next)
+
+    def focus_default_control(self) -> None:
+        self.screen.focus_next("DebugSettingsPanel *")
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.control.id == "debug-log-level" and event.value is not None:
