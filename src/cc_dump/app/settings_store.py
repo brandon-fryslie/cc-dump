@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 
 # [LAW:one-source-of-truth] All known settings and their defaults
 SCHEMA: dict[str, object] = {
-    "auto_zoom_default": False,
     "side_channel_enabled": True,
     "side_channel_global_kill": False,
     "side_channel_max_concurrent": 1,
@@ -93,17 +92,6 @@ def setup_reactions(store, context=None):
                 ("side_channel_budget_caps", coerce_str_object_dict, mgr.set_budget_caps),
             )
             for key, project, apply in manager_bindings:
-                disposers.append(_bind_setting(store, key, project, apply))
-
-        tmux = context.get("tmux_controller")
-        if tmux is not None:
-            tmux_bindings: tuple[
-                tuple[str, Callable[[object], object], Callable[[object], None]],
-                ...,
-            ] = (
-                ("auto_zoom_default", bool, lambda value: setattr(tmux, "auto_zoom", bool(value))),
-            )
-            for key, project, apply in tmux_bindings:
                 disposers.append(_bind_setting(store, key, project, apply))
 
     return disposers

@@ -1,10 +1,9 @@
-"""Tmux integration for cc-dump — split panes, launch external tools, auto-zoom.
+"""Tmux integration for cc-dump — split panes, launch external tools, log tail.
 
 This module is STABLE — holds live pane references, never hot-reloaded.
 All libtmux usage is lazy-imported and wrapped in try/except.
 
 // [LAW:locality-or-seam] All tmux logic isolated here; rest of app uses is_available() + TmuxController.
-// [LAW:dataflow-not-control-flow] Zoom decisions via _ZOOM_DECISIONS lookup table.
 """
 
 from __future__ import annotations
@@ -21,12 +20,7 @@ if TYPE_CHECKING:
 
 from snarfx import Observable, watch
 
-from cc_dump.pipeline.event_types import (
-    PipelineEvent,
-    PipelineEventKind,
-    ResponseCompleteEvent,
-    StopReason,
-)
+from cc_dump.pipeline.event_types import PipelineEvent
 
 logger = logging.getLogger(__name__)
 
@@ -106,39 +100,6 @@ class LogTailResult:
         return "LogTailResult({})".format(parts)
 
 
-# ─── Zoom decision table ─────────────────────────────────────────────────────
-# Key: (PipelineEventKind, StopReason | None)
-# Value: True = zoom, False = unzoom, None = no-op
-# // [LAW:dataflow-not-control-flow] Table lookup, not if/elif chains.
-
-_ZOOM_DECISIONS: dict[tuple[PipelineEventKind, StopReason | None], bool | None] = {
-    (PipelineEventKind.REQUEST, None): True,
-    (PipelineEventKind.RESPONSE_COMPLETE, StopReason.END_TURN): False,
-    (PipelineEventKind.RESPONSE_COMPLETE, StopReason.MAX_TOKENS): False,
-    (PipelineEventKind.RESPONSE_COMPLETE, StopReason.TOOL_USE): None,
-    (PipelineEventKind.ERROR, None): False,
-    (PipelineEventKind.PROXY_ERROR, None): False,
-}
-
-
-def _extract_decision_key(
-    event: PipelineEvent,
-) -> tuple[PipelineEventKind, StopReason | None]:
-    """Extract the lookup key from a pipeline event.
-
-    For ResponseCompleteEvent, extract stop_reason from body dict.
-    For all other events, stop_reason is None.
-    """
-    stop_reason: StopReason | None = None
-    if isinstance(event, ResponseCompleteEvent):
-        sr_str = event.body.get("stop_reason", "") or ""
-        try:
-            stop_reason = StopReason(sr_str)
-        except ValueError:
-            stop_reason = StopReason.NONE
-    return (event.kind, stop_reason)
-
-
 def is_available() -> bool:
     """Check if tmux integration is possible ($TMUX set + libtmux importable)."""
     if not os.environ.get("TMUX"):
@@ -152,9 +113,8 @@ def is_available() -> bool:
 
 
 class TmuxController:
-    """Manages tmux pane splitting, zoom, and tool-launch lifecycle.
+    """Manages tmux pane splitting and tool-launch lifecycle.
 
-    // [LAW:single-enforcer] on_event() is the sole zoom decision point.
     // [LAW:single-enforcer] _validate_tool_pane() is the sole pane liveness check.
     """
 
@@ -164,11 +124,8 @@ class TmuxController:
         process_names: tuple[str, ...] = (),
         launch_env: dict[str, str] | None = None,
         launcher_label: str = "tool",
-        auto_zoom: bool = False,
     ) -> None:
         self.state = TmuxState.NOT_IN_TMUX
-        self._auto_zoom = bool(auto_zoom)
-        self._is_zoomed = False
         self._port: int | None = None  # legacy fallback path
         self._launch_command = ""
         self._process_names: tuple[str, ...] = ()
@@ -179,8 +136,6 @@ class TmuxController:
         self._our_pane: libtmux.Pane | None = None
         self._tool_pane: libtmux.Pane | None = None
         self.pane_alive = Observable(False)  # reactive — True while launched pane is alive
-        self.auto_zoom_state = Observable(self._auto_zoom)
-        self.zoomed_state = Observable(self._is_zoomed)
         self.configure_launcher(
             command=launch_command,
             process_names=process_names,
@@ -295,8 +250,6 @@ class TmuxController:
         except Exception:
             self._tool_pane = None
             self.state = TmuxState.READY
-            self._is_zoomed = False
-            self.zoomed_state.set(self._is_zoomed)
             return False
 
     def _find_tool_pane(self) -> "libtmux.Pane | None":
@@ -329,15 +282,6 @@ class TmuxController:
     def launch_command(self) -> str:
         """The base launcher command."""
         return self._launch_command
-
-    @property
-    def auto_zoom(self) -> bool:
-        return self._auto_zoom
-
-    @auto_zoom.setter
-    def auto_zoom(self, value: bool) -> None:
-        self._auto_zoom = bool(value)
-        self.auto_zoom_state.set(self._auto_zoom)
 
     def launch_tool(self, command: str = "") -> LaunchResult:
         """Evaluate preconditions, derive action, log, execute.
@@ -542,68 +486,15 @@ class TmuxController:
             _log("focus_tool error: {}".format(e))
             return False
 
-    def zoom(self) -> None:
-        """Zoom cc-dump pane to full screen. Idempotent."""
-        if self._is_zoomed or self._our_pane is None:
-            return
-        try:
-            self._our_pane.resize(zoom=True)
-            self._is_zoomed = True
-            self.zoomed_state.set(self._is_zoomed)
-        except Exception as e:
-            _log("zoom error: {}".format(e))
-
-    def unzoom(self) -> None:
-        """Unzoom cc-dump pane (restore split). Idempotent."""
-        if not self._is_zoomed or self._our_pane is None:
-            return
-        try:
-            self._our_pane.resize(zoom=True)
-            self._is_zoomed = False
-            self.zoomed_state.set(self._is_zoomed)
-        except Exception as e:
-            _log("unzoom error: {}".format(e))
-
-    def toggle_zoom(self) -> None:
-        """Manual zoom toggle."""
-        if self._is_zoomed:
-            self.unzoom()
-        else:
-            self.zoom()
-
-    def toggle_auto_zoom(self) -> None:
-        """Toggle automatic zoom on API activity."""
-        self.auto_zoom = not self.auto_zoom
-
     def on_event(self, event: PipelineEvent) -> None:
-        """Subscriber callback — table lookup determines zoom/unzoom.
+        """Subscriber callback for pipeline events.
 
-        // [LAW:dataflow-not-control-flow] Decision from _ZOOM_DECISIONS table.
-        Guards: only act when TOOL_RUNNING and auto_zoom is on.
+        Zoom behavior was intentionally removed; tmux zoom is user-driven.
         """
-        if self.state != TmuxState.TOOL_RUNNING or not self.auto_zoom:
-            return
-
-        # Validate pane is still alive before zoom logic
-        if not self._validate_tool_pane():
-            return
-
-        key = _extract_decision_key(event)
-        decision = _ZOOM_DECISIONS.get(key)
-
-        # // [LAW:dataflow-not-control-flow] decision is True/False/None
-        # None = no-op, True = zoom, False = unzoom
-        _ZOOM_ACTIONS = {
-            True: self.zoom,
-            False: self.unzoom,
-        }
-        action = _ZOOM_ACTIONS.get(decision)
-        if action is not None:
-            action()
+        _ = event
 
     def cleanup(self) -> None:
-        """Unzoom on shutdown. Does NOT kill the launched pane."""
-        self.unzoom()
+        """Shutdown hook. Does NOT kill the launched pane."""
 
 
 def _log(msg: str) -> None:

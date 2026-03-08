@@ -52,13 +52,6 @@ class SettingsPanelViewState:
 
 SETTINGS_FIELDS: list[FieldDef] = [
     FieldDef(
-        key="auto_zoom_default",
-        label="Auto-Zoom Default",
-        description="Start with tmux auto-zoom enabled",
-        kind="bool",
-        default=cc_dump.app.settings_store.SCHEMA["auto_zoom_default"],
-    ),
-    FieldDef(
         key="side_channel_enabled",
         label="AI Summaries",
         description="Enable AI-powered summaries via claude -p",

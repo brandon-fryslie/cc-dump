@@ -1,4 +1,4 @@
-"""Tests for tmux_controller — zoom decisions, state machine, event handling.
+"""Tests for tmux_controller launch/adopt/log-tail behavior.
 
 All tests mock libtmux and tmux env vars; no actual tmux required.
 """
@@ -8,22 +8,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cc_dump.pipeline.event_types import (
-    ErrorEvent,
-    PipelineEventKind,
-    ProxyErrorEvent,
-    RequestBodyEvent,
-    ResponseCompleteEvent,
-    ResponseDoneEvent,
-    StopReason,
-)
+from cc_dump.pipeline.event_types import RequestBodyEvent
 from cc_dump.app.tmux_controller import (
     LogTailAction,
     LaunchAction,
     TmuxController,
     TmuxState,
-    _ZOOM_DECISIONS,
-    _extract_decision_key,
     is_available,
 )
 
@@ -32,7 +22,7 @@ from cc_dump.app.tmux_controller import (
 
 
 _VALID_ATTRS = frozenset({
-    "state", "auto_zoom", "_is_zoomed", "_port",
+    "state", "_port",
     "_launch_command", "_process_names", "_launch_env", "_launcher_label",
     "_server", "_session", "_our_pane", "_tool_pane",
 })
@@ -56,81 +46,6 @@ def make_controller():
         return ctrl
 
     return _factory
-
-
-@pytest.fixture
-def active_controller(make_controller):
-    """Controller in TOOL_RUNNING state with mocked panes and auto_zoom on."""
-    return make_controller(
-        state=TmuxState.TOOL_RUNNING,
-        auto_zoom=True,
-        _our_pane=MagicMock(),
-        _tool_pane=MagicMock(),
-    )
-
-
-# ─── _ZOOM_DECISIONS table ───────────────────────────────────────────────────
-
-
-class TestZoomDecisions:
-    """Verify the zoom decision table entries."""
-
-    def test_request_zooms(self):
-        assert _ZOOM_DECISIONS[(PipelineEventKind.REQUEST, None)] is True
-
-    def test_end_turn_unzooms(self):
-        assert _ZOOM_DECISIONS[(PipelineEventKind.RESPONSE_COMPLETE, StopReason.END_TURN)] is False
-
-    def test_max_tokens_unzooms(self):
-        assert _ZOOM_DECISIONS[(PipelineEventKind.RESPONSE_COMPLETE, StopReason.MAX_TOKENS)] is False
-
-    def test_tool_use_is_noop(self):
-        assert _ZOOM_DECISIONS[(PipelineEventKind.RESPONSE_COMPLETE, StopReason.TOOL_USE)] is None
-
-    def test_error_unzooms(self):
-        assert _ZOOM_DECISIONS[(PipelineEventKind.ERROR, None)] is False
-
-    def test_proxy_error_unzooms(self):
-        assert _ZOOM_DECISIONS[(PipelineEventKind.PROXY_ERROR, None)] is False
-
-
-# ─── _extract_decision_key ───────────────────────────────────────────────────
-
-
-class TestExtractDecisionKey:
-    def test_request_body_event(self):
-        event = RequestBodyEvent(body={})
-        assert _extract_decision_key(event) == (PipelineEventKind.REQUEST, None)
-
-    def test_response_complete_end_turn(self):
-        event = ResponseCompleteEvent(body={"stop_reason": "end_turn"})
-        assert _extract_decision_key(event) == (PipelineEventKind.RESPONSE_COMPLETE, StopReason.END_TURN)
-
-    def test_response_complete_tool_use(self):
-        event = ResponseCompleteEvent(body={"stop_reason": "tool_use"})
-        assert _extract_decision_key(event) == (PipelineEventKind.RESPONSE_COMPLETE, StopReason.TOOL_USE)
-
-    def test_response_complete_max_tokens(self):
-        event = ResponseCompleteEvent(body={"stop_reason": "max_tokens"})
-        assert _extract_decision_key(event) == (PipelineEventKind.RESPONSE_COMPLETE, StopReason.MAX_TOKENS)
-
-    def test_response_complete_no_stop_reason(self):
-        """ResponseCompleteEvent with no stop_reason gets StopReason.NONE."""
-        event = ResponseCompleteEvent(body={})
-        assert _extract_decision_key(event) == (PipelineEventKind.RESPONSE_COMPLETE, StopReason.NONE)
-
-    def test_response_complete_unknown_stop_reason(self):
-        """Unknown stop_reason falls back to StopReason.NONE."""
-        event = ResponseCompleteEvent(body={"stop_reason": "something_new"})
-        assert _extract_decision_key(event) == (PipelineEventKind.RESPONSE_COMPLETE, StopReason.NONE)
-
-    def test_error_event(self):
-        event = ErrorEvent(code=500, reason="server error")
-        assert _extract_decision_key(event) == (PipelineEventKind.ERROR, None)
-
-    def test_proxy_error_event(self):
-        event = ProxyErrorEvent(error="connection refused")
-        assert _extract_decision_key(event) == (PipelineEventKind.PROXY_ERROR, None)
 
 
 # ─── is_available() ──────────────────────────────────────────────────────────
@@ -167,155 +82,24 @@ class TestTmuxControllerStates:
         assert result.action == LaunchAction.BLOCKED
         assert not result.success
 
-    def test_not_in_tmux_zoom_is_noop(self, make_controller):
-        ctrl = make_controller()
-        ctrl.zoom()
-        assert ctrl._is_zoomed is False
-
-
-# ─── on_event behavior ──────────────────────────────────────────────────────
-
-
-class TestOnEvent:
-    def test_request_triggers_zoom(self, active_controller):
-        event = RequestBodyEvent(body={})
-        active_controller.on_event(event)
-        assert active_controller._is_zoomed is True
-        active_controller._our_pane.resize.assert_called_once_with(zoom=True)
-
-    def test_end_turn_triggers_unzoom(self, make_controller):
+class TestEventHooks:
+    def test_on_event_is_noop(self, make_controller):
         ctrl = make_controller(
             state=TmuxState.TOOL_RUNNING,
-            auto_zoom=True,
-            _is_zoomed=True,
             _our_pane=MagicMock(),
             _tool_pane=MagicMock(),
         )
-        event = ResponseCompleteEvent(body={"stop_reason": "end_turn"})
-        ctrl.on_event(event)
-        assert ctrl._is_zoomed is False
+        ctrl.on_event(RequestBodyEvent(body={}))
+        assert ctrl.state == TmuxState.TOOL_RUNNING
 
-    def test_tool_use_is_noop(self, make_controller):
+    def test_cleanup_is_noop(self, make_controller):
         ctrl = make_controller(
             state=TmuxState.TOOL_RUNNING,
-            auto_zoom=True,
-            _is_zoomed=True,
             _our_pane=MagicMock(),
             _tool_pane=MagicMock(),
-        )
-        event = ResponseCompleteEvent(body={"stop_reason": "tool_use"})
-        ctrl.on_event(event)
-        # Should stay zoomed — no change
-        assert ctrl._is_zoomed is True
-        ctrl._our_pane.resize.assert_not_called()
-
-    def test_error_triggers_unzoom(self, make_controller):
-        ctrl = make_controller(
-            state=TmuxState.TOOL_RUNNING,
-            auto_zoom=True,
-            _is_zoomed=True,
-            _our_pane=MagicMock(),
-            _tool_pane=MagicMock(),
-        )
-        event = ErrorEvent(code=500, reason="fail")
-        ctrl.on_event(event)
-        assert ctrl._is_zoomed is False
-
-    def test_proxy_error_triggers_unzoom(self, make_controller):
-        ctrl = make_controller(
-            state=TmuxState.TOOL_RUNNING,
-            auto_zoom=True,
-            _is_zoomed=True,
-            _our_pane=MagicMock(),
-            _tool_pane=MagicMock(),
-        )
-        event = ProxyErrorEvent(error="connection refused")
-        ctrl.on_event(event)
-        assert ctrl._is_zoomed is False
-
-    def test_auto_zoom_off_ignores_events(self, active_controller):
-        active_controller.auto_zoom = False
-        event = RequestBodyEvent(body={})
-        active_controller.on_event(event)
-        assert active_controller._is_zoomed is False
-        active_controller._our_pane.resize.assert_not_called()
-
-    def test_not_claude_running_ignores_events(self, make_controller):
-        ctrl = make_controller(
-            state=TmuxState.READY,
-            _our_pane=MagicMock(),
-            _tool_pane=MagicMock(),
-        )
-        event = RequestBodyEvent(body={})
-        ctrl.on_event(event)
-        assert ctrl._is_zoomed is False
-        ctrl._our_pane.resize.assert_not_called()
-
-    def test_response_done_no_decision(self, active_controller):
-        """ResponseDoneEvent has no table entry — no-op."""
-        event = ResponseDoneEvent()
-        active_controller.on_event(event)
-        assert active_controller._is_zoomed is False
-        active_controller._our_pane.resize.assert_not_called()
-
-
-# ─── Zoom idempotency ───────────────────────────────────────────────────────
-
-
-class TestZoomIdempotency:
-    def test_zoom_when_already_zoomed_is_noop(self, make_controller):
-        ctrl = make_controller(
-            _is_zoomed=True,
-            _our_pane=MagicMock(),
-        )
-        ctrl.zoom()
-        ctrl._our_pane.resize.assert_not_called()
-
-    def test_unzoom_when_not_zoomed_is_noop(self, make_controller):
-        ctrl = make_controller(_our_pane=MagicMock())
-        ctrl.unzoom()
-        ctrl._our_pane.resize.assert_not_called()
-
-    def test_toggle_zoom(self, make_controller):
-        ctrl = make_controller(_our_pane=MagicMock())
-        ctrl.toggle_zoom()
-        assert ctrl._is_zoomed is True
-        ctrl.toggle_zoom()
-        assert ctrl._is_zoomed is False
-
-
-# ─── toggle_auto_zoom ────────────────────────────────────────────────────────
-
-
-class TestToggleAutoZoom:
-    def test_toggle(self, make_controller):
-        ctrl = make_controller()
-        assert ctrl.auto_zoom is False
-        ctrl.toggle_auto_zoom()
-        assert ctrl.auto_zoom is True
-        ctrl.toggle_auto_zoom()
-        assert ctrl.auto_zoom is False
-
-
-# ─── cleanup ─────────────────────────────────────────────────────────────────
-
-
-class TestCleanup:
-    def test_cleanup_unzooms(self, make_controller):
-        ctrl = make_controller(
-            _is_zoomed=True,
-            _our_pane=MagicMock(),
         )
         ctrl.cleanup()
-        assert ctrl._is_zoomed is False
-        ctrl._our_pane.resize.assert_called_once_with(zoom=True)
-
-    def test_cleanup_when_not_zoomed_is_noop(self, make_controller):
-        ctrl = make_controller(
-            _our_pane=MagicMock(),
-        )
-        ctrl.cleanup()
-        ctrl._our_pane.resize.assert_not_called()
+        assert ctrl.state == TmuxState.TOOL_RUNNING
 
 # ─── _validate_tool_pane ─────────────────────────────────────────────────
 
@@ -809,18 +593,15 @@ class TestAutoResume:
 
 
 class TestOnEventWithDeadPane:
-    def test_dead_pane_skips_zoom(self, make_controller):
-        """on_event with dead tool pane should not attempt zoom."""
+    def test_dead_pane_is_untouched_by_noop_event_hook(self, make_controller):
         dead_pane = MagicMock()
         dead_pane.refresh.side_effect = Exception("pane dead")
         ctrl = make_controller(
             state=TmuxState.TOOL_RUNNING,
-            auto_zoom=True,
             _our_pane=MagicMock(),
             _tool_pane=dead_pane,
         )
-        event = RequestBodyEvent(body={})
-        ctrl.on_event(event)
-        # Pane was dead, so state transitioned to READY
-        assert ctrl.state == TmuxState.READY
-        assert ctrl._is_zoomed is False
+        ctrl.on_event(RequestBodyEvent(body={}))
+        # on_event no longer mutates pane state; pane validation remains launch/focus-owned.
+        assert ctrl.state == TmuxState.TOOL_RUNNING
+        assert ctrl._tool_pane is dead_pane
