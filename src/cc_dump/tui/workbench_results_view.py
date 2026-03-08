@@ -13,6 +13,7 @@ from snarfx import textual as stx
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
+import cc_dump.app.view_store
 from cc_dump.tui.store_widget import StoreWidget
 
 
@@ -81,25 +82,25 @@ class WorkbenchResultsView(StoreWidget):
         self._result_state_reaction.dispose()
 
     def _setup_store_reactions(self) -> list:
-        store = getattr(self.app, "_view_store", None)
-        if store is None:
-            return []
+        store = self.app.view_store
         return [
             stx.reaction(
                 self.app,
                 lambda: store.workbench_state.get(),
-                self._sync_from_store_projection,
+                self._apply_workbench_projection,
                 fire_immediately=True,
             )
         ]
 
-    def _sync_from_store_projection(self, projection: dict[str, object]) -> None:
+    def _apply_workbench_projection(
+        self, projection: cc_dump.app.view_store.WorkbenchProjection
+    ) -> None:
         self.update_result(
-            text=str(projection.get("text", "")),
-            source=str(projection.get("source", "")),
-            elapsed_ms=_read_elapsed_ms(projection),
-            action=str(projection.get("action", "")),
-            context_session_id=str(projection.get("context_session_id", "")),
+            text=projection.text,
+            source=projection.source,
+            elapsed_ms=projection.elapsed_ms,
+            action=projection.action,
+            context_session_id=projection.context_session_id,
         )
 
     @staticmethod
@@ -185,8 +186,3 @@ class WorkbenchResultsView(StoreWidget):
 def create_workbench_results_view() -> WorkbenchResultsView:
     """Factory for app compose."""
     return WorkbenchResultsView()
-
-
-def _read_elapsed_ms(projection: dict[str, object]) -> int:
-    value = projection.get("elapsed_ms")
-    return value if isinstance(value, int) and not isinstance(value, bool) else 0

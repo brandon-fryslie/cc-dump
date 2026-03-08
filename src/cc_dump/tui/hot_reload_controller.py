@@ -16,8 +16,6 @@ import cc_dump.tui.rendering
 import cc_dump.tui.search
 import cc_dump.tui.widget_factory
 import cc_dump.tui.info_panel
-import cc_dump.tui.keys_panel
-import cc_dump.tui.debug_settings_panel
 import cc_dump.tui.settings_panel
 import cc_dump.tui.custom_footer
 import cc_dump.app.settings_store
@@ -207,7 +205,7 @@ async def _do_hot_reload(app) -> None:
         except Exception as e:
             app._app_log("ERROR", f"Hot-reload: settings store reconcile failed: {e}")
 
-    # Reconcile view store schema (values survive) and rebind app-owned reactions.
+    # Reconcile view store schema (values survive). Widgets self-subscribe on mount.
     view_store = getattr(app, "_view_store", None)
     if view_store is not None:
         try:
@@ -215,7 +213,6 @@ async def _do_hot_reload(app) -> None:
                 cc_dump.app.view_store.SCHEMA,
                 lambda store: [],
             )
-            app._bind_view_store_reactions()
         except Exception as e:
             app._app_log("ERROR", f"Hot-reload: view store reconcile failed: {e}")
 
@@ -455,12 +452,6 @@ def _build_replacement_info(info_state: dict):
 
 async def _remove_ephemeral_panels(app) -> None:
     """Drop transient overlays before remounting persisted widgets."""
-    for ephemeral_panel_type in (
-        cc_dump.tui.keys_panel.KeysPanel,
-        cc_dump.tui.debug_settings_panel.DebugSettingsPanel,
-    ):
-        await _remove_panels_by_type(app, ephemeral_panel_type)
-
     removals = (
         (cc_dump.tui.settings_panel.SettingsPanel, "panel:settings"),
         (cc_dump.tui.launch_config_panel.LaunchConfigPanel, "panel:launch_config"),

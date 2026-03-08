@@ -9,6 +9,7 @@ import logging
 import tracemalloc
 
 from snarfx import Observable, reaction
+from snarfx import textual as stx
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Label, Select, Static
@@ -114,12 +115,23 @@ class DebugSettingsPanel(VerticalScroll):
         )
 
     def on_mount(self) -> None:
-        focusable = self.query("Select, ToggleChip")
-        if focusable:
-            focusable.first().focus()
+        self._visibility_reaction = stx.reaction(
+            self.app,
+            lambda: bool(self.app.view_store.get("panel:debug_settings")),
+            self._apply_panel_visibility,
+            fire_immediately=True,
+        )
 
     def on_unmount(self) -> None:
+        self._visibility_reaction.dispose()
         self._toggle_reaction.dispose()
+
+    def _apply_panel_visibility(self, visible: bool) -> None:
+        self.display = bool(visible)
+        if visible:
+            focusable = self.query("Select, ToggleChip")
+            if focusable:
+                self.call_after_refresh(focusable.first().focus)
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.control.id == "debug-log-level" and event.value is not None:
@@ -130,11 +142,7 @@ class DebugSettingsPanel(VerticalScroll):
         if event.key == "escape":
             event.stop()
             event.prevent_default()
-            self.remove()
-            if self._app_ref:
-                conv = self._app_ref._get_conv()
-                if conv is not None:
-                    conv.focus()
+            self.app.view_store.set("panel:debug_settings", False)
 
     def _handle_debug_toggle(self, chip: ToggleChip, value: bool) -> None:
         perf_enabled, mem_enabled = self._toggle_state.get()

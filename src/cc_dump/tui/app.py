@@ -44,7 +44,7 @@ import cc_dump.tui.session_panel
 import cc_dump.tui.workbench_results_view
 # Extracted controller modules (module-object imports — safe for hot-reload)
 from cc_dump.tui import action_handlers as _actions
-from cc_dump.tui.panel_registry import PANEL_REGISTRY, PANEL_ORDER, PANEL_CSS_IDS
+from cc_dump.tui.panel_registry import PANEL_REGISTRY, PANEL_CSS_IDS
 from cc_dump.tui import search_controller as _search
 from cc_dump.tui import dump_export as _dump
 from cc_dump.tui import theme_controller as _theme
@@ -227,7 +227,9 @@ class CcDumpApp(App):
         self._side_channel_manager = side_channel_manager
         self._data_dispatcher = data_dispatcher
         self._settings_store = settings_store
-        self._view_store = view_store
+        self._view_store = (
+            view_store if view_store is not None else cc_dump.app.view_store.create()
+        )
         self._domain_store = domain_store if domain_store is not None else cc_dump.app.domain_store.DomainStore()
         self._store_context = store_context
         # // [LAW:one-source-of-truth] App owns render runtime state for theme/render coupling.
@@ -298,6 +300,11 @@ class CcDumpApp(App):
     @active_panel.setter
     def active_panel(self, value):
         self._view_store.set("panel:active", value)
+        _actions.refresh_active_panel(self, value)
+
+    @property
+    def view_store(self):
+        return self._view_store
 
     @property
     def _input_mode(self):
@@ -755,6 +762,7 @@ class CcDumpApp(App):
         for spec in PANEL_REGISTRY:
             widget = _resolve_factory(spec.factory)()
             widget.id = self._panel_ids[spec.name]
+            widget.display = spec.name == self.active_panel
             yield widget
 
         with TabbedContent(id=self._conv_tabs_id):
@@ -784,19 +792,27 @@ class CcDumpApp(App):
         settings_panel = cc_dump.tui.settings_panel.create_settings_panel(
             _settings_launch.initial_settings_values(self)
         )
-        settings_panel.display = False
+        settings_panel.display = bool(self._view_store.get("panel:settings"))
         yield settings_panel
 
         launch_panel = cc_dump.tui.launch_config_panel.create_launch_config_panel(
             cc_dump.app.launch_config.load_configs(),
             cc_dump.app.launch_config.load_active_name(),
         )
-        launch_panel.display = False
+        launch_panel.display = bool(self._view_store.get("panel:launch_config"))
         yield launch_panel
 
         side_channel_panel = cc_dump.tui.side_channel_panel.create_side_channel_panel()
-        side_channel_panel.display = False
+        side_channel_panel.display = bool(self._view_store.get("panel:side_channel"))
         yield side_channel_panel
+
+        keys_panel = cc_dump.tui.keys_panel.create_keys_panel()
+        keys_panel.display = bool(self._view_store.get("panel:keys"))
+        yield keys_panel
+
+        debug_panel = cc_dump.tui.debug_settings_panel.create_debug_settings_panel(app_ref=self)
+        debug_panel.display = bool(self._view_store.get("panel:debug_settings"))
+        yield debug_panel
 
         search_bar = cc_dump.tui.search.SearchBar()
         search_bar.id = self._search_bar_id
@@ -807,47 +823,6 @@ class CcDumpApp(App):
     def on_mount(self):
         _lifecycle.on_mount(self)
         self._execute_auto_launch()
-
-    def _bind_view_store_reactions(self) -> None:
-        """(Re)bind app-owned view-store reactions after app mount.
-
-        // [LAW:single-enforcer] App-local UI orchestration reactions are centralized here.
-        """
-        if self._view_store is None:
-            return
-        self._dispose_view_store_reactions()
-        store = self._view_store
-        self._view_store._reaction_disposers = [
-            stx.reaction(self, lambda: store.get("panel:active"), self._apply_active_panel, fire_immediately=True),
-            stx.reaction(self, lambda: store.sidebar_panel_state.get(), self._sync_sidebar_panels, fire_immediately=True),
-            stx.reaction(self, lambda: store.chrome_panel_state.get(), self._sync_chrome_panels, fire_immediately=True),
-            stx.reaction(self, lambda: store.aux_panel_state.get(), self._sync_aux_panels, fire_immediately=True),
-        ]
-
-    def _dispose_view_store_reactions(self) -> None:
-        old_disposers = getattr(self._view_store, "_reaction_disposers", None)
-        if not isinstance(old_disposers, list):
-            return
-        for disposer in old_disposers:
-            self._dispose_reaction_handle(disposer)
-
-    @staticmethod
-    def _dispose_reaction_handle(disposer) -> None:
-        if hasattr(disposer, "dispose"):
-            try:
-                disposer.dispose()
-            except Exception:
-                pass
-            return
-        if callable(disposer):
-            try:
-                disposer()
-            except Exception:
-                pass
-
-    def _apply_active_panel(self, active: str) -> None:
-        self._sync_panel_display(active)
-        _actions.refresh_active_panel(self, active)
 
     async def action_quit(self) -> None:
         now = time.monotonic()
@@ -1460,90 +1435,6 @@ class CcDumpApp(App):
 
     def _handle_search_nav_special_keys(self, event) -> bool:
         return _search.handle_search_nav_special_keys(self, event)
-
-    # ─── Reactive watchers ─────────────────────────────────────────────
-
-    def _sync_panel_display(self, active: str):
-        """// [LAW:one-source-of-truth] Panel visibility driven by PANEL_ORDER from registry."""
-        for name in PANEL_ORDER:
-            widget = self._get_panel(name)
-            if widget is not None:
-                widget.display = (name == active)
-
-    def _sync_sidebar_panels(self, state: tuple[bool, bool, bool]) -> None:
-        """Single enforcer for sidebar visibility + focus."""
-        settings_open, launch_open, side_open = state
-        def _first_or_none(panel_type):
-            try:
-                return self.screen.query(panel_type).first()
-            except NoMatches:
-                return None
-
-        settings_panel = _first_or_none(cc_dump.tui.settings_panel.SettingsPanel)
-        launch_panel = _first_or_none(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
-        side_panel = _first_or_none(cc_dump.tui.side_channel_panel.SideChannelPanel)
-
-        if settings_panel is not None:
-            settings_panel.display = settings_open
-        if launch_panel is not None:
-            launch_panel.display = launch_open
-        if side_panel is not None:
-            side_panel.display = side_open
-
-        focus_target = None
-        if side_open:
-            focus_target = side_panel
-        elif launch_open:
-            focus_target = launch_panel
-        elif settings_open:
-            focus_target = settings_panel
-        if focus_target is not None:
-            focus_default = getattr(focus_target, "focus_default_control", None)
-            if callable(focus_default):
-                self.call_after_refresh(focus_default)
-        else:
-            conv = self._get_conv()
-            if conv is not None:
-                self.call_after_refresh(conv.focus)
-
-    def _sync_chrome_panels(self, state: tuple[bool, bool]) -> None:
-        """Single enforcer for logs/info panel visibility."""
-        logs_visible, info_visible = state
-        logs = self._get_logs()
-        if logs is not None:
-            logs.display = bool(logs_visible)
-        info = self._get_info()
-        if info is not None:
-            info.display = bool(info_visible)
-
-    def _sync_aux_panels(self, state: tuple[bool, bool]) -> None:
-        """Single enforcer for keys/debug overlay mount/remove behavior."""
-        keys_visible, debug_visible = state
-        self._sync_overlay_panel(
-            visible=keys_visible,
-            panel_type=cc_dump.tui.keys_panel.KeysPanel,
-            factory=cc_dump.tui.keys_panel.create_keys_panel,
-        )
-        removed_debug = self._sync_overlay_panel(
-            visible=debug_visible,
-            panel_type=cc_dump.tui.debug_settings_panel.DebugSettingsPanel,
-            factory=lambda: cc_dump.tui.debug_settings_panel.create_debug_settings_panel(app_ref=self),
-        )
-        if removed_debug:
-            conv = self._get_conv()
-            if conv is not None:
-                conv.focus()
-
-    def _sync_overlay_panel(self, *, visible: bool, panel_type, factory) -> bool:
-        panels = list(self.screen.query(panel_type))
-        should_mount = visible and not panels
-        should_remove = (not visible) and bool(panels)
-        if should_mount:
-            self.screen.mount(factory())
-        if should_remove:
-            for mounted_panel in panels:
-                mounted_panel.remove()
-        return should_remove
 
     def watch_theme(self, theme_name: str) -> None:
         if not stx.is_safe(self):

@@ -106,7 +106,7 @@ class StatusFooter(StoreWidget):
     def _setup_store_reactions(self) -> list:
         # [LAW:single-enforcer] Footer self-subscribes to footer_state; fires immediately
         # on mount (post-compose) so children are guaranteed ready.
-        store = self.app._view_store
+        store = self.app.view_store
         return [
             stx.reaction(
                 self.app,
@@ -116,7 +116,7 @@ class StatusFooter(StoreWidget):
             ),
             stx.reaction(
                 self.app,
-                lambda: bool(store.search_ui_state.get().get("footer_visible", True)),
+                lambda: bool(store.search_ui_state.get().footer_visible),
                 self._apply_footer_visibility,
                 fire_immediately=True,
             ),
@@ -242,6 +242,4 @@ class StatusFooter(StoreWidget):
         launch_chip.update(f" c {active_tool_label}{config_suffix} ")
 
     def _apply_footer_visibility(self, footer_visible: bool) -> None:
-        if not self.is_attached:
-            return
         self.display = bool(footer_visible)

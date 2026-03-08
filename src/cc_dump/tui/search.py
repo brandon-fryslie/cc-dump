@@ -21,6 +21,7 @@ from snarfx import textual as stx
 from rich.text import Text
 from textual.widgets import Static
 
+import cc_dump.app.view_store
 from cc_dump.core.analysis import fmt_tokens
 import cc_dump.tui.rendering
 
@@ -472,25 +473,25 @@ class SearchBar(Static):
         self._display_state.set(state)
 
     def _setup_store_reactions(self) -> list:
-        store = getattr(self.app, "_view_store", None)
-        if store is None:
-            return []
+        store = self.app.view_store
         return [
             stx.reaction(
                 self.app,
                 lambda: store.search_ui_state.get(),
-                self._sync_from_store_projection,
+                self._apply_search_projection,
                 fire_immediately=True,
             )
         ]
 
-    def _sync_from_store_projection(self, projection: dict[str, object]) -> None:
-        phase_raw = str(projection.get("phase", SearchPhase.INACTIVE.value))
+    def _apply_search_projection(
+        self, projection: cc_dump.app.view_store.SearchUiProjection
+    ) -> None:
+        phase_raw = projection.phase
         try:
             phase = SearchPhase(phase_raw)
         except ValueError:
             phase = SearchPhase.INACTIVE
-        modes_raw = _read_int(projection.get("modes"), int(SearchMode.CASE_INSENSITIVE))
+        modes_raw = projection.modes
         try:
             modes = SearchMode(modes_raw)
         except ValueError:
@@ -498,11 +499,11 @@ class SearchBar(Static):
         self.update_display(
             SearchBarState(
                 phase=phase,
-                query=str(projection.get("query", "")),
+                query=projection.query,
                 modes=modes,
-                cursor_pos=_read_int(projection.get("cursor_pos"), 0),
-                current_index=_read_int(projection.get("current_index"), 0),
-                match_count=_read_int(projection.get("match_count"), 0),
+                cursor_pos=projection.cursor_pos,
+                current_index=projection.current_index,
+                match_count=projection.match_count,
             )
         )
 
@@ -616,9 +617,3 @@ class SearchBar(Static):
             self._build_nav_help_line(state, tc),
         ]
         self.update(Text("\n").join(lines))
-
-
-def _read_int(value: object, default: int) -> int:
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    return default
