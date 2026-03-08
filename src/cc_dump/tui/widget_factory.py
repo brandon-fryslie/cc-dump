@@ -2264,8 +2264,15 @@ class StatsPanel(Static):
         super().__init__("")
         self._view_index = 0
         self._last_snapshot: dict = {"summary": {}, "timeline": [], "models": []}
+        self._pull_tick: Observable[int] = Observable(0)
         self._render_state: Observable[tuple[int, dict[str, object]]] = Observable(
             (self._view_index, self._last_snapshot)
+        )
+        # [LAW:single-enforcer] One projection owns pull-based snapshot hydration from app stores.
+        self._pull_reaction = reaction(
+            lambda: self._pull_tick.get(),
+            self._pull_snapshot_from_app,
+            fire_immediately=False,
         )
         # [LAW:single-enforcer] One reactive projection owns stats panel rendering.
         self._render_reaction = reaction(
@@ -2275,33 +2282,80 @@ class StatsPanel(Static):
         )
 
     def on_mount(self) -> None:
-        self._store_reaction = stx.reaction(
-            self.app,
-            lambda: self.app._view_store.get("panel:stats_snapshot"),
-            self._apply_store_snapshot,
-            fire_immediately=True,
-        )
+        self.set_interval(0.5, self._request_pull)
+        self._request_pull()
         self._apply_render_state(self._render_state.get())
 
     def on_unmount(self) -> None:
-        self._store_reaction.dispose()
+        self._pull_reaction.dispose()
         self._render_reaction.dispose()
 
-    def _apply_store_snapshot(self, payload: object) -> None:
-        self.update_display(payload if isinstance(payload, dict) else {})
+    def _request_pull(self) -> None:
+        self._pull_tick.set(self._pull_tick.get() + 1)
 
-    def update_display(self, snapshot: dict[str, object]) -> None:
-        """Apply canonical stats snapshot projection from view store."""
-        # [LAW:one-source-of-truth] Panel renders from canonical view-store snapshot shape.
-        summary = snapshot.get("summary", {})
-        timeline = snapshot.get("timeline", [])
-        models = snapshot.get("models", [])
-        self._last_snapshot = {
-            "summary": dict(summary) if isinstance(summary, dict) else {},
-            "timeline": list(timeline) if isinstance(timeline, list) else [],
-            "models": list(models) if isinstance(models, list) else [],
-        }
+    def _current_turn_from_app(self, app) -> dict | None:
+        app_state = getattr(app, "_app_state", {})
+        usage_by_request = app_state.get("current_turn_usage_by_request", {})
+        if not isinstance(usage_by_request, dict):
+            return None
+        active_domain_getter = getattr(app, "_get_active_domain_store", None)
+        active_domain_store = (
+            active_domain_getter()
+            if callable(active_domain_getter)
+            else getattr(app, "_domain_store", None)
+        )
+        if active_domain_store is None:
+            return None
+        focused_request_id = active_domain_store.get_focused_stream_id()
+        if not focused_request_id:
+            return None
+        current_turn = usage_by_request.get(focused_request_id)
+        return current_turn if isinstance(current_turn, dict) else None
+
+    def _pull_snapshot_from_app(self, _tick: int) -> None:
+        # [LAW:dataflow-not-control-flow] exception: pull requires mounted widget/app context.
+        if not self.is_attached:
+            return
+        app = getattr(self, "app", None)
+        analytics_store = getattr(app, "_analytics_store", None) if app is not None else None
+        if analytics_store is None:
+            self._last_snapshot = {"summary": {}, "timeline": [], "models": []}
+            self._refresh_display()
+            return
+        snapshot = analytics_store.get_dashboard_snapshot(
+            current_turn=self._current_turn_from_app(app)
+        )
+        summary = dict(snapshot.get("summary", {}))
+
+        # Optional local capacity baseline (not provided by API).
+        capacity_raw = str(os.environ.get("CC_DUMP_TOKEN_CAPACITY", "") or "").strip()
+        try:
+            capacity_total = int(capacity_raw) if capacity_raw else 0
+        except ValueError:
+            capacity_total = 0
+        if capacity_total > 0:
+            used_tokens = int(summary.get("total_tokens", 0))
+            remaining_tokens = max(0, capacity_total - used_tokens)
+            used_pct = min(100.0, (used_tokens / capacity_total) * 100.0)
+            summary["capacity_total"] = capacity_total
+            summary["capacity_used"] = used_tokens
+            summary["capacity_remaining"] = remaining_tokens
+            summary["capacity_used_pct"] = used_pct
+
+        snapshot["summary"] = summary
+        self._last_snapshot = snapshot
         self._refresh_display()
+
+    def refresh_from_store(
+        self,
+        store=None,
+        current_turn: dict | None = None,
+        domain_store=None,
+        all_domain_stores: tuple[object, ...] | None = None,
+    ):
+        """Back-compat seam: trigger pull-based refresh from app-owned stores."""
+        _ = (store, current_turn, domain_store, all_domain_stores)
+        self._request_pull()
 
     def _refresh_display(self):
         self._render_state.set((self._view_index, self._last_snapshot))

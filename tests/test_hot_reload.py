@@ -564,6 +564,63 @@ class TestHotReloadSwapValidation:
             )
 
 
+class TestHotReloadPanelRehydrate:
+    """Unit tests for post-swap panel refresh from canonical stores."""
+
+    def test_rehydrate_panels_from_store_refreshes_all_supported_panels(self):
+        from cc_dump.tui.hot_reload_controller import _rehydrate_panels_from_store
+
+        class PanelStub:
+            def __init__(self):
+                self.calls = []
+
+            def refresh_from_store(self):
+                self.calls.append("refresh")
+
+        stats = PanelStub()
+        session = PanelStub()
+
+        app = SimpleNamespace(
+            _analytics_store=object(),
+            _domain_store=object(),
+            _iter_domain_stores=lambda: (object(),),
+            _app_state={"last_message_time": 123.0},
+            _session_id="session-123",
+        )
+        new_panels = {
+            "stats": stats,
+            "session": session,
+        }
+
+        _rehydrate_panels_from_store(app, new_panels)
+
+        assert stats.calls == ["refresh"]
+        assert session.calls == ["refresh"]
+
+    def test_rehydrate_panels_from_store_passes_none_store_unconditionally(self):
+        from cc_dump.tui.hot_reload_controller import _rehydrate_panels_from_store
+
+        class StorePanelStub:
+            def __init__(self):
+                self.calls = []
+
+            def refresh_from_store(self):
+                self.calls.append("refresh")
+
+        stats = StorePanelStub()
+        app = SimpleNamespace(
+            _analytics_store=None,
+            _domain_store=None,
+            _iter_domain_stores=lambda: (),
+            _app_state={},
+            _session_id=None,
+        )
+
+        _rehydrate_panels_from_store(app, {"stats": stats})
+
+        assert stats.calls == ["refresh"]
+
+
 class TestWidgetStatePreservation:
     """Unit tests for widget state get/restore cycle."""
 
