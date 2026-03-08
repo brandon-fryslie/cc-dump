@@ -90,8 +90,6 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
 
         # Tmux integration
         "c": "launch_tool",
-        "z": "toggle_tmux_zoom",
-        "Z": "toggle_auto_zoom",
         "L": "open_tmux_log_tail",
 
         # Filterset cycling (printable — NORMAL only)
@@ -168,7 +166,6 @@ FOOTER_KEYS: dict[InputMode, list[tuple[str, str]]] = {
         ("?", "keys"),
         ("/", "search"),
         ("c", "launch"),
-        ("z", "zoom"),
         ("L", "tail"),
     ],
     InputMode.SEARCH_EDIT: [
@@ -226,7 +223,6 @@ KEY_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("c", "Launch tool (tmux)"),
         ("C", "Run configs"),
         ("D", "Debug"),
-        ("z/Z", "Zoom (tmux)"),
         ("L", "Tail logs (tmux)"),
         ("S", "Settings"),
         ("D", "Debug"),

@@ -23,7 +23,6 @@ def tmp_settings(tmp_path, monkeypatch):
 class TestCreate:
     def test_creates_store_with_schema_defaults(self, tmp_settings):
         store = cc_dump.app.settings_store.create()
-        assert store.get("auto_zoom_default") is False
         assert store.get("side_channel_enabled") is True
         assert store.get("side_channel_global_kill") is False
         assert store.get("side_channel_max_concurrent") == 1
@@ -39,7 +38,7 @@ class TestCreate:
         store = cc_dump.app.settings_store.create()
         assert store.get("theme") == "gruvbox"
         # Unset keys get schema defaults
-        assert store.get("auto_zoom_default") is False
+        assert store.get("side_channel_enabled") is True
 
     def test_initial_overrides(self, tmp_settings):
         store = cc_dump.app.settings_store.create(initial_overrides={"theme": "dark"})
@@ -94,17 +93,6 @@ class TestSetupReactions:
 
         store.set("side_channel_max_concurrent", "not-a-number")
         mgr.set_max_concurrent.assert_called_with(1)
-
-    def test_tmux_auto_zoom_sync(self, tmp_settings):
-        store = cc_dump.app.settings_store.create()
-        tmux = MagicMock()
-        tmux.auto_zoom = False
-        context = {"tmux_controller": tmux}
-        disposers = cc_dump.app.settings_store.setup_reactions(store, context)
-        store._reaction_disposers = disposers
-
-        store.set("auto_zoom_default", True)
-        assert tmux.auto_zoom is True
 
     def test_no_context_still_persists(self, tmp_settings):
         store = cc_dump.app.settings_store.create()
@@ -165,8 +153,8 @@ class TestReactiveTracking:
     def test_update_batches(self, tmp_settings):
         store = cc_dump.app.settings_store.create()
         log = []
-        autorun(lambda: log.append((store.get("auto_zoom_default"), store.get("theme"))))
-        assert log == [(False, None)]
-        store.update({"auto_zoom_default": True, "theme": "y"})
+        autorun(lambda: log.append((store.get("side_channel_enabled"), store.get("theme"))))
+        assert log == [(True, None)]
+        store.update({"side_channel_enabled": False, "theme": "y"})
         # Single batch, not two separate updates
-        assert log == [(False, None), (True, "y")]
+        assert log == [(True, None), (False, "y")]

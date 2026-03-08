@@ -896,22 +896,14 @@ class CcDumpApp(App):
             logger.log(level_num, message, extra={"cc_dump_in_app": True})
 
     def _tmux_store_projection(self, tmux) -> dict[str, bool]:
-        """Compute footer-facing tmux flags from controller state/observables."""
+        """Compute footer-facing tmux availability flag from controller state."""
         _TMUX_ACTIVE = {cc_dump.app.tmux_controller.TmuxState.READY, cc_dump.app.tmux_controller.TmuxState.TOOL_RUNNING}
         if tmux is None:
             return {
                 "tmux:available": False,
-                "tmux:auto_zoom": False,
-                "tmux:zoomed": False,
             }
-        auto_obs = getattr(tmux, "auto_zoom_state", None)
-        zoom_obs = getattr(tmux, "zoomed_state", None)
-        auto_zoom = auto_obs.get() if auto_obs is not None else bool(getattr(tmux, "auto_zoom", False))
-        zoomed = zoom_obs.get() if zoom_obs is not None else bool(getattr(tmux, "_is_zoomed", False))
         return {
             "tmux:available": tmux.state in _TMUX_ACTIVE,
-            "tmux:auto_zoom": auto_zoom,
-            "tmux:zoomed": zoomed,
         }
 
     def _sync_tmux_to_store(self):
@@ -1226,22 +1218,6 @@ class CcDumpApp(App):
     def action_launch_tool(self):
         config = cc_dump.app.launch_config.get_active_config()
         self._launch_with_config(config, log_label="launch_tool")
-
-    def action_toggle_tmux_zoom(self):
-        tmux = self._tmux_controller
-        if tmux is None:
-            self.notify("Tmux not available", severity="warning")
-            return
-        tmux.toggle_zoom()
-
-    def action_toggle_auto_zoom(self):
-        tmux = self._tmux_controller
-        if tmux is None:
-            self.notify("Tmux not available", severity="warning")
-            return
-        tmux.toggle_auto_zoom()
-        label = "on" if tmux.auto_zoom else "off"
-        self.notify("Auto-zoom: {}".format(label))
 
     def action_open_tmux_log_tail(self):
         tmux = self._tmux_controller
