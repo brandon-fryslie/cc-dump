@@ -403,12 +403,6 @@ def main():
         help="Preview recording cleanup without deleting files.",
     )
     parser.add_argument(
-        "--seed-hue",
-        type=float,
-        default=None,
-        help="Seed hue (0-360) for color palette (default: 190, cyan). Env: CC_DUMP_SEED_HUE",
-    )
-    parser.add_argument(
         "--forward-proxy-ca-dir",
         type=str,
         default=None,
@@ -454,7 +448,7 @@ def main():
     )
 
     # Initialize color palette before anything else imports it
-    cc_dump.core.palette.init_palette(args.seed_hue)
+    cc_dump.core.palette.init_palette()
 
     if args.list_recordings:
         recordings = cc_dump.io.sessions.list_recordings()
