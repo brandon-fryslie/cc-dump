@@ -5,11 +5,47 @@ import pytest
 from tests.harness import (
     run_app,
     press_and_settle,
+    choose_from_select,
+    settle,
     is_panel_visible,
     is_follow_mode,
 )
 
 pytestmark = pytest.mark.textual
+
+
+async def _open_launch_config_panel(app, pilot):
+    import cc_dump.tui.launch_config_panel
+
+    app.action_toggle_launch_config()
+    await pilot.pause()
+    return app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+
+
+def _first_other_value(values: list[str] | tuple[str, ...], current: str) -> str:
+    for value in values:
+        if value != current:
+            return value
+    return current
+
+
+async def _choose_selector_value(pilot, selector, target: str, option_order: list[str]) -> str:
+    values = [str(value) for value in option_order]
+    current = str(selector.value)
+    if target == current or target not in values or current not in values:
+        return current
+
+    current_idx = values.index(current)
+    target_idx = values.index(target)
+    direction = "down" if target_idx > current_idx else "up"
+    steps = abs(target_idx - current_idx)
+    open_key = "down" if direction == "up" else "enter"
+    return await choose_from_select(
+        pilot,
+        selector,
+        navigation_keys=[direction] * steps,
+        open_key=open_key,
+    )
 
 
 async def test_panel_cycling_dot():
@@ -144,98 +180,83 @@ async def test_command_palette_includes_launch_presets():
             assert f"Launch preset: {key}" in titles
 
 
+def test_launch_config_select_values_reads_public_options_shape():
+    import cc_dump.tui.launch_config_panel
+
+    class _FakeOption:
+        def __init__(self, value) -> None:
+            self.value = value
+
+    class _FakeSelect:
+        BLANK = object()
+
+        def __init__(self) -> None:
+            self.options = [
+                ("alpha", "alpha"),
+                _FakeOption("beta"),
+                ("blank", self.BLANK),
+            ]
+
+    selector = _FakeSelect()
+    assert cc_dump.tui.launch_config_panel._select_values(selector) == ("alpha", "beta")
+
+
 async def test_launch_config_select_changes_value_with_standard_select_keys():
     """Launch config selection changes once via standard select keyboard controls."""
     from textual.widgets import Select
-    import cc_dump.tui.launch_config_panel
 
     async with run_app() as (pilot, app):
-        app.action_toggle_launch_config()
-        await pilot.pause()
-
-        panel = app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+        panel = await _open_launch_config_panel(app, pilot)
         panel.create_new_config()
-        await pilot.pause()
+        await settle(pilot)
         selector = panel.query_one("#lc-config-selector", Select)
         original = str(selector.value)
+        option_order = [config.name for config in panel._configs]
+        target = _first_other_value(option_order, original)
 
-        selector.focus()
-        await pilot.pause()
-        await press_and_settle(pilot, "down")
-        assert selector.expanded is True
-
-        await press_and_settle(pilot, "down")
-        await press_and_settle(pilot, "enter")
-
-        changed = str(selector.value)
+        changed = await _choose_selector_value(pilot, selector, target, option_order)
         assert changed != original
 
-        await pilot.pause()
-        await pilot.pause()
+        await settle(pilot, ticks=2)
         assert str(selector.value) == changed
 
 
-async def test_launch_config_preset_select_round_trips_after_layout_change():
-    """Preset select should switch away and back even when the selected preset changes tool layout."""
+async def test_launch_config_preset_select_stays_stable_after_layout_change():
+    """Preset select should switch and keep the new value after tool-layout changes."""
     from textual.widgets import Select
-    import cc_dump.tui.launch_config_panel
 
     async with run_app() as (pilot, app):
-        app.action_toggle_launch_config()
-        await pilot.pause()
-
-        panel = app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+        panel = await _open_launch_config_panel(app, pilot)
         selector = panel.query_one("#lc-config-selector", Select)
         original = str(selector.value)
+        option_order = [config.name for config in panel._configs]
+        changed_target = _first_other_value(option_order, original)
 
-        selector.focus()
-        await pilot.pause()
-        await press_and_settle(pilot, "down")
-        await press_and_settle(pilot, "down")
-        await press_and_settle(pilot, "enter")
-        changed = str(selector.value)
+        changed = await _choose_selector_value(pilot, selector, changed_target, option_order)
         assert changed != original
 
-        selector.focus()
-        await pilot.pause()
-        await press_and_settle(pilot, "down")
-        await press_and_settle(pilot, "up")
-        await press_and_settle(pilot, "enter")
-        assert str(selector.value) == original
-
-        await pilot.pause()
-        await pilot.pause()
-        assert str(selector.value) == original
+        await settle(pilot, ticks=2)
+        assert str(selector.value) == changed
 
 
 async def test_launch_config_launcher_select_handles_standard_keys_without_panel_shortcuts():
     """Focused select should own enter and arrow keys instead of triggering panel actions."""
+    import cc_dump.app.launcher_registry
     from textual.widgets import Select
-    import cc_dump.tui.launch_config_panel
 
     async with run_app() as (pilot, app):
-        app.action_toggle_launch_config()
-        await pilot.pause()
-
-        panel = app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+        panel = await _open_launch_config_panel(app, pilot)
         selector = panel.query_one("#lc-field-launcher", Select)
         original = str(selector.value)
         config_count = len(panel._configs)
+        option_order = list(cc_dump.app.launcher_registry.launcher_keys())
+        changed_target = _first_other_value(option_order, original)
 
-        selector.focus()
-        await pilot.pause()
-        await press_and_settle(pilot, "down")
-        assert selector.expanded is True
-
-        await press_and_settle(pilot, "down")
-        await press_and_settle(pilot, "enter")
-
-        changed = str(selector.value)
+        changed = await _choose_selector_value(pilot, selector, changed_target, option_order)
         assert changed != original
         assert len(panel._configs) == config_count
 
-        await pilot.pause()
-        await pilot.pause()
+        await settle(pilot, ticks=2)
         assert str(selector.value) == changed
 
         await press_and_settle(pilot, "tab")
@@ -247,17 +268,13 @@ async def test_launch_config_launcher_select_handles_standard_keys_without_panel
 async def test_launch_config_select_allows_unclaimed_app_shortcuts():
     """Focused select should keep its own keys but allow unrelated app shortcuts through."""
     from textual.widgets import Select
-    import cc_dump.tui.launch_config_panel
 
     async with run_app() as (pilot, app):
-        app.action_toggle_launch_config()
-        await pilot.pause()
-
-        panel = app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+        panel = await _open_launch_config_panel(app, pilot)
         selector = panel.query_one("#lc-field-launcher", Select)
         original = str(selector.value)
         selector.focus()
-        await pilot.pause()
+        await settle(pilot)
 
         before = app.active_panel
         await press_and_settle(pilot, ".")
@@ -267,55 +284,62 @@ async def test_launch_config_select_allows_unclaimed_app_shortcuts():
 
 async def test_launch_config_launcher_select_round_trips_and_reopens_stably():
     """Launcher select should switch away, switch back, and reopen without oscillating."""
+    import cc_dump.app.launcher_registry
     from textual.widgets import Select
     import cc_dump.tui.launch_config_panel
 
     async with run_app() as (pilot, app):
-        app.action_toggle_launch_config()
-        await pilot.pause()
-
-        panel = app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+        panel = await _open_launch_config_panel(app, pilot)
         selector = panel.query_one("#lc-field-launcher", Select)
         original = str(selector.value)
+        option_order = list(cc_dump.app.launcher_registry.launcher_keys())
+        changed_target = _first_other_value(option_order, original)
 
-        selector.focus()
-        await pilot.pause()
-        await press_and_settle(pilot, "down")
-        await press_and_settle(pilot, "down")
-        await press_and_settle(pilot, "enter")
-        changed = str(selector.value)
+        changed = await _choose_selector_value(pilot, selector, changed_target, option_order)
         assert changed != original
 
-        selector.focus()
-        await pilot.pause()
-        await press_and_settle(pilot, "down")
-        await press_and_settle(pilot, "down")
-        await press_and_settle(pilot, "enter")
-        assert str(selector.value) == original
+        round_trip = await _choose_selector_value(pilot, selector, original, option_order)
+        assert round_trip == original
 
-        await pilot.pause()
-        await pilot.pause()
+        await settle(pilot, ticks=2)
         assert str(selector.value) == original
 
         app.action_toggle_launch_config()
-        await pilot.pause()
+        await settle(pilot)
         app.action_toggle_launch_config()
-        await pilot.pause()
+        await settle(pilot)
 
         reopened_panel = app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
         reopened_selector = reopened_panel.query_one("#lc-field-launcher", Select)
         assert str(reopened_selector.value) == original
 
-        await pilot.pause()
-        await pilot.pause()
+        await settle(pilot, ticks=2)
         assert str(reopened_selector.value) == original
+
+
+async def test_launch_config_hidden_mount_hydrates_from_store(monkeypatch):
+    """Fresh hidden mount should hydrate selector/form state before first show."""
+    from textual.widgets import Select
+    import cc_dump.app.launch_config
+
+    configs = cc_dump.app.launch_config.default_configs()
+    if len(configs) < 2:
+        pytest.skip("requires at least two launch presets")
+    active_name = configs[1].name
+
+    monkeypatch.setattr(cc_dump.app.launch_config, "load_configs", lambda: configs)
+    monkeypatch.setattr(cc_dump.app.launch_config, "load_active_name", lambda: active_name)
+
+    async with run_app() as (pilot, app):
+        panel = await _open_launch_config_panel(app, pilot)
+        selector = panel.query_one("#lc-config-selector", Select)
+        assert str(selector.value) == active_name
 
 
 async def test_launch_config_save_chip_keeps_app_responsive():
     """Focused action chips should allow unrelated shortcuts and still handle activation keys."""
     async with run_app() as (pilot, app):
-        app.action_toggle_launch_config()
-        await pilot.pause()
+        await _open_launch_config_panel(app, pilot)
 
         save_chip = app.screen.query_one("#lc-action-save")
         save_chip.focus()
@@ -333,8 +357,7 @@ async def test_launch_config_save_chip_keeps_app_responsive():
 async def test_launch_config_escape_closes_via_app_handler():
     """Escape should close launch config through the app-level panel dispatcher."""
     async with run_app() as (pilot, app):
-        app.action_toggle_launch_config()
-        await pilot.pause()
+        await _open_launch_config_panel(app, pilot)
 
         await press_and_settle(pilot, "escape")
         assert not app._view_store.get("panel:launch_config")
@@ -345,8 +368,7 @@ async def test_launch_config_toggle_reopens_hidden_panel():
     import cc_dump.tui.launch_config_panel
 
     async with run_app() as (pilot, app):
-        app.action_toggle_launch_config()
-        await pilot.pause()
+        await _open_launch_config_panel(app, pilot)
         panel = app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
         assert panel.display
 

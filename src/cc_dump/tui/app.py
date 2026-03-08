@@ -17,13 +17,14 @@ import time
 import tracemalloc
 import traceback
 from functools import lru_cache
-from typing import Callable, Optional, TypedDict, cast
+from typing import Callable, Optional, Protocol, TypedDict, cast
 
 import textual
 import textual.filter as _textual_filter
 from textual.app import App, ComposeResult, SystemCommand
 from textual.css.query import NoMatches
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Header, TabbedContent, TabPane
 from rich.style import Style
 
@@ -77,10 +78,27 @@ from snarfx import textual as stx
 logger = logging.getLogger(__name__)
 
 
-def _focused_widget_owns_key(widget: object | None, event) -> bool:
-    # [LAW:single-enforcer] Focused widgets are the sole authority on which keys they consume.
+class _KeyConsumer(Protocol):
+    def check_consume_key(self, key: str, character: str | None) -> bool:
+        ...
+
+
+class _NullKeyConsumer:
+    def check_consume_key(self, key: str, character: str | None) -> bool:
+        return False
+
+
+_NULL_KEY_CONSUMER = _NullKeyConsumer()
+
+
+def _resolve_key_consumer(widget: Widget | None) -> _KeyConsumer:
+    # [LAW:single-enforcer] Widgets are the sole authority for key consumption.
     check_consume_key = getattr(widget, "check_consume_key", None)
-    return bool(check_consume_key and check_consume_key(event.key, event.character))
+    return cast(_KeyConsumer, widget) if callable(check_consume_key) else _NULL_KEY_CONSUMER
+
+
+def _event_key_is_consumed(event, consumer: _KeyConsumer) -> bool:
+    return bool(consumer.check_consume_key(event.key, event.character))
 
 
 def _patch_textual_monochrome_style() -> None:
@@ -1543,7 +1561,7 @@ class CcDumpApp(App):
         if event.key == "escape" and self._close_topmost_panel():
             event.prevent_default()
             return True
-        if _focused_widget_owns_key(self.screen.focused, event):
+        if _event_key_is_consumed(event, _resolve_key_consumer(self.screen.focused)):
             return True
         if mode == InputMode.NORMAL and event.character == "/":
             event.prevent_default()
