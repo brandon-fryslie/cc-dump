@@ -9,10 +9,11 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from snarfx import Observable, reaction
+from snarfx import textual as stx
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
-from textual.widget import Widget
 from textual.widgets import Markdown, Static
+from cc_dump.tui.store_widget import StoreWidget
 
 
 @dataclass(frozen=True)
@@ -25,7 +26,7 @@ class WorkbenchResultState:
     meta: str = ""
 
 
-class WorkbenchResultsView(Widget):
+class WorkbenchResultsView(StoreWidget):
     """Renders the most recent workbench output in a full-width conversation tab."""
 
     DEFAULT_CSS = """
@@ -72,10 +73,34 @@ class WorkbenchResultsView(Widget):
             yield Markdown("No workbench output yet.", id="workbench-results-markdown")
 
     def on_mount(self) -> None:
+        super().on_mount()
         self._render_result_state(self._result_state.get())
 
     def on_unmount(self) -> None:
+        super().on_unmount()
         self._result_state_reaction.dispose()
+
+    def _setup_store_reactions(self) -> list:
+        store = getattr(self.app, "_view_store", None)
+        if store is None:
+            return []
+        return [
+            stx.reaction(
+                self.app,
+                lambda: store.workbench_state.get(),
+                self._sync_from_store_projection,
+                fire_immediately=True,
+            )
+        ]
+
+    def _sync_from_store_projection(self, projection: dict[str, object]) -> None:
+        self.update_result(
+            text=str(projection.get("text", "")),
+            source=str(projection.get("source", "")),
+            elapsed_ms=_read_elapsed_ms(projection),
+            action=str(projection.get("action", "")),
+            context_session_id=str(projection.get("context_session_id", "")),
+        )
 
     @staticmethod
     def _build_meta_line(state: WorkbenchResultState) -> str:
@@ -160,3 +185,8 @@ class WorkbenchResultsView(Widget):
 def create_workbench_results_view() -> WorkbenchResultsView:
     """Factory for app compose."""
     return WorkbenchResultsView()
+
+
+def _read_elapsed_ms(projection: dict[str, object]) -> int:
+    value = projection.get("elapsed_ms")
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0

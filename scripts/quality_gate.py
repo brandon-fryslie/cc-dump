@@ -221,6 +221,43 @@ def check_complexity_regressions(
     return increased, new_too_complex
 
 
+def collect_forbidden_tui_coerce_usage() -> list[str]:
+    """Collect forbidden coercion-helper usage within TUI modules.
+
+    // [LAW:single-enforcer] Quality gate is the sole policy enforcer for this restriction.
+    """
+    proc = subprocess.run(
+        [
+            "rg",
+            "-n",
+            "--no-heading",
+            "--color",
+            "never",
+            "-e",
+            r"\bfrom cc_dump\.core\.coerce import\b",
+            "-e",
+            r"\bimport cc_dump\.core\.coerce\b",
+            "-e",
+            r"\bcoerce_[A-Za-z0-9_]+\(",
+            "src/cc_dump/tui",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode == 1:
+        return []
+    if proc.returncode != 0:
+        print("ERROR: forbidden-pattern scan failed", file=sys.stderr)
+        if proc.stderr.strip():
+            print(proc.stderr.strip(), file=sys.stderr)
+        elif proc.stdout.strip():
+            print(proc.stdout.strip(), file=sys.stderr)
+        raise SystemExit(1)
+    return sorted(line for line in proc.stdout.splitlines() if line.strip())
+
+
 def cmd_refresh(args: argparse.Namespace) -> int:
     baseline_dir = Path(args.baseline_dir)
     lint_counts = collect_lint_counts()
@@ -286,6 +323,18 @@ def cmd_check(args: argparse.Namespace) -> int:
             print(f"  - {key}: {score}")
         if len(new_complexity) > 50:
             print(f"  ... and {len(new_complexity) - 50} more")
+
+    forbidden_tui_coerce_usage = collect_forbidden_tui_coerce_usage()
+    if forbidden_tui_coerce_usage:
+        has_failure = True
+        print(
+            "\nFAIL: coercion helpers are forbidden in src/cc_dump/tui "
+            "(use explicit type validation/narrowing instead):"
+        )
+        for line in forbidden_tui_coerce_usage[:50]:
+            print(f"  - {line}")
+        if len(forbidden_tui_coerce_usage) > 50:
+            print(f"  ... and {len(forbidden_tui_coerce_usage) - 50} more")
 
     if has_failure:
         return 1
