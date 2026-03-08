@@ -59,12 +59,14 @@ class SessionPanel(Static):
     def on_mount(self) -> None:
         """Start 1s timer for live age updates. Textual auto-stops on widget removal."""
         self.set_interval(1.0, self._tick_clock)
+        self._pull_from_app()
         self._render_session(self._state.get())
 
     def on_unmount(self) -> None:
         self._state_reaction.dispose()
 
     def _tick_clock(self) -> None:
+        self._pull_from_app()
         self._clock_tick.set(self._clock_tick.get() + 1)
 
     def _render_projection(self, projection: tuple[int, SessionPanelState]) -> None:
@@ -82,6 +84,25 @@ class SessionPanel(Static):
                 session_id=session_id,
                 last_message_time=last_message_time,
             )
+        )
+
+    def _pull_from_app(self) -> None:
+        # [LAW:dataflow-not-control-flow] exception: pull requires mounted widget/app context.
+        if not self.is_attached:
+            return
+        app = getattr(self, "app", None)
+        if app is None:
+            return
+        state_getter = getattr(app, "_get_active_session_panel_state", None)
+        if callable(state_getter):
+            session_id, last_message_time = state_getter()
+        else:
+            session_id = getattr(app, "_session_id", None)
+            app_state = getattr(app, "_app_state", {})
+            last_message_time = app_state.get("last_message_time")
+        self.refresh_session_state(
+            session_id=session_id,
+            last_message_time=last_message_time,
         )
 
     def _render_session(self, state: SessionPanelState) -> None:
@@ -102,8 +123,10 @@ class SessionPanel(Static):
                 self.app.copy_to_clipboard(session_id)
                 self.app.notify("Copied session ID", severity="information")
 
-    def refresh_from_store(self, store, **kwargs) -> None:
-        """No-op — session panel doesn't use the analytics store."""
+    def refresh_from_store(self, store=None, **kwargs) -> None:
+        """Back-compat seam: pull from app-owned session state."""
+        _ = (store, kwargs)
+        self._pull_from_app()
 
     def cycle_mode(self) -> None:
         """No-op — session panel has no sub-modes."""

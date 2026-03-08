@@ -6,7 +6,6 @@ instances from the updated class definitions and swap them in.
 
 import datetime
 import hashlib
-import json
 import logging
 import os
 from contextlib import contextmanager
@@ -2265,8 +2264,15 @@ class StatsPanel(Static):
         super().__init__("")
         self._view_index = 0
         self._last_snapshot: dict = {"summary": {}, "timeline": [], "models": []}
+        self._pull_tick: Observable[int] = Observable(0)
         self._render_state: Observable[tuple[int, dict[str, object]]] = Observable(
             (self._view_index, self._last_snapshot)
+        )
+        # [LAW:single-enforcer] One projection owns pull-based snapshot hydration from app stores.
+        self._pull_reaction = reaction(
+            lambda: self._pull_tick.get(),
+            self._pull_snapshot_from_app,
+            fire_immediately=False,
         )
         # [LAW:single-enforcer] One reactive projection owns stats panel rendering.
         self._render_reaction = reaction(
@@ -2274,49 +2280,51 @@ class StatsPanel(Static):
             self._apply_render_state,
             fire_immediately=False,
         )
-        self.request_count = 0
-        self.models_seen: set = set()
 
     def on_mount(self) -> None:
+        self.set_interval(0.5, self._request_pull)
+        self._request_pull()
         self._apply_render_state(self._render_state.get())
 
     def on_unmount(self) -> None:
+        self._pull_reaction.dispose()
         self._render_reaction.dispose()
 
-    def update_stats(self, **kwargs):
-        """Update statistics and refresh display.
+    def _request_pull(self) -> None:
+        self._pull_tick.set(self._pull_tick.get() + 1)
 
-        Only updates in-memory fields (requests, models).
-        Token counts come from analytics store via refresh_from_store().
-        """
-        if "requests" in kwargs:
-            self.request_count = kwargs["requests"]
-        if "model" in kwargs and kwargs["model"]:
-            self.models_seen.add(kwargs["model"])
+    def _current_turn_from_app(self, app) -> dict | None:
+        app_state = getattr(app, "_app_state", {})
+        usage_by_request = app_state.get("current_turn_usage_by_request", {})
+        if not isinstance(usage_by_request, dict):
+            return None
+        active_domain_getter = getattr(app, "_get_active_domain_store", None)
+        active_domain_store = (
+            active_domain_getter()
+            if callable(active_domain_getter)
+            else getattr(app, "_domain_store", None)
+        )
+        if active_domain_store is None:
+            return None
+        focused_request_id = active_domain_store.get_focused_stream_id()
+        if not focused_request_id:
+            return None
+        current_turn = usage_by_request.get(focused_request_id)
+        return current_turn if isinstance(current_turn, dict) else None
 
-        # Request/model tracking is retained for compatibility with existing handlers/tests.
-
-    def refresh_from_store(
-        self,
-        store,
-        current_turn: dict | None = None,
-        domain_store=None,
-        all_domain_stores: tuple[object, ...] | None = None,
-    ):
-        """Refresh dashboard data from analytics store.
-
-        Args:
-            store: AnalyticsStore instance
-            current_turn: Optional dict with in-progress turn data to merge for real-time display
-                          Expected keys: input_tokens, output_tokens, cache_read_tokens,
-                          cache_creation_tokens, model
-        """
-        if store is None:
+    def _pull_snapshot_from_app(self, _tick: int) -> None:
+        # [LAW:dataflow-not-control-flow] exception: pull requires mounted widget/app context.
+        if not self.is_attached:
+            return
+        app = getattr(self, "app", None)
+        analytics_store = getattr(app, "_analytics_store", None) if app is not None else None
+        if analytics_store is None:
             self._last_snapshot = {"summary": {}, "timeline": [], "models": []}
             self._refresh_display()
             return
-
-        snapshot = store.get_dashboard_snapshot(current_turn=current_turn)
+        snapshot = analytics_store.get_dashboard_snapshot(
+            current_turn=self._current_turn_from_app(app)
+        )
         summary = dict(snapshot.get("summary", {}))
 
         # Optional local capacity baseline (not provided by API).
@@ -2337,6 +2345,17 @@ class StatsPanel(Static):
         snapshot["summary"] = summary
         self._last_snapshot = snapshot
         self._refresh_display()
+
+    def refresh_from_store(
+        self,
+        store=None,
+        current_turn: dict | None = None,
+        domain_store=None,
+        all_domain_stores: tuple[object, ...] | None = None,
+    ):
+        """Back-compat seam: trigger pull-based refresh from app-owned stores."""
+        _ = (store, current_turn, domain_store, all_domain_stores)
+        self._request_pull()
 
     def _refresh_display(self):
         self._render_state.set((self._view_index, self._last_snapshot))
@@ -2362,173 +2381,12 @@ class StatsPanel(Static):
 
     def get_state(self) -> dict:
         """Extract state for transfer to a new instance."""
-        return {
-            "request_count": self.request_count,
-            "models_seen": set(self.models_seen),
-            "view_index": self._view_index,
-        }
+        return {"view_index": self._view_index}
 
     def restore_state(self, state: dict):
         """Restore state from a previous instance."""
-        self.request_count = state.get("request_count", 0)
-        self.models_seen = state.get("models_seen", set())
         self._view_index = int(state.get("view_index", 0)) % len(self._VIEW_ORDER)
         self._refresh_display()
-
-
-class ToolEconomicsPanel(Static):
-    """Panel showing per-tool token usage aggregates.
-
-    Queries analytics store as single source of truth.
-    Supports two view modes:
-    - Aggregate (default): one row per tool (all models combined)
-    - Breakdown (Ctrl+M): separate rows per (tool, model) combination
-    """
-
-    def __init__(self):
-        super().__init__("")
-        self._breakdown_mode = False  # Default to aggregate view
-        self._store = None
-        self._rows_state: Observable[list[dict[str, object]]] = Observable([])
-        # [LAW:single-enforcer] One reactive projection owns economics table rendering.
-        self._rows_reaction = reaction(
-            lambda: self._rows_state.get(),
-            self._apply_rows_state,
-            fire_immediately=False,
-        )
-
-    def on_mount(self) -> None:
-        self._apply_rows_state(list(self._rows_state.get()))
-
-    def on_unmount(self) -> None:
-        self._rows_reaction.dispose()
-
-    def refresh_from_store(self, store):
-        """Refresh panel data from analytics store.
-
-        Args:
-            store: AnalyticsStore instance
-        """
-        # Store for use in toggle_breakdown
-        self._store = store
-
-        if store is None:
-            self._refresh_display([])
-            return
-
-        # Query tool economics with real tokens and cache attribution
-        rows = store.get_tool_economics(group_by_model=self._breakdown_mode)
-        self._refresh_display(rows)
-
-    def toggle_breakdown(self):
-        """Toggle between aggregate and breakdown view modes."""
-        self._breakdown_mode = not self._breakdown_mode
-        # Re-query with new mode
-        if self._store is not None:
-            self.refresh_from_store(self._store)
-
-    def cycle_mode(self):
-        """Cycle intra-panel mode — delegates to toggle_breakdown."""
-        self.toggle_breakdown()
-
-    def _refresh_display(self, rows):
-        self._rows_state.set(list(rows))
-
-    def _apply_rows_state(self, rows: list[dict[str, object]]) -> None:
-        """Rebuild the economics table."""
-        # [LAW:dataflow-not-control-flow] exception: Textual update() requires mounted app context.
-        if not self.is_attached:
-            return
-        text = cc_dump.tui.panel_renderers.render_economics_panel(rows)
-        self.update(text)
-
-    def get_state(self) -> dict:
-        """Extract state for transfer to a new instance."""
-        return {
-            "breakdown_mode": self._breakdown_mode,
-        }
-
-    def restore_state(self, state: dict):
-        """Restore state from a previous instance."""
-        self._breakdown_mode = state.get("breakdown_mode", False)
-        self._refresh_display([])
-
-
-class TimelinePanel(Static):
-    """Panel showing per-turn context growth over time.
-
-    Queries analytics store as single source of truth.
-    """
-
-    def __init__(self):
-        super().__init__("")
-        self._budgets_state: Observable[list[cc_dump.core.analysis.TurnBudget]] = Observable([])
-        # [LAW:single-enforcer] One reactive projection owns timeline table rendering.
-        self._budgets_reaction = reaction(
-            lambda: self._budgets_state.get(),
-            self._apply_budgets_state,
-            fire_immediately=False,
-        )
-
-    def on_mount(self) -> None:
-        self._apply_budgets_state(list(self._budgets_state.get()))
-
-    def on_unmount(self) -> None:
-        self._budgets_reaction.dispose()
-
-    def refresh_from_store(self, store):
-        """Refresh panel data from analytics store.
-
-        Args:
-            store: AnalyticsStore instance
-        """
-        if store is None:
-            self._refresh_display([])
-            return
-
-        # Query turn timeline from store
-        turn_data = store.get_turn_timeline()
-
-        # Reconstruct TurnBudget objects from store data
-        budgets = []
-        for row in turn_data:
-            # Parse request JSON to compute budget estimates
-            request_json = row["request_json"]
-            request_body = json.loads(request_json) if request_json else {}
-
-            budget = cc_dump.core.analysis.compute_turn_budget(request_body)
-
-            # Fill in actual token counts from store
-            budget.actual_input_tokens = row["input_tokens"]
-            budget.actual_cache_read_tokens = row["cache_read_tokens"]
-            budget.actual_cache_creation_tokens = row["cache_creation_tokens"]
-            budget.actual_output_tokens = row["output_tokens"]
-
-            budgets.append(budget)
-
-        self._refresh_display(budgets)
-
-    def _refresh_display(self, budgets: list[cc_dump.core.analysis.TurnBudget]):
-        self._budgets_state.set(list(budgets))
-
-    def _apply_budgets_state(self, budgets: list[cc_dump.core.analysis.TurnBudget]) -> None:
-        """Rebuild the timeline table."""
-        # [LAW:dataflow-not-control-flow] exception: Textual update() requires mounted app context.
-        if not self.is_attached:
-            return
-        text = cc_dump.tui.panel_renderers.render_timeline_panel(budgets)
-        self.update(text)
-
-    def cycle_mode(self):
-        """No-op — TimelinePanel has no sub-modes."""
-
-    def get_state(self) -> dict:
-        """Extract state for transfer to a new instance."""
-        return {}  # No state to preserve - queries DB on demand
-
-    def restore_state(self, state: dict):
-        """Restore state from a previous instance."""
-        self._refresh_display([])
 
 
 class LogsPanel(RichLog):
@@ -2593,16 +2451,6 @@ def create_conversation_view(
 def create_stats_panel() -> StatsPanel:
     """Create a new StatsPanel instance."""
     return StatsPanel()
-
-
-def create_economics_panel() -> ToolEconomicsPanel:
-    """Create a new ToolEconomicsPanel instance."""
-    return ToolEconomicsPanel()
-
-
-def create_timeline_panel() -> TimelinePanel:
-    """Create a new TimelinePanel instance."""
-    return TimelinePanel()
 
 
 def create_logs_panel() -> LogsPanel:

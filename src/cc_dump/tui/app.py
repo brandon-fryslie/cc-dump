@@ -621,12 +621,6 @@ class CcDumpApp(App):
     def _get_stats(self):
         return self._get_panel("stats")
 
-    def _get_economics(self):
-        return self._get_panel("economics")
-
-    def _get_timeline(self):
-        return self._get_panel("timeline")
-
     def _get_logs(self):
         return self._query_safe("#" + self._logs_id)
 
@@ -1080,9 +1074,6 @@ class CcDumpApp(App):
         state = self._provider_state(provider)
         session_key = self._resolve_event_session_key(event, provider=provider)
         conv = self._get_conv(session_key=session_key)
-        stats = self._get_stats()
-        if stats is None:
-            return
         if conv is None:
             conv = self._query_safe("#" + self._conv_id)
         if conv is None:
@@ -1094,15 +1085,9 @@ class CcDumpApp(App):
         # [LAW:dataflow-not-control-flow] Unified context dict
         widgets = {
             "conv": conv,
-            "stats": stats,
             "filters": self.active_filters,
             "view_store": self._view_store if is_active_session else None,
             "domain_store": domain_store,
-            "stats_domain_store": self._get_active_domain_store(),
-            "all_domain_stores": self._iter_domain_stores(),
-            "refresh_callbacks": {
-                "refresh_session": self._refresh_session,
-            },
             "analytics_store": self._analytics_store,
         }
 
@@ -1425,15 +1410,6 @@ class CcDumpApp(App):
 
     def action_half_page_up(self):
         _actions.half_page_up(self)
-
-    def _refresh_economics(self):
-        _actions.refresh_economics(self)
-
-    def _refresh_timeline(self):
-        _actions.refresh_timeline(self)
-
-    def _refresh_session(self):
-        _actions.refresh_session(self)
 
     # Search
     def _start_search(self):

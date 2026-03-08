@@ -73,17 +73,6 @@ def _pop_response_meta(app_state, request_id: str) -> tuple[int, dict]:
     return status_code, headers
 
 
-def _current_turn_from_focus(app_state, domain_store):
-    usage_map = app_state.get("current_turn_usage_by_request", {})
-    if not isinstance(usage_map, dict):
-        return None
-    focused = domain_store.get_focused_stream_id() if domain_store is not None else None
-    if not focused:
-        return None
-    usage = usage_map.get(focused)
-    return usage if isinstance(usage, dict) else None
-
-
 def _clear_current_turn_usage(app_state, request_id: str) -> None:
     """Clear per-request streaming usage tracking."""
     usage_by_request = app_state.get("current_turn_usage_by_request", {})
@@ -95,33 +84,14 @@ def _clear_current_turn_usage(app_state, request_id: str) -> None:
 
 
 def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool = True) -> None:
-    """Refresh stats/panels after a response completion path."""
-    domain_store = widgets["domain_store"]
-    stats = widgets["stats"]
+    """Refresh derived UI state after a response completion path."""
     conv = widgets["conv"]
     filters = widgets["filters"]
-    refresh_callbacks = widgets.get("refresh_callbacks", {})
-    analytics_store = widgets.get("analytics_store")
-    stats_domain_store = widgets.get("stats_domain_store", domain_store)
-    all_domain_stores = widgets.get("all_domain_stores")
-
-    if analytics_store is not None:
-        stats.refresh_from_store(
-            analytics_store,
-            current_turn=_current_turn_from_focus(app_state, domain_store),
-            domain_store=stats_domain_store,
-            all_domain_stores=all_domain_stores if isinstance(all_domain_stores, tuple) else None,
-        )
 
     if rerender_budget:
         budget_vis = filters.get("metadata", cc_dump.core.formatting.HIDDEN)
         if budget_vis.visible:
             conv.rerender(filters)
-
-    for cb_name in ("refresh_session",):
-        cb = refresh_callbacks.get(cb_name)
-        if cb:
-            cb()
 
 
 def _handle_complete_response_payload(
@@ -213,13 +183,8 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
         blocks = cc_dump.core.formatting.format_request_for_provider(provider, body, state, request_headers=pending_headers)
 
         domain_store = widgets["domain_store"]
-        stats = widgets["stats"]
-
         # Non-streaming: add turn to domain store (fires callback to ConversationView)
         domain_store.add_turn(blocks)
-
-        # Update stats (only request count and model tracking - not tokens)
-        stats.update_stats(requests=state["request_counter"])
 
         log_fn("DEBUG", f"Request #{state['request_counter']} processed")
     except Exception as e:
@@ -300,10 +265,6 @@ def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_s
         )
 
         domain_store = widgets["domain_store"]
-        stats = widgets["stats"]
-        stats_domain_store = widgets.get("stats_domain_store", domain_store)
-        all_domain_stores = widgets.get("all_domain_stores")
-
         domain_store.begin_stream(event.request_id)
 
         if event.delta_text:
@@ -313,20 +274,7 @@ def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_s
             )
             domain_store.append_stream_block(event.request_id, block)
 
-        if event.model:
-            stats.update_stats(model=event.model)
-
         _upsert_current_turn_usage(app_state, event.request_id, event)
-
-        # Refresh stats with the currently focused active stream, if any.
-        analytics_store = widgets.get("analytics_store")
-        if analytics_store is not None:
-            stats.refresh_from_store(
-                analytics_store,
-                current_turn=_current_turn_from_focus(app_state, domain_store),
-                domain_store=stats_domain_store,
-                all_domain_stores=all_domain_stores if isinstance(all_domain_stores, tuple) else None,
-            )
     except Exception as e:
         log_fn("ERROR", f"Error handling response progress: {e}")
         raise
