@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import time
 
 from snarfx import Observable, reaction
+from snarfx import textual as stx
 from textual.widgets import Static
 
 import cc_dump.tui.panel_renderers
@@ -31,11 +32,11 @@ class SessionPanel(Static):
     def __init__(self):
         super().__init__("")
         self._state: Observable[SessionPanelState] = Observable(SessionPanelState())
-        self._clock_tick: Observable[int] = Observable(0)
+        self._store_reaction_disposer = None
         self._session_id_span: tuple[int, int] | None = None
         # [LAW:single-enforcer] One reactive projection owns panel text/span rendering.
         self._state_reaction = reaction(
-            lambda: (self._clock_tick.get(), self._state.get()),
+            lambda: self._state.get(),
             self._render_projection,
             fire_immediately=False,
         )
@@ -57,20 +58,35 @@ class SessionPanel(Static):
         return (time.monotonic() - state.last_message_time) < _CONNECTION_TIMEOUT_S
 
     def on_mount(self) -> None:
-        """Start 1s timer for live age updates. Textual auto-stops on widget removal."""
-        self.set_interval(1.0, self._tick_clock)
+        self._bind_store_reaction()
         self._pull_from_app()
         self._render_session(self._state.get())
 
+    def _bind_store_reaction(self) -> None:
+        app = getattr(self, "app", None)
+        view_store = getattr(app, "_view_store", None) if app is not None else None
+        if app is None or view_store is None:
+            return
+        # [LAW:single-enforcer] Session panel pulls only when store revision changes.
+        self._store_reaction_disposer = stx.reaction(
+            app,
+            lambda: (
+                view_store.get("session:revision"),
+                view_store.get("panel:active"),
+            ),
+            self._pull_from_store_signal,
+        )
+
     def on_unmount(self) -> None:
+        if callable(self._store_reaction_disposer):
+            self._store_reaction_disposer()
+            self._store_reaction_disposer = None
         self._state_reaction.dispose()
 
-    def _tick_clock(self) -> None:
+    def _pull_from_store_signal(self, _signal: tuple[object, object]) -> None:
         self._pull_from_app()
-        self._clock_tick.set(self._clock_tick.get() + 1)
 
-    def _render_projection(self, projection: tuple[int, SessionPanelState]) -> None:
-        _, state = projection
+    def _render_projection(self, state: SessionPanelState) -> None:
         self._render_session(state)
 
     def refresh_session_state(

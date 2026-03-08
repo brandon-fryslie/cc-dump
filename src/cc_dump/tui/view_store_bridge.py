@@ -10,7 +10,6 @@ import cc_dump.tui.keys_panel
 import cc_dump.tui.debug_settings_panel
 import cc_dump.tui.search
 from textual.css.query import NoMatches
-from cc_dump.tui import action_handlers as _actions
 
 
 def build_reaction_context(app) -> dict:
@@ -56,7 +55,6 @@ def build_reaction_context(app) -> dict:
 
     def push_panel_change(value):
         app._sync_panel_display(value)
-        _actions.refresh_active_panel(app, value)
 
     def push_sidebar_state(value):
         app._sync_sidebar_panels(value)

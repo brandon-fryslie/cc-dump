@@ -35,6 +35,8 @@ SCHEMA["panel:debug_settings"] = False
 # // [LAW:one-source-of-truth] String, not FollowState enum — enum class identity
 # changes on reload; string comparison is stable across reloads.
 SCHEMA["nav:follow"] = "active"
+SCHEMA["analytics:revision"] = 0
+SCHEMA["session:revision"] = 0
 
 # Footer inputs (previously app attributes or external reads)
 SCHEMA["filter:active"] = "1"               # str|None — default to F1 (Conversation)

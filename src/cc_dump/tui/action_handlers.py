@@ -131,11 +131,6 @@ def cycle_panel_mode(app) -> None:
         panel.cycle_mode()
 
 
-def refresh_active_panel(app, panel_name: str) -> None:
-    """Refresh data for the named panel."""
-    refresh_panel(app, panel_name)
-
-
 def _toggle_panel(app, panel_key: str) -> None:
     """// [LAW:dataflow-not-control-flow] Panel toggling is store-key driven data."""
     store_key = cc_dump.tui.action_config.PANEL_TOGGLE_CONFIG[panel_key]
@@ -488,22 +483,3 @@ def prev_session(app) -> None:
 
     _conv_action(app, _jump)
 
-
-# ─── Panel refresh ─────────────────────────────────────────────────────
-
-
-def refresh_panel(app, name: str) -> None:
-    """// [LAW:one-type-per-behavior] Generic refresh for all cycling panels."""
-    if not app.is_running:
-        return
-    panel = app._get_panel(name)
-    if panel is None:
-        return
-    refresh = getattr(panel, "refresh_from_store", None)
-    if callable(refresh):
-        # [LAW:dataflow-not-control-flow] All panels refresh through the same boundary.
-        refresh()
-
-
-def refresh_stats(app) -> None:
-    refresh_panel(app, "stats")
