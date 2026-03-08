@@ -117,7 +117,7 @@ class StatusFooter(StoreWidget):
             stx.reaction(
                 self.app,
                 lambda: bool(store.search_ui_state.get().footer_visible),
-                self._apply_footer_visibility,
+                lambda footer_visible: setattr(self, "display", bool(footer_visible)),
                 fire_immediately=True,
             ),
         ]
@@ -240,6 +240,3 @@ class StatusFooter(StoreWidget):
             else ""
         )
         launch_chip.update(f" c {active_tool_label}{config_suffix} ")
-
-    def _apply_footer_visibility(self, footer_visible: bool) -> None:
-        self.display = bool(footer_visible)
