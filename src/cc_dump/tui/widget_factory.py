@@ -248,9 +248,7 @@ class ConversationView(ScrollView):
         self._last_search_signature: tuple | None = None
         self._last_theme_generation: int = self._read_theme_generation()
         # [LAW:one-source-of-truth] Canonical follow state lives in FollowModeStore Observable.
-        initial_follow = self._initial_follow_state()
-        self._follow_state_fallback: FollowState = initial_follow
-        self._follow_store = FollowModeStore(initial_follow)
+        self._follow_store = FollowModeStore(self._initial_follow_state())
         self._pending_restore: dict | None = None
         self._scrolling_programmatically: bool = False
         self._scroll_anchor: ScrollAnchor | None = None
@@ -432,7 +430,6 @@ class ConversationView(ScrollView):
         self._follow_store.state.set(value)
 
     def _persist_follow_state(self, value: FollowState) -> None:
-        self._follow_state_fallback = value
         if self._view_store is not None:
             self._view_store.set("nav:follow", value.value)
 
