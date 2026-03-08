@@ -37,7 +37,8 @@ import cc_dump.app.domain_store
 from cc_dump.tui.follow_mode import (
     FollowState,
     FollowEvent,
-    transition_follow_state,
+    FollowModeStore,
+    FollowTransition,
 )
 from cc_dump.io.perf_logging import monitor_slow_path
 
@@ -246,12 +247,10 @@ class ConversationView(ScrollView):
         self._overrides_revision: int = 0
         self._last_search_signature: tuple | None = None
         self._last_theme_generation: int = self._read_theme_generation()
-        # Local fallback for tests that don't pass a view_store
-        self._follow_state_fallback: FollowState = FollowState.ACTIVE
-        self._follow_event_seq: int = 0
-        self._follow_event: Observable[tuple[int, FollowEvent, bool]] = Observable(
-            (0, FollowEvent.USER_SCROLL, True)
-        )
+        # [LAW:one-source-of-truth] Canonical follow state lives in FollowModeStore Observable.
+        initial_follow = self._initial_follow_state()
+        self._follow_state_fallback: FollowState = initial_follow
+        self._follow_store = FollowModeStore(initial_follow)
         self._pending_restore: dict | None = None
         self._scrolling_programmatically: bool = False
         self._scroll_anchor: ScrollAnchor | None = None
@@ -263,11 +262,17 @@ class ConversationView(ScrollView):
             self._apply_indicator_state,
             fire_immediately=False,
         )
-        # [LAW:single-enforcer] One follow reaction owns transition + follow-scroll side effects.
-        self._follow_reaction = reaction(
-            lambda: self._follow_event.get(),
-            self._apply_follow_event,
+        # [LAW:single-enforcer] Follow transition side effects flow from one reactive projection.
+        self._follow_transition_reaction = reaction(
+            lambda: self._follow_store.transition.get(),
+            self._apply_follow_transition,
             fire_immediately=False,
+        )
+        # [LAW:single-enforcer] One projection syncs follow state into view_store/persistence.
+        self._follow_state_sync_reaction = reaction(
+            lambda: self._follow_store.state.get(),
+            self._persist_follow_state,
+            fire_immediately=True,
         )
         # // [LAW:one-source-of-truth] All per-block view state lives here.
         self._view_overrides = cc_dump.tui.view_overrides.ViewOverrides()
@@ -298,6 +303,14 @@ class ConversationView(ScrollView):
             return 0
         raw = self._view_store.get("theme:generation")
         return int(raw) if isinstance(raw, int) else 0
+
+    def _initial_follow_state(self) -> FollowState:
+        follow_raw = self._view_store.get("nav:follow") if self._view_store is not None else FollowState.ACTIVE.value
+        try:
+            return FollowState(str(follow_raw))
+        except ValueError:
+            # [LAW:dataflow-not-control-flow] exception: guard malformed persisted state.
+            return FollowState.ACTIVE
 
     @staticmethod
     def _search_match_signature(match) -> tuple | None:
@@ -363,7 +376,9 @@ class ConversationView(ScrollView):
 
     def on_unmount(self) -> None:
         self._indicator_reaction.dispose()
-        self._follow_reaction.dispose()
+        self._follow_transition_reaction.dispose()
+        self._follow_state_sync_reaction.dispose()
+        self._follow_store.dispose()
 
     def _set_indicator_state(
         self,
@@ -407,20 +422,19 @@ class ConversationView(ScrollView):
         self.refresh()
 
     # // [LAW:one-source-of-truth] Follow state stored as string in view store.
-    # String comparison is stable across hot-reloads (enum class identity changes).
-    # Falls back to local attribute when no store (tests).
+    # String persistence in view_store remains derived from this canonical Observable.
     @property
     def _follow_state(self) -> FollowState:
-        if self._view_store is not None:
-            return FollowState(self._view_store.get("nav:follow"))
-        return self._follow_state_fallback
+        return self._follow_store.state.get()
 
     @_follow_state.setter
     def _follow_state(self, value: FollowState):
+        self._follow_store.state.set(value)
+
+    def _persist_follow_state(self, value: FollowState) -> None:
+        self._follow_state_fallback = value
         if self._view_store is not None:
             self._view_store.set("nav:follow", value.value)
-        else:
-            self._follow_state_fallback = value
 
     def _dispatch_follow_event(
         self,
@@ -429,17 +443,10 @@ class ConversationView(ScrollView):
         at_bottom: bool | None = None,
     ) -> None:
         resolved_at_bottom = self.is_vertical_scroll_end if at_bottom is None else at_bottom
-        self._follow_event_seq += 1
-        self._follow_event.set((self._follow_event_seq, event, bool(resolved_at_bottom)))
+        self._follow_store.dispatch(event, at_bottom=bool(resolved_at_bottom))
 
-    def _apply_follow_event(self, payload: tuple[int, FollowEvent, bool]) -> None:
-        _seq, event, at_bottom = payload
-        transition = transition_follow_state(
-            self._follow_state,
-            event,
-            at_bottom=at_bottom,
-        )
-        self._follow_state = transition.next_state
+    def _apply_follow_transition(self, payload: tuple[int, FollowTransition]) -> None:
+        _seq, transition = payload
         if transition.scroll_to_end:
             with self._programmatic_scroll():
                 self.scroll_end(animate=False)
@@ -1821,7 +1828,7 @@ class ConversationView(ScrollView):
         CRITICAL: Must call super() to preserve scrollbar sync and refresh.
         CRITICAL: Signature is (old_value, new_value), not (value).
 
-        // [LAW:dataflow-not-control-flow] Transition via _FOLLOW_TRANSITIONS table.
+        // [LAW:dataflow-not-control-flow] Transition dispatched to reactive follow store.
         """
         super().watch_scroll_y(old_value, new_value)
         if self._scrolling_programmatically:
@@ -1836,14 +1843,14 @@ class ConversationView(ScrollView):
     def toggle_follow(self):
         """Toggle follow mode.
 
-        // [LAW:dataflow-not-control-flow] Transition via _FOLLOW_TOGGLE table.
+        // [LAW:dataflow-not-control-flow] Transition dispatched to reactive follow store.
         """
         self._dispatch_follow_event(FollowEvent.TOGGLE, at_bottom=False)
 
     def scroll_to_bottom(self):
         """Scroll to bottom. Transitions ENGAGED→ACTIVE; OFF stays OFF.
 
-        // [LAW:dataflow-not-control-flow] Transition via _FOLLOW_SCROLL_BOTTOM table.
+        // [LAW:dataflow-not-control-flow] Transition dispatched to reactive follow store.
         """
         self._dispatch_follow_event(FollowEvent.SCROLL_BOTTOM, at_bottom=False)
 

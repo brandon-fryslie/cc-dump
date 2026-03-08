@@ -6,6 +6,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
+from snarfx import Observable, reaction
 
 
 class FollowState(Enum):
@@ -94,3 +95,43 @@ def transition_follow_state(
     """Return the deterministic follow transition for a follow event."""
     return _FOLLOW_EVENT_TRANSITIONS[(current_state, event, at_bottom)]
 
+
+class FollowModeStore:
+    """Reactive follow-mode state store.
+
+    // [LAW:one-source-of-truth] Canonical follow state is `state` Observable.
+    // [LAW:single-enforcer] `_apply_intent` is the sole transition application path.
+    """
+
+    def __init__(self, initial_state: FollowState):
+        self.state: Observable[FollowState] = Observable(initial_state)
+        self._intent_seq: int = 0
+        self.intent: Observable[tuple[int, FollowEvent, bool]] = Observable(
+            (0, FollowEvent.USER_SCROLL, True)
+        )
+        self.transition: Observable[tuple[int, FollowTransition]] = Observable(
+            (0, FollowTransition(next_state=initial_state, scroll_to_end=False))
+        )
+        self._intent_reaction = reaction(
+            lambda: self.intent.get(),
+            self._apply_intent,
+            fire_immediately=False,
+        )
+
+    def dispose(self) -> None:
+        self._intent_reaction.dispose()
+
+    def dispatch(self, event: FollowEvent, *, at_bottom: bool) -> None:
+        self._intent_seq += 1
+        self.intent.set((self._intent_seq, event, at_bottom))
+
+    def _apply_intent(self, payload: tuple[int, FollowEvent, bool]) -> None:
+        seq, event, at_bottom = payload
+        current = self.state.get()
+        next_transition = transition_follow_state(
+            current,
+            event,
+            at_bottom=at_bottom,
+        )
+        self.state.set(next_transition.next_state)
+        self.transition.set((seq, next_transition))
