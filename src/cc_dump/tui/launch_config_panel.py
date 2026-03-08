@@ -10,6 +10,8 @@ removed during hot-reload (stateless, user can re-open with C).
 from __future__ import annotations
 
 import copy
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Literal
 
@@ -18,14 +20,13 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
-from textual.widgets import Input, Label, Static
+from textual.widgets import Input, Label, Select, Static
 
 import cc_dump.app.launch_config
 import cc_dump.app.launcher_registry
 import cc_dump.core.palette
 from cc_dump.app.launch_config import SHELL_OPTIONS
 from cc_dump.tui.chip import Chip, ToggleChip
-from cc_dump.tui.cycle_selector import CycleSelector
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,21 @@ class LaunchConfigPanelViewState:
     active_name: str
     selected_idx: int
     revision: int
+
+
+@dataclass(frozen=True)
+class ToolOptionValueViewState:
+    key: str
+    kind: Literal["text", "bool"]
+    text_value: str = ""
+    bool_value: bool = False
+
+
+@dataclass(frozen=True)
+class ToolOptionValuesViewState:
+    """Reactive projection for stable tool option values."""
+
+    values: tuple[ToolOptionValueViewState, ...]
 
 
 _SHELL_NONE_LABEL = "(none)"
@@ -105,7 +121,133 @@ _BASE_FIELDS: tuple[BaseFieldDef, ...] = (
 )
 
 
-def _make_base_widget(field: BaseFieldDef, value: object) -> Input | CycleSelector:
+def _tool_option_defs_by_launcher() -> dict[str, tuple[cc_dump.app.launch_config.LaunchOptionDef, ...]]:
+    return {
+        launcher: cc_dump.app.launch_config.launcher_option_defs(launcher)
+        for launcher in cc_dump.app.launcher_registry.launcher_keys()
+    }
+
+
+_TOOL_OPTION_DEFS_BY_LAUNCHER = _tool_option_defs_by_launcher()
+
+
+def _all_tool_option_defs() -> tuple[cc_dump.app.launch_config.LaunchOptionDef, ...]:
+    defs_by_key: dict[str, cc_dump.app.launch_config.LaunchOptionDef] = {}
+    ordered_keys: list[str] = []
+    for option_defs in _TOOL_OPTION_DEFS_BY_LAUNCHER.values():
+        for option in option_defs:
+            if option.key in defs_by_key:
+                continue
+            defs_by_key[option.key] = option
+            ordered_keys.append(option.key)
+    return tuple(defs_by_key[key] for key in ordered_keys)
+
+
+_TOOL_OPTION_DEFS = _all_tool_option_defs()
+
+
+def _common_tool_option_defs() -> tuple[cc_dump.app.launch_config.LaunchOptionDef, ...]:
+    launcher_keys = tuple(_TOOL_OPTION_DEFS_BY_LAUNCHER)
+    if not launcher_keys:
+        return ()
+    common_keys = set(option.key for option in _TOOL_OPTION_DEFS_BY_LAUNCHER[launcher_keys[0]])
+    for launcher in launcher_keys[1:]:
+        common_keys &= {
+            option.key for option in _TOOL_OPTION_DEFS_BY_LAUNCHER[launcher]
+        }
+    return tuple(option for option in _TOOL_OPTION_DEFS if option.key in common_keys)
+
+
+_COMMON_TOOL_OPTION_DEFS = _common_tool_option_defs()
+
+
+def _tool_specific_option_defs_by_launcher() -> dict[str, tuple[cc_dump.app.launch_config.LaunchOptionDef, ...]]:
+    common_keys = {option.key for option in _COMMON_TOOL_OPTION_DEFS}
+    return {
+        launcher: tuple(
+            option for option in option_defs if option.key not in common_keys
+        )
+        for launcher, option_defs in _TOOL_OPTION_DEFS_BY_LAUNCHER.items()
+    }
+
+
+_TOOL_SPECIFIC_OPTION_DEFS_BY_LAUNCHER = _tool_specific_option_defs_by_launcher()
+
+
+def _empty_tool_option_values_state() -> ToolOptionValuesViewState:
+    return ToolOptionValuesViewState(
+        values=tuple(
+            ToolOptionValueViewState(
+                key=option.key,
+                kind=option.kind,
+                text_value=str(option.default or ""),
+                bool_value=bool(option.default),
+            )
+            for option in _TOOL_OPTION_DEFS
+        )
+    )
+
+
+def _compose_tool_option_widgets(
+    option_defs: tuple[cc_dump.app.launch_config.LaunchOptionDef, ...],
+) -> ComposeResult:
+    for option in option_defs:
+        if option.kind == "bool":
+            with Horizontal(
+                classes="field-row",
+                id="lc-option-row-{}".format(option.key),
+            ):
+                yield ToggleChip(
+                    option.label,
+                    value=bool(option.default),
+                    id="lc-option-{}".format(option.key),
+                )
+        else:
+            with Horizontal(
+                classes="field-row",
+                id="lc-option-row-{}".format(option.key),
+            ):
+                yield Label(option.label, classes="field-label")
+                yield Input(
+                    value=str(option.default or ""),
+                    id="lc-option-{}".format(option.key),
+                )
+        yield Static(
+            option.description,
+            classes="field-desc",
+            id="lc-option-desc-{}".format(option.key),
+        )
+
+
+def _compose_tool_option_sets() -> ComposeResult:
+    if _COMMON_TOOL_OPTION_DEFS:
+        yield Static("Common", classes="field-desc", id="lc-toolset-common-title")
+        with Vertical(id="lc-toolset-common"):
+            yield from _compose_tool_option_widgets(_COMMON_TOOL_OPTION_DEFS)
+    for launcher, option_defs in _TOOL_SPECIFIC_OPTION_DEFS_BY_LAUNCHER.items():
+        if not option_defs:
+            continue
+        title = cc_dump.app.launcher_registry.get_launcher_spec(launcher).display_name
+        yield Static(
+            title,
+            classes="field-desc",
+            id="lc-toolset-title-{}".format(launcher),
+        )
+        with Vertical(id="lc-toolset-{}".format(launcher)):
+            yield from _compose_tool_option_widgets(option_defs)
+
+def _select_widget(options: Sequence[str], selected: str, widget_id: str) -> Select[str]:
+    return Select[str](
+        [(option, option) for option in options],
+        value=selected,
+        allow_blank=False,
+        compact=True,
+        type_to_search=False,
+        id=widget_id,
+    )
+
+
+def _make_base_widget(field: BaseFieldDef, value: object) -> Input | Select[str]:
     widget_id = "lc-field-{}".format(field.key)
     if field.kind == "text":
         return Input(value=str(value or ""), id=widget_id)
@@ -113,35 +255,46 @@ def _make_base_widget(field: BaseFieldDef, value: object) -> Input | CycleSelect
     selected = str(value or field.default)
     if selected not in field.options:
         selected = field.default if field.default in field.options else field.options[0]
-    return CycleSelector(field.options, value=selected, id=widget_id)
+    return _select_widget(field.options, selected, widget_id)
 
 
-class LaunchActionChip(Chip):
-    """Focusable chip that posts a local action message on click/Enter/Space."""
+def _select_values(selector: Select[str]) -> tuple[str, ...]:
+    return tuple(
+        str(value)
+        for _prompt, value in getattr(selector, "_options", [])
+        if value is not selector.BLANK
+    )
 
-    can_focus = True
 
-    class Pressed(Message):
-        def __init__(self, action_key: str) -> None:
-            self.action_key = action_key
-            super().__init__()
+def _base_field_display_value(field: BaseFieldDef, config) -> str:
+    if field.key == "name":
+        return config.name
+    if field.key == "launcher":
+        return config.launcher
+    if field.key == "command":
+        return config.command
+    if field.key == "model":
+        return config.model
+    if field.key == "shell":
+        return _shell_to_display(config.shell)
+    return str(getattr(config, field.key, "") or "")
 
-    def __init__(self, label: str, *, action_key: str, **kwargs) -> None:
-        super().__init__(label, **kwargs)
-        self._action_key = action_key
 
-    def _emit(self) -> None:
-        self.post_message(self.Pressed(self._action_key))
+def _action_chip(
+    label: str,
+    action_key: str,
+    on_activate: Callable[[str], object],
+) -> Chip:
+    # [LAW:one-type-per-behavior] Launch actions are Chip instances with different activation data.
+    def _activate(_chip: Chip) -> object:
+        return on_activate(action_key)
 
-    def on_click(self, event) -> None:
-        event.stop()
-        self._emit()
-
-    def on_key(self, event) -> None:
-        if event.key in ("enter", "space"):
-            event.stop()
-            event.prevent_default()
-            self._emit()
+    return Chip(
+        label,
+        on_activate=_activate,
+        id="lc-action-{}".format(action_key),
+        classes="action-chip",
+    )
 
 
 class LaunchConfigPanel(VerticalScroll):
@@ -193,23 +346,63 @@ class LaunchConfigPanel(VerticalScroll):
         margin-top: 1;
         color: $text-muted;
     }
-    LaunchConfigPanel LaunchActionChip {
+    LaunchConfigPanel .action-chip {
         margin-right: 1;
     }
     LaunchConfigPanel ToggleChip {
         margin-top: 1;
     }
     LaunchConfigPanel Input {
-        width: 1fr;
+        width: 20;
         height: 1;
         border: none;
         padding: 0;
+        background: $panel-lighten-2;
+        color: $text;
     }
     LaunchConfigPanel Input:focus {
         border: none;
+        background: $surface-lighten-3;
+        color: $accent;
     }
-    LaunchConfigPanel CycleSelector {
-        width: 1fr;
+    LaunchConfigPanel Select {
+        width: 20;
+        height: auto;
+    }
+    LaunchConfigPanel Select > SelectCurrent {
+        height: 1;
+        min-height: 1;
+        border: none !important;
+        padding: 0 1;
+        background: $panel-lighten-2;
+        color: $text;
+        text-style: bold;
+        content-align: center middle;
+    }
+    LaunchConfigPanel Select:focus > SelectCurrent {
+        border: none !important;
+        background: $surface-lighten-3;
+        color: $accent;
+    }
+    LaunchConfigPanel Select.-expanded > SelectCurrent {
+        border: none !important;
+        background: $accent;
+        color: $text;
+    }
+    LaunchConfigPanel Select > SelectOverlay {
+        border: none !important;
+        padding: 0;
+        background: $surface-darken-1;
+        max-height: 8;
+    }
+    LaunchConfigPanel Select > SelectOverlay > .option-list--option {
+        padding: 0 1;
+        content-align: center middle;
+    }
+    LaunchConfigPanel Select > SelectOverlay > .option-list--option-highlighted {
+        background: $accent;
+        color: $text;
+        text-style: bold;
     }
     LaunchConfigPanel #lc-tool-fields {
         height: auto;
@@ -263,10 +456,27 @@ class LaunchConfigPanel(VerticalScroll):
                 revision=self._view_revision,
             )
         )
+        self._tool_option_values_state: Observable[ToolOptionValuesViewState] = Observable(
+            _empty_tool_option_values_state()
+        )
+        self._active_tool_option_set: Observable[str] = Observable(
+            cc_dump.app.launcher_registry.DEFAULT_LAUNCHER_KEY
+        )
+        self._select_sync_depth = 0
         # [LAW:single-enforcer] One reactive projection owns selector/active/form sync.
         self._panel_reaction = reaction(
             lambda: self._panel_state.get(),
             self._apply_panel_state,
+            fire_immediately=False,
+        )
+        self._tool_option_values_reaction = reaction(
+            lambda: self._tool_option_values_state.get(),
+            self._apply_tool_option_values_state,
+            fire_immediately=False,
+        )
+        self._active_tool_option_set_reaction = reaction(
+            lambda: self._active_tool_option_set.get(),
+            self._apply_active_tool_option_set,
             fire_immediately=False,
         )
 
@@ -279,13 +489,17 @@ class LaunchConfigPanel(VerticalScroll):
             preset_options = tuple(config.name for config in self._configs) or (
                 cc_dump.app.launcher_registry.DEFAULT_LAUNCHER_KEY,
             )
-            yield CycleSelector(preset_options, value=preset_options[0], id="lc-config-selector")
+            yield _select_widget(preset_options, preset_options[0], "lc-config-selector")
 
         with Horizontal(classes="chip-row"):
-            yield LaunchActionChip(" New ", action_key="new")
-            yield LaunchActionChip(" Delete ", action_key="delete")
-            yield LaunchActionChip(" Activate ", action_key="activate")
-            yield LaunchActionChip(" Launch ", action_key="launch")
+            yield _action_chip(" New ", "new", self._handle_action_chip)
+            yield _action_chip(" Delete ", "delete", self._handle_action_chip)
+            yield _action_chip(" Activate ", "activate", self._handle_action_chip)
+            yield _action_chip(" Launch ", "launch", self._handle_action_chip)
+
+        with Horizontal(classes="chip-row"):
+            yield _action_chip(" Save ", "save", self._handle_action_chip)
+            yield _action_chip(" Close ", "close", self._handle_action_chip)
 
         yield Static("", id="lc-active", classes="field-desc")
 
@@ -300,22 +514,27 @@ class LaunchConfigPanel(VerticalScroll):
                 yield Static(field.description, classes="field-desc")
 
             yield Static("Tool Options", classes="section-title")
-            yield Vertical(id="lc-tool-fields")
+            with Vertical(id="lc-tool-fields"):
+                yield from _compose_tool_option_sets()
 
         yield Static(
             "[bold {info}]Tab[/] next  [bold {info}]Shift+Tab[/] prev\n"
-            "[bold {info}]n[/] new  [bold {info}]d[/] delete  [bold {info}]a[/] activate  [bold {info}]l[/] launch\n"
-            "[bold {info}]Enter[/] save  [bold {info}]Esc[/] close".format(info=p.info),
+            "[bold {info}]Enter[/]/[bold {info}]Space[/] activate focused control  [bold {info}]Esc[/] close".format(
+                info=p.info
+            ),
             classes="panel-footer",
         )
 
     def on_mount(self) -> None:
+        if not self.display:
+            return
         self._apply_panel_state(self._panel_state.get())
-        if self.display:
-            self.focus_default_control()
+        self.focus_default_control()
 
     def on_unmount(self) -> None:
         self._panel_reaction.dispose()
+        self._tool_option_values_reaction.dispose()
+        self._active_tool_option_set_reaction.dispose()
 
     def _emit_panel_state(self) -> None:
         """Trigger reactive selector/active/form projection after model mutation."""
@@ -327,6 +546,54 @@ class LaunchConfigPanel(VerticalScroll):
                 revision=self._view_revision,
             )
         )
+
+    @contextmanager
+    def _suspend_select_events(self) -> Iterator[None]:
+        # [LAW:single-enforcer] Programmatic Select mutations are silenced at one boundary.
+        self._select_sync_depth += 1
+        try:
+            yield
+        finally:
+            self._select_sync_depth -= 1
+
+    def _sync_select_widget(
+        self,
+        selector: Select[str],
+        *,
+        options: tuple[str, ...] | None = None,
+        value: str,
+    ) -> None:
+        with self._suspend_select_events():
+            if options is not None and _select_values(selector) != options:
+                selector.set_options([(option, option) for option in options])
+            if selector.value != value:
+                selector.value = value
+
+    def _sync_active_label(self) -> None:
+        try:
+            active_widget = self.query_one("#lc-active", Static)
+        except NoMatches:
+            return
+        active_widget.update("Active preset: {}".format(self._active_name or "(none)"))
+
+    def _sync_preset_selector(self, names: tuple[str, ...], selected_name: str) -> None:
+        try:
+            selector = self.query_one("#lc-config-selector", Select)
+        except NoMatches:
+            return
+        self._sync_select_widget(selector, options=names, value=selected_name)
+
+    def _sync_base_field_widget(self, field: BaseFieldDef, value: str) -> None:
+        widget_id = "#lc-field-{}".format(field.key)
+        try:
+            widget = self.query_one(widget_id)
+        except NoMatches:
+            return
+        if field.kind == "select":
+            self._sync_select_widget(widget, value=value)
+            return
+        if widget.value != value:
+            widget.value = value
 
     def _apply_panel_state(self, panel_state: LaunchConfigPanelViewState) -> None:
         # [LAW:dataflow-not-control-flow] exception: widget mutations require mounted children.
@@ -345,20 +612,57 @@ class LaunchConfigPanel(VerticalScroll):
             else names[0]
         )
         selected_name = names[self._selected_idx]
-
-        try:
-            selector = self.query_one("#lc-config-selector", CycleSelector)
-            selector.set_options(names, value=selected_name)
-        except NoMatches:
-            pass
-
-        try:
-            active_widget = self.query_one("#lc-active", Static)
-            active_widget.update("Active preset: {}".format(self._active_name or "(none)"))
-        except NoMatches:
-            pass
-
+        self._sync_preset_selector(tuple(names), selected_name)
+        self._sync_active_label()
         self._populate_form(self._selected_config())
+
+    def _build_tool_option_values_state(self, config) -> ToolOptionValuesViewState:
+        if config is None:
+            return _empty_tool_option_values_state()
+        option_values = cc_dump.app.launch_config.normalize_options(config.options)
+        return ToolOptionValuesViewState(
+            values=tuple(
+                ToolOptionValueViewState(
+                    key=option.key,
+                    kind=option.kind,
+                    text_value=str(option_values.get(option.key, "") or ""),
+                    bool_value=bool(option_values.get(option.key, False)),
+                )
+                for option in _TOOL_OPTION_DEFS
+            )
+        )
+
+    def _apply_tool_option_values_state(self, state: ToolOptionValuesViewState) -> None:
+        # [LAW:dataflow-not-control-flow] Stable tool option widgets always receive value hydration.
+        for field_state in state.values:
+            widget_id = "#lc-option-{}".format(field_state.key)
+            try:
+                widget = self.query_one(widget_id)
+            except NoMatches:
+                continue
+            if field_state.kind == "bool":
+                widget.value = field_state.bool_value
+            else:
+                widget.value = field_state.text_value
+
+    def _apply_active_tool_option_set(self, active_launcher: str) -> None:
+        try:
+            common_set = self.query_one("#lc-toolset-common")
+            common_title = self.query_one("#lc-toolset-common-title", Static)
+            common_visible = bool(_COMMON_TOOL_OPTION_DEFS)
+            common_set.display = common_visible
+            common_title.display = common_visible
+        except NoMatches:
+            pass
+        for launcher, option_defs in _TOOL_SPECIFIC_OPTION_DEFS_BY_LAUNCHER.items():
+            visible = launcher == active_launcher and bool(option_defs)
+            try:
+                title = self.query_one("#lc-toolset-title-{}".format(launcher), Static)
+                toolset = self.query_one("#lc-toolset-{}".format(launcher))
+            except NoMatches:
+                continue
+            title.display = visible
+            toolset.display = visible
 
     def reset_configs(self, configs: list, active_config_name: str) -> None:
         """Reset panel state from persisted launch configs."""
@@ -375,7 +679,7 @@ class LaunchConfigPanel(VerticalScroll):
         self._emit_panel_state()
 
     def focus_default_control(self) -> None:
-        focusable = self.query("Input, CycleSelector, ToggleChip")
+        focusable = self.query("Input, Select, ToggleChip")
         if focusable:
             focusable.first().focus()
 
@@ -387,14 +691,14 @@ class LaunchConfigPanel(VerticalScroll):
 
     def _read_launcher_value(self) -> str:
         try:
-            launcher_widget = self.query_one("#lc-field-launcher", CycleSelector)
+            launcher_widget = self.query_one("#lc-field-launcher", Select)
         except NoMatches:
             return cc_dump.app.launcher_registry.DEFAULT_LAUNCHER_KEY
         return cc_dump.app.launcher_registry.normalize_launcher_key(launcher_widget.value)
 
     def _read_shell_value(self) -> str:
         try:
-            shell_widget = self.query_one("#lc-field-shell", CycleSelector)
+            shell_widget = self.query_one("#lc-field-shell", Select)
         except NoMatches:
             return ""
         return _shell_from_display(shell_widget.value)
@@ -485,66 +789,14 @@ class LaunchConfigPanel(VerticalScroll):
         config.shell = self._read_shell_value()
         config.options = merged_options
 
-    def _rebuild_tool_option_fields(self, config) -> None:
-        try:
-            container = self.query_one("#lc-tool-fields", Vertical)
-        except NoMatches:
-            return
-
-        container.remove_children()
-        self.call_after_refresh(self._mount_tool_option_fields, copy.deepcopy(config))
-
-    def _mount_tool_option_fields(self, config) -> None:
-        try:
-            container = self.query_one("#lc-tool-fields", Vertical)
-        except NoMatches:
-            return
-        option_values = cc_dump.app.launch_config.normalize_options(config.options)
-        for option in cc_dump.app.launch_config.launcher_option_defs(config.launcher):
-            value = option_values.get(option.key, option.default)
-            if option.kind == "bool":
-                container.mount(
-                    ToggleChip(
-                        option.label,
-                        value=bool(value),
-                        id="lc-option-{}".format(option.key),
-                    )
-                )
-            else:
-                row = Horizontal(
-                    Label(option.label, classes="field-label"),
-                    Input(
-                        value=str(value or ""),
-                        id="lc-option-{}".format(option.key),
-                    ),
-                    classes="field-row",
-                )
-                container.mount(row)
-            container.mount(Static(option.description, classes="field-desc"))
-
     def _populate_form(self, config) -> None:
         if config is None:
             return
 
         for field in _BASE_FIELDS:
-            widget_id = "#lc-field-{}".format(field.key)
-            try:
-                widget = self.query_one(widget_id)
-            except NoMatches:
-                continue
-
-            if field.key == "name":
-                widget.value = config.name
-            elif field.key == "launcher":
-                widget.value = config.launcher
-            elif field.key == "command":
-                widget.value = config.command
-            elif field.key == "model":
-                widget.value = config.model
-            elif field.key == "shell":
-                widget.value = _shell_to_display(config.shell)
-
-        self._rebuild_tool_option_fields(config)
+            self._sync_base_field_widget(field, _base_field_display_value(field, config))
+        self._tool_option_values_state.set(self._build_tool_option_values_state(config))
+        self._active_tool_option_set.set(config.launcher)
 
     def _switch_to_config(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._configs):
@@ -608,22 +860,46 @@ class LaunchConfigPanel(VerticalScroll):
         self._emit_panel_state()
         self.post_message(self.Saved(self._configs, self._active_name))
 
-    def on_launch_action_chip_pressed(self, event: LaunchActionChip.Pressed) -> None:
-        event.stop()
-        action = event.action_key
-        if action == "new":
-            self.create_new_config()
-        elif action == "delete":
-            self.delete_selected_config()
-        elif action == "activate":
-            self.activate_selected_config()
-        elif action == "launch":
-            self.quick_launch_selected_config()
+    def _apply_launcher_selection(self, launcher_value: object) -> None:
+        selected = self._selected_config()
+        if selected is None:
+            return
+        old_launcher = selected.launcher
+        new_launcher = cc_dump.app.launcher_registry.normalize_launcher_key(
+            str(launcher_value)
+        )
+        if new_launcher == old_launcher:
+            return
+        self._apply_form_to_selected(
+            option_launcher=old_launcher,
+            launcher_value=new_launcher,
+        )
+        self._active_tool_option_set.set(selected.launcher)
 
-    def on_cycle_selector_changed(self, event: CycleSelector.Changed) -> None:
+    def _action_handlers(self) -> dict[str, Callable[[], object]]:
+        return {
+            "new": self.create_new_config,
+            "delete": self.delete_selected_config,
+            "activate": self.activate_selected_config,
+            "launch": self.quick_launch_selected_config,
+            "save": self._do_save,
+            "close": lambda: self.post_message(self.Cancelled()),
+        }
+
+    def _handle_action_chip(self, action_key: str) -> None:
+        handler = self._action_handlers().get(action_key)
+        if handler is not None:
+            handler()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if self._select_sync_depth > 0:
+            event.stop()
+            return
+
         event.stop()
 
-        control_id = event.cycle_selector.id or ""
+        control = event.select
+        control_id = control.id or ""
         if control_id == "lc-config-selector":
             names = [config.name for config in self._configs]
             if event.value in names:
@@ -633,62 +909,7 @@ class LaunchConfigPanel(VerticalScroll):
             return
 
         if control_id == "lc-field-launcher":
-            selected = self._selected_config()
-            if selected is None:
-                return
-            old_launcher = selected.launcher
-            new_launcher = cc_dump.app.launcher_registry.normalize_launcher_key(event.value)
-            self._apply_form_to_selected(
-                option_launcher=old_launcher,
-                launcher_value=new_launcher,
-            )
-            self._emit_panel_state()
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        event.stop()
-        self._do_save()
-
-    def on_key(self, event) -> None:
-        key = event.key
-
-        if key == "escape":
-            event.stop()
-            event.prevent_default()
-            self.post_message(self.Cancelled())
-            return
-
-        if key == "enter" and not isinstance(self.screen.focused, Input):
-            event.stop()
-            event.prevent_default()
-            self._do_save()
-            return
-
-        if isinstance(self.screen.focused, Input):
-            return
-
-        if key == "n":
-            event.stop()
-            event.prevent_default()
-            self.create_new_config()
-            return
-
-        if key == "d":
-            event.stop()
-            event.prevent_default()
-            self.delete_selected_config()
-            return
-
-        if key == "a":
-            event.stop()
-            event.prevent_default()
-            self.activate_selected_config()
-            return
-
-        if key == "l":
-            event.stop()
-            event.prevent_default()
-            self.quick_launch_selected_config()
-            return
+            self._apply_launcher_selection(event.value)
 
     def get_state(self) -> dict:
         return {}

@@ -11,7 +11,6 @@ import tracemalloc
 from snarfx import Observable, reaction
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
-from textual.message import Message
 from textual.widgets import Label, Select, Static
 
 from cc_dump.tui.chip import ToggleChip
@@ -22,20 +21,6 @@ import cc_dump.io.perf_logging
 
 def _initial_memory_snapshots_enabled(app_ref) -> bool:
     return bool(getattr(app_ref, "_memory_snapshot_enabled", False)) if app_ref else False
-
-
-class DebugToggleChip(ToggleChip):
-    """Toggle chip variant that emits a change message for reactive side effects."""
-
-    class Changed(Message):
-        def __init__(self, control_id: str, value: bool) -> None:
-            self.control_id = control_id
-            self.value = value
-            super().__init__()
-
-    def _toggle(self) -> None:
-        super()._toggle()
-        self.post_message(self.Changed(str(self.id or ""), self.value))
 
 
 class DebugSettingsPanel(VerticalScroll):
@@ -105,19 +90,21 @@ class DebugSettingsPanel(VerticalScroll):
         yield Static("Runtime log level for cc_dump logger", classes="field-desc")
 
         # Perf logging
-        yield DebugToggleChip(
+        yield ToggleChip(
             "Perf Logging",
             value=cc_dump.io.perf_logging.is_enabled(),
             id="debug-perf-logging",
+            on_change=self._handle_debug_toggle,
         )
         yield Static("Stack traces when render stages exceed thresholds", classes="field-desc")
 
         # Memory snapshots
         mem_enabled = bool(getattr(self._app_ref, "_memory_snapshot_enabled", False)) if self._app_ref else False
-        yield DebugToggleChip(
+        yield ToggleChip(
             "Memory Snapshots",
             value=mem_enabled,
             id="debug-memory-snapshots",
+            on_change=self._handle_debug_toggle,
         )
         yield Static("tracemalloc snapshots at startup/shutdown", classes="field-desc")
 
@@ -149,13 +136,13 @@ class DebugSettingsPanel(VerticalScroll):
                 if conv is not None:
                     conv.focus()
 
-    def on_debug_toggle_chip_changed(self, event: DebugToggleChip.Changed) -> None:
-        event.stop()
+    def _handle_debug_toggle(self, chip: ToggleChip, value: bool) -> None:
         perf_enabled, mem_enabled = self._toggle_state.get()
-        if event.control_id == "debug-perf-logging":
-            perf_enabled = bool(event.value)
-        elif event.control_id == "debug-memory-snapshots":
-            mem_enabled = bool(event.value)
+        control_id = str(chip.id or "")
+        if control_id == "debug-perf-logging":
+            perf_enabled = bool(value)
+        elif control_id == "debug-memory-snapshots":
+            mem_enabled = bool(value)
         self._toggle_state.set((perf_enabled, mem_enabled))
 
     def _apply_toggle_state(self, toggle_state: tuple[bool, bool]) -> None:
