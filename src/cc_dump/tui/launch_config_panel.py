@@ -258,23 +258,6 @@ def _make_base_widget(field: BaseFieldDef, value: object) -> Input | Select[str]
     return _select_widget(field.options, selected, widget_id)
 
 
-def _select_values(selector: Select[str]) -> tuple[str, ...]:
-    options = getattr(selector, "options", None)
-    if options is None:
-        return ()
-
-    values: list[str] = []
-    for option in options:
-        if isinstance(option, tuple) and len(option) >= 2:
-            _, value = option[:2]
-        else:
-            value = getattr(option, "value", option)
-        if value is selector.BLANK:
-            continue
-        values.append(str(value))
-    return tuple(values)
-
-
 def _base_field_display_value(field: BaseFieldDef, config) -> str:
     if field.key == "name":
         return config.name
@@ -476,6 +459,8 @@ class LaunchConfigPanel(VerticalScroll):
         self._active_tool_option_set: Observable[str] = Observable(
             cc_dump.app.launcher_registry.DEFAULT_LAUNCHER_KEY
         )
+        # [LAW:one-source-of-truth] Panel owns canonical Select option tuples.
+        self._select_options_by_id: dict[str, tuple[str, ...]] = {}
         self._select_sync_depth = 0
         # [LAW:single-enforcer] One reactive projection owns selector/active/form sync.
         self._panel_reaction = reaction(
@@ -578,8 +563,13 @@ class LaunchConfigPanel(VerticalScroll):
         value: str,
     ) -> None:
         with self._suspend_select_events():
-            if options is not None and _select_values(selector) != options:
-                selector.set_options([(option, option) for option in options])
+            if options is not None:
+                # [LAW:one-source-of-truth] Option equality is against panel-owned values, not widget internals.
+                cache_key = selector.id or str(id(selector))
+                normalized_options = tuple(str(option) for option in options)
+                if self._select_options_by_id.get(cache_key) != normalized_options:
+                    selector.set_options([(option, option) for option in normalized_options])
+                    self._select_options_by_id[cache_key] = normalized_options
             if selector.value != value:
                 selector.value = value
 
@@ -911,6 +901,9 @@ class LaunchConfigPanel(VerticalScroll):
         control = event.select
         control_id = control.id or ""
         if control_id == "lc-config-selector":
+            # [LAW:single-enforcer] Only focused selector changes represent user intent.
+            if not control.has_focus:
+                return
             names = [config.name for config in self._configs]
             if event.value in names:
                 idx = names.index(event.value)
@@ -919,6 +912,9 @@ class LaunchConfigPanel(VerticalScroll):
             return
 
         if control_id == "lc-field-launcher":
+            # [LAW:single-enforcer] Ignore framework-emitted programmatic updates.
+            if not control.has_focus:
+                return
             self._apply_launcher_selection(event.value)
 
     def get_state(self) -> dict:
