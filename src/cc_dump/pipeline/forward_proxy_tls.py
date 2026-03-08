@@ -45,13 +45,18 @@ class ForwardProxyCertificateAuthority:
         self._ca_key, self._ca_cert = self._load_or_create_ca()
         self._host_contexts: dict[str, ssl.SSLContext] = {}
         self._lock = threading.Lock()
-        self._tmp_dir = Path(tempfile.mkdtemp(prefix="cc-dump-forward-proxy-"))
-        atexit.register(shutil.rmtree, str(self._tmp_dir), True)
+        self._artifact_dir = Path(tempfile.mkdtemp(prefix="cc-dump-forward-proxy-"))
+        atexit.register(shutil.rmtree, str(self._artifact_dir), True)
 
     @property
     def ca_cert_path(self) -> Path:
         """Path to CA certificate PEM file (for NODE_EXTRA_CA_CERTS etc.)."""
         return self._ca_dir / "ca.crt"
+
+    @property
+    def artifact_dir(self) -> Path:
+        """Directory containing ephemeral per-host cert/key files."""
+        return self._artifact_dir
 
     def ssl_context_for_host(self, hostname: str) -> ssl.SSLContext:
         """Return a server-side SSL context presenting a cert for *hostname*."""
@@ -124,8 +129,8 @@ class ForwardProxyCertificateAuthority:
 
         # ssl.SSLContext.load_cert_chain requires file paths.
         cert_stem = _host_cert_stem(normalized_hostname)
-        cert_path = self._tmp_dir / "{}.crt".format(cert_stem)
-        key_path = self._tmp_dir / "{}.key".format(cert_stem)
+        cert_path = self._artifact_dir / "{}.crt".format(cert_stem)
+        key_path = self._artifact_dir / "{}.key".format(cert_stem)
         cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
         key_path.write_bytes(
             key.private_bytes(

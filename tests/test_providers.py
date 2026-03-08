@@ -62,3 +62,36 @@ def test_build_provider_proxy_env_uses_endpoint_mode():
     assert providers.build_provider_proxy_env(endpoint) == {
         "ANTHROPIC_BASE_URL": "http://127.0.0.1:3344",
     }
+
+
+def test_build_provider_endpoint_detail_lines_hide_tls_branching_outside_providers():
+    endpoint = providers.build_provider_endpoint(
+        "copilot",
+        proxy_url="http://127.0.0.1:4567",
+        target="https://ignored.example",
+        proxy_mode="forward",
+        forward_proxy_ca_cert_path="/tmp/copilot-ca.crt",
+    )
+
+    assert providers.build_provider_endpoint_detail_lines(endpoint) == (
+        "Copilot endpoint (forward): http://127.0.0.1:4567",
+        "  Usage: HTTP_PROXY=http://127.0.0.1:4567 HTTPS_PROXY=http://127.0.0.1:4567 NODE_EXTRA_CA_CERTS=/tmp/copilot-ca.crt <your-tool>",
+    )
+
+
+def test_resolve_forward_proxy_connect_route_validates_provider_host_boundary():
+    allowed = providers.resolve_forward_proxy_connect_route(
+        "copilot",
+        host="api.githubcopilot.com",
+        port=443,
+    )
+    denied = providers.resolve_forward_proxy_connect_route(
+        "copilot",
+        host="api.openai.com",
+        port=443,
+    )
+
+    assert allowed is not None
+    assert allowed.provider_key == "copilot"
+    assert allowed.upstream_origin == "https://api.githubcopilot.com"
+    assert denied is None

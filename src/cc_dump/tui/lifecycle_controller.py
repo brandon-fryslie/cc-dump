@@ -55,42 +55,6 @@ def _connect_stderr_tee(app) -> None:
     tee.connect(_drain)
 
 
-def _endpoint_usage_line(
-    spec,
-    *,
-    endpoint: cc_dump.providers.ProviderEndpoint,
-) -> str:
-    """Build provider usage line preserving existing reverse-target behavior."""
-    if endpoint.proxy_mode == "reverse" and endpoint.target:
-        return f"  Usage: {spec.base_url_env}={endpoint.proxy_url} {spec.client_hint}"
-    suffix = (
-        f" NODE_EXTRA_CA_CERTS={endpoint.forward_proxy_ca_cert_path}"
-        if endpoint.forward_proxy_ca_cert_path
-        else ""
-    )
-    return (
-        f"  Usage: HTTP_PROXY={endpoint.proxy_url} HTTPS_PROXY={endpoint.proxy_url}{suffix} "
-        f"{spec.client_hint}"
-    )
-
-
-def _endpoint_detail_lines(
-    spec,
-    endpoint: cc_dump.providers.ProviderEndpoint,
-) -> list[str]:
-    """Return detail lines for one provider endpoint."""
-    details = [f"{spec.display_name} endpoint ({endpoint.proxy_mode}): {endpoint.proxy_url}"]
-    if endpoint.proxy_mode == "reverse" and endpoint.target:
-        details.append(f"  Target: {endpoint.target}")
-    details.append(
-        _endpoint_usage_line(
-            spec,
-            endpoint=endpoint,
-        )
-    )
-    return details
-
-
 def _log_proxy_endpoints(app) -> None:
     app._app_log("INFO", "🚀 cc-dump proxy started")
     app._app_log("INFO", f"Listening on: http://{app._host}:{app._port}")
@@ -101,7 +65,7 @@ def _log_proxy_endpoints(app) -> None:
         if not endpoint.proxy_url:
             continue
         # // [LAW:dataflow-not-control-flow] Endpoint logging is derived line data.
-        for line in _endpoint_detail_lines(spec, endpoint):
+        for line in cc_dump.providers.build_provider_endpoint_detail_lines(endpoint):
             app._app_log("INFO", line)
 
 

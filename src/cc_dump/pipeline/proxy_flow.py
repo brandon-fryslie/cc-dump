@@ -26,25 +26,78 @@ class ProxyTarget:
 
 def resolve_proxy_target(path: str, target_host: str | None) -> ProxyTarget:
     """Resolve request path and upstream URL for forward/reverse proxy modes."""
+    return resolve_proxy_target_for_origin(path, target_host, required_origin=None)
+
+
+def resolve_proxy_target_for_origin(
+    path: str,
+    target_host: str | None,
+    *,
+    required_origin: str | None,
+) -> ProxyTarget:
+    """Resolve request path + upstream URL and optionally constrain to a required origin.
+
+    // [LAW:single-enforcer] Absolute-form target confinement for CONNECT tunnels lives here.
+    """
     if path.startswith("http://") or path.startswith("https://"):
         parsed = urlparse(path)
         request_path = parsed.path or "/"
+        if parsed.query:
+            request_path = f"{request_path}?{parsed.query}"
         upstream_url = path if path.startswith("https://") else "https://" + path[7:]
-        return ProxyTarget(
+        target = ProxyTarget(
             request_path=request_path,
             upstream_url=upstream_url,
         )
-    if not target_host:
-        return ProxyTarget(
+    elif not target_host:
+        target = ProxyTarget(
             request_path=path,
             upstream_url="",
             error_reason="No target_host configured for reverse proxy mode",
             error_status=500,
         )
+    else:
+        target = ProxyTarget(
+            request_path=path,
+            upstream_url=f"{target_host}{path}",
+        )
+
+    return _constrain_target_origin(target, required_origin=required_origin)
+
+
+def _constrain_target_origin(
+    target: ProxyTarget,
+    *,
+    required_origin: str | None,
+) -> ProxyTarget:
+    if not required_origin or target.error_reason:
+        return target
+
+    parsed_required = urlparse(required_origin)
+    parsed_upstream = urlparse(target.upstream_url)
+    if _normalized_origin(parsed_upstream) != _normalized_origin(parsed_required):
+        return ProxyTarget(
+            request_path=target.request_path,
+            upstream_url="",
+            error_reason="CONNECT target origin mismatch",
+            error_status=403,
+        )
+
     return ProxyTarget(
-        request_path=path,
-        upstream_url=f"{target_host}{path}",
+        request_path=target.request_path,
+        upstream_url=f"{required_origin}{target.request_path}",
     )
+
+
+def _normalized_origin(parsed) -> str:
+    scheme = (parsed.scheme or "").lower()
+    hostname = (parsed.hostname or "").lower()
+    if not scheme or not hostname:
+        return ""
+    port = parsed.port
+    if port is None:
+        port = 443 if scheme == "https" else 80 if scheme == "http" else -1
+    return f"{scheme}://{hostname}:{port}"
 
 
 def parse_request_json(
