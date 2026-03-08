@@ -34,6 +34,6 @@ def test_generated_leaf_files_stay_in_tmp_dir(tmp_path):
     ca = ForwardProxyCertificateAuthority(ca_dir=tmp_path / "ca")
     ca.ssl_context_for_host("../../tricky-host")
 
-    generated = list(ca._tmp_dir.iterdir())
+    generated = list(ca.artifact_dir.iterdir())
     assert generated
-    assert all(path.parent == ca._tmp_dir for path in generated)
+    assert all(path.parent == ca.artifact_dir for path in generated)

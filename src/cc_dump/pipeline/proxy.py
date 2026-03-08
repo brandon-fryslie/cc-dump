@@ -373,12 +373,19 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         self.event_queue.put(LogEvent(method=self.command, path=self.path, status=args[0] if args else "", provider=self.provider))
 
+    def _active_target_host(self) -> str | None:
+        tunnel_target = getattr(self, "_connect_target_host", None)
+        return tunnel_target if tunnel_target is not None else self.target_host
+
     def _proxy(self):
         request_id = uuid.uuid4().hex
         content_len = int(self.headers.get("Content-Length", 0))
         body_bytes = self.rfile.read(content_len) if content_len else b""
 
-        target = cc_dump.pipeline.proxy_flow.resolve_proxy_target(self.path, self.target_host)
+        target = cc_dump.pipeline.proxy_flow.resolve_proxy_target(
+            self.path,
+            self._active_target_host(),
+        )
         request_path = target.request_path
         url = target.upstream_url
         if target.error_reason:
@@ -654,6 +661,15 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(501, "CONNECT not supported in reverse proxy mode")
             return
 
+        route = cc_dump.providers.resolve_forward_proxy_connect_route(
+            self.provider,
+            host=host,
+            port=port,
+        )
+        if route is None:
+            self.send_error(403, "CONNECT host not allowed for provider")
+            return
+
         # Tell client the tunnel is established.
         self.send_response(200, "Connection Established")
         self.end_headers()
@@ -672,9 +688,8 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         self.wfile = client_ssl.makefile("wb")
 
         # Route decrypted HTTP through the normal proxy pipeline.
-        authority_host = "[{}]".format(host) if ":" in host and not host.startswith("[") else host
-        self.target_host = "https://{}".format(authority_host) + (":{}".format(port) if port != 443 else "")
-        self.provider = cc_dump.providers.infer_provider_from_url(host)
+        # [LAW:one-source-of-truth] CONNECT routing is resolved once, then reused for every tunneled request.
+        self._connect_target_host = route.upstream_origin
 
         try:
             while True:
