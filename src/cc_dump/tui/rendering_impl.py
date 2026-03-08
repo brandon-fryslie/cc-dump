@@ -65,7 +65,7 @@ from textual.strip import Strip
 from textual.color import Color
 import cc_dump.core.segmentation
 
-# Region kinds that support click-to-collapse/expand.
+# Region kinds that support being collapsed/expanded via ViewOverrides.
 # FUTURE: consider md/other region kinds for collapse behavior
 COLLAPSIBLE_REGION_KINDS = frozenset({"xml_block", "tool_def", "code_fence", "md_fence"})
 

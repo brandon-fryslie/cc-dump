@@ -20,7 +20,7 @@ import cc_dump.tui.rendering
 class BlockViewState:
     """Per-block view state, keyed by block_id."""
 
-    expanded: bool | None = None  # click toggle override
+    expanded: bool | None = None  # per-block expansion override
     force_vis: VisState | None = None  # search override
 
 
@@ -28,7 +28,7 @@ class BlockViewState:
 class RegionViewState:
     """Per-region view state, keyed by (block_id, region_index)."""
 
-    expanded: bool | None = None  # click toggle override
+    expanded: bool | None = None  # per-region expansion override
 
 
 class ViewOverrides:

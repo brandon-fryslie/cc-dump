@@ -648,6 +648,9 @@ def test_xml_block_renders_with_content_regions():
     xml_region = block.content_regions[1]
     assert xml_region.kind == "xml_block"
     assert strips
+    rendered_text = "".join(segment.text for strip in strips for segment in strip)
+    assert "<thinking>" in rendered_text
+    assert "Line 2" in rendered_text
 
 
 def test_xml_collapsed_fewer_strips():
