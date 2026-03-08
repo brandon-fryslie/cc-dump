@@ -12,7 +12,6 @@ import os
 from contextlib import contextmanager
 from collections import deque
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import TYPE_CHECKING
 from snarfx import Observable, reaction
 from textual.dom import NoScreen
@@ -35,51 +34,18 @@ import cc_dump.tui.error_indicator
 import cc_dump.tui.view_overrides
 import cc_dump.app.error_models
 import cc_dump.app.domain_store
+from cc_dump.tui.follow_mode import (
+    FollowState,
+    FollowEvent,
+    FollowModeStore,
+    FollowTransition,
+)
 from cc_dump.io.perf_logging import monitor_slow_path
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from cc_dump.tui.rendering_impl import RenderRuntime
-
-
-# ─── Follow mode state machine ──────────────────────────────────────────────
-
-
-class FollowState(Enum):
-    OFF = "off"
-    ENGAGED = "engaged"
-    ACTIVE = "active"
-
-
-# [LAW:dataflow-not-control-flow] Transitions as data, not branches.
-# Key: (current_state, at_bottom) → new_state
-_FOLLOW_TRANSITIONS: dict[tuple[FollowState, bool], FollowState] = {
-    (FollowState.ACTIVE, True): FollowState.ACTIVE,
-    (FollowState.ACTIVE, False): FollowState.ENGAGED,
-    (FollowState.ENGAGED, True): FollowState.ACTIVE,
-    (FollowState.ENGAGED, False): FollowState.ENGAGED,
-    (FollowState.OFF, True): FollowState.OFF,
-    (FollowState.OFF, False): FollowState.OFF,
-}
-
-_FOLLOW_TOGGLE: dict[FollowState, FollowState] = {
-    FollowState.OFF: FollowState.ACTIVE,
-    FollowState.ENGAGED: FollowState.OFF,
-    FollowState.ACTIVE: FollowState.OFF,
-}
-
-_FOLLOW_SCROLL_BOTTOM: dict[FollowState, FollowState] = {
-    FollowState.OFF: FollowState.OFF,
-    FollowState.ENGAGED: FollowState.ACTIVE,
-    FollowState.ACTIVE: FollowState.ACTIVE,
-}
-
-_FOLLOW_DEACTIVATE: dict[FollowState, FollowState] = {
-    FollowState.OFF: FollowState.OFF,
-    FollowState.ENGAGED: FollowState.ENGAGED,
-    FollowState.ACTIVE: FollowState.ENGAGED,
-}
 
 
 def _compute_widest(strips: list) -> int:
@@ -288,8 +254,8 @@ class ConversationView(ScrollView):
         self._overrides_revision: int = 0
         self._last_search_signature: tuple | None = None
         self._last_theme_generation: int = self._read_theme_generation()
-        # Local fallback for tests that don't pass a view_store
-        self._follow_state_fallback: FollowState = FollowState.ACTIVE
+        # [LAW:one-source-of-truth] Canonical follow state lives in FollowModeStore Observable.
+        self._follow_store = FollowModeStore(self._initial_follow_state())
         self._pending_restore: dict | None = None
         self._scrolling_programmatically: bool = False
         self._scroll_anchor: ScrollAnchor | None = None
@@ -300,6 +266,18 @@ class ConversationView(ScrollView):
             lambda: self._indicator_state.get(),
             self._apply_indicator_state,
             fire_immediately=False,
+        )
+        # [LAW:single-enforcer] Follow transition side effects flow from one reactive projection.
+        self._follow_transition_reaction = reaction(
+            lambda: self._follow_store.transition.get(),
+            self._apply_follow_transition,
+            fire_immediately=False,
+        )
+        # [LAW:single-enforcer] One projection syncs follow state into view_store/persistence.
+        self._follow_state_sync_reaction = reaction(
+            lambda: self._follow_store.state.get(),
+            self._persist_follow_state,
+            fire_immediately=True,
         )
         # // [LAW:one-source-of-truth] All per-block view state lives here.
         self._view_overrides = cc_dump.tui.view_overrides.ViewOverrides()
@@ -330,6 +308,14 @@ class ConversationView(ScrollView):
             return 0
         raw = self._view_store.get("theme:generation")
         return int(raw) if isinstance(raw, int) else 0
+
+    def _initial_follow_state(self) -> FollowState:
+        follow_raw = self._view_store.get("nav:follow") if self._view_store is not None else FollowState.ACTIVE.value
+        try:
+            return FollowState(str(follow_raw))
+        except ValueError:
+            # [LAW:dataflow-not-control-flow] exception: guard malformed persisted state.
+            return FollowState.ACTIVE
 
     @staticmethod
     def _search_match_signature(match) -> tuple | None:
@@ -395,6 +381,9 @@ class ConversationView(ScrollView):
 
     def on_unmount(self) -> None:
         self._indicator_reaction.dispose()
+        self._follow_transition_reaction.dispose()
+        self._follow_state_sync_reaction.dispose()
+        self._follow_store.dispose()
 
     def _set_indicator_state(
         self,
@@ -438,20 +427,36 @@ class ConversationView(ScrollView):
         self.refresh()
 
     # // [LAW:one-source-of-truth] Follow state stored as string in view store.
-    # String comparison is stable across hot-reloads (enum class identity changes).
-    # Falls back to local attribute when no store (tests).
+    # String persistence in view_store remains derived from this canonical Observable.
     @property
     def _follow_state(self) -> FollowState:
-        if self._view_store is not None:
-            return FollowState(self._view_store.get("nav:follow"))
-        return self._follow_state_fallback
+        return self._follow_store.state.get()
 
     @_follow_state.setter
     def _follow_state(self, value: FollowState):
+        self._follow_store.state.set(value)
+
+    def _persist_follow_state(self, value: FollowState) -> None:
         if self._view_store is not None:
             self._view_store.set("nav:follow", value.value)
-        else:
-            self._follow_state_fallback = value
+
+    def _dispatch_follow_event(
+        self,
+        event: FollowEvent,
+        *,
+        at_bottom: bool,
+    ) -> None:
+        """Dispatch a follow intent with explicit caller-owned scroll context.
+
+        // [LAW:one-source-of-truth] Caller-provided at_bottom is authoritative.
+        """
+        self._follow_store.dispatch(event, at_bottom=bool(at_bottom))
+
+    def _apply_follow_transition(self, payload: tuple[int, FollowTransition]) -> None:
+        _seq, transition = payload
+        if transition.scroll_to_end:
+            with self._programmatic_scroll():
+                self.scroll_end(animate=False)
 
     @contextmanager
     def _programmatic_scroll(self):
@@ -1842,35 +1847,37 @@ class ConversationView(ScrollView):
         CRITICAL: Must call super() to preserve scrollbar sync and refresh.
         CRITICAL: Signature is (old_value, new_value), not (value).
 
-        // [LAW:dataflow-not-control-flow] Transition via _FOLLOW_TRANSITIONS table.
+        // [LAW:dataflow-not-control-flow] Transition dispatched to reactive follow store.
         """
         super().watch_scroll_y(old_value, new_value)
         if self._scrolling_programmatically:
             return
         # Compute anchor on user scroll (block-level anchor for vis_state changes)
         self._scroll_anchor = self._compute_anchor_from_scroll()
-        self._follow_state = _FOLLOW_TRANSITIONS[
-            (self._follow_state, self.is_vertical_scroll_end)
-        ]
+        self._dispatch_follow_event(
+            FollowEvent.USER_SCROLL,
+            at_bottom=bool(self.is_vertical_scroll_end),
+        )
 
     def toggle_follow(self):
         """Toggle follow mode.
 
-        // [LAW:dataflow-not-control-flow] Transition via _FOLLOW_TOGGLE table.
+        // [LAW:dataflow-not-control-flow] Transition dispatched to reactive follow store.
         """
-        self._follow_state = _FOLLOW_TOGGLE[self._follow_state]
-        if self._is_following:
-            with self._programmatic_scroll():
-                self.scroll_end(animate=False)
+        self._dispatch_follow_event(FollowEvent.TOGGLE, at_bottom=False)
 
     def scroll_to_bottom(self):
         """Scroll to bottom. Transitions ENGAGED→ACTIVE; OFF stays OFF.
 
-        // [LAW:dataflow-not-control-flow] Transition via _FOLLOW_SCROLL_BOTTOM table.
+        // [LAW:dataflow-not-control-flow] Transition dispatched to reactive follow store.
         """
-        self._follow_state = _FOLLOW_SCROLL_BOTTOM[self._follow_state]
+        self._dispatch_follow_event(FollowEvent.SCROLL_BOTTOM, at_bottom=False)
+
+    def scroll_to_top(self) -> None:
+        """Scroll to top and deactivate follow mode."""
+        self._dispatch_follow_event(FollowEvent.DEACTIVATE, at_bottom=False)
         with self._programmatic_scroll():
-            self.scroll_end(animate=False)
+            self.scroll_home(animate=False)
 
     def capture_scroll_anchor(self) -> None:
         """Capture the current block-level anchor for later restore.
@@ -1903,8 +1910,8 @@ class ConversationView(ScrollView):
         viewport_height = self.scrollable_content_region.height
         centered_y = max(0, target_y - viewport_height // 2)
 
-        # // [LAW:dataflow-not-control-flow] Deactivate via table lookup.
-        self._follow_state = _FOLLOW_DEACTIVATE[self._follow_state]
+        # // [LAW:dataflow-not-control-flow] Deactivate via follow transition event.
+        self._dispatch_follow_event(FollowEvent.DEACTIVATE, at_bottom=False)
         with self._programmatic_scroll():
             self.scroll_to(y=centered_y, animate=False)
 

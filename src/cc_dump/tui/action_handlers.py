@@ -19,7 +19,6 @@ import cc_dump.tui.rendering
 # [LAW:one-source-of-truth] Panel order derived from registry
 from cc_dump.tui.panel_registry import PANEL_ORDER
 from snarfx import transaction
-import cc_dump.tui.widget_factory
 
 
 # ─── Visibility actions ────────────────────────────────────────────────
@@ -402,12 +401,7 @@ def prev_region_tag(app, tag: str = "all") -> None:
 
 
 def go_top(app) -> None:
-    def _go(c):
-        # // [LAW:dataflow-not-control-flow] Deactivate via table lookup.
-        c._follow_state = cc_dump.tui.widget_factory._FOLLOW_DEACTIVATE[c._follow_state]
-        c.scroll_home(animate=False)
-
-    _conv_action(app, _go)
+    _conv_action(app, lambda c: c.scroll_to_top())
 
 
 def go_bottom(app) -> None:
