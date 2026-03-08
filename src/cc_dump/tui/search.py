@@ -2,7 +2,7 @@
 
 State machine: INACTIVE → EDITING → NAVIGATING → INACTIVE
 Search runs incrementally during EDITING with debounce.
-Navigation (n/N) in NAVIGATING phase raises category visibility and expands blocks.
+Navigation keys in NAVIGATING phase are reserved for upcoming redesign.
 
 This module is RELOADABLE.
 """
@@ -186,7 +186,7 @@ class SearchState:
     view store — they survive hot-reload via reconcile() without manual
     save/restore.
 
-    Transient fields (matches, expanded_blocks, etc.) are plain attributes
+    Transient fields (matches, debounce timer, cache, etc.) are plain attributes
     rebuilt by run_search() after reload.
 
     // [LAW:one-source-of-truth] Store is the single source for identity fields.
@@ -197,7 +197,6 @@ class SearchState:
         # Transient — rebuilt by run_search() after reload
         self.matches: list[SearchMatch] = []
         self.saved_filters: dict = {}
-        self.expanded_blocks: list[tuple[int, int, object]] = []
         self.debounce_timer: object | None = None
         self.saved_scroll_y: float | None = None
         self.text_cache: SearchTextCache = SearchTextCache(max_entries=20_000)
@@ -369,7 +368,7 @@ def _collect_descendants(block, hier_idx: int) -> list[tuple[int, object]]:
 
 
 def find_all_matches(
-    turns: list,
+    turns: Sequence[object],
     pattern: re.Pattern,
     text_cache: SearchTextCache | dict[tuple[str, int], str] | None = None,
 ) -> list[SearchMatch]:
@@ -381,7 +380,7 @@ def find_all_matches(
     Walks container children recursively (arbitrary depth) so content inside
     MessageBlock, MetadataSection, ToolDefsSection→ToolDefBlock→SkillDefChild,
     etc. is searchable. Child matches use the top-level container's
-    hierarchical index as block_index (for _force_vis), but store the actual
+    hierarchical index as block_index, but store the actual
     child block in the `block` field (for identity lookup).
 
     // [LAW:dataflow-not-control-flow] searchable list is always built;
