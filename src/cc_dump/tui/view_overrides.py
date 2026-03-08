@@ -21,7 +21,6 @@ class BlockViewState:
 
     expanded: bool | None = None  # click toggle override
     force_vis: VisState | None = None  # search override
-    expandable: bool = False  # renderer-computed
 
 
 @dataclass
@@ -29,7 +28,6 @@ class RegionViewState:
     """Per-region view state, keyed by (block_id, region_index)."""
 
     expanded: bool | None = None  # click toggle override
-    strip_range: tuple[int, int] | None = None  # renderer-computed
 
 
 class ViewOverrides:
@@ -104,8 +102,6 @@ class ViewOverrides:
             entry = {}
             if bvs.expanded is not None:
                 entry["expanded"] = bvs.expanded
-            if bvs.expandable:
-                entry["expandable"] = True
             if entry:
                 blocks[bid] = entry
 
@@ -114,7 +110,6 @@ class ViewOverrides:
             entry = {}
             if rvs.expanded is not None:
                 entry["expanded"] = rvs.expanded
-            # strip_range is renderer-computed, transient — not serialized
             if entry:
                 regions[f"{bid},{idx}"] = entry
 
@@ -128,7 +123,6 @@ class ViewOverrides:
             bid = int(bid_str) if isinstance(bid_str, str) else bid_str
             bvs = BlockViewState(
                 expanded=entry.get("expanded"),
-                expandable=entry.get("expandable", False),
             )
             vo._blocks[bid] = bvs
 

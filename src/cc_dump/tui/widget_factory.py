@@ -959,8 +959,6 @@ class ConversationView(ScrollView):
         "stream_finalized":  "_render_stream_finalized",
         "focus_changed":     "_render_focus_changed",
         "filters_changed":   "_rerender_affected",
-        "block_toggled":     "_render_single_turn",
-        "region_toggled":    "_render_single_turn",
         "search":            "_rerender_affected",
         "resize":            "_render_all_turns",
         "restore":           "_render_restore",
@@ -984,7 +982,7 @@ class ConversationView(ScrollView):
         "new_turn", "stream_delta", "stream_finalized", "focus_changed",
     })
     _ANCHOR_REASONS = frozenset({
-        "filters_changed", "block_toggled", "region_toggled", "search",
+        "filters_changed", "search",
     })
 
     def _post_render(self, reason: str) -> None:
@@ -1891,12 +1889,6 @@ class ConversationView(ScrollView):
                 best_strip_start = strip_start
         return best_block_idx
 
-    def _is_expandable_block(self, block) -> bool:
-        """Check if a block is expandable (from ViewOverrides, set by render_turn_to_strips)."""
-        # // [LAW:one-source-of-truth] Expandable state from overrides only
-        bvs = self._view_overrides._blocks.get(block.block_id)
-        return bvs.expandable if bvs is not None else False
-
     def _block_strip_count(self, turn: TurnData, block_index: int) -> int:
         """Return the number of strips occupied by a block.
 
@@ -2056,39 +2048,6 @@ class ConversationView(ScrollView):
         target_y = turn.line_offset + block_start + clamped_line
         self._scroll_programmatically_to(y=target_y)
 
-    def _resolve_click_target(self, event):
-        """Pure coordinate/meta resolution for a click event.
-
-        Returns (turn, block_idx, meta_type, meta_value) if the click hit
-        a toggle target, or None if it missed.
-
-        meta_type is META_TOGGLE_BLOCK or META_TOGGLE_REGION.
-        meta_value is True for block toggles, or the region index for regions.
-        """
-        meta = event.style.meta
-        content_y = int(event.y + self.scroll_offset.y)
-        turn = self._find_turn_for_line(content_y)
-        if turn is None:
-            return None
-        block_idx = self._block_index_at_line(turn, content_y)
-        if block_idx is None or block_idx >= len(turn._flat_blocks):
-            return None
-
-        # Fast path: segment metadata
-        # // [LAW:single-enforcer] Only rendering.py sets these meta keys
-        if meta.get(cc_dump.tui.rendering.META_TOGGLE_BLOCK):
-            return (turn, block_idx, cc_dump.tui.rendering.META_TOGGLE_BLOCK, True)
-        if meta.get(cc_dump.tui.rendering.META_TOGGLE_REGION) is not None:
-            return (turn, block_idx, cc_dump.tui.rendering.META_TOGGLE_REGION,
-                    meta.get(cc_dump.tui.rendering.META_TOGGLE_REGION))
-
-        # Coordinate fallback for gutter clicks on region tag lines
-        block = turn._flat_blocks[block_idx]
-        region_idx = self._region_tag_at_line(turn, block, block_idx, content_y)
-        if region_idx is not None:
-            return (turn, block_idx, cc_dump.tui.rendering.META_TOGGLE_REGION, region_idx)
-        return None
-
     def text_select_all(self) -> None:
         """Override to select only the block at the last click position.
 
@@ -2132,158 +2091,9 @@ class ConversationView(ScrollView):
         self.screen.selections = {self: selection}
 
     def on_click(self, event) -> None:
-        """Toggle expand on truncated blocks or content regions.
-
-        Uses segment metadata (Style.from_meta) set during rendering to
-        determine what was clicked, following the same pattern as Textual's
-        Tree widget. Only arrow segments carry toggle metadata.
-
-        Also stores click position for text_select_all() block selection.
-        """
+        """Store click position for block-scoped double-click selection."""
         # Store for text_select_all (called by Widget._on_click on double-click)
         self._last_click_content_y = int(event.y + self.scroll_offset.y)
-
-        target = self._resolve_click_target(event)
-        if target is None:
-            return
-
-        turn, block_idx, meta_type, meta_value = target
-
-        if meta_type == cc_dump.tui.rendering.META_TOGGLE_BLOCK:
-            if self._is_expandable_block(turn._flat_blocks[block_idx]):
-                self._toggle_block_expand(turn, block_idx)
-        elif meta_type == cc_dump.tui.rendering.META_TOGGLE_REGION:
-            self._toggle_region(turn, block_idx, meta_value)
-
-    # FUTURE: region navigation — scan all turns' blocks' content_regions
-    # for matching tags to support "go to <tag>" navigation
-
-    def _region_at_line(
-        self, turn: TurnData, block, block_idx: int, content_y: int
-    ) -> int | None:
-        """Map click y → content region index using strip_range.
-
-        Returns the region index if the click hit a region's strip range,
-        or None if no region was hit.
-        """
-        if not block.content_regions:
-            return None
-
-        # Compute the click's local strip offset within this block
-        block_start_strip = turn.block_strip_map.get(block_idx)
-        if block_start_strip is None:
-            return None
-
-        local_y = content_y - turn.line_offset - block_start_strip
-
-        # // [LAW:one-source-of-truth] strip_range from overrides only
-        for region in block.content_regions:
-            rvs = self._view_overrides._regions.get((block.block_id, region.index))
-            strip_range = rvs.strip_range if rvs is not None else None
-            if strip_range is not None:
-                range_start, range_end = strip_range
-                if range_start <= local_y < range_end:
-                    return region.index
-
-        return None
-
-    def _region_tag_at_line(
-        self, turn: TurnData, block, block_idx: int, content_y: int
-    ) -> int | None:
-        """Check if click is on a region tag line (first or last strip of region).
-
-        Only matches start tag and end tag lines, not inner content.
-        This is the coordinate-based complement to META_TOGGLE_REGION metadata.
-        """
-        if not block.content_regions:
-            return None
-        block_start_strip = turn.block_strip_map.get(block_idx)
-        if block_start_strip is None:
-            return None
-        local_y = content_y - turn.line_offset - block_start_strip
-        # // [LAW:one-source-of-truth] strip_range from overrides only
-        for region in block.content_regions:
-            rvs = self._view_overrides._regions.get((block.block_id, region.index))
-            strip_range = rvs.strip_range if rvs is not None else None
-            if strip_range is not None:
-                range_start, range_end = strip_range
-                if local_y == range_start or local_y == range_end - 1:
-                    return region.index
-        return None
-
-    def _toggle_region(
-        self, turn: TurnData, block_idx: int, region_idx: int
-    ) -> None:
-        """Toggle a content region's expanded state and re-render the turn.
-
-        // [LAW:dataflow-not-control-flow] content_regions[i].expanded is the value;
-        // None = default (expanded). False = collapsed.
-        """
-        block = turn._flat_blocks[block_idx]
-
-        if region_idx >= len(block.content_regions):
-            return
-
-        region = block.content_regions[region_idx]
-        # Only collapsible region kinds can be toggled
-        if region.kind not in cc_dump.tui.rendering.COLLAPSIBLE_REGION_KINDS:
-            return
-        # Toggle: None/True → False, False → None (restore default)
-        # // [LAW:one-source-of-truth] Region expanded state in overrides only
-        rvs = self._view_overrides.get_region(block.block_id, region_idx)
-        current_exp = rvs.expanded
-        new_expanded = None if current_exp is False else False
-        rvs.expanded = new_expanded
-
-        # // [LAW:single-enforcer] Re-render via _invalidate
-        if not turn.is_streaming:
-            self.mark_overrides_changed()
-            self._invalidate("region_toggled", turn=turn)
-
-    def _toggle_block_expand(self, turn: TurnData, block_idx: int):
-        """Toggle expand state for a single block and re-render its turn."""
-        block = turn._flat_blocks[block_idx]
-
-        # [LAW:dataflow-not-control-flow] Coalesce None to default, then toggle
-        cat = cc_dump.tui.rendering.get_category(block)
-        vis = self._last_filters.get(cat.value, cc_dump.core.formatting.ALWAYS_VISIBLE) if cat else cc_dump.core.formatting.ALWAYS_VISIBLE
-
-        # Coalesce: treat None as default — read from overrides only
-        # / [LAW:one-source-of-truth] Expanded state from ViewOverrides only
-        bvs = self._view_overrides.get_block(block.block_id)
-        current = bvs.expanded if bvs.expanded is not None else vis.expanded
-
-        # Toggle
-        new_value = not current
-
-        # Store override (None if matches default)
-        override_value = None if new_value == vis.expanded else new_value
-        # // [LAW:one-source-of-truth] View state in overrides only
-        bvs.expanded = override_value
-
-        # // [LAW:single-enforcer] Re-render via _invalidate
-        if not turn.is_streaming:
-            self.mark_overrides_changed()
-            self._invalidate("block_toggled", turn=turn)
-
-    def _render_single_turn(self, turn: TurnData | None = None) -> None:
-        """Re-render a single turn after toggle. Post-render via _post_render."""
-        if turn is None:
-            return
-        width = self._content_width if self._size_known else self._last_width
-        console = self.app.console
-        render_key = self._turn_render_key(width)
-        turn.re_render(
-            self._last_filters,
-            console,
-            width,
-            force=True,
-            block_cache=self._block_strip_cache,
-            overrides=self._view_overrides,
-            render_key=render_key,
-            runtime=self._render_runtime,
-        )
-        self._recalculate_offsets_from(turn.turn_index)
 
     # ─── Error indicator ────────────────────────────────────────────────────
 

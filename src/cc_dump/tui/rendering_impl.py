@@ -65,11 +65,6 @@ from textual.strip import Strip
 from textual.color import Color
 import cc_dump.core.segmentation
 
-# Click-target meta keys — the sole identifiers for interactive segments.
-# // [LAW:one-source-of-truth] Canonical constants; widget_factory reads these via module import.
-META_TOGGLE_BLOCK = "toggle_block"
-META_TOGGLE_REGION = "toggle_region"
-
 # Region kinds that support click-to-collapse/expand.
 # FUTURE: consider md/other region kinds for collapse behavior
 COLLAPSIBLE_REGION_KINDS = frozenset({"xml_block", "tool_def", "code_fence", "md_fence"})
@@ -3425,11 +3420,8 @@ def _add_gutter_to_strips(
         left_seg = Segment(symbol, Style(bold=True, color=color))
 
         # First strip: arrow (if expandable) or spaces
-        # // [LAW:single-enforcer] Meta on arrow segment is the sole toggle trigger
         if is_expandable and arrow_char:
-            arrow_style = Style(color=color, bold=True) + Style.from_meta(
-                {META_TOGGLE_BLOCK: True}
-            )
+            arrow_style = Style(color=color, bold=True)
             arrow_seg = Segment(arrow_char + "  ", arrow_style)
         else:
             arrow_seg = Segment("   ", Style())
@@ -3687,8 +3679,7 @@ def _render_region_block_strips(
         return cached_block if isinstance(cached_block, list) else []
 
     block_strips: list[Strip] = []
-    for part_renderable, region_idx in region_parts:
-        part_start = len(block_strips)
+    for part_renderable, _region_idx in region_parts:
         part_segments = ctx.console.render(part_renderable, ctx.render_options)
         part_lines = list(Segment.split_lines(part_segments))
         if part_lines:
@@ -3697,23 +3688,6 @@ def _render_region_block_strips(
                 for strip in Strip.from_lines(part_lines)
             ]
             block_strips.extend(part_strips)
-        if region_idx is None:
-            continue
-
-        region = block.content_regions[region_idx]
-        # // [LAW:one-source-of-truth] region strip_range is persisted in ViewOverrides.
-        strip_range = (part_start, len(block_strips))
-        if ctx.overrides is not None:
-            ctx.overrides.get_region(block.block_id, region_idx).strip_range = strip_range
-        if (
-            region.kind in COLLAPSIBLE_REGION_KINDS
-            and part_start < len(block_strips)
-        ):
-            region_meta = {META_TOGGLE_REGION: region_idx}
-            block_strips[part_start] = block_strips[part_start].apply_meta(region_meta)
-            last_idx = len(block_strips) - 1
-            if last_idx != part_start:
-                block_strips[last_idx] = block_strips[last_idx].apply_meta(region_meta)
 
     if cache is not None:
         cache[cache_key] = block_strips
@@ -3885,9 +3859,6 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
     )
 
     is_expandable = _compute_expandable(block_type, vis, children, block_strips)
-    # // [LAW:one-source-of-truth] Expandable state is persisted only in ViewOverrides.
-    if ctx.overrides is not None:
-        ctx.overrides.get_block(block.block_id).expandable = is_expandable
 
     strips_for_gutter, arrow = _prepare_gutter_inputs(
         block_strips, vis, max_lines, is_expandable, ctx

@@ -119,7 +119,6 @@ def test_view_overrides_serialization():
     b2 = TextContentBlock(content="two")
 
     vo.get_block(b1.block_id).expanded = True
-    vo.get_block(b1.block_id).expandable = True
     vo.get_block(b2.block_id).expanded = False
 
     vo.get_region(b1.block_id, 0).expanded = False
@@ -130,7 +129,6 @@ def test_view_overrides_serialization():
 
     # Block state
     assert restored.get_block(b1.block_id).expanded is True
-    assert restored.get_block(b1.block_id).expandable is True
     assert restored.get_block(b2.block_id).expanded is False
 
     # Region state
@@ -149,9 +147,7 @@ def test_view_overrides_serialization():
 def test_blocks_not_mutated_by_render():
     """render_turn_to_strips() with overrides does not mutate block fields.
 
-    AC6: Verifies overrides parameter routes view mutations to ViewOverrides.
-    When overrides is provided, block domain fields (category, block_id) are unchanged
-    and expandable is written to overrides instead of monkey-patched onto the block.
+    AC6: Verifies overrides parameter does not mutate block domain fields.
     """
     from rich.console import Console
     from cc_dump.tui.rendering import render_turn_to_strips
@@ -181,12 +177,8 @@ def test_blocks_not_mutated_by_render():
     # Domain fields unchanged
     assert block.category == pre_category
     assert block.block_id == pre_block_id
-    # No _expandable attribute on block — lives in overrides
+    # Render pass should not attach renderer artifacts to block objects.
     assert "_expandable" not in vars(block)
-
-    # expandable written to overrides
-    bvs = vo.get_block(block.block_id)
-    assert isinstance(bvs.expandable, bool)
 
 
 def test_auto_create_on_miss():
@@ -196,12 +188,10 @@ def test_auto_create_on_miss():
     assert isinstance(bvs, BlockViewState)
     assert bvs.expanded is None
     assert bvs.force_vis is None
-    assert bvs.expandable is False
 
     rvs = vo.get_region(999, 0)
     assert isinstance(rvs, RegionViewState)
     assert rvs.expanded is None
-    assert rvs.strip_range is None
 
 
 def test_clear_search_empty_is_noop():
