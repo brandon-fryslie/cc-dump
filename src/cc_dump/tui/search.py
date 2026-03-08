@@ -453,6 +453,7 @@ class SearchBar(Static):
                 match_count=0,
             )
         )
+        self._store_disposers: list = []
         # [LAW:single-enforcer] SearchBar rendering is owned by one local projection reaction.
         self._display_reaction = reaction(
             lambda: self._display_state.get(),
@@ -465,7 +466,7 @@ class SearchBar(Static):
         self._render_display(self._display_state.get())
 
     def on_unmount(self) -> None:
-        for d in getattr(self, "_store_disposers", []):
+        for d in self._store_disposers:
             d.dispose()
         self._display_reaction.dispose()
 

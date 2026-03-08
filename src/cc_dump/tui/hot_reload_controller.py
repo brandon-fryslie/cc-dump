@@ -19,7 +19,6 @@ import cc_dump.tui.info_panel
 import cc_dump.tui.settings_panel
 import cc_dump.tui.custom_footer
 import cc_dump.app.settings_store
-import cc_dump.app.view_store
 import cc_dump.tui.launch_config_panel
 import cc_dump.tui.side_channel_panel
 import cc_dump.tui.search_controller
@@ -204,17 +203,6 @@ async def _do_hot_reload(app) -> None:
             )
         except Exception as e:
             app._app_log("ERROR", f"Hot-reload: settings store reconcile failed: {e}")
-
-    # Reconcile view store schema (values survive). Widgets self-subscribe on mount.
-    view_store = getattr(app, "_view_store", None)
-    if view_store is not None:
-        try:
-            view_store.reconcile(
-                cc_dump.app.view_store.SCHEMA,
-                lambda store: [],
-            )
-        except Exception as e:
-            app._app_log("ERROR", f"Hot-reload: view store reconcile failed: {e}")
 
     # Any file change triggers full widget replacement
     # // [LAW:dataflow-not-control-flow] Unconditional — all reloads take same path
