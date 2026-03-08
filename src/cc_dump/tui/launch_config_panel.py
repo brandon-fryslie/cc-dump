@@ -685,6 +685,8 @@ class LaunchConfigPanel(VerticalScroll):
         self._active_name = active_config_name
         self._selected_idx = _selected_index_for_active_name(self._configs, self._active_name)
         self._emit_panel_state()
+        # [LAW:verifiable-goals] Apply immediately so first-show hydration is deterministic.
+        self._apply_panel_state(self._panel_state.get())
 
     def focus_default_control(self) -> None:
         focusable = self.query("Input, Select, ToggleChip")
