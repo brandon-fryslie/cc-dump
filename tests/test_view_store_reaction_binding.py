@@ -6,7 +6,6 @@ from types import SimpleNamespace
 import pytest
 
 import cc_dump.app.view_store
-import cc_dump.tui.view_store_bridge
 from cc_dump.tui.app import CcDumpApp
 from tests.harness import all_turns_text, make_replay_entry
 
@@ -38,11 +37,9 @@ async def test_pre_run_view_store_reactions_rebind_on_mount():
         store_context=store_context,
     )
 
-    # Pre-bind reactions exactly like CLI startup did before app.run().
-    store_context["app"] = app
-    store_context.update(cc_dump.tui.view_store_bridge.build_reaction_context(app))
+    # Pre-bind reactions before app.run(); app.on_mount should replace them safely.
     view_store._reaction_disposers = cc_dump.app.view_store.setup_reactions(
-        view_store, store_context
+        view_store, {"app": app}
     )
 
     async with app.run_test(size=(120, 40)) as pilot:

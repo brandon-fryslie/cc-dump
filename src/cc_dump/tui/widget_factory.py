@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 from snarfx import Observable, reaction
+from snarfx import textual as stx
 from textual.dom import NoScreen
 from textual.widgets import RichLog, Static
 from textual.scroll_view import ScrollView
@@ -294,6 +295,7 @@ class ConversationView(ScrollView):
             self._apply_indicator_state,
             fire_immediately=False,
         )
+        self._store_disposers: list = []
         # // [LAW:one-source-of-truth] All per-block view state lives here.
         self._view_overrides = cc_dump.tui.view_overrides.ViewOverrides()
         # Streaming preview rendering state (rendering concern).
@@ -383,11 +385,40 @@ class ConversationView(ScrollView):
 
         // [LAW:one-source-of-truth] DomainStore remains canonical; widget cache is derived.
         """
+        self._store_disposers = self._setup_store_reactions()
         self._apply_indicator_state(self._indicator_state.get())
         self._hydrate_from_domain_store()
 
     def on_unmount(self) -> None:
+        for d in self._store_disposers:
+            d.dispose()
         self._indicator_reaction.dispose()
+
+    def _setup_store_reactions(self) -> list:
+        store = self._view_store
+        if store is None:
+            return []
+        return [
+            stx.reaction(
+                self.app,
+                lambda: store.active_filters.get(),
+                self._rerender_from_store_filters,
+                fire_immediately=False,
+            ),
+            stx.reaction(
+                self.app,
+                lambda: store.error_items.get(),
+                self._update_errors_from_store,
+                fire_immediately=True,
+            ),
+        ]
+
+    def _rerender_from_store_filters(self, filters: dict) -> None:
+        # [LAW:single-enforcer] Conversation rerender on filter changes is owned locally.
+        self.rerender(filters)
+
+    def _update_errors_from_store(self, items: list) -> None:
+        self.update_error_items(items)
 
     def _set_indicator_state(
         self,

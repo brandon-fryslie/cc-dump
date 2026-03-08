@@ -107,12 +107,20 @@ class StatusFooter(StoreWidget):
         # [LAW:single-enforcer] Footer self-subscribes to footer_state; fires immediately
         # on mount (post-compose) so children are guaranteed ready.
         store = self.app._view_store
-        return [stx.reaction(
-            self.app,
-            lambda: store.footer_state.get(),
-            self._apply_footer_state,
-            fire_immediately=True,
-        )]
+        return [
+            stx.reaction(
+                self.app,
+                lambda: store.footer_state.get(),
+                self._apply_footer_state,
+                fire_immediately=True,
+            ),
+            stx.reaction(
+                self.app,
+                lambda: bool(store.search_ui_state.get().get("footer_visible", True)),
+                self._apply_footer_visibility,
+                fire_immediately=True,
+            ),
+        ]
 
     def compose(self):
         # Line 1: category chips
@@ -232,3 +240,8 @@ class StatusFooter(StoreWidget):
             else ""
         )
         launch_chip.update(f" c {active_tool_label}{config_suffix} ")
+
+    def _apply_footer_visibility(self, footer_visible: bool) -> None:
+        if not self.is_attached:
+            return
+        self.display = bool(footer_visible)

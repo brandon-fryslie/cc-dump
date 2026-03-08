@@ -36,7 +36,6 @@ from cc_dump.pipeline.proxy import RequestPipeline
 import cc_dump.app.view_store
 import cc_dump.app.hot_reload
 import cc_dump.app.domain_store
-import cc_dump.tui.view_store_bridge
 import cc_dump.io.logging_setup
 import cc_dump.providers
 from cc_dump.tui.app import CcDumpApp
@@ -292,14 +291,6 @@ def _base_store_context(
         "tmux_controller": tmux_controller,
         "settings_store": settings_store,
         "view_store": view_store,
-    }
-
-
-def _app_store_context(base_context: dict[str, object], app: CcDumpApp) -> dict[str, object]:
-    return {
-        **base_context,
-        "app": app,
-        **cc_dump.tui.view_store_bridge.build_reaction_context(app),
     }
 
 
@@ -669,7 +660,6 @@ def main():
         auto_launch_extra_args=auto_launch_extra_args,
     )
 
-    app._store_context = _app_store_context(store_context, app)
     try:
         app.run()
     finally:

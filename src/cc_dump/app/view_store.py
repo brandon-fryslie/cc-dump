@@ -1,9 +1,7 @@
 """View store — category visibility + panel/follow + footer/error/side-channel state. RELOADABLE.
 
 // [LAW:one-source-of-truth] Schema derived from CATEGORY_CONFIG + panel/follow + footer/error/sc keys.
-// [LAW:single-enforcer] Single autorun triggers re-render on any visibility change.
-// [LAW:single-enforcer] Single reaction per widget push (panel, footer, error, side-channel).
-// [LAW:one-way-deps] No widget imports — push callbacks provided via context (see view_store_bridge).
+// [LAW:one-way-deps] App/tui layers subscribe to this store; this module owns only data.
 """
 
 from cc_dump.core.formatting import VisState
@@ -13,7 +11,6 @@ from cc_dump.core.coerce import coerce_int
 from cc_dump.tui.category_config import CATEGORY_CONFIG
 from snarfx.hot_reload import HotReloadStore
 from snarfx import computed, ObservableList
-from snarfx import textual as stx
 
 
 # [LAW:one-source-of-truth] Schema built programmatically from CATEGORY_CONFIG + panel/follow
@@ -93,7 +90,7 @@ def create():
     store.exception_items = ObservableList()   # list[ErrorItem] — was app._exception_items
 
     # // [LAW:single-enforcer] footer_state Computed reads all footer inputs from store.
-    # Returns plain types — bridge converts to widget-specific types (FollowState).
+    # Returns plain types — footer widget performs local enum adaptation.
     @computed
     def footer_state():
         return {
@@ -150,7 +147,7 @@ def create():
     store.error_items = error_items
 
     # // [LAW:single-enforcer] sc_panel_state Computed combines side-channel fields.
-    # Returns plain dict — bridge converts to SideChannelPanelState.
+    # SideChannelPanel adapts this projection to its local dataclass.
     @computed
     def sc_panel_state():
         return {
@@ -199,39 +196,14 @@ def create():
 
 
 def setup_reactions(store, context=None):
-    """Register reactions. Returns list of disposers.
+    """Compatibility shim for historical call sites.
 
-    Called on create and on hot-reload reconcile.
-    context: dict with "app" and push callbacks from bridge.
-
-    // [LAW:single-enforcer] All guards (pause, NoMatches, thread-marshal) enforced by stx.
-    // [LAW:one-way-deps] Push callbacks provided by caller, not imported here.
+    Store consumers now self-subscribe via local SnarFX reactions; there are no
+    view-store-owned UI push reactions.
     """
-    disposers = []
-
-    if context:
-        app = context.get("app")
-        if app is not None:
-            disposers.append(stx.autorun(app,
-                lambda: (store.active_filters.get(), app._rerender_if_mounted())
-            ))
-
-            # // [LAW:single-enforcer] Callback-based reactions — bridge provides push functions.
-            for key, data_fn in [
-                ("push_panel_change", lambda: store.get("panel:active")),
-                ("push_sidebar_state", lambda: store.sidebar_panel_state.get()),
-                ("push_chrome_panels", lambda: store.chrome_panel_state.get()),
-                ("push_aux_panels", lambda: store.aux_panel_state.get()),
-                ("push_errors", lambda: store.error_items.get()),
-                ("push_sc_panel", lambda: store.sc_panel_state.get()),
-                ("push_workbench", lambda: store.workbench_state.get()),
-                ("push_search_ui", lambda: store.search_ui_state.get()),
-            ]:
-                cb = context.get(key)
-                if cb:
-                    disposers.append(stx.reaction(app, data_fn, cb))
-
-    return disposers
+    _ = store
+    _ = context
+    return []
 
 
 def get_category_state(store, name: str) -> VisState:

@@ -61,7 +61,6 @@ import cc_dump.app.tmux_controller
 import cc_dump.tui.settings_panel
 import cc_dump.tui.launch_config_panel
 import cc_dump.tui.side_channel_panel
-import cc_dump.tui.view_store_bridge
 import cc_dump.pipeline.har_replayer
 import cc_dump.io.sessions
 import cc_dump.app.memory_stats
@@ -70,6 +69,8 @@ import cc_dump.app.view_store
 import cc_dump.ai.conversation_qa
 import cc_dump.ai.side_channel_marker
 import cc_dump.providers
+import cc_dump.tui.keys_panel
+import cc_dump.tui.debug_settings_panel
 
 from cc_dump.io.stderr_tee import get_tee as _get_tee
 import cc_dump.app.domain_store
@@ -808,30 +809,45 @@ class CcDumpApp(App):
         self._execute_auto_launch()
 
     def _bind_view_store_reactions(self) -> None:
-        """(Re)bind view-store reactions after app mount.
+        """(Re)bind app-owned view-store reactions after app mount.
 
-        // [LAW:single-enforcer] View-store reaction lifecycle is owned here.
-        // [LAW:one-source-of-truth] _store_context is canonical reaction context.
+        // [LAW:single-enforcer] App-local UI orchestration reactions are centralized here.
         """
         if self._view_store is None:
             return
-        ctx = self._store_context if isinstance(self._store_context, dict) else {}
-        self._store_context = ctx
-        ctx["app"] = self
-        ctx.update(cc_dump.tui.view_store_bridge.build_reaction_context(self))
+        self._dispose_view_store_reactions()
+        store = self._view_store
+        self._view_store._reaction_disposers = [
+            stx.reaction(self, lambda: store.get("panel:active"), self._apply_active_panel, fire_immediately=True),
+            stx.reaction(self, lambda: store.sidebar_panel_state.get(), self._sync_sidebar_panels, fire_immediately=True),
+            stx.reaction(self, lambda: store.chrome_panel_state.get(), self._sync_chrome_panels, fire_immediately=True),
+            stx.reaction(self, lambda: store.aux_panel_state.get(), self._sync_aux_panels, fire_immediately=True),
+        ]
 
+    def _dispose_view_store_reactions(self) -> None:
         old_disposers = getattr(self._view_store, "_reaction_disposers", None)
-        if isinstance(old_disposers, list):
-            for dispose in old_disposers:
-                if callable(dispose):
-                    try:
-                        dispose()
-                    except Exception:
-                        pass
+        if not isinstance(old_disposers, list):
+            return
+        for disposer in old_disposers:
+            self._dispose_reaction_handle(disposer)
 
-        self._view_store._reaction_disposers = cc_dump.app.view_store.setup_reactions(
-            self._view_store, ctx
-        )
+    @staticmethod
+    def _dispose_reaction_handle(disposer) -> None:
+        if hasattr(disposer, "dispose"):
+            try:
+                disposer.dispose()
+            except Exception:
+                pass
+            return
+        if callable(disposer):
+            try:
+                disposer()
+            except Exception:
+                pass
+
+    def _apply_active_panel(self, active: str) -> None:
+        self._sync_panel_display(active)
+        _actions.refresh_active_panel(self, active)
 
     async def action_quit(self) -> None:
         now = time.monotonic()
@@ -1489,6 +1505,45 @@ class CcDumpApp(App):
             conv = self._get_conv()
             if conv is not None:
                 self.call_after_refresh(conv.focus)
+
+    def _sync_chrome_panels(self, state: tuple[bool, bool]) -> None:
+        """Single enforcer for logs/info panel visibility."""
+        logs_visible, info_visible = state
+        logs = self._get_logs()
+        if logs is not None:
+            logs.display = bool(logs_visible)
+        info = self._get_info()
+        if info is not None:
+            info.display = bool(info_visible)
+
+    def _sync_aux_panels(self, state: tuple[bool, bool]) -> None:
+        """Single enforcer for keys/debug overlay mount/remove behavior."""
+        keys_visible, debug_visible = state
+        self._sync_overlay_panel(
+            visible=keys_visible,
+            panel_type=cc_dump.tui.keys_panel.KeysPanel,
+            factory=cc_dump.tui.keys_panel.create_keys_panel,
+        )
+        removed_debug = self._sync_overlay_panel(
+            visible=debug_visible,
+            panel_type=cc_dump.tui.debug_settings_panel.DebugSettingsPanel,
+            factory=lambda: cc_dump.tui.debug_settings_panel.create_debug_settings_panel(app_ref=self),
+        )
+        if removed_debug:
+            conv = self._get_conv()
+            if conv is not None:
+                conv.focus()
+
+    def _sync_overlay_panel(self, *, visible: bool, panel_type, factory) -> bool:
+        panels = list(self.screen.query(panel_type))
+        should_mount = visible and not panels
+        should_remove = (not visible) and bool(panels)
+        if should_mount:
+            self.screen.mount(factory())
+        if should_remove:
+            for mounted_panel in panels:
+                mounted_panel.remove()
+        return should_remove
 
     def watch_theme(self, theme_name: str) -> None:
         if not stx.is_safe(self):

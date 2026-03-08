@@ -26,7 +26,6 @@ import cc_dump.tui.launch_config_panel
 import cc_dump.tui.side_channel_panel
 import cc_dump.tui.search_controller
 import cc_dump.tui.theme_controller
-import cc_dump.tui.view_store_bridge
 import cc_dump.tui.protocols
 from cc_dump.tui.category_config import CATEGORY_CONFIG
 
@@ -208,18 +207,15 @@ async def _do_hot_reload(app) -> None:
         except Exception as e:
             app._app_log("ERROR", f"Hot-reload: settings store reconcile failed: {e}")
 
-    # Reconcile view store (values survive, autorun re-registers)
+    # Reconcile view store schema (values survive) and rebind app-owned reactions.
     view_store = getattr(app, "_view_store", None)
     if view_store is not None:
         try:
-            # Rebuild bridge context with freshly-reloaded module functions
-            ctx = getattr(app, "_store_context", None)
-            if ctx is not None:
-                ctx.update(cc_dump.tui.view_store_bridge.build_reaction_context(app))
             view_store.reconcile(
                 cc_dump.app.view_store.SCHEMA,
-                lambda store: cc_dump.app.view_store.setup_reactions(store, ctx),
+                lambda store: cc_dump.app.view_store.setup_reactions(store, None),
             )
+            app._bind_view_store_reactions()
         except Exception as e:
             app._app_log("ERROR", f"Hot-reload: view store reconcile failed: {e}")
 

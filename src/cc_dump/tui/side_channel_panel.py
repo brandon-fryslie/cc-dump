@@ -9,14 +9,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from snarfx import Observable, reaction
+from snarfx import textual as stx
 from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
-from textual.widget import Widget
 from textual.widgets import Checkbox, Input, Select, Static
 
 from cc_dump.core.analysis import fmt_tokens
 from cc_dump.ai.utility_catalog import UtilityRegistry
 from cc_dump.tui.chip import Chip
+from cc_dump.tui.store_widget import StoreWidget
 
 
 @dataclass
@@ -129,7 +130,7 @@ _DEFAULT_SIDE_CHANNEL_PANEL_STATE = SideChannelPanelState(
 )
 
 
-class SideChannelPanel(Widget):
+class SideChannelPanel(StoreWidget):
     """Docked panel for Workbench orchestration controls and status."""
 
     DEFAULT_CSS = """
@@ -286,10 +287,38 @@ class SideChannelPanel(Widget):
             )
         )
 
+    def _setup_store_reactions(self) -> list:
+        store = getattr(self.app, "_view_store", None)
+        if store is None:
+            return []
+        return [
+            stx.reaction(
+                self.app,
+                lambda: store.sc_panel_state.get(),
+                self._sync_from_store_projection,
+                fire_immediately=True,
+            )
+        ]
+
+    def _sync_from_store_projection(self, projection: dict[str, object]) -> None:
+        self.update_display(
+            SideChannelPanelState(
+                enabled=bool(projection.get("enabled", False)),
+                loading=bool(projection.get("loading", False)),
+                active_action=str(projection.get("active_action", "")),
+                result_text=str(projection.get("result_text", "")),
+                result_source=str(projection.get("result_source", "")),
+                result_elapsed_ms=_read_int(projection.get("result_elapsed_ms"), 0),
+                purpose_usage=_read_purpose_usage(projection.get("purpose_usage")),
+            )
+        )
+
     def on_mount(self) -> None:
+        super().on_mount()
         self._apply_display_state(self._display_state.get())
 
     def on_unmount(self) -> None:
+        super().on_unmount()
         self._display_reaction.dispose()
 
     def _apply_display_state(self, state: SideChannelPanelState) -> None:
@@ -517,3 +546,24 @@ def _utility_options() -> list[tuple[str, str]]:
 def _utility_default_value() -> str:
     specs = _utility_specs()
     return specs[0].utility_id if specs else ""
+
+
+def _read_int(value: object, default: int) -> int:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return default
+
+
+def _read_purpose_usage(value: object) -> dict[str, dict[str, int]]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, dict[str, int]] = {}
+    for purpose, row in value.items():
+        if not isinstance(purpose, str) or not isinstance(row, dict):
+            continue
+        typed_row: dict[str, int] = {}
+        for metric, metric_value in row.items():
+            if isinstance(metric, str) and isinstance(metric_value, int) and not isinstance(metric_value, bool):
+                typed_row[metric] = metric_value
+        normalized[purpose] = typed_row
+    return normalized
