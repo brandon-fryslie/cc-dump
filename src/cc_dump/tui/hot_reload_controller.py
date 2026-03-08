@@ -579,6 +579,19 @@ async def _mount_replacement_widgets(
     new_footer = cc_dump.tui.custom_footer.StatusFooter()
     await app.mount(new_footer, after=new_info)
 
+
+def _rehydrate_panels_from_store(app, new_panels: dict[str, object]) -> None:
+    """Rehydrate mounted panel data from canonical stores after widget swap.
+
+    // [LAW:one-source-of-truth] Panel content is always derived from live stores.
+    // [LAW:single-enforcer] Hot-reload panel hydration happens at this boundary.
+    """
+    for panel in new_panels.values():
+        refresh = getattr(panel, "refresh_from_store", None)
+        if callable(refresh):
+            refresh()
+
+
 async def _mount_replacement_conversation(
     app,
     new_conv,

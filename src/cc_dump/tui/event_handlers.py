@@ -171,7 +171,6 @@ def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool =
         budget_vis = filters.get("metadata", cc_dump.core.formatting.HIDDEN)
         if budget_vis.visible:
             conv.rerender(filters)
-    _refresh_stats_snapshot(widgets, app_state)
 
 
 def _handle_complete_response_payload(
@@ -260,7 +259,6 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
         domain_store = widgets["domain_store"]
         # Non-streaming: add turn to domain store (fires callback to ConversationView)
         domain_store.add_turn(blocks)
-        _refresh_stats_snapshot(widgets, app_state)
 
         log_fn("DEBUG", f"Request #{state['request_counter']} processed")
     except Exception as e:
@@ -351,7 +349,6 @@ def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_s
             domain_store.append_stream_block(event.request_id, block)
 
         _upsert_current_turn_usage(app_state, event.request_id, event)
-        _refresh_stats_snapshot(widgets, app_state)
     except Exception as e:
         log_fn("ERROR", f"Error handling response progress: {e}")
         raise
