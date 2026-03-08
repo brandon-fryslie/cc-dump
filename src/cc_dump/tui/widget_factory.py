@@ -442,6 +442,10 @@ class ConversationView(ScrollView):
         *,
         at_bottom: bool,
     ) -> None:
+        """Dispatch a follow intent with explicit caller-owned scroll context.
+
+        // [LAW:one-source-of-truth] Caller-provided at_bottom is authoritative.
+        """
         self._follow_store.dispatch(event, at_bottom=bool(at_bottom))
 
     def _apply_follow_transition(self, payload: tuple[int, FollowTransition]) -> None:
