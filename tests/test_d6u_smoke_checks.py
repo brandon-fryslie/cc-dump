@@ -176,19 +176,15 @@ def test_m3_replay_parity_matches_live_analytics_projection():
     assert replay_store.get_latest_turn_stats() == live_store.get_latest_turn_stats()
 
 
-def test_m4_tmux_auto_zoom_request_then_end_turn():
-    """M4: tmux auto-zoom zooms on request and unzooms on end_turn."""
+def test_m4_tmux_event_subscriber_is_noop():
+    """M4: tmux event callback is intentionally a no-op after zoom removal."""
     with patch.dict("os.environ", {}, clear=True):
         controller = TmuxController()
 
-    pane = MagicMock()
     controller.state = TmuxState.TOOL_RUNNING
-    controller.auto_zoom = True
-    controller._our_pane = pane
+    controller._our_pane = MagicMock()
     controller._tool_pane = MagicMock()
 
     controller.on_event(RequestBodyEvent(body={}))
-    assert controller._is_zoomed is True
-
     controller.on_event(ResponseCompleteEvent(body={"stop_reason": "end_turn"}))
-    assert controller._is_zoomed is False
+    assert controller.state == TmuxState.TOOL_RUNNING

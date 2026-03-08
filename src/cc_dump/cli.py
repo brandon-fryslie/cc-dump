@@ -592,18 +592,13 @@ def main():
             provider_endpoints=provider_endpoints,
         )
         active_launcher_label = active_profile.launcher_label.lower()
-        auto_zoom = bool(settings_store.get("auto_zoom_default"))
         tmux_ctrl = cc_dump.app.tmux_controller.TmuxController(
             launch_command=active_config.resolved_command,
             process_names=active_profile.process_names,
             launch_env=active_profile.environment,
             launcher_label=active_profile.launcher_label,
-            auto_zoom=auto_zoom,
         )
         tmux_ctrl.set_port(actual_port)
-        # Subscribe for both READY and TOOL_RUNNING (adoption case)
-        if tmux_ctrl.state in (TmuxState.READY, TmuxState.TOOL_RUNNING):
-            router.add_subscriber(DirectSubscriber(tmux_ctrl.on_event))
     # [LAW:dataflow-not-control-flow] Status message from state, not branching
     _TMUX_STATUS = {
         None: "disabled (not in tmux)" if not os.environ.get("TMUX") else "disabled (libtmux not installed)",
