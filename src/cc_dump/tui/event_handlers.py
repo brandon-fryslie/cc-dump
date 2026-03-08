@@ -162,6 +162,20 @@ def _refresh_stats_snapshot(widgets, app_state) -> None:
     view_store.set("panel:stats_snapshot", _with_capacity_summary(snapshot))
 
 
+def _bump_view_store_revision(widgets, key: str) -> None:
+    """Bump a view-store revision key when derived UI projections need refresh."""
+    view_store = widgets.get("view_store")
+    if view_store is None:
+        return
+    get_value = getattr(view_store, "get", None)
+    set_value = getattr(view_store, "set", None)
+    if not callable(set_value):
+        return
+    raw = get_value(key) if callable(get_value) else 0
+    current = int(raw) if isinstance(raw, int) else 0
+    set_value(key, current + 1)
+
+
 def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool = True) -> None:
     """Refresh derived UI state after a response completion path."""
     conv = widgets["conv"]
@@ -171,6 +185,7 @@ def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool =
         budget_vis = filters.get("metadata", cc_dump.core.formatting.HIDDEN)
         if budget_vis.visible:
             conv.rerender(filters)
+    _bump_view_store_revision(widgets, "analytics:revision")
 
 
 def _handle_complete_response_payload(
@@ -259,6 +274,7 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
         domain_store = widgets["domain_store"]
         # Non-streaming: add turn to domain store (fires callback to ConversationView)
         domain_store.add_turn(blocks)
+        _bump_view_store_revision(widgets, "analytics:revision")
 
         log_fn("DEBUG", f"Request #{state['request_counter']} processed")
     except Exception as e:
@@ -349,6 +365,7 @@ def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_s
             domain_store.append_stream_block(event.request_id, block)
 
         _upsert_current_turn_usage(app_state, event.request_id, event)
+        _bump_view_store_revision(widgets, "analytics:revision")
     except Exception as e:
         log_fn("ERROR", f"Error handling response progress: {e}")
         raise

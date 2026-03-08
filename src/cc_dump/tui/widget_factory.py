@@ -2264,15 +2264,9 @@ class StatsPanel(Static):
         super().__init__("")
         self._view_index = 0
         self._last_snapshot: dict = {"summary": {}, "timeline": [], "models": []}
-        self._pull_tick: Observable[int] = Observable(0)
+        self._store_reaction_disposer = None
         self._render_state: Observable[tuple[int, dict[str, object]]] = Observable(
             (self._view_index, self._last_snapshot)
-        )
-        # [LAW:single-enforcer] One projection owns pull-based snapshot hydration from app stores.
-        self._pull_reaction = reaction(
-            lambda: self._pull_tick.get(),
-            self._pull_snapshot_from_app,
-            fire_immediately=False,
         )
         # [LAW:single-enforcer] One reactive projection owns stats panel rendering.
         self._render_reaction = reaction(
@@ -2282,16 +2276,30 @@ class StatsPanel(Static):
         )
 
     def on_mount(self) -> None:
-        self.set_interval(0.5, self._request_pull)
-        self._request_pull()
+        app = getattr(self, "app", None)
+        view_store = getattr(app, "_view_store", None) if app is not None else None
+        if app is not None and view_store is not None:
+            # [LAW:single-enforcer] Store revision changes are the only trigger for panel pulls.
+            self._store_reaction_disposer = stx.reaction(
+                app,
+                lambda: (
+                    view_store.get("analytics:revision"),
+                    view_store.get("session:revision"),
+                    view_store.get("panel:active"),
+                ),
+                self._pull_snapshot_from_store_signal,
+            )
+        self._pull_snapshot_from_app()
         self._apply_render_state(self._render_state.get())
 
     def on_unmount(self) -> None:
-        self._pull_reaction.dispose()
+        if callable(self._store_reaction_disposer):
+            self._store_reaction_disposer()
+            self._store_reaction_disposer = None
         self._render_reaction.dispose()
 
-    def _request_pull(self) -> None:
-        self._pull_tick.set(self._pull_tick.get() + 1)
+    def _pull_snapshot_from_store_signal(self, _signal: tuple[object, object, object]) -> None:
+        self._pull_snapshot_from_app()
 
     def _current_turn_from_app(self, app) -> dict | None:
         app_state = getattr(app, "_app_state", {})
@@ -2312,7 +2320,7 @@ class StatsPanel(Static):
         current_turn = usage_by_request.get(focused_request_id)
         return current_turn if isinstance(current_turn, dict) else None
 
-    def _pull_snapshot_from_app(self, _tick: int) -> None:
+    def _pull_snapshot_from_app(self) -> None:
         # [LAW:dataflow-not-control-flow] exception: pull requires mounted widget/app context.
         if not self.is_attached:
             return
@@ -2355,7 +2363,7 @@ class StatsPanel(Static):
     ):
         """Back-compat seam: trigger pull-based refresh from app-owned stores."""
         _ = (store, current_turn, domain_store, all_domain_stores)
-        self._request_pull()
+        self._pull_snapshot_from_app()
 
     def _refresh_display(self):
         self._render_state.set((self._view_index, self._last_snapshot))

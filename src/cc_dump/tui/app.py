@@ -543,7 +543,12 @@ class CcDumpApp(App):
             per_session = {}
         per_session[resolved_key] = time.monotonic()
         self._app_state["last_message_time_by_session"] = per_session
-        self._publish_session_panel_state()
+        self._bump_view_store_revision("session:revision")
+
+    def _bump_view_store_revision(self, key: str) -> None:
+        raw = self._view_store.get(key)
+        current = int(raw) if isinstance(raw, int) else 0
+        self._view_store.set(key, current + 1)
 
     def _sync_detected_session(self, state: dict[str, object]) -> None:
         # // [LAW:one-source-of-truth] Session ID comes from formatting state,
@@ -554,7 +559,7 @@ class CcDumpApp(App):
             return
         self._app_log("INFO", f"Session detected: {current_session}")
         self._session_id = current_session
-        self._publish_session_panel_state()
+        self._bump_view_store_revision("session:revision")
         self.post_message(NewSession(current_session))
         self.notify(f"New session: {current_session[:8]}...")
         info = self._get_info()
@@ -1104,19 +1109,12 @@ class CcDumpApp(App):
         if conv is None:
             return
         domain_store = self._get_domain_store(session_key)
-        active_session_key = self._active_session_key_from_tabs()
-        # [LAW:single-enforcer] Active-session gating for stats snapshot writes is enforced here.
-        event_view_store = (
-            self._view_store
-            if session_key == active_session_key
-            else None
-        )
 
         # [LAW:dataflow-not-control-flow] Unified context dict
         widgets = {
             "conv": conv,
             "filters": self.active_filters,
-            "view_store": event_view_store,
+            "view_store": self._view_store,
             "domain_store": domain_store,
             "analytics_store": self._analytics_store,
         }
@@ -1146,8 +1144,8 @@ class CcDumpApp(App):
             if tab_id == pane_id:
                 self._active_session_key = session_key
                 break
-        self._publish_session_panel_state()
-        # // [LAW:one-source-of-truth] _domain_store mirrors the active session store.
+        self._bump_view_store_revision("session:revision")
+        # // [LAW:one-source-of-truth] Back-compat alias points to active session store.
         self._domain_store = self._get_active_domain_store()
 
     # ─── Delegates to extracted modules ────────────────────────────────
