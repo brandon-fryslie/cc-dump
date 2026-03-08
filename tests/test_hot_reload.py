@@ -159,6 +159,93 @@ class TestHotReloadMountSeam:
         app.mount.assert_awaited_once_with(new_conv, after=prev_widget)
 
 
+class TestHotReloadPanelIdentity:
+    def test_assign_replacement_identity_reconciles_panel_ids(self, monkeypatch):
+        import cc_dump.tui.hot_reload_controller as controller
+        import cc_dump.tui.panel_registry as panel_registry
+
+        monkeypatch.setattr(
+            panel_registry,
+            "PANEL_REGISTRY",
+            [
+                panel_registry.PanelSpec("stats", "stats-panel", "cc_dump.tui.widget_factory.create_stats_panel"),
+                panel_registry.PanelSpec("session", "session-panel", "cc_dump.tui.session_panel.create_session_panel"),
+            ],
+        )
+
+        app = SimpleNamespace(
+            _logs_id="logs-panel",
+            _info_id="info-panel",
+            _panel_ids={"stats": "old-stats-panel", "removed": "removed-panel"},
+        )
+        snapshot = controller._WidgetSwapSnapshot(
+            conversations=[],
+            old_logs=None,
+            old_info=None,
+            old_footer=None,
+            logs_state={},
+            info_state={},
+            old_panels={},
+            panel_states={},
+            active_panel="stats",
+            logs_visible=True,
+            info_visible=False,
+        )
+        new_logs = SimpleNamespace(id=None, display=None)
+        new_info = SimpleNamespace(id=None, display=None)
+        new_panels = {
+            "stats": SimpleNamespace(id=None, display=None),
+            "session": SimpleNamespace(id=None, display=None),
+        }
+
+        controller._assign_replacement_identity(
+            app,
+            snapshot=snapshot,
+            new_conversations={},
+            new_panels=new_panels,
+            new_logs=new_logs,
+            new_info=new_info,
+        )
+
+        assert app._panel_ids == {
+            "stats": "stats-panel",
+            "session": "session-panel",
+        }
+        assert new_panels["stats"].id == "stats-panel"
+        assert new_panels["stats"].display is True
+        assert new_panels["session"].id == "session-panel"
+        assert new_panels["session"].display is False
+        assert new_logs.id == "logs-panel"
+        assert new_logs.display is True
+        assert new_info.id == "info-panel"
+        assert new_info.display is False
+
+    @pytest.mark.asyncio
+    async def test_remove_old_widgets_drops_stale_panels(self):
+        import cc_dump.tui.hot_reload_controller as controller
+
+        stale_panel = AsyncMock()
+        current_panel = AsyncMock()
+        snapshot = controller._WidgetSwapSnapshot(
+            conversations=[],
+            old_logs=None,
+            old_info=None,
+            old_footer=None,
+            logs_state={},
+            info_state={},
+            old_panels={"removed": stale_panel, "stats": current_panel},
+            panel_states={},
+            active_panel="stats",
+            logs_visible=True,
+            info_visible=True,
+        )
+
+        await controller._remove_old_widgets(snapshot)
+
+        stale_panel.remove.assert_awaited_once()
+        current_panel.remove.assert_awaited_once()
+
+
 @pytest.mark.textual
 class TestHotReloadMultiSessionTabs:
     async def test_replace_all_widgets_preserves_all_session_tabs(self):
@@ -751,9 +838,14 @@ class TestHotReloadModuleStructure:
 
         assert isinstance(_EXCLUDED_MODULES, set)
 
-        required_exclusions = ["tui/app.py"]
+        required_exclusions = ["tui/app.py", "tui/hot_reload_controller.py"]
         for exc in required_exclusions:
             assert exc in _EXCLUDED_MODULES, f"Expected {exc} to be excluded"
+
+        # [LAW:locality-or-seam] Pure/controller modules should remain reloadable.
+        assert "tui/search_controller.py" not in _EXCLUDED_MODULES
+        assert "tui/category_config.py" not in _EXCLUDED_MODULES
+        assert "tui/panel_registry.py" not in _EXCLUDED_MODULES
 
     def test_no_widgets_reexport_module(self):
         """tui/widgets.py re-export shim must not exist (regression guard)."""
@@ -813,6 +905,9 @@ class TestHotReloadFileDetection:
         assert hr.is_reloadable(str(test_dir / "core" / "palette.py")) is True
         assert hr.is_reloadable(str(test_dir / "core" / "formatting.py")) is True
         assert hr.is_reloadable(str(test_dir / "tui" / "rendering.py")) is True
+        assert hr.is_reloadable(str(test_dir / "tui" / "search_controller.py")) is True
+        assert hr.is_reloadable(str(test_dir / "tui" / "category_config.py")) is True
+        assert hr.is_reloadable(str(test_dir / "tui" / "panel_registry.py")) is True
 
     def test_is_reloadable_rejects_excluded(self):
         import cc_dump.app.hot_reload as hr
