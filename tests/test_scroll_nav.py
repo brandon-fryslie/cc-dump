@@ -13,6 +13,8 @@ from unittest.mock import patch, PropertyMock, MagicMock
 from cc_dump.tui.widget_factory import (
     ConversationView,
     FollowState,
+)
+from cc_dump.tui.follow_mode import (
     _FOLLOW_TOGGLE,
     _FOLLOW_TRANSITIONS,
     _FOLLOW_SCROLL_BOTTOM,

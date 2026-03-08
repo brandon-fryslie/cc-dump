@@ -12,7 +12,6 @@ import os
 from contextlib import contextmanager
 from collections import deque
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import TYPE_CHECKING
 from snarfx import Observable, reaction
 from textual.dom import NoScreen
@@ -35,51 +34,17 @@ import cc_dump.tui.error_indicator
 import cc_dump.tui.view_overrides
 import cc_dump.app.error_models
 import cc_dump.app.domain_store
+from cc_dump.tui.follow_mode import (
+    FollowState,
+    FollowEvent,
+    transition_follow_state,
+)
 from cc_dump.io.perf_logging import monitor_slow_path
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from cc_dump.tui.rendering_impl import RenderRuntime
-
-
-# ─── Follow mode state machine ──────────────────────────────────────────────
-
-
-class FollowState(Enum):
-    OFF = "off"
-    ENGAGED = "engaged"
-    ACTIVE = "active"
-
-
-# [LAW:dataflow-not-control-flow] Transitions as data, not branches.
-# Key: (current_state, at_bottom) → new_state
-_FOLLOW_TRANSITIONS: dict[tuple[FollowState, bool], FollowState] = {
-    (FollowState.ACTIVE, True): FollowState.ACTIVE,
-    (FollowState.ACTIVE, False): FollowState.ENGAGED,
-    (FollowState.ENGAGED, True): FollowState.ACTIVE,
-    (FollowState.ENGAGED, False): FollowState.ENGAGED,
-    (FollowState.OFF, True): FollowState.OFF,
-    (FollowState.OFF, False): FollowState.OFF,
-}
-
-_FOLLOW_TOGGLE: dict[FollowState, FollowState] = {
-    FollowState.OFF: FollowState.ACTIVE,
-    FollowState.ENGAGED: FollowState.OFF,
-    FollowState.ACTIVE: FollowState.OFF,
-}
-
-_FOLLOW_SCROLL_BOTTOM: dict[FollowState, FollowState] = {
-    FollowState.OFF: FollowState.OFF,
-    FollowState.ENGAGED: FollowState.ACTIVE,
-    FollowState.ACTIVE: FollowState.ACTIVE,
-}
-
-_FOLLOW_DEACTIVATE: dict[FollowState, FollowState] = {
-    FollowState.OFF: FollowState.OFF,
-    FollowState.ENGAGED: FollowState.ENGAGED,
-    FollowState.ACTIVE: FollowState.ENGAGED,
-}
 
 
 def _compute_widest(strips: list) -> int:
@@ -283,6 +248,10 @@ class ConversationView(ScrollView):
         self._last_theme_generation: int = self._read_theme_generation()
         # Local fallback for tests that don't pass a view_store
         self._follow_state_fallback: FollowState = FollowState.ACTIVE
+        self._follow_event_seq: int = 0
+        self._follow_event: Observable[tuple[int, FollowEvent, bool]] = Observable(
+            (0, FollowEvent.USER_SCROLL, True)
+        )
         self._pending_restore: dict | None = None
         self._scrolling_programmatically: bool = False
         self._scroll_anchor: ScrollAnchor | None = None
@@ -292,6 +261,12 @@ class ConversationView(ScrollView):
         self._indicator_reaction = reaction(
             lambda: self._indicator_state.get(),
             self._apply_indicator_state,
+            fire_immediately=False,
+        )
+        # [LAW:single-enforcer] One follow reaction owns transition + follow-scroll side effects.
+        self._follow_reaction = reaction(
+            lambda: self._follow_event.get(),
+            self._apply_follow_event,
             fire_immediately=False,
         )
         # // [LAW:one-source-of-truth] All per-block view state lives here.
@@ -388,6 +363,7 @@ class ConversationView(ScrollView):
 
     def on_unmount(self) -> None:
         self._indicator_reaction.dispose()
+        self._follow_reaction.dispose()
 
     def _set_indicator_state(
         self,
@@ -445,6 +421,28 @@ class ConversationView(ScrollView):
             self._view_store.set("nav:follow", value.value)
         else:
             self._follow_state_fallback = value
+
+    def _dispatch_follow_event(
+        self,
+        event: FollowEvent,
+        *,
+        at_bottom: bool | None = None,
+    ) -> None:
+        resolved_at_bottom = self.is_vertical_scroll_end if at_bottom is None else at_bottom
+        self._follow_event_seq += 1
+        self._follow_event.set((self._follow_event_seq, event, bool(resolved_at_bottom)))
+
+    def _apply_follow_event(self, payload: tuple[int, FollowEvent, bool]) -> None:
+        _seq, event, at_bottom = payload
+        transition = transition_follow_state(
+            self._follow_state,
+            event,
+            at_bottom=at_bottom,
+        )
+        self._follow_state = transition.next_state
+        if transition.scroll_to_end:
+            with self._programmatic_scroll():
+                self.scroll_end(animate=False)
 
     @contextmanager
     def _programmatic_scroll(self):
@@ -1830,28 +1828,30 @@ class ConversationView(ScrollView):
             return
         # Compute anchor on user scroll (block-level anchor for vis_state changes)
         self._scroll_anchor = self._compute_anchor_from_scroll()
-        self._follow_state = _FOLLOW_TRANSITIONS[
-            (self._follow_state, self.is_vertical_scroll_end)
-        ]
+        self._dispatch_follow_event(
+            FollowEvent.USER_SCROLL,
+            at_bottom=bool(self.is_vertical_scroll_end),
+        )
 
     def toggle_follow(self):
         """Toggle follow mode.
 
         // [LAW:dataflow-not-control-flow] Transition via _FOLLOW_TOGGLE table.
         """
-        self._follow_state = _FOLLOW_TOGGLE[self._follow_state]
-        if self._is_following:
-            with self._programmatic_scroll():
-                self.scroll_end(animate=False)
+        self._dispatch_follow_event(FollowEvent.TOGGLE, at_bottom=False)
 
     def scroll_to_bottom(self):
         """Scroll to bottom. Transitions ENGAGED→ACTIVE; OFF stays OFF.
 
         // [LAW:dataflow-not-control-flow] Transition via _FOLLOW_SCROLL_BOTTOM table.
         """
-        self._follow_state = _FOLLOW_SCROLL_BOTTOM[self._follow_state]
+        self._dispatch_follow_event(FollowEvent.SCROLL_BOTTOM, at_bottom=False)
+
+    def scroll_to_top(self) -> None:
+        """Scroll to top and deactivate follow mode."""
+        self._dispatch_follow_event(FollowEvent.DEACTIVATE, at_bottom=False)
         with self._programmatic_scroll():
-            self.scroll_end(animate=False)
+            self.scroll_home(animate=False)
 
     def scroll_to_block(self, turn_index: int, block_index: int) -> None:
         """Scroll to center a specific block in the viewport."""
@@ -1869,8 +1869,8 @@ class ConversationView(ScrollView):
         viewport_height = self.scrollable_content_region.height
         centered_y = max(0, target_y - viewport_height // 2)
 
-        # // [LAW:dataflow-not-control-flow] Deactivate via table lookup.
-        self._follow_state = _FOLLOW_DEACTIVATE[self._follow_state]
+        # // [LAW:dataflow-not-control-flow] Deactivate via follow transition event.
+        self._dispatch_follow_event(FollowEvent.DEACTIVATE, at_bottom=False)
         with self._programmatic_scroll():
             self.scroll_to(y=centered_y, animate=False)
 
