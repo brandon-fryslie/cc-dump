@@ -560,6 +560,8 @@ class LaunchConfigPanel(VerticalScroll):
         self.display = bool(visible)
         if visible:
             self.call_after_refresh(self.focus_default_control)
+        elif self.has_focus_within:
+            self.call_after_refresh(self.screen.focus_next)
 
     def _emit_panel_state(self) -> None:
         """Trigger reactive selector/active/form projection after model mutation."""
