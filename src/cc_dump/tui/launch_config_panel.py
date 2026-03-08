@@ -259,11 +259,20 @@ def _make_base_widget(field: BaseFieldDef, value: object) -> Input | Select[str]
 
 
 def _select_values(selector: Select[str]) -> tuple[str, ...]:
-    return tuple(
-        str(value)
-        for _prompt, value in getattr(selector, "_options", [])
-        if value is not selector.BLANK
-    )
+    options = getattr(selector, "options", None)
+    if options is None:
+        return ()
+
+    values: list[str] = []
+    for option in options:
+        if isinstance(option, tuple) and len(option) >= 2:
+            _, value = option[:2]
+        else:
+            value = getattr(option, "value", option)
+        if value is selector.BLANK:
+            continue
+        values.append(str(value))
+    return tuple(values)
 
 
 def _base_field_display_value(field: BaseFieldDef, config) -> str:
@@ -278,6 +287,11 @@ def _base_field_display_value(field: BaseFieldDef, config) -> str:
     if field.key == "shell":
         return _shell_to_display(config.shell)
     return str(getattr(config, field.key, "") or "")
+
+
+def _selected_index_for_active_name(configs: Sequence, active_name: str) -> int:
+    names = [config.name for config in configs]
+    return names.index(active_name) if active_name in names else 0
 
 
 def _action_chip(
@@ -447,7 +461,7 @@ class LaunchConfigPanel(VerticalScroll):
         incoming = copy.deepcopy(configs)
         self._configs = incoming or cc_dump.app.launch_config.default_configs()
         self._active_name = active_config_name
-        self._selected_idx = 0
+        self._selected_idx = _selected_index_for_active_name(self._configs, self._active_name)
         self._view_revision = 0
         self._panel_state: Observable[LaunchConfigPanelViewState] = Observable(
             LaunchConfigPanelViewState(
@@ -526,10 +540,10 @@ class LaunchConfigPanel(VerticalScroll):
         )
 
     def on_mount(self) -> None:
-        if not self.display:
-            return
+        # [LAW:dataflow-not-control-flow] Always hydrate widget state on mount.
         self._apply_panel_state(self._panel_state.get())
-        self.focus_default_control()
+        if self.display:
+            self.focus_default_control()
 
     def on_unmount(self) -> None:
         self._panel_reaction.dispose()
@@ -669,13 +683,7 @@ class LaunchConfigPanel(VerticalScroll):
         incoming = copy.deepcopy(configs)
         self._configs = incoming or cc_dump.app.launch_config.default_configs()
         self._active_name = active_config_name
-        names = [config.name for config in self._configs]
-        target_name = ""
-        if self._active_name in names:
-            target_name = self._active_name
-        elif names:
-            target_name = names[0]
-        self._selected_idx = names.index(target_name) if target_name in names else 0
+        self._selected_idx = _selected_index_for_active_name(self._configs, self._active_name)
         self._emit_panel_state()
 
     def focus_default_control(self) -> None:
