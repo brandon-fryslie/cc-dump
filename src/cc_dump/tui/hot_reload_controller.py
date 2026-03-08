@@ -364,21 +364,7 @@ def _capture_widget_snapshot(app) -> _WidgetSwapSnapshot:
     logs_state = old_logs.get_state() if old_logs else {}
     info_state = old_info.get_state() if old_info else {}
 
-    # [LAW:one-source-of-truth] Existing mounted panel IDs are owned by app._panel_ids.
-    # Capture from that mapping first so removed registry entries still get cleaned up.
-    old_panels: dict[str, object | None] = {}
-    panel_states: dict[str, dict] = {}
-    panel_ids = getattr(app, "_panel_ids", {})
-    if isinstance(panel_ids, dict):
-        for name, css_id in panel_ids.items():
-            if not isinstance(name, str) or not isinstance(css_id, str):
-                continue
-            old_widget = app._query_safe("#" + css_id)
-            old_panels[name] = old_widget
-            panel_states[name] = old_widget.get_state() if old_widget else {}
-    # Ensure current registry names always have state entries for replacement creation.
-    for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
-        panel_states.setdefault(spec.name, {})
+    old_panels, panel_states = _capture_panel_swap_state(app)
 
     logs_visible = (
         old_logs.display
@@ -403,6 +389,25 @@ def _capture_widget_snapshot(app) -> _WidgetSwapSnapshot:
         logs_visible=logs_visible,
         info_visible=info_visible,
     )
+
+
+def _capture_panel_swap_state(app) -> tuple[dict[str, object | None], dict[str, dict]]:
+    """Capture mounted panel widgets/state using the app-owned panel ID map."""
+    # [LAW:one-source-of-truth] Existing mounted panel IDs are owned by app._panel_ids.
+    old_panels: dict[str, object | None] = {}
+    panel_states: dict[str, dict] = {}
+    panel_ids = getattr(app, "_panel_ids", {})
+    if isinstance(panel_ids, dict):
+        for name, css_id in panel_ids.items():
+            if not isinstance(name, str) or not isinstance(css_id, str):
+                continue
+            old_widget = app._query_safe("#" + css_id)
+            old_panels[name] = old_widget
+            panel_states[name] = old_widget.get_state() if old_widget else {}
+    # Ensure current registry names always have state entries for replacement creation.
+    for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
+        panel_states.setdefault(spec.name, {})
+    return old_panels, panel_states
 
 
 def _build_replacement_conversations(
@@ -510,6 +515,20 @@ def _assign_replacement_identity(
     for payload in snapshot.conversations:
         new_conversations[payload.session_key].id = payload.conv_id
 
+    _assign_panel_identity_from_registry(
+        app,
+        new_panels=new_panels,
+        active_panel=snapshot.active_panel,
+    )
+
+
+def _assign_panel_identity_from_registry(
+    app,
+    *,
+    new_panels: dict[str, object],
+    active_panel: str,
+) -> None:
+    """Assign panel IDs/display from live registry and reconcile app panel ID map."""
     resolved_panel_ids: dict[str, str] = {}
     for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
         panel = new_panels.get(spec.name)
@@ -518,7 +537,7 @@ def _assign_replacement_identity(
         css_id = spec.css_id
         resolved_panel_ids[spec.name] = css_id
         panel.id = css_id
-        panel.display = spec.name == snapshot.active_panel
+        panel.display = spec.name == active_panel
     # [LAW:one-source-of-truth] Registry-derived IDs are canonical after each reload.
     app._panel_ids = resolved_panel_ids
 
