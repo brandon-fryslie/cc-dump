@@ -468,14 +468,10 @@ def _get_seed_hue() -> float:
     return 190.0
 
 
-def init_palette(seed_hue: float | None = None) -> None:
-    """Initialize the global palette with a seed hue.
-
-    Call this before TUI starts if using --seed-hue CLI arg.
-    """
+def init_palette() -> None:
+    """Initialize the global palette from the environment/default seed hue."""
     global PALETTE
-    hue = seed_hue if seed_hue is not None else _get_seed_hue()
-    PALETTE = Palette(seed_hue=hue)
+    PALETTE = Palette(seed_hue=_get_seed_hue())
 
 
 # Module-level singleton — consumers import this
