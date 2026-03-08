@@ -35,13 +35,6 @@ def _ensure_side_channel_panel(app):
     return panel
 
 
-def _side_channel_usage_summary(app) -> dict:
-    return (
-        app._analytics_store.get_side_channel_purpose_summary()
-        if app._analytics_store is not None
-        else {}
-    )
-
 def open_side_channel(app) -> None:
     """Open AI Workbench sidebar and hydrate panel state."""
     _ensure_side_channel_panel(app)
@@ -57,7 +50,6 @@ def open_side_channel(app) -> None:
             "sc:result_text": "",
             "sc:result_source": "",
             "sc:result_elapsed_ms": 0,
-            "sc:purpose_usage": _side_channel_usage_summary(app),
             "workbench:text": "",
             "workbench:source": "",
             "workbench:elapsed_ms": 0,
@@ -70,14 +62,6 @@ def open_side_channel(app) -> None:
 def close_side_channel(app) -> None:
     """Hide AI Workbench sidebar."""
     app._view_store.set("panel:side_channel", False)
-
-
-def refresh_side_channel_usage(app) -> None:
-    """Project side-channel usage totals from AnalyticsStore into view store.
-
-    // [LAW:one-source-of-truth] AnalyticsStore is canonical source for usage aggregates.
-    """
-    app._view_store.set("sc:purpose_usage", _side_channel_usage_summary(app))
 
 
 def collect_recent_messages(app, count: int) -> list[dict]:
@@ -429,7 +413,6 @@ def on_side_channel_qa_result(app, result, question: str, context_session_key: s
         focus_results=True,
         context_session_key=context_session_key,
     )
-    refresh_side_channel_usage(app)
 
 
 def action_sc_utility_run(app) -> None:
@@ -514,7 +497,6 @@ def on_side_channel_utility_result(app, result, context_session_key: str) -> Non
         focus_results=True,
         context_session_key=context_session_key,
     )
-    refresh_side_channel_usage(app)
 
 
 def action_sc_preview_qa(app) -> None:

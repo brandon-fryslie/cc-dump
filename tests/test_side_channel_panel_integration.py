@@ -40,7 +40,6 @@ async def test_side_channel_panel_exposes_remaining_entrypoint_controls():
                 result_text="",
                 result_source="",
                 result_elapsed_ms=0,
-                purpose_usage={},
             )
         )
         expected = {

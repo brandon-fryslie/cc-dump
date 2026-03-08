@@ -36,6 +36,7 @@ import cc_dump.tui.error_indicator
 import cc_dump.tui.view_overrides
 import cc_dump.app.error_models
 import cc_dump.app.domain_store
+import cc_dump.app.view_store
 from cc_dump.io.perf_logging import monitor_slow_path
 
 logger = logging.getLogger(__name__)
@@ -231,6 +232,12 @@ class ScrollAnchor:
     line_in_block: int   # line offset within block's rendered strips
 
 
+def _resolve_view_store(view_store):
+    if view_store is not None:
+        return view_store
+    return cc_dump.app.view_store.create()
+
+
 class ConversationView(ScrollView):
     """Virtual-rendering conversation display using Line API.
 
@@ -258,7 +265,7 @@ class ConversationView(ScrollView):
         runtime: "RenderRuntime | None" = None,
     ):
         super().__init__()
-        self._view_store = view_store
+        self._view_store = _resolve_view_store(view_store)
         # Auto-create domain store for tests that don't provide one
         self._domain_store = domain_store if domain_store is not None else cc_dump.app.domain_store.DomainStore()
         self._render_runtime: "RenderRuntime | None" = runtime
@@ -282,17 +289,23 @@ class ConversationView(ScrollView):
         self._overrides_revision: int = 0
         self._last_search_signature: tuple | None = None
         self._last_theme_generation: int = self._read_theme_generation()
-        # Local fallback for tests that don't pass a view_store
-        self._follow_state_fallback: FollowState = FollowState.ACTIVE
         self._pending_restore: dict | None = None
         self._scrolling_programmatically: bool = False
         self._scroll_anchor: ScrollAnchor | None = None
         self._indicator = cc_dump.tui.error_indicator.IndicatorState()
         self._indicator_state: Observable[tuple[list, bool]] = Observable(([], False))
+        self._filters_state: Observable[dict] = Observable(
+            dict(self._view_store.active_filters.get())
+        )
         # [LAW:single-enforcer] One reactive projection owns indicator invalidation/refresh.
         self._indicator_reaction = reaction(
             lambda: self._indicator_state.get(),
             self._apply_indicator_state,
+            fire_immediately=False,
+        )
+        self._filters_reaction = reaction(
+            lambda: self._filters_state.get(),
+            self._apply_filter_projection,
             fire_immediately=False,
         )
         self._store_disposers: list = []
@@ -321,8 +334,6 @@ class ConversationView(ScrollView):
         self._wire_domain_store(self._domain_store)
 
     def _read_theme_generation(self) -> int:
-        if self._view_store is None:
-            return 0
         raw = self._view_store.get("theme:generation")
         return int(raw) if isinstance(raw, int) else 0
 
@@ -393,16 +404,15 @@ class ConversationView(ScrollView):
         for d in self._store_disposers:
             d.dispose()
         self._indicator_reaction.dispose()
+        self._filters_reaction.dispose()
 
     def _setup_store_reactions(self) -> list:
         store = self._view_store
-        if store is None:
-            return []
         return [
             stx.reaction(
                 self.app,
                 lambda: store.active_filters.get(),
-                self._rerender_from_store_filters,
+                self._update_filter_projection,
                 fire_immediately=False,
             ),
             stx.reaction(
@@ -413,7 +423,10 @@ class ConversationView(ScrollView):
             ),
         ]
 
-    def _rerender_from_store_filters(self, filters: dict) -> None:
+    def _update_filter_projection(self, filters: dict) -> None:
+        self._filters_state.set(dict(filters))
+
+    def _apply_filter_projection(self, filters: dict) -> None:
         # [LAW:single-enforcer] Conversation rerender on filter changes is owned locally.
         self.rerender(filters)
 
@@ -463,19 +476,13 @@ class ConversationView(ScrollView):
 
     # // [LAW:one-source-of-truth] Follow state stored as string in view store.
     # String comparison is stable across hot-reloads (enum class identity changes).
-    # Falls back to local attribute when no store (tests).
     @property
     def _follow_state(self) -> FollowState:
-        if self._view_store is not None:
-            return FollowState(self._view_store.get("nav:follow"))
-        return self._follow_state_fallback
+        return FollowState(self._view_store.get("nav:follow"))
 
     @_follow_state.setter
     def _follow_state(self, value: FollowState):
-        if self._view_store is not None:
-            self._view_store.set("nav:follow", value.value)
-        else:
-            self._follow_state_fallback = value
+        self._view_store.set("nav:follow", value.value)
 
     @contextmanager
     def _programmatic_scroll(self):
@@ -2268,10 +2275,20 @@ class StatsPanel(Static):
         self.models_seen: set = set()
 
     def on_mount(self) -> None:
+        self._visibility_reaction = stx.reaction(
+            self.app,
+            lambda: str(self.app.view_store.get("panel:active")),
+            self._apply_panel_visibility,
+            fire_immediately=True,
+        )
         self._apply_render_state(self._render_state.get())
 
     def on_unmount(self) -> None:
+        self._visibility_reaction.dispose()
         self._render_reaction.dispose()
+
+    def _apply_panel_visibility(self, active_panel: str) -> None:
+        self.display = active_panel == "stats"
 
     def update_stats(self, **kwargs):
         """Update statistics and refresh display.
@@ -2526,6 +2543,23 @@ class LogsPanel(RichLog):
 
     def __init__(self):
         super().__init__(highlight=False, markup=False, wrap=True, max_lines=1000)
+        self._visibility_reaction = None
+
+    def on_mount(self) -> None:
+        self._visibility_reaction = stx.reaction(
+            self.app,
+            lambda: bool(self.app.view_store.get("panel:logs")),
+            self._apply_panel_visibility,
+            fire_immediately=True,
+        )
+
+    def on_unmount(self) -> None:
+        if self._visibility_reaction is not None:
+            self._visibility_reaction.dispose()
+            self._visibility_reaction = None
+
+    def _apply_panel_visibility(self, visible: bool) -> None:
+        self.display = bool(visible)
 
     # [LAW:dataflow-not-control-flow] Log level style dispatch
     def _get_log_level_styles(self):

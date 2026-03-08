@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import time
 
 from snarfx import Observable, reaction
+from snarfx import textual as stx
 from textual.widgets import Static
 
 import cc_dump.tui.panel_renderers
@@ -58,11 +59,21 @@ class SessionPanel(Static):
 
     def on_mount(self) -> None:
         """Start 1s timer for live age updates. Textual auto-stops on widget removal."""
+        self._visibility_reaction = stx.reaction(
+            self.app,
+            lambda: str(self.app.view_store.get("panel:active")),
+            self._apply_panel_visibility,
+            fire_immediately=True,
+        )
         self.set_interval(1.0, self._tick_clock)
         self._render_session(self._state.get())
 
     def on_unmount(self) -> None:
+        self._visibility_reaction.dispose()
         self._state_reaction.dispose()
+
+    def _apply_panel_visibility(self, active_panel: str) -> None:
+        self.display = active_panel == "session"
 
     def _tick_clock(self) -> None:
         self._clock_tick.set(self._clock_tick.get() + 1)

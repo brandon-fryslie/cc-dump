@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from snarfx import Observable, reaction
+from snarfx import textual as stx
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
@@ -540,15 +541,25 @@ class LaunchConfigPanel(VerticalScroll):
         )
 
     def on_mount(self) -> None:
+        self._visibility_reaction = stx.reaction(
+            self.app,
+            lambda: bool(self.app.view_store.get("panel:launch_config")),
+            self._apply_panel_visibility,
+            fire_immediately=True,
+        )
         # [LAW:dataflow-not-control-flow] Always hydrate widget state on mount.
         self._apply_panel_state(self._panel_state.get())
-        if self.display:
-            self.focus_default_control()
 
     def on_unmount(self) -> None:
+        self._visibility_reaction.dispose()
         self._panel_reaction.dispose()
         self._tool_option_values_reaction.dispose()
         self._active_tool_option_set_reaction.dispose()
+
+    def _apply_panel_visibility(self, visible: bool) -> None:
+        self.display = bool(visible)
+        if visible:
+            self.call_after_refresh(self.focus_default_control)
 
     def _emit_panel_state(self) -> None:
         """Trigger reactive selector/active/form projection after model mutation."""

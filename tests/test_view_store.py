@@ -1,7 +1,5 @@
 """Tests for view_store — reactive category visibility + panel/follow state."""
 
-from unittest.mock import MagicMock
-
 
 import cc_dump.app.view_store
 from cc_dump.core.formatting import VisState
@@ -104,11 +102,9 @@ class TestReconcile:
 
     def test_reconcile_with_reaction_registration_callback(self):
         store = cc_dump.app.view_store.create()
-        assert cc_dump.app.view_store.setup_reactions(store, {"app": MagicMock()}) == []
-
         store.reconcile(
             cc_dump.app.view_store.SCHEMA,
-            lambda s: cc_dump.app.view_store.setup_reactions(s, {"app": MagicMock()}),
+            lambda s: [],
         )
 
         store.set("vis:user", False)
@@ -126,22 +122,6 @@ class TestGetCategoryState:
         store.set("vis:user", False)
         state = cc_dump.app.view_store.get_category_state(store, "user")
         assert state == VisState(False, True, True)
-
-
-class TestSetupReactions:
-    def test_returns_empty_with_app_context(self):
-        store = cc_dump.app.view_store.create()
-        assert cc_dump.app.view_store.setup_reactions(store, {"app": MagicMock()}) == []
-
-    def test_no_context_returns_empty(self):
-        store = cc_dump.app.view_store.create()
-        disposers = cc_dump.app.view_store.setup_reactions(store)
-        assert disposers == []
-
-    def test_no_app_in_context_returns_empty(self):
-        store = cc_dump.app.view_store.create()
-        disposers = cc_dump.app.view_store.setup_reactions(store, {})
-        assert disposers == []
 
 
 class TestPanelAndFollowSchema:
@@ -200,7 +180,6 @@ class TestReconcileWithNewKeys:
         assert store.get("tmux:available") is False
         assert store.get("sc:loading") is False
         assert store.get("sc:active_action") == ""
-        assert store.get("sc:purpose_usage") == {}
 
 
 class TestFooterStateComputed:
@@ -275,25 +254,19 @@ class TestScPanelStateComputed:
     def test_defaults(self):
         store = cc_dump.app.view_store.create()
         state = store.sc_panel_state.get()
-        assert isinstance(state, dict)
-        assert state["enabled"] is False  # no settings_store wired
-        assert state["loading"] is False
-        assert state["active_action"] == ""
-        assert state["result_text"] == ""
-        assert state["result_source"] == ""
-        assert state["result_elapsed_ms"] == 0
-        assert state["purpose_usage"] == {}
+        assert state.enabled is False  # no settings_store wired
+        assert state.loading is False
+        assert state.active_action == ""
+        assert state.result_text == ""
+        assert state.result_source == ""
+        assert state.result_elapsed_ms == 0
 
     def test_updates_from_store(self):
         store = cc_dump.app.view_store.create()
         store.set("sc:loading", True)
         store.set("sc:active_action", "qa_submit")
         store.set("sc:result_text", "answer")
-        store.set("sc:purpose_usage", {"conversation_qa": {"turns": 1}})
         state = store.sc_panel_state.get()
-        assert state["loading"] is True
-        assert state["active_action"] == "qa_submit"
-        assert state["result_text"] == "answer"
-        assert state["purpose_usage"] == {"conversation_qa": {"turns": 1}}
-
-
+        assert state.loading is True
+        assert state.active_action == "qa_submit"
+        assert state.result_text == "answer"

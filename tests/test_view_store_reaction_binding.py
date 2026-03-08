@@ -37,9 +37,6 @@ async def test_pre_run_view_store_reactions_rebind_on_mount():
         store_context=store_context,
     )
 
-    # Pre-bind reactions before app.run(); app.on_mount should replace them safely.
-    view_store._reaction_disposers = []
-
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         assert "Hello world" in all_turns_text(app)

@@ -66,13 +66,4 @@ async def run_app(
         # Ensure on_mount processing (including replay) has completed
         await pilot.pause()
 
-        # View-store reactions are bound by app.on_mount(); keep a compatibility
-        # fallback for older app instances that don't provide mount binding.
-        if not getattr(view_store, "_reaction_disposers", None):
-            bind_reactions = getattr(app, "_bind_view_store_reactions", None)
-            if callable(bind_reactions):
-                bind_reactions()
-            else:
-                view_store._reaction_disposers = []
-
         yield pilot, app

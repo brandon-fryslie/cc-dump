@@ -4,6 +4,8 @@
 // [LAW:one-way-deps] App/tui layers subscribe to this store; this module owns only data.
 """
 
+from dataclasses import dataclass
+
 from cc_dump.core.formatting import VisState
 from cc_dump.app.error_models import ErrorItem
 from cc_dump.core.coerce import coerce_int
@@ -46,7 +48,6 @@ SCHEMA["sc:active_action"] = ""
 SCHEMA["sc:result_text"] = ""
 SCHEMA["sc:result_source"] = ""
 SCHEMA["sc:result_elapsed_ms"] = 0
-SCHEMA["sc:purpose_usage"] = {}
 SCHEMA["settings:side_channel_enabled"] = False
 
 # Workbench results projection state (canonical source for results tab rendering)
@@ -64,6 +65,36 @@ SCHEMA["search:modes"] = 13    # CASE_INSENSITIVE(1) | REGEX(4) | INCREMENTAL(8)
 SCHEMA["search:cursor_pos"] = 0
 SCHEMA["search:current_index"] = 0
 SCHEMA["search:match_count"] = 0
+
+
+@dataclass(frozen=True)
+class SideChannelPanelProjection:
+    enabled: bool
+    loading: bool
+    active_action: str
+    result_text: str
+    result_source: str
+    result_elapsed_ms: int
+
+
+@dataclass(frozen=True)
+class WorkbenchProjection:
+    text: str
+    source: str
+    elapsed_ms: int
+    action: str
+    context_session_id: str
+
+
+@dataclass(frozen=True)
+class SearchUiProjection:
+    phase: str
+    query: str
+    modes: int
+    cursor_pos: int
+    current_index: int
+    match_count: int
+    footer_visible: bool
 
 
 def create():
@@ -106,37 +137,6 @@ def create():
 
     store.footer_state = footer_state
 
-    @computed
-    def sidebar_panel_state():
-        # [LAW:one-source-of-truth] Sidebar visibility tuple is derived from panel:* keys once.
-        return (
-            bool(store.get("panel:settings")),
-            bool(store.get("panel:launch_config")),
-            bool(store.get("panel:side_channel")),
-        )
-
-    store.sidebar_panel_state = sidebar_panel_state
-
-    @computed
-    def chrome_panel_state():
-        # [LAW:one-source-of-truth] Logs/info visibility is derived from panel:* keys once.
-        return (
-            bool(store.get("panel:logs")),
-            bool(store.get("panel:info")),
-        )
-
-    store.chrome_panel_state = chrome_panel_state
-
-    @computed
-    def aux_panel_state():
-        # [LAW:one-source-of-truth] Keys/debug overlay visibility is derived from panel:* keys once.
-        return (
-            bool(store.get("panel:keys")),
-            bool(store.get("panel:debug_settings")),
-        )
-
-    store.aux_panel_state = aux_panel_state
-
     # // [LAW:single-enforcer] error_items Computed combines stale files + exceptions.
     @computed
     def error_items():
@@ -150,28 +150,27 @@ def create():
     # SideChannelPanel adapts this projection to its local dataclass.
     @computed
     def sc_panel_state():
-        return {
-            "enabled": bool(store.get("settings:side_channel_enabled")),
-            "loading": store.get("sc:loading"),
-            "active_action": store.get("sc:active_action"),
-            "result_text": store.get("sc:result_text"),
-            "result_source": store.get("sc:result_source"),
-            "result_elapsed_ms": store.get("sc:result_elapsed_ms"),
-            "purpose_usage": store.get("sc:purpose_usage"),
-        }
+        return SideChannelPanelProjection(
+            enabled=bool(store.get("settings:side_channel_enabled")),
+            loading=bool(store.get("sc:loading")),
+            active_action=str(store.get("sc:active_action")),
+            result_text=str(store.get("sc:result_text")),
+            result_source=str(store.get("sc:result_source")),
+            result_elapsed_ms=coerce_int(store.get("sc:result_elapsed_ms"), 0),
+        )
 
     store.sc_panel_state = sc_panel_state
 
     @computed
     def workbench_state():
         # [LAW:one-source-of-truth] Workbench result rendering is derived from canonical store keys.
-        return {
-            "text": str(store.get("workbench:text")),
-            "source": str(store.get("workbench:source")),
-            "elapsed_ms": coerce_int(store.get("workbench:elapsed_ms"), 0),
-            "action": str(store.get("workbench:action")),
-            "context_session_id": str(store.get("workbench:context_session_id")),
-        }
+        return WorkbenchProjection(
+            text=str(store.get("workbench:text")),
+            source=str(store.get("workbench:source")),
+            elapsed_ms=coerce_int(store.get("workbench:elapsed_ms"), 0),
+            action=str(store.get("workbench:action")),
+            context_session_id=str(store.get("workbench:context_session_id")),
+        )
 
     store.workbench_state = workbench_state
 
@@ -179,31 +178,20 @@ def create():
     def search_ui_state():
         # [LAW:single-enforcer] Search bar + footer visibility projection is centralized here.
         phase = str(store.get("search:phase"))
-        return {
-            "phase": phase,
-            "query": str(store.get("search:query")),
-            "modes": coerce_int(store.get("search:modes"), 13),
-            "cursor_pos": coerce_int(store.get("search:cursor_pos"), 0),
-            "current_index": coerce_int(store.get("search:current_index"), 0),
-            "match_count": coerce_int(store.get("search:match_count"), 0),
+        return SearchUiProjection(
+            phase=phase,
+            query=str(store.get("search:query")),
+            modes=coerce_int(store.get("search:modes"), 13),
+            cursor_pos=coerce_int(store.get("search:cursor_pos"), 0),
+            current_index=coerce_int(store.get("search:current_index"), 0),
+            match_count=coerce_int(store.get("search:match_count"), 0),
             # [LAW:dataflow-not-control-flow] Footer visibility is a derived value from search phase.
-            "footer_visible": phase == "inactive",
-        }
+            footer_visible=phase == "inactive",
+        )
 
     store.search_ui_state = search_ui_state
 
     return store
-
-
-def setup_reactions(store, context=None):
-    """Compatibility shim for historical call sites.
-
-    Store consumers now self-subscribe via local SnarFX reactions; there are no
-    view-store-owned UI push reactions.
-    """
-    _ = store
-    _ = context
-    return []
 
 
 def get_category_state(store, name: str) -> VisState:
