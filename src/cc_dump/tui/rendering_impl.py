@@ -493,16 +493,9 @@ def _resolve_visibility(block: FormattedBlock, filters: dict, overrides=None) ->
     // [LAW:single-enforcer] ViewOverrides is the sole source for per-block overrides.
 
     Filters contain VisState values keyed by category name.
-    Runtime force_vis (from overrides) overrides all filters (search mode).
     Per-block expanded (from overrides) overrides category-level expansion.
     Returns ALWAYS_VISIBLE for blocks with no category.
     """
-    # Check for runtime override (search mode) — from overrides only
-    if overrides is not None:
-        bvs = overrides._blocks.get(block.block_id)
-        if bvs is not None and bvs.force_vis is not None:
-            return bvs.force_vis
-
     cat = get_category(block)
     if cat is None:
         return ALWAYS_VISIBLE  # always fully visible
@@ -3592,21 +3585,8 @@ def _collapse_children(
     result: list[FormattedBlock] = []
     pending: list[FormattedBlock] = []
 
-    def _has_force_vis(b):
-        # // [LAW:one-source-of-truth] force_vis from overrides only
-        if overrides is not None:
-            bvs = overrides._blocks.get(b.block_id)
-            if bvs is not None and bvs.force_vis is not None:
-                return True
-        return False
-
     def flush():
         if not pending:
-            return
-        # Blocks with search overrides are emitted individually
-        if any(_has_force_vis(b) for b in pending):
-            result.extend(pending)
-            pending.clear()
             return
         use_blocks = [b for b in pending if type(b).__name__ == "ToolUseBlock"]
         # Orphaned ToolResultBlocks without a preceding ToolUseBlock are dropped
