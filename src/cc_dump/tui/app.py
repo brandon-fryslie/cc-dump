@@ -543,12 +543,7 @@ class CcDumpApp(App):
             per_session = {}
         per_session[resolved_key] = time.monotonic()
         self._app_state["last_message_time_by_session"] = per_session
-        self._bump_view_store_revision("session:revision")
-
-    def _bump_view_store_revision(self, key: str) -> None:
-        raw = self._view_store.get(key)
-        current = int(raw) if isinstance(raw, int) else 0
-        self._view_store.set(key, current + 1)
+        self._publish_session_panel_state()
 
     def _sync_detected_session(self, state: dict[str, object]) -> None:
         # // [LAW:one-source-of-truth] Session ID comes from formatting state,
@@ -559,7 +554,7 @@ class CcDumpApp(App):
             return
         self._app_log("INFO", f"Session detected: {current_session}")
         self._session_id = current_session
-        self._bump_view_store_revision("session:revision")
+        self._publish_session_panel_state()
         self.post_message(NewSession(current_session))
         self.notify(f"New session: {current_session[:8]}...")
         info = self._get_info()
@@ -1144,8 +1139,8 @@ class CcDumpApp(App):
             if tab_id == pane_id:
                 self._active_session_key = session_key
                 break
-        self._bump_view_store_revision("session:revision")
-        # // [LAW:one-source-of-truth] Back-compat alias points to active session store.
+        self._publish_session_panel_state()
+        # // [LAW:one-source-of-truth] _domain_store mirrors the active session store.
         self._domain_store = self._get_active_domain_store()
 
     # ─── Delegates to extracted modules ────────────────────────────────
@@ -1509,11 +1504,11 @@ class CcDumpApp(App):
                 self.call_after_refresh(conv.focus)
 
     def _sync_aux_panels(self, state: tuple[bool, bool]) -> None:
-        """Sync auxiliary overlays from canonical store flags."""
+        """Mount/unmount keys + debug overlays from canonical store flags."""
         keys_visible, debug_visible = state
-        # [LAW:single-enforcer] Keep one mounted KeysPanel and let its reaction own visibility.
-        self._ensure_panel_mounted(
+        self._sync_optional_panel(
             panel_type=cc_dump.tui.keys_panel.KeysPanel,
+            visible=keys_visible,
             create_panel=cc_dump.tui.keys_panel.create_keys_panel,
         )
         self._sync_optional_panel(
@@ -1522,17 +1517,6 @@ class CcDumpApp(App):
             create_panel=lambda: cc_dump.tui.debug_settings_panel.create_debug_settings_panel(app_ref=self),
             on_hidden=self._focus_active_conversation,
         )
-
-    def _ensure_panel_mounted(
-        self,
-        *,
-        panel_type: type[Widget],
-        create_panel: Callable[[], Widget],
-    ) -> None:
-        """Mount a panel if missing, without altering its display state."""
-        panels: list[Widget] = list(self.screen.query(panel_type))
-        if not panels:
-            self.screen.mount(create_panel())
 
     def _sync_optional_panel(
         self,
