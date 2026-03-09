@@ -17,6 +17,7 @@ from enum import Enum, IntFlag
 from typing import Callable
 
 from snarfx import Observable, reaction
+from snarfx import textual as stx
 from rich.text import Text
 from textual.widgets import Static
 
@@ -459,13 +460,45 @@ class SearchBar(Static):
         )
 
     def on_mount(self) -> None:
+        self._store_reaction = stx.reaction(
+            self.app,
+            lambda: self.app._view_store.search_ui_state.get(),
+            self._apply_store_state,
+            fire_immediately=True,
+        )
         self._render_display(self._display_state.get())
 
     def on_unmount(self) -> None:
+        self._store_reaction.dispose()
         self._display_reaction.dispose()
 
     def update_display(self, state: SearchBarState) -> None:
         self._display_state.set(state)
+
+    def _apply_store_state(self, payload: object) -> None:
+        state = payload if isinstance(payload, dict) else {}
+        modes_raw = int(state.get("modes", int(SearchMode.CASE_INSENSITIVE)))
+        try:
+            modes = SearchMode(modes_raw)
+        except ValueError:
+            modes = SearchMode.CASE_INSENSITIVE
+        phase_raw = str(state.get("phase", SearchPhase.INACTIVE.value))
+        try:
+            phase = SearchPhase(phase_raw)
+        except ValueError:
+            phase = SearchPhase.INACTIVE
+
+        self.display = phase != SearchPhase.INACTIVE
+        self.update_display(
+            SearchBarState(
+                phase=phase,
+                query=str(state.get("query", "")),
+                modes=modes,
+                cursor_pos=int(state.get("cursor_pos", 0)),
+                current_index=int(state.get("current_index", 0)),
+                match_count=int(state.get("match_count", 0)),
+            )
+        )
 
     def _build_search_line(self, state: SearchBarState, tc) -> Text:
         line = Text()

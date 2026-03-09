@@ -42,7 +42,6 @@ def test_get_active_session_panel_state_reads_per_session_last_message(monkeypat
     app._session_id = "legacy-main"
     app._active_session_key = "sess-a"
     app._session_tab_ids["sess-a"] = "conversation-tab-main-1"
-    app._app_state["last_message_time"] = 10.0
     app._app_state["last_message_time_by_session"] = {
         "__default__": 11.0,
         "sess-a": 42.5,

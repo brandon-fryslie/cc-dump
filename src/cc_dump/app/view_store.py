@@ -2,8 +2,7 @@
 
 // [LAW:one-source-of-truth] Schema derived from CATEGORY_CONFIG + panel/follow + footer/error/sc keys.
 // [LAW:single-enforcer] Single autorun triggers re-render on any visibility change.
-// [LAW:single-enforcer] Single reaction per widget push (panel, footer, error, side-channel).
-// [LAW:one-way-deps] No widget imports — push callbacks provided via context (see view_store_bridge).
+// [LAW:one-way-deps] No widget imports; widgets subscribe directly to canonical store keys/computeds.
 """
 
 from cc_dump.core.formatting import VisState
@@ -35,8 +34,8 @@ SCHEMA["panel:debug_settings"] = False
 # // [LAW:one-source-of-truth] String, not FollowState enum — enum class identity
 # changes on reload; string comparison is stable across reloads.
 SCHEMA["nav:follow"] = "active"
-SCHEMA["analytics:revision"] = 0
-SCHEMA["session:revision"] = 0
+SCHEMA["panel:stats_snapshot"] = {"summary": {}, "timeline": [], "models": []}
+SCHEMA["panel:session_state"] = {"session_id": None, "last_message_time": None}
 
 # Footer inputs (previously app attributes or external reads)
 SCHEMA["filter:active"] = "1"               # str|None — default to F1 (Conversation)
@@ -204,10 +203,10 @@ def setup_reactions(store, context=None):
     """Register reactions. Returns list of disposers.
 
     Called on create and on hot-reload reconcile.
-    context: dict with "app" and push callbacks from bridge.
+    context: dict with "app" for app-level reactions.
 
     // [LAW:single-enforcer] All guards (pause, NoMatches, thread-marshal) enforced by stx.
-    // [LAW:one-way-deps] Push callbacks provided by caller, not imported here.
+    // [LAW:one-source-of-truth] App-level chrome/panel reactions are centralized here.
     """
     disposers = []
 
@@ -217,21 +216,16 @@ def setup_reactions(store, context=None):
             disposers.append(stx.autorun(app,
                 lambda: (store.active_filters.get(), app._rerender_if_mounted())
             ))
-
-            # // [LAW:single-enforcer] Callback-based reactions — bridge provides push functions.
-            for key, data_fn in [
-                ("push_panel_change", lambda: store.get("panel:active")),
-                ("push_sidebar_state", lambda: store.sidebar_panel_state.get()),
-                ("push_chrome_panels", lambda: store.chrome_panel_state.get()),
-                ("push_aux_panels", lambda: store.aux_panel_state.get()),
-                ("push_errors", lambda: store.error_items.get()),
-                ("push_sc_panel", lambda: store.sc_panel_state.get()),
-                ("push_workbench", lambda: store.workbench_state.get()),
-                ("push_search_ui", lambda: store.search_ui_state.get()),
-            ]:
-                cb = context.get(key)
-                if cb:
-                    disposers.append(stx.reaction(app, data_fn, cb))
+            for data_fn, method_name in (
+                (lambda: store.get("panel:active"), "_sync_panel_display"),
+                (lambda: store.sidebar_panel_state.get(), "_sync_sidebar_panels"),
+                (lambda: store.chrome_panel_state.get(), "_sync_chrome_panels"),
+                (lambda: store.aux_panel_state.get(), "_sync_aux_panels"),
+                (lambda: store.error_items.get(), "_sync_error_items"),
+            ):
+                effect = getattr(app, method_name, None)
+                if callable(effect):
+                    disposers.append(stx.reaction(app, data_fn, effect))
 
     return disposers
 

@@ -61,7 +61,7 @@ import cc_dump.app.tmux_controller
 import cc_dump.tui.settings_panel
 import cc_dump.tui.launch_config_panel
 import cc_dump.tui.side_channel_panel
-import cc_dump.tui.view_store_bridge
+import cc_dump.tui.error_indicator
 import cc_dump.pipeline.har_replayer
 import cc_dump.io.sessions
 import cc_dump.app.memory_stats
@@ -142,11 +142,9 @@ class TurnUsage(TypedDict, total=False):
 
 
 class AppState(TypedDict, total=False):
-    current_turn_usage: TurnUsage
     current_turn_usage_by_request: dict[str, TurnUsage]
     pending_request_headers: dict[str, dict[str, str]]
     recent_messages: list[dict]
-    last_message_time: float
     last_message_time_by_session: dict[str, float]
     stream_registry: object
 
@@ -248,7 +246,6 @@ class CcDumpApp(App):
             self._replay_complete.set()
 
         self._app_state: AppState = {
-            "current_turn_usage": {},
             "current_turn_usage_by_request": {},
             "pending_request_headers": {},
             "last_message_time_by_session": {},
@@ -541,12 +538,7 @@ class CcDumpApp(App):
             per_session = {}
         per_session[resolved_key] = time.monotonic()
         self._app_state["last_message_time_by_session"] = per_session
-        self._bump_view_store_revision("session:revision")
-
-    def _bump_view_store_revision(self, key: str) -> None:
-        raw = self._view_store.get(key)
-        current = int(raw) if isinstance(raw, int) else 0
-        self._view_store.set(key, current + 1)
+        self._publish_session_panel_state()
 
     def _sync_detected_session(self, state: dict[str, object]) -> None:
         # // [LAW:one-source-of-truth] Session ID comes from formatting state,
@@ -557,7 +549,7 @@ class CcDumpApp(App):
             return
         self._app_log("INFO", f"Session detected: {current_session}")
         self._session_id = current_session
-        self._bump_view_store_revision("session:revision")
+        self._publish_session_panel_state()
         self.post_message(NewSession(current_session))
         self.notify(f"New session: {current_session[:8]}...")
         info = self._get_info()
@@ -589,13 +581,24 @@ class CcDumpApp(App):
             raw_time = per_session.get(active_key)
             if isinstance(raw_time, (int, float)):
                 last_message_time = float(raw_time)
-        if last_message_time is None:
-            raw_fallback = self._app_state.get("last_message_time")
-            if isinstance(raw_fallback, (int, float)):
-                last_message_time = float(raw_fallback)
         if active_key != self._default_session_key:
             return active_key, last_message_time
         return self._session_id, last_message_time
+
+    def _publish_session_panel_state(self) -> None:
+        """Publish canonical session panel projection to the view store.
+
+        // [LAW:one-source-of-truth] Session panel state is derived once at app boundary.
+        // [LAW:single-enforcer] Only this method writes panel:session_state.
+        """
+        session_id, last_message_time = self._get_active_session_panel_state()
+        self._view_store.set(
+            "panel:session_state",
+            {
+                "session_id": session_id,
+                "last_message_time": last_message_time,
+            },
+        )
 
     def _active_resume_session_id(self) -> str:
         """Resolve session_id used for launch auto-resume from active tab context."""
@@ -819,20 +822,30 @@ class CcDumpApp(App):
         ctx = self._store_context if isinstance(self._store_context, dict) else {}
         self._store_context = ctx
         ctx["app"] = self
-        ctx.update(cc_dump.tui.view_store_bridge.build_reaction_context(self))
 
         old_disposers = getattr(self._view_store, "_reaction_disposers", None)
         if isinstance(old_disposers, list):
-            for dispose in old_disposers:
-                if callable(dispose):
-                    try:
-                        dispose()
-                    except Exception:
-                        pass
+            self._dispose_reaction_handles(old_disposers)
 
         self._view_store._reaction_disposers = cc_dump.app.view_store.setup_reactions(
             self._view_store, ctx
         )
+
+    def _dispose_reaction_handles(self, disposers: list[object]) -> None:
+        """Dispose reaction handles that expose either .dispose() or callable teardown."""
+        for handle in disposers:
+            disposer = getattr(handle, "dispose", None)
+            if callable(disposer):
+                try:
+                    disposer()
+                except Exception:
+                    pass
+                continue
+            if callable(handle):
+                try:
+                    handle()
+                except Exception:
+                    pass
 
     async def action_quit(self) -> None:
         now = time.monotonic()
@@ -1121,8 +1134,8 @@ class CcDumpApp(App):
             if tab_id == pane_id:
                 self._active_session_key = session_key
                 break
-        self._bump_view_store_revision("session:revision")
-        # // [LAW:one-source-of-truth] Back-compat alias points to active session store.
+        self._publish_session_panel_state()
+        # // [LAW:one-source-of-truth] _domain_store mirrors the active session store.
         self._domain_store = self._get_active_domain_store()
 
     # ─── Delegates to extracted modules ────────────────────────────────
@@ -1436,6 +1449,16 @@ class CcDumpApp(App):
             if widget is not None:
                 widget.display = (name == active)
 
+    def _sync_chrome_panels(self, state: tuple[bool, bool]) -> None:
+        """Sync logs/info visibility from canonical view-store projection."""
+        logs_visible, info_visible = state
+        logs = self._get_logs()
+        if logs is not None:
+            logs.display = bool(logs_visible)
+        info = self._get_info()
+        if info is not None:
+            info.display = bool(info_visible)
+
     def _sync_sidebar_panels(self, state: tuple[bool, bool, bool]) -> None:
         """Single enforcer for sidebar visibility + focus."""
         settings_open, launch_open, side_open = state
@@ -1471,6 +1494,63 @@ class CcDumpApp(App):
             conv = self._get_conv()
             if conv is not None:
                 self.call_after_refresh(conv.focus)
+
+    def _sync_aux_panels(self, state: tuple[bool, bool]) -> None:
+        """Mount/unmount keys + debug overlays from canonical store flags."""
+        keys_visible, debug_visible = state
+        self._sync_optional_panel(
+            panel_type=cc_dump.tui.keys_panel.KeysPanel,
+            visible=keys_visible,
+            create_panel=cc_dump.tui.keys_panel.create_keys_panel,
+        )
+        self._sync_optional_panel(
+            panel_type=cc_dump.tui.debug_settings_panel.DebugSettingsPanel,
+            visible=debug_visible,
+            create_panel=lambda: cc_dump.tui.debug_settings_panel.create_debug_settings_panel(app_ref=self),
+            on_hidden=self._focus_active_conversation,
+        )
+
+    def _sync_optional_panel(
+        self,
+        *,
+        panel_type: type[Widget],
+        visible: bool,
+        create_panel: Callable[[], Widget],
+        on_hidden: Callable[[], None] | None = None,
+    ) -> None:
+        """Sync optional overlay panel presence to a boolean visibility flag."""
+        panels: list[Widget] = list(self.screen.query(panel_type))
+        if visible:
+            if not panels:
+                self.screen.mount(create_panel())
+            return
+        if panels:
+            for panel in panels:
+                panel.remove()
+            if on_hidden is not None:
+                on_hidden()
+
+    def _focus_active_conversation(self) -> None:
+        conv = self._get_conv()
+        if conv is not None:
+            conv.focus()
+
+    def _sync_error_items(self, items: list[cc_dump.app.error_models.ErrorItem]) -> None:
+        """Project canonical error items to the active conversation indicator."""
+        conv = self._get_conv()
+        if conv is None:
+            return
+        ErrorItem = cc_dump.tui.error_indicator.ErrorItem
+        conv.update_error_items(
+            [
+                ErrorItem(
+                    str(item.id),
+                    str(item.icon),
+                    str(item.summary),
+                )
+                for item in items
+            ]
+        )
 
     def watch_theme(self, theme_name: str) -> None:
         if not stx.is_safe(self):

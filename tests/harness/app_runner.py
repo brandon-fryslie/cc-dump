@@ -70,7 +70,6 @@ async def run_app(
         # fallback for older app instances that don't provide mount binding.
         if not getattr(view_store, "_reaction_disposers", None):
             store_context = {"app": app}
-            store_context.update(cc_dump.tui.view_store_bridge.build_reaction_context(app))
             view_store._reaction_disposers = cc_dump.app.view_store.setup_reactions(
                 view_store, store_context
             )

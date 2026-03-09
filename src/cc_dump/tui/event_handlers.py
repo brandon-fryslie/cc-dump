@@ -5,6 +5,7 @@ events arrive from the proxy. The app.py module calls into these functions
 but the actual behavior can be hot-swapped.
 """
 
+import os
 from collections.abc import Callable
 
 import cc_dump.core.analysis
@@ -79,22 +80,68 @@ def _clear_current_turn_usage(app_state, request_id: str) -> None:
     if isinstance(usage_by_request, dict):
         usage_by_request.pop(request_id, None)
         app_state["current_turn_usage_by_request"] = usage_by_request
-    # Legacy key retained for backward compatibility with old app_state shape.
-    app_state["current_turn_usage"] = {}
 
 
-def _bump_view_store_revision(widgets, key: str) -> None:
-    """Bump a view-store revision key when derived UI projections need refresh."""
+def _focused_current_turn_usage(app_state, domain_store) -> dict | None:
+    """Resolve in-progress usage for the currently focused stream in domain_store.
+
+    // [LAW:one-source-of-truth] Focused request_id resolves once from DomainStore.
+    """
+    usage_by_request = app_state.get("current_turn_usage_by_request", {})
+    if not isinstance(usage_by_request, dict):
+        return None
+    focused_getter = getattr(domain_store, "get_focused_stream_id", None)
+    focused_request_id = focused_getter() if callable(focused_getter) else None
+    if not focused_request_id:
+        return None
+    current_turn = usage_by_request.get(focused_request_id)
+    return current_turn if isinstance(current_turn, dict) else None
+
+
+def _with_capacity_summary(snapshot: dict[str, object]) -> dict[str, object]:
+    """Attach optional token-capacity summary fields to analytics snapshot."""
+    summary = snapshot.get("summary", {})
+    summary_dict = dict(summary) if isinstance(summary, dict) else {}
+
+    capacity_raw = str(os.environ.get("CC_DUMP_TOKEN_CAPACITY", "") or "").strip()
+    try:
+        capacity_total = int(capacity_raw) if capacity_raw else 0
+    except ValueError:
+        capacity_total = 0
+
+    if capacity_total > 0:
+        used_tokens = int(summary_dict.get("total_tokens", 0))
+        remaining_tokens = max(0, capacity_total - used_tokens)
+        used_pct = min(100.0, (used_tokens / capacity_total) * 100.0)
+        summary_dict["capacity_total"] = capacity_total
+        summary_dict["capacity_used"] = used_tokens
+        summary_dict["capacity_remaining"] = remaining_tokens
+        summary_dict["capacity_used_pct"] = used_pct
+
+    return {
+        **snapshot,
+        "summary": summary_dict,
+    }
+
+
+def _refresh_stats_snapshot(widgets, app_state) -> None:
+    """Recompute and publish canonical stats panel snapshot.
+
+    // [LAW:single-enforcer] This is the sole writer for panel:stats_snapshot.
+    """
     view_store = widgets.get("view_store")
     if view_store is None:
         return
-    get_value = getattr(view_store, "get", None)
-    set_value = getattr(view_store, "set", None)
-    if not callable(set_value):
+    analytics_store = widgets.get("analytics_store")
+    if analytics_store is None:
+        view_store.set("panel:stats_snapshot", {"summary": {}, "timeline": [], "models": []})
         return
-    raw = get_value(key) if callable(get_value) else 0
-    current = int(raw) if isinstance(raw, int) else 0
-    set_value(key, current + 1)
+
+    domain_store = widgets.get("domain_store")
+    snapshot = analytics_store.get_dashboard_snapshot(
+        current_turn=_focused_current_turn_usage(app_state, domain_store)
+    )
+    view_store.set("panel:stats_snapshot", _with_capacity_summary(snapshot))
 
 
 def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool = True) -> None:
@@ -106,7 +153,7 @@ def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool =
         budget_vis = filters.get("metadata", cc_dump.core.formatting.HIDDEN)
         if budget_vis.visible:
             conv.rerender(filters)
-    _bump_view_store_revision(widgets, "analytics:revision")
+    _refresh_stats_snapshot(widgets, app_state)
 
 
 def _handle_complete_response_payload(
@@ -165,8 +212,6 @@ def handle_request_headers(event: RequestHeadersEvent, state, widgets, app_state
 
 def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
     """Handle a request event."""
-    import time
-
     body = event.body
 
     try:
@@ -178,9 +223,6 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
             recv_ns=event.recv_ns,
             session_hint=state.get("current_session", "") if isinstance(state.get("current_session", ""), str) else "",
         )
-
-        # Track last message time for session panel connectivity
-        app_state["last_message_time"] = time.monotonic()
 
         # Capture recent messages for side-channel summarization
         raw_messages = body.get("messages", [])
@@ -200,7 +242,7 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
         domain_store = widgets["domain_store"]
         # Non-streaming: add turn to domain store (fires callback to ConversationView)
         domain_store.add_turn(blocks)
-        _bump_view_store_revision(widgets, "analytics:revision")
+        _refresh_stats_snapshot(widgets, app_state)
 
         log_fn("DEBUG", f"Request #{state['request_counter']} processed")
     except Exception as e:
@@ -291,7 +333,7 @@ def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_s
             domain_store.append_stream_block(event.request_id, block)
 
         _upsert_current_turn_usage(app_state, event.request_id, event)
-        _bump_view_store_revision(widgets, "analytics:revision")
+        _refresh_stats_snapshot(widgets, app_state)
     except Exception as e:
         log_fn("ERROR", f"Error handling response progress: {e}")
         raise
@@ -340,6 +382,7 @@ def handle_response_done(event: ResponseDoneEvent, state, widgets, app_state, lo
 
         _ = _pop_response_meta(app_state, event.request_id)
         _clear_current_turn_usage(app_state, event.request_id)
+        _refresh_stats_snapshot(widgets, app_state)
         log_fn("DEBUG", "Response done acknowledged")
     except Exception as e:
         log_fn("ERROR", f"Error handling response done: {e}")

@@ -26,7 +26,6 @@ import cc_dump.tui.launch_config_panel
 import cc_dump.tui.side_channel_panel
 import cc_dump.tui.search_controller
 import cc_dump.tui.theme_controller
-import cc_dump.tui.view_store_bridge
 import cc_dump.tui.protocols
 import cc_dump.tui.category_config
 import cc_dump.tui.panel_registry
@@ -240,10 +239,8 @@ def _reconcile_view_store(app) -> None:
     if view_store is None:
         return
     try:
-        # // [LAW:locality-or-seam] Bridge context updates through a single seam.
+        # // [LAW:locality-or-seam] App-owned context is passed directly to setup_reactions().
         ctx = getattr(app, "_store_context", None)
-        if ctx is not None:
-            ctx.update(cc_dump.tui.view_store_bridge.build_reaction_context(app))
         view_store.reconcile(
             cc_dump.app.view_store.SCHEMA,
             lambda store: cc_dump.app.view_store.setup_reactions(store, ctx),
@@ -316,9 +313,8 @@ async def _replace_all_widgets_inner(app) -> None:
     for new_conv in new_conversations.values():
         new_conv.rerender(app.active_filters)
     if hasattr(app, "_get_active_domain_store"):
-        # // [LAW:one-source-of-truth] Back-compat alias points at active session store.
+        # // [LAW:one-source-of-truth] _domain_store mirrors the active session store.
         app._domain_store = app._get_active_domain_store()
-    _rehydrate_panels_from_store(app, new_panels)
 
 
 def _collect_conversation_swaps(app) -> list[_ConversationSwap]:
@@ -582,19 +578,6 @@ async def _mount_replacement_widgets(
 
     new_footer = cc_dump.tui.custom_footer.StatusFooter()
     await app.mount(new_footer, after=new_info)
-
-
-def _rehydrate_panels_from_store(app, new_panels: dict[str, object]) -> None:
-    """Rehydrate mounted panel data from canonical stores after widget swap.
-
-    // [LAW:one-source-of-truth] Panel content is always derived from live stores.
-    // [LAW:single-enforcer] Hot-reload panel hydration happens at this boundary.
-    """
-    for panel in new_panels.values():
-        refresh = getattr(panel, "refresh_from_store", None)
-        if callable(refresh):
-            refresh()
-
 
 async def _mount_replacement_conversation(
     app,
