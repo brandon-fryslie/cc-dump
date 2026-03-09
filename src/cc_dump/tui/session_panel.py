@@ -32,11 +32,11 @@ class SessionPanel(Static):
     def __init__(self):
         super().__init__("")
         self._state: Observable[SessionPanelState] = Observable(SessionPanelState())
-        self._store_reaction_disposer = None
+        self._clock_tick: Observable[int] = Observable(0)
         self._session_id_span: tuple[int, int] | None = None
         # [LAW:single-enforcer] One reactive projection owns panel text/span rendering.
         self._state_reaction = reaction(
-            lambda: self._state.get(),
+            lambda: (self._clock_tick.get(), self._state.get()),
             self._render_projection,
             fire_immediately=False,
         )
@@ -58,35 +58,24 @@ class SessionPanel(Static):
         return (time.monotonic() - state.last_message_time) < _CONNECTION_TIMEOUT_S
 
     def on_mount(self) -> None:
-        self._bind_store_reaction()
-        self._pull_from_app()
+        self._store_reaction = stx.reaction(
+            self.app,
+            lambda: self.app._view_store.get("panel:session_state"),
+            self._apply_store_state,
+            fire_immediately=True,
+        )
+        self.set_interval(1.0, self._tick_clock)
         self._render_session(self._state.get())
 
-    def _bind_store_reaction(self) -> None:
-        app = getattr(self, "app", None)
-        view_store = getattr(app, "_view_store", None) if app is not None else None
-        if app is None or view_store is None:
-            return
-        # [LAW:single-enforcer] Session panel pulls only when store revision changes.
-        self._store_reaction_disposer = stx.reaction(
-            app,
-            lambda: (
-                view_store.get("session:revision"),
-                view_store.get("panel:active"),
-            ),
-            self._pull_from_store_signal,
-        )
-
     def on_unmount(self) -> None:
-        if callable(self._store_reaction_disposer):
-            self._store_reaction_disposer()
-            self._store_reaction_disposer = None
+        self._store_reaction.dispose()
         self._state_reaction.dispose()
 
-    def _pull_from_store_signal(self, _signal: tuple[object, object]) -> None:
-        self._pull_from_app()
+    def _tick_clock(self) -> None:
+        self._clock_tick.set(self._clock_tick.get() + 1)
 
-    def _render_projection(self, state: SessionPanelState) -> None:
+    def _render_projection(self, projection: tuple[int, SessionPanelState]) -> None:
+        _, state = projection
         self._render_session(state)
 
     def _apply_store_state(self, payload: object) -> None:
@@ -120,23 +109,11 @@ class SessionPanel(Static):
             )
         )
 
-    def _pull_from_app(self) -> None:
-        # [LAW:dataflow-not-control-flow] exception: pull requires mounted widget/app context.
-        if not self.is_attached:
-            return
-        app = getattr(self, "app", None)
-        if app is None:
-            return
-        state_getter = getattr(app, "_get_active_session_panel_state", None)
-        if callable(state_getter):
-            session_id, last_message_time = state_getter()
-        else:
-            session_id = getattr(app, "_session_id", None)
-            app_state = getattr(app, "_app_state", {})
-            last_message_time = app_state.get("last_message_time")
+    def update_display(self, state: SessionPanelState) -> None:
+        """Apply canonical session panel state projection."""
         self.refresh_session_state(
-            session_id=session_id,
-            last_message_time=last_message_time,
+            session_id=state.session_id,
+            last_message_time=state.last_message_time,
         )
 
     def _render_session(self, state: SessionPanelState) -> None:
@@ -156,11 +133,6 @@ class SessionPanel(Static):
             if start <= event.x < end:
                 self.app.copy_to_clipboard(session_id)
                 self.app.notify("Copied session ID", severity="information")
-
-    def refresh_from_store(self, store=None, **kwargs) -> None:
-        """Back-compat seam: pull from app-owned session state."""
-        _ = (store, kwargs)
-        self._pull_from_app()
 
     def cycle_mode(self) -> None:
         """No-op — session panel has no sub-modes."""

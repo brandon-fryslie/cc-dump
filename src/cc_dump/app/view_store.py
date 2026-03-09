@@ -34,8 +34,8 @@ SCHEMA["panel:debug_settings"] = False
 # // [LAW:one-source-of-truth] String, not FollowState enum — enum class identity
 # changes on reload; string comparison is stable across reloads.
 SCHEMA["nav:follow"] = "active"
-SCHEMA["analytics:revision"] = 0
-SCHEMA["session:revision"] = 0
+SCHEMA["panel:stats_snapshot"] = {"summary": {}, "timeline": [], "models": []}
+SCHEMA["panel:session_state"] = {"session_id": None, "last_message_time": None}
 
 # Footer inputs (previously app attributes or external reads)
 SCHEMA["filter:active"] = "1"               # str|None — default to F1 (Conversation)
@@ -225,8 +225,7 @@ def setup_reactions(store, context=None):
             ):
                 effect = getattr(app, method_name, None)
                 if callable(effect):
-                    # [LAW:single-enforcer] App-level UI sync is initialized here on bind.
-                    disposers.append(stx.reaction(app, data_fn, effect, fire_immediately=True))
+                    disposers.append(stx.reaction(app, data_fn, effect))
 
     return disposers
 
