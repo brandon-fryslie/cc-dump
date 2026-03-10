@@ -130,8 +130,6 @@ class DebugSettingsPanel(VerticalScroll):
         self.display = bool(visible)
         if visible:
             self.call_after_refresh(self.focus_default_control)
-        elif self.has_focus_within:
-            self.call_after_refresh(self.screen.focus_next)
 
     def focus_default_control(self) -> None:
         self.screen.focus_next("DebugSettingsPanel *")

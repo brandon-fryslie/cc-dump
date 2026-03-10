@@ -200,11 +200,8 @@ class SettingsPanel(VerticalScroll):
         self._view_reaction.dispose()
 
     def _apply_panel_visibility(self, visible: bool) -> None:
+        # [LAW:single-enforcer] App-level sidebar coordinator owns cross-panel focus policy.
         self.display = bool(visible)
-        if visible:
-            self.call_after_refresh(self.focus_default_control)
-        elif self.has_focus_within:
-            self.call_after_refresh(self.screen.focus_next)
 
     def _apply_view_state(self, view_state: SettingsPanelViewState) -> None:
         if not self.is_attached:

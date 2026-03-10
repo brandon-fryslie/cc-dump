@@ -6,7 +6,7 @@ removed during hot-reload (stateless, user can re-open with X).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from snarfx import Observable, reaction
 from snarfx import textual as stx
@@ -30,7 +30,8 @@ class SideChannelPanelState:
     result_text: str
     result_source: str  # "ai" | "fallback" | "error" | "preview" | ""
     result_elapsed_ms: int
-    purpose_usage: dict[str, dict[str, int]]
+    # [LAW:one-source-of-truth] Default empty usage keeps a canonical shape for all callers.
+    purpose_usage: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
