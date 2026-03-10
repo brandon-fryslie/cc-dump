@@ -41,6 +41,7 @@ from cc_dump.ai.handoff_notes import (
 from cc_dump.ai.prompt_registry import get_prompt_spec, PromptSpec, UTILITY_CUSTOM_PURPOSE
 from cc_dump.ai.side_channel import SideChannelManager
 from cc_dump.ai.side_channel_analytics import SideChannelAnalytics
+from cc_dump.ai.scope_token_helpers import build_message_context_lines
 from cc_dump.ai.utility_catalog import UtilityRegistry, UtilitySpec, fallback_utility_output, utility_prompt
 
 logger = logging.getLogger(__name__)
@@ -487,23 +488,13 @@ class DataDispatcher:
 
 def _build_summary_context(messages: list[dict]) -> str:
     """Build a stable context string for prompt and cache-key derivation."""
-    lines: list[str] = []
-    for msg in messages:
-        role = msg.get("role", "unknown")
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            # Extract text from content blocks
-            parts = []
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    parts.append(block.get("text", ""))
-            content = " ".join(parts)
-        # Truncate individual messages to keep prompt reasonable
-        if len(content) > 500:
-            content = content[:500] + "..."
-        lines.append(f"[{role}]: {content}")
-
-    return "\n".join(lines)
+    return "\n".join(
+        build_message_context_lines(
+            messages,
+            line_template="[{role}]: {content}",
+            truncate_content_at=500,
+        )
+    )
 
 
 def _build_summary_prompt(context: str, spec: PromptSpec) -> str:

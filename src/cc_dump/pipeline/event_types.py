@@ -9,6 +9,8 @@ This module is STABLE — never hot-reloaded. Safe for `from` imports everywhere
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
+import time
+import uuid
 
 
 # ─── Type alias for JSON-parsed dicts ─────────────────────────────────────────
@@ -281,6 +283,31 @@ class LogEvent(PipelineEvent):
     path: str
     status: str
     kind: PipelineEventKind = field(default=PipelineEventKind.LOG, init=False)
+
+
+def new_request_id() -> str:
+    """Generate canonical request IDs for request/response envelopes."""
+    return uuid.uuid4().hex
+
+
+def event_envelope(
+    *,
+    request_id: str,
+    seq: int,
+    provider: str,
+    recv_ns: int | None = None,
+) -> dict[str, str | int]:
+    """Build canonical event envelope fields.
+
+    // [LAW:one-source-of-truth] request_id/seq/recv_ns/provider envelope values
+    // are derived in one helper for both live and replay pipelines.
+    """
+    return {
+        "request_id": request_id,
+        "seq": int(seq),
+        "recv_ns": time.monotonic_ns() if recv_ns is None else int(recv_ns),
+        "provider": provider,
+    }
 
 
 # [LAW:one-source-of-truth] Canonical SSE -> progress-hint mapping lives here.

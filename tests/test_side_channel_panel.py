@@ -104,7 +104,7 @@ def test_qa_controls_disabled_when_ai_disabled():
     assert "[disabled]" in submit_label
 
 
-def test_render_qa_estimate_line_masks_tokens_for_ui_display():
+def test_render_qa_estimate_line_formats_tokens_for_ui_display():
     line = render_qa_estimate_line(
         scope_mode="selected_range",
         message_count=4,
@@ -112,7 +112,7 @@ def test_render_qa_estimate_line_masks_tokens_for_ui_display():
         estimated_output_tokens=320,
         estimated_total_tokens=1554,
     )
-    assert line == "estimate: scope=selected_range messages=4 in=x out=x total=x"
+    assert line == "estimate: scope=selected_range messages=4 in=1.2k out=320 total=1.6k"
 
 
 def test_render_qa_scope_line_shows_selected_indices():

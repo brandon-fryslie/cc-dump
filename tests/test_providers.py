@@ -32,6 +32,26 @@ def test_complete_shape_validation_is_family_based():
     assert providers.is_complete_response_for_provider("copilot", openai_msg)
 
 
+def test_detect_provider_from_har_entry_returns_none_when_unknown_complete_shape():
+    entry = {"request": {"url": "https://unknown.example/v1/chat"}}
+    unknown_complete = {"foo": "bar"}
+
+    assert (
+        providers.detect_provider_from_har_entry(
+            entry,
+            complete_message=unknown_complete,
+        )
+        is None
+    )
+    assert (
+        providers.infer_provider_from_har_entry(
+            entry,
+            complete_message=unknown_complete,
+        )
+        == providers.DEFAULT_PROVIDER_KEY
+    )
+
+
 def test_provider_proxy_type_defaults():
     assert providers.get_provider_spec("anthropic").proxy_type == "reverse"
     assert providers.get_provider_spec("openai").proxy_type == "reverse"

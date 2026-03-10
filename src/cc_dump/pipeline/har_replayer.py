@@ -6,8 +6,6 @@ typed events the live pipeline produces.
 
 import json
 import logging
-import time
-import uuid
 
 import cc_dump.providers
 from cc_dump.pipeline.event_types import (
@@ -16,6 +14,8 @@ from cc_dump.pipeline.event_types import (
     RequestHeadersEvent,
     ResponseHeadersEvent,
     ResponseCompleteEvent,
+    event_envelope,
+    new_request_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -122,18 +122,11 @@ def load_har(path: str) -> list[tuple[dict, dict, int, dict, dict, str]]:
                     ):
                         response_headers[header["name"]] = header["value"]
 
-            # Detect provider: _cc_dump metadata (preferred) > URL heuristic > default.
-            # // [LAW:one-source-of-truth] Provider detection at HAR load boundary.
-            cc_dump_meta = entry.get("_cc_dump", {})
-            raw_provider = cc_dump_meta.get("provider", "") if isinstance(cc_dump_meta, dict) else ""
-            if cc_dump.providers.is_known_provider(str(raw_provider)):
-                provider = cc_dump.providers.normalize_provider(str(raw_provider))
-            else:
-                provider = cc_dump.providers.infer_provider_from_url(request.get("url", ""))
-                if provider == cc_dump.providers.DEFAULT_PROVIDER_KEY:
-                    provider = cc_dump.providers.infer_provider_from_complete_message(
-                        complete_message
-                    )
+            # // [LAW:one-source-of-truth] HAR provider inference precedence is centralized.
+            provider = cc_dump.providers.infer_provider_from_har_entry(
+                entry,
+                complete_message=complete_message,
+            )
 
             if not cc_dump.providers.is_complete_response_for_provider(provider, complete_message):
                 raise ValueError(
@@ -183,36 +176,40 @@ def convert_to_events(
     Returns:
         List of typed PipelineEvent objects
     """
-    request_id = uuid.uuid4().hex
+    request_id = new_request_id()
     return [
         # // [LAW:one-source-of-truth] Replay uses same request envelope shape as live proxy.
         RequestHeadersEvent(
             headers=request_headers,
-            request_id=request_id,
-            seq=0,
-            recv_ns=time.monotonic_ns(),
-            provider=provider,
+            **event_envelope(
+                request_id=request_id,
+                seq=0,
+                provider=provider,
+            ),
         ),
         RequestBodyEvent(
             body=request_body,
-            request_id=request_id,
-            seq=1,
-            recv_ns=time.monotonic_ns(),
-            provider=provider,
+            **event_envelope(
+                request_id=request_id,
+                seq=1,
+                provider=provider,
+            ),
         ),
         ResponseHeadersEvent(
             status_code=response_status,
             headers=response_headers,
-            request_id=request_id,
-            seq=2,
-            recv_ns=time.monotonic_ns(),
-            provider=provider,
+            **event_envelope(
+                request_id=request_id,
+                seq=2,
+                provider=provider,
+            ),
         ),
         ResponseCompleteEvent(
             body=complete_message,
-            request_id=request_id,
-            seq=3,
-            recv_ns=time.monotonic_ns(),
-            provider=provider,
+            **event_envelope(
+                request_id=request_id,
+                seq=3,
+                provider=provider,
+            ),
         ),
     ]

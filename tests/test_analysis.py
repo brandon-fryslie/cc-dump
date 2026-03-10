@@ -44,13 +44,21 @@ def test_estimate_tokens_unicode():
 
 
 def test_fmt_tokens_small():
-    """Token formatter emits placeholder during remediation."""
-    assert fmt_tokens(999) == "x"
+    """Token formatter leaves sub-thousand values unscaled."""
+    assert fmt_tokens(999) == "999"
 
 
 def test_fmt_tokens_thousands():
-    """Token formatter emits placeholder for large values too."""
-    assert fmt_tokens(1500) == "x"
+    """Token formatter scales thousand-range values."""
+    assert fmt_tokens(1500) == "1.5k"
+
+
+def test_fmt_tokens_compact_suffixes_and_sign():
+    """Token formatter supports large magnitudes and negative values."""
+    assert fmt_tokens(1_000) == "1k"
+    assert fmt_tokens(2_000_000) == "2M"
+    assert fmt_tokens(3_400_000_000) == "3.4B"
+    assert fmt_tokens(-2_300) == "-2.3k"
 
 
 # ─── Turn Budget Tests ────────────────────────────────────────────────────────

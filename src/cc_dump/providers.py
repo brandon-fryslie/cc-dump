@@ -236,6 +236,12 @@ def session_provider(session_key: str) -> str:
 
 def infer_provider_from_url(url: str) -> str:
     """Best-effort provider inference from request URL."""
+    # [LAW:one-source-of-truth] Unknown URLs collapse to default provider at this boundary.
+    return provider_from_url_marker(url) or DEFAULT_PROVIDER_KEY
+
+
+def provider_from_url_marker(url: str) -> str | None:
+    """Match provider key from URL markers, returning None when unknown."""
     url_lc = url.strip().lower()
     return next(
         (
@@ -243,8 +249,49 @@ def infer_provider_from_url(url: str) -> str:
             for spec in _PROVIDERS.values()
             if any(marker in url_lc for marker in spec.url_markers)
         ),
-        DEFAULT_PROVIDER_KEY,
+        None,
     )
+
+
+def detect_provider_from_har_entry(
+    entry: dict[str, object],
+    *,
+    complete_message: dict[str, object] | None = None,
+) -> str | None:
+    """Infer provider from HAR entry metadata + request URL + optional response shape.
+
+    // [LAW:one-source-of-truth] HAR provider inference precedence is centralized here:
+    // `_cc_dump.provider` > request URL markers > complete response shape.
+    """
+    metadata = entry.get("_cc_dump", {})
+    raw_provider = metadata.get("provider", "") if isinstance(metadata, dict) else ""
+    normalized = normalize_provider(str(raw_provider))
+    if is_known_provider(normalized):
+        return normalized
+
+    request = entry.get("request", {})
+    raw_url = request.get("url", "") if isinstance(request, dict) else ""
+    provider = provider_from_url_marker(str(raw_url))
+    if provider is not None:
+        return provider
+
+    return (
+        infer_provider_from_complete_message(complete_message)
+        if complete_message is not None
+        else None
+    )
+
+
+def infer_provider_from_har_entry(
+    entry: dict[str, object],
+    *,
+    complete_message: dict[str, object] | None = None,
+) -> str:
+    """Infer provider from HAR entry and fall back to default when unknown."""
+    return detect_provider_from_har_entry(
+        entry,
+        complete_message=complete_message,
+    ) or DEFAULT_PROVIDER_KEY
 
 
 def _provider_proxy_env_items(endpoint: ProviderEndpoint) -> tuple[tuple[str, str], ...]:
@@ -269,14 +316,17 @@ def _normalize_connect_host(host: str) -> str:
     return str(host or "").strip().strip("[]").rstrip(".").lower()
 
 
-def infer_provider_from_complete_message(message: dict[str, object]) -> str:
-    """Best-effort provider inference from complete response shape."""
+def infer_provider_from_complete_message(message: dict[str, object]) -> str | None:
+    """Best-effort provider inference from complete response shape.
+
+    Returns None when message shape does not identify a known provider family.
+    """
     # // [LAW:dataflow-not-control-flow] Provider family is derived from response markers.
     if message.get("type") == "message":
         return "anthropic"
     if message.get("object") == "chat.completion":
         return "openai"
-    return DEFAULT_PROVIDER_KEY
+    return None
 
 
 def is_complete_response_for_provider(provider: str, message: dict[str, object]) -> bool:
