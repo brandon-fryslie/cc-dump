@@ -10,12 +10,14 @@ for hot-reload preservation.
 
 import json
 import logging
+import hashlib
 from dataclasses import dataclass, field
 from typing import TypedDict
 
 from cc_dump.pipeline.event_types import (
     PipelineEvent,
     PipelineEventKind,
+    RequestHeadersEvent,
     RequestBodyEvent,
     ResponseCompleteEvent,
 )
@@ -27,10 +29,24 @@ from cc_dump.core.analysis import (
     HAIKU_BASE_UNIT,
     ToolEconomicsRow,
 )
+import cc_dump.core.formatting
 from cc_dump.ai.side_channel_marker import extract_marker
 from cc_dump.core.token_counter import count_tokens
 
 logger = logging.getLogger(__name__)
+
+
+TURN_METRICS_SCHEMA = "cc_dump.per_turn_metrics"
+TURN_METRICS_VERSION = 1
+
+
+_RETRY_HEADER_KEYS = (
+    "x-stainless-retry-count",
+    "anthropic-retry-attempt",
+    "x-retry-count",
+    "retry-count",
+)
+_INTERRUPTED_STOP_REASONS = frozenset({"max_tokens", "length", "content_filter"})
 
 
 @dataclass
@@ -48,14 +64,25 @@ class ToolInvocationRecord:
 class TurnRecord:
     """Record of a completed API turn (request + response)."""
 
-    sequence_num: int
-    model: str
-    stop_reason: str
-    input_tokens: int
-    output_tokens: int
-    cache_read_tokens: int
-    cache_creation_tokens: int
-    request_json: str  # For timeline budget calculation
+    sequence_num: int = 0
+    request_id: str = ""
+    session_id: str = ""
+    model: str = ""
+    stop_reason: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+    request_json: str = ""  # For timeline budget calculation
+    request_recv_ns: int = 0
+    response_recv_ns: int = 0
+    latency_ms: float = 0.0
+    retry_key: str = ""
+    retry_ordinal: int = 0
+    transport_retry_count: int = 0
+    was_interrupted: bool = False
+    command_count: int = 0
+    command_families: tuple[str, ...] = ()
     purpose: str = "primary"
     prompt_version: str = ""
     policy_version: str = ""
@@ -75,7 +102,16 @@ class _PendingTurn:
     prompt_version: str
     policy_version: str
     is_side_channel: bool
+    session_id: str
+    request_recv_ns: int
+    transport_retry_count: int
     provider: str = "anthropic"
+
+
+@dataclass
+class _RequestMeta:
+    request_recv_ns: int = 0
+    transport_retry_count: int = 0
 
 
 class DashboardTurnRow(TypedDict):
@@ -133,6 +169,153 @@ class SideChannelPurposeSummaryRow(TypedDict):
     policy_versions: dict[str, int]
 
 
+class TurnMetricRecord(TypedDict):
+    sequence_num: int
+    request_id: str
+    session_id: str
+    provider: str
+    purpose: str
+    is_side_channel: bool
+    model: str
+    stop_reason: str
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_creation_tokens: int
+    request_recv_ns: int
+    response_recv_ns: int
+    latency_ms: float
+    retry_key: str
+    retry_ordinal: int
+    transport_retry_count: int
+    is_retry: bool
+    was_interrupted: bool
+    tool_invocation_count: int
+    tool_names: list[str]
+    command_count: int
+    command_families: list[str]
+
+
+class TurnMetricSnapshot(TypedDict):
+    schema: str
+    version: int
+    records: list[TurnMetricRecord]
+
+
+def _extract_session_id(request_body: dict) -> str:
+    metadata = request_body.get("metadata", {})
+    if not isinstance(metadata, dict):
+        return ""
+    user_id = metadata.get("user_id", "")
+    if not isinstance(user_id, str) or not user_id:
+        return ""
+    parsed = cc_dump.core.formatting.parse_user_id(user_id)
+    if not isinstance(parsed, dict):
+        return ""
+    session_id = parsed.get("session_id", "")
+    return session_id if isinstance(session_id, str) else ""
+
+
+def _extract_transport_retry_count(headers: dict[str, str]) -> int:
+    for key in _RETRY_HEADER_KEYS:
+        value = headers.get(key, "")
+        try:
+            count = int(str(value).strip())
+        except (TypeError, ValueError):
+            continue
+        if count >= 0:
+            return count
+    return 0
+
+
+def _command_family(command: str) -> str:
+    tokens = command.strip().split()
+    if not tokens:
+        return ""
+    return tokens[0].lower()
+
+
+def _extract_command_usage(messages: list) -> tuple[int, tuple[str, ...]]:
+    commands: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+
+        content = message.get("content", [])
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") != "tool_use":
+                    continue
+                tool_input = block.get("input", {})
+                if not isinstance(tool_input, dict):
+                    continue
+                command = tool_input.get("command", "")
+                if isinstance(command, str) and command.strip():
+                    commands.append(command.strip())
+
+        tool_calls = message.get("tool_calls", [])
+        if isinstance(tool_calls, list):
+            for tool_call in tool_calls:
+                if not isinstance(tool_call, dict):
+                    continue
+                function = tool_call.get("function", {})
+                if not isinstance(function, dict):
+                    continue
+                arguments_raw = function.get("arguments", "")
+                if not isinstance(arguments_raw, str) or not arguments_raw:
+                    continue
+                try:
+                    parsed_args = json.loads(arguments_raw)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(parsed_args, dict):
+                    continue
+                command = parsed_args.get("command", "")
+                if isinstance(command, str) and command.strip():
+                    commands.append(command.strip())
+
+    families = tuple(
+        sorted({family for family in (_command_family(command) for command in commands) if family})
+    )
+    return len(commands), families
+
+
+def _retry_fingerprint(
+    *,
+    provider: str,
+    session_id: str,
+    purpose: str,
+    model: str,
+    request_body: dict,
+) -> str:
+    # [LAW:one-source-of-truth] Retry identity is derived once from canonical request payload fields.
+    fingerprint_payload = {
+        "provider": provider,
+        "session_id": session_id,
+        "purpose": purpose,
+        "model": model,
+        "system": request_body.get("system"),
+        "messages": request_body.get("messages"),
+        "tools": request_body.get("tools"),
+        "max_tokens": request_body.get("max_tokens"),
+        "temperature": request_body.get("temperature"),
+    }
+    normalized = json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha1(normalized.encode("utf-8")).hexdigest()
+
+
+def _compute_latency_ms(request_recv_ns: int, response_recv_ns: int) -> float:
+    if request_recv_ns <= 0 or response_recv_ns <= 0:
+        return 0.0
+    return max(0.0, (response_recv_ns - request_recv_ns) / 1_000_000)
+
+
+def _is_interrupted_stop_reason(stop_reason: str) -> bool:
+    return stop_reason in _INTERRUPTED_STOP_REASONS
+
+
 class AnalyticsStore:
     """In-memory event subscriber that accumulates analytics data.
 
@@ -144,6 +327,8 @@ class AnalyticsStore:
         self._turns: list[TurnRecord] = []
         self._seq = 0
         self._pending: dict[str, _PendingTurn] = {}
+        self._request_meta: dict[str, _RequestMeta] = {}
+        self._retry_ordinals: dict[str, int] = {}
 
     @property
     def turn_count(self) -> int:
@@ -161,10 +346,28 @@ class AnalyticsStore:
         """Internal event handler - may raise exceptions."""
         kind = event.kind
 
-        if kind == PipelineEventKind.REQUEST:
+        if kind == PipelineEventKind.REQUEST_HEADERS:
+            assert isinstance(event, RequestHeadersEvent)
+            # [LAW:single-enforcer] Retry header normalization happens at this boundary only.
+            headers = {
+                str(key).lower(): str(value)
+                for key, value in event.headers.items()
+            }
+            self._request_meta[event.request_id] = _RequestMeta(
+                request_recv_ns=event.recv_ns,
+                transport_retry_count=_extract_transport_retry_count(headers),
+            )
+
+        elif kind == PipelineEventKind.REQUEST:
             assert isinstance(event, RequestBodyEvent)
             body = event.body if isinstance(event.body, dict) else {}
             marker = extract_marker(body)
+            request_meta = self._request_meta.pop(event.request_id, _RequestMeta())
+            request_recv_ns = (
+                request_meta.request_recv_ns
+                if request_meta.request_recv_ns > 0
+                else event.recv_ns
+            )
             self._pending[event.request_id] = _PendingTurn(
                 request_id=event.request_id,
                 request_body=body,
@@ -173,6 +376,9 @@ class AnalyticsStore:
                 prompt_version=marker.prompt_version if marker is not None else "",
                 policy_version=marker.policy_version if marker is not None else "",
                 is_side_channel=marker is not None,
+                session_id=_extract_session_id(body),
+                request_recv_ns=request_recv_ns,
+                transport_retry_count=request_meta.transport_retry_count,
                 provider=event.provider,
             )
 
@@ -204,6 +410,7 @@ class AnalyticsStore:
                 usage=usage_map,
                 model=str(model),
                 stop_reason=str(stop_reason),
+                response_recv_ns=event.recv_ns,
             )
 
     def _commit_turn(
@@ -213,6 +420,7 @@ class AnalyticsStore:
         usage: dict[str, int],
         model: str,
         stop_reason: str,
+        response_recv_ns: int,
     ) -> None:
         """Store accumulated turn in memory."""
         if not pending.request_body:
@@ -221,7 +429,8 @@ class AnalyticsStore:
         self._seq += 1
 
         # Build tool invocations with token counts
-        messages = pending.request_body.get("messages", [])
+        messages_raw = pending.request_body.get("messages", [])
+        messages = messages_raw if isinstance(messages_raw, list) else []
         invocations = correlate_tools(messages)
         tool_records = []
         for inv in invocations:
@@ -239,9 +448,22 @@ class AnalyticsStore:
                 )
             )
 
+        command_count, command_families = _extract_command_usage(messages)
+        retry_key = _retry_fingerprint(
+            provider=pending.provider,
+            session_id=pending.session_id,
+            purpose=pending.purpose,
+            model=model,
+            request_body=pending.request_body,
+        )
+        retry_ordinal = self._retry_ordinals.get(retry_key, 0)
+        self._retry_ordinals[retry_key] = retry_ordinal + 1
+
         # Create turn record
         turn = TurnRecord(
             sequence_num=self._seq,
+            request_id=pending.request_id,
+            session_id=pending.session_id,
             model=model,
             stop_reason=stop_reason,
             input_tokens=usage.get("input_tokens", 0),
@@ -251,6 +473,15 @@ class AnalyticsStore:
                 "cache_creation_input_tokens", 0
             ),
             request_json=json.dumps(pending.request_body),
+            request_recv_ns=pending.request_recv_ns,
+            response_recv_ns=response_recv_ns,
+            latency_ms=_compute_latency_ms(pending.request_recv_ns, response_recv_ns),
+            retry_key=retry_key,
+            retry_ordinal=retry_ordinal,
+            transport_retry_count=pending.transport_retry_count,
+            was_interrupted=_is_interrupted_stop_reason(stop_reason),
+            command_count=command_count,
+            command_families=command_families,
             purpose=pending.purpose,
             prompt_version=pending.prompt_version,
             policy_version=pending.policy_version,
@@ -335,6 +566,45 @@ class AnalyticsStore:
             }
             for t in self._turns
         ]
+
+    def get_turn_metrics_snapshot(self) -> TurnMetricSnapshot:
+        """Return deterministic per-turn metric records with explicit schema/version."""
+        # [LAW:one-source-of-truth] Per-turn metrics derive from canonical TurnRecord rows.
+        records: list[TurnMetricRecord] = []
+        for turn in self._turns:
+            records.append(
+                {
+                    "sequence_num": turn.sequence_num,
+                    "request_id": turn.request_id,
+                    "session_id": turn.session_id,
+                    "provider": turn.provider,
+                    "purpose": turn.purpose,
+                    "is_side_channel": turn.is_side_channel,
+                    "model": turn.model,
+                    "stop_reason": turn.stop_reason,
+                    "input_tokens": turn.input_tokens,
+                    "output_tokens": turn.output_tokens,
+                    "cache_read_tokens": turn.cache_read_tokens,
+                    "cache_creation_tokens": turn.cache_creation_tokens,
+                    "request_recv_ns": turn.request_recv_ns,
+                    "response_recv_ns": turn.response_recv_ns,
+                    "latency_ms": turn.latency_ms,
+                    "retry_key": turn.retry_key,
+                    "retry_ordinal": turn.retry_ordinal,
+                    "transport_retry_count": turn.transport_retry_count,
+                    "is_retry": turn.retry_ordinal > 0,
+                    "was_interrupted": turn.was_interrupted,
+                    "tool_invocation_count": len(turn.tool_invocations),
+                    "tool_names": sorted({inv.tool_name for inv in turn.tool_invocations if inv.tool_name}),
+                    "command_count": turn.command_count,
+                    "command_families": list(turn.command_families),
+                }
+            )
+        return {
+            "schema": TURN_METRICS_SCHEMA,
+            "version": TURN_METRICS_VERSION,
+            "records": records,
+        }
 
     def get_dashboard_snapshot(self, current_turn: dict | None = None) -> dict[str, object]:
         """Build canonical analytics dashboard data from real API usage fields only.
@@ -647,6 +917,8 @@ class AnalyticsStore:
             "turns": [
                 {
                     "sequence_num": t.sequence_num,
+                    "request_id": t.request_id,
+                    "session_id": t.session_id,
                     "model": t.model,
                     "stop_reason": t.stop_reason,
                     "input_tokens": t.input_tokens,
@@ -654,10 +926,20 @@ class AnalyticsStore:
                     "cache_read_tokens": t.cache_read_tokens,
                     "cache_creation_tokens": t.cache_creation_tokens,
                     "request_json": t.request_json,
+                    "request_recv_ns": t.request_recv_ns,
+                    "response_recv_ns": t.response_recv_ns,
+                    "latency_ms": t.latency_ms,
+                    "retry_key": t.retry_key,
+                    "retry_ordinal": t.retry_ordinal,
+                    "transport_retry_count": t.transport_retry_count,
+                    "was_interrupted": t.was_interrupted,
+                    "command_count": t.command_count,
+                    "command_families": list(t.command_families),
                     "purpose": t.purpose,
                     "prompt_version": t.prompt_version,
                     "policy_version": t.policy_version,
                     "is_side_channel": t.is_side_channel,
+                    "provider": t.provider,
                     "tool_invocations": [
                         {
                             "tool_name": inv.tool_name,
@@ -681,9 +963,22 @@ class AnalyticsStore:
                     "prompt_version": p.prompt_version,
                     "policy_version": p.policy_version,
                     "is_side_channel": p.is_side_channel,
+                    "session_id": p.session_id,
+                    "request_recv_ns": p.request_recv_ns,
+                    "transport_retry_count": p.transport_retry_count,
+                    "provider": p.provider,
                 }
                 for p in self._pending.values()
             ],
+            "request_meta": [
+                {
+                    "request_id": request_id,
+                    "request_recv_ns": meta.request_recv_ns,
+                    "transport_retry_count": meta.transport_retry_count,
+                }
+                for request_id, meta in self._request_meta.items()
+            ],
+            "retry_ordinals": dict(self._retry_ordinals),
         }
 
     def restore_state(self, state: dict):
@@ -703,6 +998,8 @@ class AnalyticsStore:
             self._turns.append(
                 TurnRecord(
                     sequence_num=t_data["sequence_num"],
+                    request_id=str(t_data.get("request_id", "") or ""),
+                    session_id=str(t_data.get("session_id", "") or ""),
                     model=t_data["model"],
                     stop_reason=t_data["stop_reason"],
                     input_tokens=t_data["input_tokens"],
@@ -710,10 +1007,24 @@ class AnalyticsStore:
                     cache_read_tokens=t_data["cache_read_tokens"],
                     cache_creation_tokens=t_data["cache_creation_tokens"],
                     request_json=t_data["request_json"],
+                    request_recv_ns=int(t_data.get("request_recv_ns", 0) or 0),
+                    response_recv_ns=int(t_data.get("response_recv_ns", 0) or 0),
+                    latency_ms=float(t_data.get("latency_ms", 0.0) or 0.0),
+                    retry_key=str(t_data.get("retry_key", "") or ""),
+                    retry_ordinal=int(t_data.get("retry_ordinal", 0) or 0),
+                    transport_retry_count=int(t_data.get("transport_retry_count", 0) or 0),
+                    was_interrupted=bool(t_data.get("was_interrupted", False)),
+                    command_count=int(t_data.get("command_count", 0) or 0),
+                    command_families=tuple(
+                        str(family)
+                        for family in t_data.get("command_families", [])
+                        if isinstance(family, str)
+                    ),
                     purpose=str(t_data.get("purpose", "primary") or "primary"),
                     prompt_version=str(t_data.get("prompt_version", "") or ""),
                     policy_version=str(t_data.get("policy_version", "") or ""),
                     is_side_channel=bool(t_data.get("is_side_channel", False)),
+                    provider=str(t_data.get("provider", "anthropic") or "anthropic"),
                     tool_invocations=tool_invocations,
                 )
             )
@@ -737,4 +1048,28 @@ class AnalyticsStore:
                 prompt_version=str(p_data.get("prompt_version", "") or ""),
                 policy_version=str(p_data.get("policy_version", "") or ""),
                 is_side_channel=bool(p_data.get("is_side_channel", False)),
+                session_id=str(p_data.get("session_id", "") or ""),
+                request_recv_ns=int(p_data.get("request_recv_ns", 0) or 0),
+                transport_retry_count=int(p_data.get("transport_retry_count", 0) or 0),
+                provider=str(p_data.get("provider", "anthropic") or "anthropic"),
             )
+
+        self._request_meta = {}
+        for meta_data in state.get("request_meta", []):
+            if not isinstance(meta_data, dict):
+                continue
+            request_id = str(meta_data.get("request_id", "") or "")
+            if not request_id:
+                continue
+            self._request_meta[request_id] = _RequestMeta(
+                request_recv_ns=int(meta_data.get("request_recv_ns", 0) or 0),
+                transport_retry_count=int(meta_data.get("transport_retry_count", 0) or 0),
+            )
+
+        retry_ordinals = state.get("retry_ordinals", {})
+        self._retry_ordinals = {}
+        if isinstance(retry_ordinals, dict):
+            for key, value in retry_ordinals.items():
+                if not isinstance(key, str):
+                    continue
+                self._retry_ordinals[key] = int(value or 0)

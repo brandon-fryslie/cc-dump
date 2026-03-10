@@ -4,6 +4,7 @@ import pytest
 
 from cc_dump.app.analytics_store import AnalyticsStore, TurnRecord, ToolInvocationRecord
 from cc_dump.pipeline.event_types import (
+    RequestHeadersEvent,
     RequestBodyEvent,
     ResponseCompleteEvent,
 )
@@ -771,3 +772,130 @@ def test_openai_tool_correlation_in_analytics():
     turn = store._turns[0]
     assert len(turn.tool_invocations) == 1
     assert turn.tool_invocations[0].tool_name == "get_weather"
+
+
+def test_turn_metrics_snapshot_has_versioned_schema_and_linkage_keys():
+    """Per-turn metrics snapshot exposes stable schema + request/session linkage."""
+    store = AnalyticsStore()
+    request_id = "req-metrics"
+    request = {
+        "model": "claude-sonnet-4",
+        "metadata": {
+            "user_id": (
+                "user_deadbeef_account_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee_"
+                "session_11111111-2222-3333-4444-555555555555"
+            )
+        },
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tool_cmd",
+                        "name": "Bash",
+                        "input": {"command": "git status"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool_cmd",
+                        "content": "on branch main",
+                    }
+                ],
+            },
+        ],
+    }
+
+    store.on_event(
+        RequestHeadersEvent(
+            headers={"x-stainless-retry-count": "2"},
+            request_id=request_id,
+            recv_ns=1_000_000,
+        )
+    )
+    store.on_event(RequestBodyEvent(body=request, request_id=request_id, recv_ns=1_100_000))
+    store.on_event(
+        ResponseCompleteEvent(
+            body={
+                "model": "claude-sonnet-4",
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_read_input_tokens": 20,
+                    "cache_creation_input_tokens": 1,
+                },
+                "stop_reason": "max_tokens",
+            },
+            request_id=request_id,
+            recv_ns=6_100_000,
+        )
+    )
+
+    snapshot = store.get_turn_metrics_snapshot()
+    assert snapshot["schema"] == "cc_dump.per_turn_metrics"
+    assert snapshot["version"] == 1
+    assert len(snapshot["records"]) == 1
+
+    record = snapshot["records"][0]
+    assert record["request_id"] == request_id
+    assert record["session_id"] == "11111111-2222-3333-4444-555555555555"
+    assert record["sequence_num"] == 1
+    assert record["provider"] == "anthropic"
+    assert record["purpose"] == "primary"
+    assert record["transport_retry_count"] == 2
+    assert record["retry_ordinal"] == 0
+    assert record["is_retry"] is False
+    assert record["was_interrupted"] is True
+    assert record["latency_ms"] == pytest.approx(5.1)
+    assert record["tool_invocation_count"] == 1
+    assert record["tool_names"] == ["Bash"]
+    assert record["command_count"] == 1
+    assert record["command_families"] == ["git"]
+
+
+def test_turn_metrics_snapshot_derives_retry_ordinal_from_request_fingerprint():
+    """Repeated identical requests increment retry ordinal deterministically."""
+    store = AnalyticsStore()
+    request = {
+        "model": "claude-haiku-4-5",
+        "messages": [{"role": "user", "content": "Retry me"}],
+    }
+
+    store.on_event(RequestBodyEvent(body=request, request_id="req-1", recv_ns=1_000))
+    store.on_event(
+        ResponseCompleteEvent(
+            body={
+                "model": "claude-haiku-4-5",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+                "stop_reason": "end_turn",
+            },
+            request_id="req-1",
+            recv_ns=2_000,
+        )
+    )
+
+    store.on_event(RequestBodyEvent(body=request, request_id="req-2", recv_ns=3_000))
+    store.on_event(
+        ResponseCompleteEvent(
+            body={
+                "model": "claude-haiku-4-5",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+                "stop_reason": "end_turn",
+            },
+            request_id="req-2",
+            recv_ns=4_000,
+        )
+    )
+
+    records = store.get_turn_metrics_snapshot()["records"]
+    assert len(records) == 2
+    assert records[0]["retry_ordinal"] == 0
+    assert records[0]["is_retry"] is False
+    assert records[1]["retry_ordinal"] == 1
+    assert records[1]["is_retry"] is True
+    assert records[0]["retry_key"] == records[1]["retry_key"]
