@@ -218,6 +218,12 @@ def render_qa_result_text(
     return "\n".join(lines)
 
 
+def _purpose_usage_snapshot(app) -> dict[str, dict[str, int]]:
+    usage_summary_getter = getattr(app._analytics_store, "get_side_channel_purpose_summary", None)
+    usage_summary = usage_summary_getter() if callable(usage_summary_getter) else {}
+    return dict(usage_summary) if isinstance(usage_summary, dict) else {}
+
+
 def set_side_channel_result(
     app,
     *,
@@ -229,6 +235,7 @@ def set_side_channel_result(
     focus_results: bool = False,
     context_session_key: str | None = None,
 ) -> None:
+    usage_summary = _purpose_usage_snapshot(app)
     context_key = app._context_session_key(
         context_session_key
         if isinstance(context_session_key, str)
@@ -240,6 +247,8 @@ def set_side_channel_result(
         app._view_store.set("sc:result_text", text)
         app._view_store.set("sc:result_source", source)
         app._view_store.set("sc:result_elapsed_ms", elapsed_ms)
+        # [LAW:single-enforcer] Side-channel result projection is the only writer for usage snapshot.
+        app._view_store.set("sc:purpose_usage", usage_summary)
         app._view_store.set("workbench:text", text)
         app._view_store.set("workbench:source", source)
         app._view_store.set("workbench:elapsed_ms", elapsed_ms)
