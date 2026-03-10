@@ -11,6 +11,7 @@ This module is STABLE — never hot-reloaded. Safe for `from` imports everywhere
 """
 
 import json
+from dataclasses import dataclass, field
 from typing import TypedDict
 
 from cc_dump.pipeline.event_types import (
@@ -347,93 +348,147 @@ class OpenAIResponseAssembler:
         return self._result
 
 
+@dataclass
+class _OpenAIReconstructionState:
+    """Canonical in-flight state for OpenAI chunk reconstruction.
+
+    // [LAW:one-source-of-truth] All reconstruction state lives in one canonical value.
+    """
+
+    message_content_parts: list[str] = field(default_factory=list)
+    model: str = ""
+    message_id: str = ""
+    finish_reason: str | None = None
+    tool_calls: dict[int, dict] = field(default_factory=dict)
+    usage: dict[str, int] = field(default_factory=dict)
+
+
+def _merge_openai_chunk_identity(chunk: dict, state: _OpenAIReconstructionState) -> None:
+    if not state.message_id:
+        state.message_id = str(chunk.get("id", "") or "")
+    if not state.model:
+        state.model = str(chunk.get("model", "") or "")
+
+
+def _merge_openai_chunk_usage(chunk: dict, state: _OpenAIReconstructionState) -> None:
+    chunk_usage = chunk.get("usage")
+    if not isinstance(chunk_usage, dict):
+        return
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        if key in chunk_usage:
+            state.usage[key] = chunk_usage[key]
+
+
+def _merge_openai_delta_content(delta: dict, state: _OpenAIReconstructionState) -> None:
+    content = delta.get("content")
+    if isinstance(content, str):
+        state.message_content_parts.append(content)
+
+
+def _openai_tool_call_entry(
+    tool_calls: dict[int, dict],
+    index: int,
+) -> dict:
+    if index not in tool_calls:
+        tool_calls[index] = {
+            "id": "",
+            "type": "function",
+            "function": {"name": "", "arguments": ""},
+        }
+    return tool_calls[index]
+
+
+def _merge_openai_delta_tool_calls(delta: dict, state: _OpenAIReconstructionState) -> None:
+    raw_tool_calls = delta.get("tool_calls")
+    if not isinstance(raw_tool_calls, list):
+        return
+    for tool_call in raw_tool_calls:
+        if not isinstance(tool_call, dict):
+            continue
+        raw_index = tool_call.get("index", 0)
+        index = raw_index if isinstance(raw_index, int) else 0
+        entry = _openai_tool_call_entry(state.tool_calls, index)
+
+        tool_call_id = tool_call.get("id")
+        if isinstance(tool_call_id, str) and tool_call_id:
+            entry["id"] = tool_call_id
+
+        func = tool_call.get("function", {})
+        if not isinstance(func, dict):
+            continue
+        name = func.get("name")
+        if isinstance(name, str) and name:
+            entry["function"]["name"] = name
+        arguments = func.get("arguments")
+        if isinstance(arguments, str):
+            entry["function"]["arguments"] += arguments
+
+
+# [LAW:dataflow-not-control-flow] Fixed-order reducers keep operation order constant per delta.
+_OPENAI_DELTA_REDUCERS = (
+    _merge_openai_delta_content,
+    _merge_openai_delta_tool_calls,
+)
+
+
+def _merge_openai_choice(choice: dict, state: _OpenAIReconstructionState) -> None:
+    finish_reason = choice.get("finish_reason")
+    if isinstance(finish_reason, str) and finish_reason:
+        state.finish_reason = finish_reason
+
+    delta = choice.get("delta", {})
+    if not isinstance(delta, dict):
+        return
+    for reducer in _OPENAI_DELTA_REDUCERS:
+        reducer(delta, state)
+
+
+def _openai_response_usage(state: _OpenAIReconstructionState) -> dict[str, int]:
+    return state.usage or {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
+
+
+def _openai_response_message(state: _OpenAIReconstructionState) -> dict:
+    message_content = "".join(state.message_content_parts)
+    result_message: dict = {"role": "assistant", "content": message_content or None}
+    if state.tool_calls:
+        result_message["tool_calls"] = [state.tool_calls[i] for i in sorted(state.tool_calls)]
+    return result_message
+
+
 def _reconstruct_openai_message(chunks: list[dict]) -> dict:
     """Reconstruct a complete OpenAI chat completion from streaming chunks.
 
     Accumulates delta.content and delta.tool_calls into the non-streaming shape.
     """
-    message_content = ""
-    model = ""
-    message_id = ""
-    finish_reason = None
-    tool_calls: dict[int, dict] = {}  # index → {id, type, function: {name, arguments}}
-    usage: dict[str, int] = {}
+    state = _OpenAIReconstructionState()
 
     for chunk in chunks:
         if not isinstance(chunk, dict):
             continue
-
-        if not message_id:
-            message_id = str(chunk.get("id", "") or "")
-        if not model:
-            model = str(chunk.get("model", "") or "")
-
-        # Usage from final chunk (OpenAI includes it when stream_options.include_usage=true)
-        chunk_usage = chunk.get("usage")
-        if isinstance(chunk_usage, dict):
-            for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
-                if k in chunk_usage:
-                    usage[k] = chunk_usage[k]
-
+        _merge_openai_chunk_identity(chunk, state)
+        _merge_openai_chunk_usage(chunk, state)
         choices = chunk.get("choices", [])
         if not isinstance(choices, list):
             continue
         for choice in choices:
             if not isinstance(choice, dict):
                 continue
-            fr = choice.get("finish_reason")
-            if isinstance(fr, str) and fr:
-                finish_reason = fr
-
-            delta = choice.get("delta", {})
-            if not isinstance(delta, dict):
-                continue
-
-            content = delta.get("content")
-            if isinstance(content, str):
-                message_content += content
-
-            delta_tool_calls = delta.get("tool_calls")
-            if isinstance(delta_tool_calls, list):
-                for tc in delta_tool_calls:
-                    if not isinstance(tc, dict):
-                        continue
-                    idx = tc.get("index", 0)
-                    if not isinstance(idx, int):
-                        idx = 0
-                    if idx not in tool_calls:
-                        tool_calls[idx] = {
-                            "id": tc.get("id", ""),
-                            "type": "function",
-                            "function": {"name": "", "arguments": ""},
-                        }
-                    entry = tool_calls[idx]
-                    tc_id = tc.get("id")
-                    if isinstance(tc_id, str) and tc_id:
-                        entry["id"] = tc_id
-                    func = tc.get("function", {})
-                    if isinstance(func, dict):
-                        name = func.get("name")
-                        if isinstance(name, str) and name:
-                            entry["function"]["name"] = name
-                        args = func.get("arguments")
-                        if isinstance(args, str):
-                            entry["function"]["arguments"] += args
-
-    result_message: dict = {"role": "assistant", "content": message_content or None}
-    if tool_calls:
-        result_message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
+            _merge_openai_choice(choice, state)
 
     return {
-        "id": message_id,
+        "id": state.message_id,
         "object": "chat.completion",
-        "model": model,
+        "model": state.model,
         "choices": [
             {
                 "index": 0,
-                "message": result_message,
-                "finish_reason": finish_reason,
+                "message": _openai_response_message(state),
+                "finish_reason": state.finish_reason,
             }
         ],
-        "usage": usage or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "usage": _openai_response_usage(state),
     }

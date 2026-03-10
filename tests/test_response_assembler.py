@@ -688,3 +688,29 @@ def test_openai_assembler_empty_content():
     # Empty string → None via `message_content or None`
     assert result["choices"][0]["message"]["content"] is None
     assert result["choices"][0]["finish_reason"] == "stop"
+
+
+def test_openai_assembler_ignores_malformed_chunks_and_choices():
+    """Malformed chunk/choice payloads are ignored without breaking assembly."""
+    assembler = OpenAIResponseAssembler()
+
+    chunks: list[object] = [
+        "not-a-dict",
+        {"id": "chatcmpl-malformed", "model": "gpt-4o-mini", "choices": "bad-choices"},
+        {"id": "chatcmpl-malformed", "model": "gpt-4o-mini", "choices": [123, {"delta": "bad-delta"}]},
+        {
+            "id": "chatcmpl-malformed",
+            "model": "gpt-4o-mini",
+            "choices": [{"index": 0, "delta": {"content": "ok"}, "finish_reason": "stop"}],
+        },
+    ]
+
+    for chunk in chunks:
+        assembler.on_event("data", chunk)
+    assembler.on_done()
+
+    result = assembler.result
+    assert result is not None
+    assert result["id"] == "chatcmpl-malformed"
+    assert result["choices"][0]["message"]["content"] == "ok"
+    assert result["choices"][0]["finish_reason"] == "stop"
