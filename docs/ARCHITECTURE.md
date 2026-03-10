@@ -62,7 +62,6 @@ The IR is a flat list of `FormattedBlock` subclasses. Key types:
 | `RoleBlock` | Message role label (USER, ASSISTANT, SYSTEM) |
 | `TextContentBlock` | Plain text content |
 | `TrackedContentBlock` | Content-hashed system prompt section |
-| `DiffBlock` | Unified diff when tracked content changes |
 | `ToolUseBlock` | Tool invocation (name, input size, detail) |
 | `ToolResultBlock` | Tool result (size, error flag, correlated name) |
 | `TextDeltaBlock` | Streaming text fragment |
