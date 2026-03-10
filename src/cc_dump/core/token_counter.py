@@ -1,35 +1,23 @@
-"""Token counting using tiktoken local tokenizer.
+"""Compatibility wrapper for legacy token-counter imports.
 
-Pure utility module with zero dependencies on other cc_dump modules.
-Uses cl100k_base encoding (GPT-4 tokenizer) which provides ~95% accuracy
-for Claude models.
+// [LAW:one-source-of-truth] Canonical estimated token policy is
+// core.analysis.estimate_tokens; this wrapper delegates to it.
 """
 
-import tiktoken
-
-# Cache encoding instance for reuse
-_ENCODING = None
+from cc_dump.core.analysis import estimate_tokens
 
 
 def count_tokens(text: str, model: str = "cl100k_base") -> int:
-    """Count tokens in text using tiktoken.
-
-    Accurate tokenizer for DB storage (tool invocation token counts).
-    For fast real-time display estimates, see analysis.estimate_tokens()
-    which uses a ~4 chars/token heuristic.
+    """Return the canonical estimated token count for text.
 
     Args:
         text: The text to tokenize
-        model: Encoding to use (default: cl100k_base for GPT-4/Claude approximation)
+        model: Compatibility parameter; currently ignored.
 
     Returns:
-        Number of tokens. Returns 0 for empty strings.
+        Number of estimated tokens. Returns 0 for empty strings.
     """
+    _ = model
     if not text:
         return 0
-
-    global _ENCODING
-    if _ENCODING is None:
-        _ENCODING = tiktoken.get_encoding("cl100k_base")
-
-    return len(_ENCODING.encode(text))
+    return estimate_tokens(text)

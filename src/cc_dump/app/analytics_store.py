@@ -508,6 +508,8 @@ class AnalyticsStore:
                 ToolInvocationRecord(
                     tool_name=inv.name,
                     tool_use_id=inv.tool_use_id,
+                    # [LAW:one-source-of-truth] Estimated tool token sizing
+                    # shares the canonical estimator with budget analytics.
                     input_tokens=count_tokens(inv.input_str),
                     result_tokens=count_tokens(inv.result_str),
                     is_error=inv.is_error,

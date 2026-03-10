@@ -66,4 +66,4 @@ def test_budget_estimate_uses_normalized_text_blocks():
         scope_mode=SCOPE_SELECTED_RANGE,
     )
     assert estimate.message_count == 1
-    assert estimate.estimated_input_tokens == 5
+    assert estimate.estimated_input_tokens == 4

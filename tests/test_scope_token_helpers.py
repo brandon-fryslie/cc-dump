@@ -29,8 +29,7 @@ def test_build_message_context_lines_applies_template():
     assert lines == ["[assistant] hello"]
 
 
-def test_estimate_tokens_from_text_rounds_up_and_minimum_one():
+def test_estimate_tokens_from_text_matches_core_policy():
     assert estimate_tokens_from_text("") == 1
     assert estimate_tokens_from_text("abcd") == 1
-    assert estimate_tokens_from_text("abcde") == 2
-
+    assert estimate_tokens_from_text("abcde") == 1

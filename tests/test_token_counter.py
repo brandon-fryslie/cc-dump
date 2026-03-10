@@ -3,37 +3,32 @@
 from cc_dump.core.token_counter import count_tokens
 
 
-def test_count_tokens_empty_string():
-    """Empty string returns 0 tokens."""
+def test_count_tokens_empty_string_returns_zero_for_compat():
+    """Empty string preserves legacy counter behavior."""
     assert count_tokens("") == 0
 
 
 def test_count_tokens_simple_text():
-    """Simple text returns reasonable token count."""
+    """Simple text follows 4-char heuristic."""
     text = "Hello, world!"
-    tokens = count_tokens(text)
-    assert tokens > 0
-    # "Hello, world!" is ~3-4 tokens in cl100k_base
-    assert 2 <= tokens <= 6
+    assert count_tokens(text) == len(text) // 4
 
 
 def test_count_tokens_longer_text():
-    """Longer text returns proportionally more tokens."""
+    """Longer text scales linearly with character count."""
     short = "Hello"
     long = "Hello " * 100  # Repeat 100 times
     short_tokens = count_tokens(short)
     long_tokens = count_tokens(long)
-    # Long text should have significantly more tokens
-    assert long_tokens > short_tokens * 50
+    assert short_tokens == len(short) // 4
+    assert long_tokens == len(long) // 4
+    assert long_tokens > short_tokens
 
 
 def test_count_tokens_json():
-    """JSON content is tokenized correctly."""
+    """JSON content is counted by character length."""
     json_text = '{"key": "value", "number": 42, "array": [1, 2, 3]}'
-    tokens = count_tokens(json_text)
-    assert tokens > 0
-    # JSON with brackets/braces/quotes adds tokens
-    assert 10 <= tokens <= 30
+    assert count_tokens(json_text) == len(json_text) // 4
 
 
 def test_count_tokens_large_text():
@@ -41,39 +36,29 @@ def test_count_tokens_large_text():
     # Generate a large text with varied content
     # Use different words to avoid compression
     large_text = " ".join(f"word{i}" for i in range(2000))
-    tokens = count_tokens(large_text)
-    assert tokens > 0
-    # Each wordN becomes multiple tokens (word + number), so ~4000-6000 tokens
-    assert 3000 <= tokens <= 7000
+    assert count_tokens(large_text) == len(large_text) // 4
 
 
 def test_count_tokens_caching():
-    """Encoding is cached and reused across calls."""
-    # Multiple calls should work without issues (verifies caching doesn't break)
+    """Multiple calls remain deterministic."""
     text = "test caching"
     tokens1 = count_tokens(text)
     tokens2 = count_tokens(text)
     assert tokens1 == tokens2
-    assert tokens1 > 0
+    assert tokens1 == len(text) // 4
 
 
 def test_count_tokens_unicode():
-    """Unicode characters are handled correctly."""
+    """Unicode strings are handled as Python character length."""
     text = "Hello 世界 🌍"
-    tokens = count_tokens(text)
-    assert tokens > 0
-    # Unicode characters typically use more tokens
-    assert 3 <= tokens <= 15
+    assert count_tokens(text) == len(text) // 4
 
 
 def test_count_tokens_code():
-    """Code snippets are tokenized correctly."""
+    """Code snippets follow the same heuristic policy."""
     code = """
 def hello_world():
     print("Hello, world!")
     return 42
 """
-    tokens = count_tokens(code)
-    assert tokens > 0
-    # Code with syntax has specific tokenization
-    assert 10 <= tokens <= 30
+    assert count_tokens(code) == len(code) // 4

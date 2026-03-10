@@ -1,12 +1,8 @@
-"""Shared scope/token helper primitives for AI prompt and budget flows.
-
-// [LAW:one-source-of-truth] Message text normalization for prompt context and
-// token estimation is centralized in this module.
-"""
+"""Shared scope/token helper primitives for AI prompt and budget flows."""
 
 from __future__ import annotations
 
-import math
+from cc_dump.core.analysis import estimate_tokens
 
 
 def normalize_message_content(
@@ -54,6 +50,8 @@ def build_message_context_lines(
 
 
 def estimate_tokens_from_text(text: str) -> int:
-    """Estimate token count from text length using shared policy."""
-    return max(1, math.ceil(len(text) / 4))
+    """Estimate token count using the canonical core token policy.
 
+    // [LAW:one-source-of-truth] Delegate to core.analysis.estimate_tokens.
+    """
+    return estimate_tokens(text)
