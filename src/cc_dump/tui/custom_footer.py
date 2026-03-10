@@ -107,12 +107,20 @@ class StatusFooter(StoreWidget):
         # [LAW:single-enforcer] Footer self-subscribes to footer_state; fires immediately
         # on mount (post-compose) so children are guaranteed ready.
         store = self.app._view_store
-        return [stx.reaction(
-            self.app,
-            lambda: store.footer_state.get(),
-            self._apply_footer_state,
-            fire_immediately=True,
-        )]
+        return [
+            stx.reaction(
+                self.app,
+                lambda: store.footer_state.get(),
+                self._apply_footer_state,
+                fire_immediately=True,
+            ),
+            stx.reaction(
+                self.app,
+                lambda: store.search_ui_state.get(),
+                self._apply_footer_visibility,
+                fire_immediately=True,
+            ),
+        ]
 
     def compose(self):
         # Line 1: category chips
@@ -184,6 +192,9 @@ class StatusFooter(StoreWidget):
         self._apply_category_row(enriched, tc)
         self._apply_follow_chip(enriched, bg_color, fg_color)
         self._apply_tmux_controls(enriched)
+
+    def _apply_footer_visibility(self, state: dict[str, object]) -> None:
+        self.display = bool(state.get("footer_visible", True))
 
     def _apply_category_row(self, state: dict[str, object], tc) -> None:
         for key, name in self._CATEGORY_ITEMS:

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import time
 
 from snarfx import Observable, reaction
+from snarfx import textual as stx
 from textual.widgets import Static
 
 import cc_dump.tui.panel_renderers
@@ -57,11 +58,17 @@ class SessionPanel(Static):
         return (time.monotonic() - state.last_message_time) < _CONNECTION_TIMEOUT_S
 
     def on_mount(self) -> None:
-        """Start 1s timer for live age updates. Textual auto-stops on widget removal."""
+        self._store_reaction = stx.reaction(
+            self.app,
+            lambda: self.app._view_store.get("panel:session_state"),
+            self._apply_store_state,
+            fire_immediately=True,
+        )
         self.set_interval(1.0, self._tick_clock)
         self._render_session(self._state.get())
 
     def on_unmount(self) -> None:
+        self._store_reaction.dispose()
         self._state_reaction.dispose()
 
     def _tick_clock(self) -> None:
@@ -70,6 +77,24 @@ class SessionPanel(Static):
     def _render_projection(self, projection: tuple[int, SessionPanelState]) -> None:
         _, state = projection
         self._render_session(state)
+
+    def _apply_store_state(self, payload: object) -> None:
+        # [LAW:dataflow-not-control-flow] Canonical payload shape drives rendering values.
+        state_dict = payload if isinstance(payload, dict) else {}
+        raw_session_id = state_dict.get("session_id")
+        session_id = raw_session_id if isinstance(raw_session_id, str) else None
+        raw_last_message_time = state_dict.get("last_message_time")
+        last_message_time = (
+            float(raw_last_message_time)
+            if isinstance(raw_last_message_time, (int, float))
+            else None
+        )
+        self.update_display(
+            SessionPanelState(
+                session_id=session_id,
+                last_message_time=last_message_time,
+            )
+        )
 
     def refresh_session_state(
         self,
@@ -82,6 +107,13 @@ class SessionPanel(Static):
                 session_id=session_id,
                 last_message_time=last_message_time,
             )
+        )
+
+    def update_display(self, state: SessionPanelState) -> None:
+        """Apply canonical session panel state projection."""
+        self.refresh_session_state(
+            session_id=state.session_id,
+            last_message_time=state.last_message_time,
         )
 
     def _render_session(self, state: SessionPanelState) -> None:
@@ -101,9 +133,6 @@ class SessionPanel(Static):
             if start <= event.x < end:
                 self.app.copy_to_clipboard(session_id)
                 self.app.notify("Copied session ID", severity="information")
-
-    def refresh_from_store(self, store, **kwargs) -> None:
-        """No-op — session panel doesn't use the analytics store."""
 
     def cycle_mode(self) -> None:
         """No-op — session panel has no sub-modes."""

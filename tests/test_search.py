@@ -11,6 +11,7 @@ from cc_dump.tui.search import (
     SearchContext,
     SearchState,
     SearchTextCache,
+    SearchBar,
     get_searchable_text,
     compile_search_pattern,
     find_all_matches,
@@ -617,3 +618,14 @@ class TestSearchContextIdentityMatching:
         result = ctx.matches_in_block(0, 0)
         assert len(result) == 1
         assert result[0].block_index == 0
+
+
+class TestSearchBarStoreState:
+    def test_apply_store_state_handles_non_numeric_modes(self):
+        bar = SearchBar()
+        bar._display_reaction.dispose()
+        bar._apply_store_state({"phase": "editing", "modes": "not-an-int", "query": "abc"})
+
+        state = bar._display_state.get()
+        assert state.phase == SearchPhase.EDITING
+        assert state.modes == SearchMode.CASE_INSENSITIVE

@@ -12,22 +12,6 @@ ConversationView {
     border: solid $primary;
 }
 
-ToolEconomicsPanel {
-    height: auto;
-    max-height: 12;
-    dock: top;
-    padding: 0 1;
-    border: solid $accent;
-}
-
-TimelinePanel {
-    height: auto;
-    max-height: 12;
-    dock: top;
-    padding: 0 1;
-    border: solid $accent;
-}
-
 SearchBar {
     dock: bottom;
     height: auto;

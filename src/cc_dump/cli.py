@@ -36,7 +36,6 @@ from cc_dump.pipeline.proxy import RequestPipeline
 import cc_dump.app.view_store
 import cc_dump.app.hot_reload
 import cc_dump.app.domain_store
-import cc_dump.tui.view_store_bridge
 import cc_dump.io.logging_setup
 import cc_dump.providers
 from cc_dump.tui.app import CcDumpApp
@@ -299,7 +298,6 @@ def _app_store_context(base_context: dict[str, object], app: CcDumpApp) -> dict[
     return {
         **base_context,
         "app": app,
-        **cc_dump.tui.view_store_bridge.build_reaction_context(app),
     }
 
 
@@ -532,13 +530,14 @@ def main():
     # Set up event router with subscribers
     router = EventRouter(event_q)
 
+    # Analytics store (direct subscriber, in-memory)
+    # [LAW:single-enforcer] Analytics projection updates before UI queue fan-out to avoid races.
+    analytics_store = AnalyticsStore()
+    router.add_subscriber(DirectSubscriber(analytics_store.on_event))
+
     # Display subscriber (queue-based for async consumption)
     display_sub = QueueSubscriber()
     router.add_subscriber(display_sub)
-
-    # Analytics store (direct subscriber, in-memory)
-    analytics_store = AnalyticsStore()
-    router.add_subscriber(DirectSubscriber(analytics_store.on_event))
 
     # HAR recording subscriber (direct subscriber, inline writes)
     har_recorders: list[cc_dump.pipeline.har_recorder.HARRecordingSubscriber] = []

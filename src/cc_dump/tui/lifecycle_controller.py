@@ -76,6 +76,7 @@ def _start_workers(app) -> None:
 
 def _seed_panel_state(app) -> None:
     app._sync_panel_display(app.active_panel)
+    app._publish_session_panel_state()
     app._sync_sidebar_panels(
         (
             bool(app._view_store.get("panel:settings")),

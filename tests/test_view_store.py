@@ -106,7 +106,13 @@ class TestReconcile:
     def test_reconcile_re_registers_reactions(self):
         store = cc_dump.app.view_store.create()
         app = MagicMock()
+        app.is_running = True
         app._rerender_if_mounted = MagicMock()
+        app._sync_panel_display = MagicMock()
+        app._sync_sidebar_panels = MagicMock()
+        app._sync_chrome_panels = MagicMock()
+        app._sync_aux_panels = MagicMock()
+        app._sync_error_items = MagicMock()
         context = {"app": app}
 
         disposers = cc_dump.app.view_store.setup_reactions(store, context)
@@ -142,7 +148,13 @@ class TestSetupReactions:
     def test_autorun_calls_rerender(self):
         store = cc_dump.app.view_store.create()
         app = MagicMock()
+        app.is_running = True
         app._rerender_if_mounted = MagicMock()
+        app._sync_panel_display = MagicMock()
+        app._sync_sidebar_panels = MagicMock()
+        app._sync_chrome_panels = MagicMock()
+        app._sync_aux_panels = MagicMock()
+        app._sync_error_items = MagicMock()
         context = {"app": app}
 
         disposers = cc_dump.app.view_store.setup_reactions(store, context)
@@ -164,6 +176,26 @@ class TestSetupReactions:
         store = cc_dump.app.view_store.create()
         disposers = cc_dump.app.view_store.setup_reactions(store, {})
         assert disposers == []
+
+    def test_store_sync_reactions_fire_immediately(self):
+        store = cc_dump.app.view_store.create()
+        app = MagicMock()
+        app.is_running = True
+        app._rerender_if_mounted = MagicMock()
+        app._sync_panel_display = MagicMock()
+        app._sync_sidebar_panels = MagicMock()
+        app._sync_chrome_panels = MagicMock()
+        app._sync_aux_panels = MagicMock()
+        app._sync_error_items = MagicMock()
+        context = {"app": app}
+
+        cc_dump.app.view_store.setup_reactions(store, context)
+
+        app._sync_panel_display.assert_called_with(store.get("panel:active"))
+        app._sync_sidebar_panels.assert_called()
+        app._sync_chrome_panels.assert_called()
+        app._sync_aux_panels.assert_called()
+        app._sync_error_items.assert_called()
 
 
 class TestPanelAndFollowSchema:
@@ -204,47 +236,58 @@ class TestPanelActiveReaction:
         app.is_running = True
         app._rerender_if_mounted = MagicMock()
         app._sync_panel_display = MagicMock()
-        push_panel = MagicMock()
-        context = {"app": app, "push_panel_change": push_panel}
+        app._sync_sidebar_panels = MagicMock()
+        app._sync_chrome_panels = MagicMock()
+        app._sync_aux_panels = MagicMock()
+        app._sync_error_items = MagicMock()
+        context = {"app": app}
 
         cc_dump.app.view_store.setup_reactions(store, context)
 
-        push_panel.reset_mock()
+        app._sync_panel_display.reset_mock()
 
         store.set("panel:active", "stats")
 
-        push_panel.assert_called_with("stats")
+        app._sync_panel_display.assert_called_with("stats")
 
     def test_reaction_guarded_during_stx_pause(self):
         store = cc_dump.app.view_store.create()
         app = MagicMock()
         app.is_running = True
         app._rerender_if_mounted = MagicMock()
-        push_panel = MagicMock()
-        context = {"app": app, "push_panel_change": push_panel}
+        app._sync_panel_display = MagicMock()
+        app._sync_sidebar_panels = MagicMock()
+        app._sync_chrome_panels = MagicMock()
+        app._sync_aux_panels = MagicMock()
+        app._sync_error_items = MagicMock()
+        context = {"app": app}
 
         cc_dump.app.view_store.setup_reactions(store, context)
-        push_panel.reset_mock()
+        app._sync_panel_display.reset_mock()
 
         with stx.pause(app):
             store.set("panel:active", "timeline")
 
-        push_panel.assert_not_called()
+        app._sync_panel_display.assert_not_called()
 
     def test_reaction_guarded_before_running(self):
         store = cc_dump.app.view_store.create()
         app = MagicMock()
         app.is_running = False
         app._rerender_if_mounted = MagicMock()
-        push_panel = MagicMock()
-        context = {"app": app, "push_panel_change": push_panel}
+        app._sync_panel_display = MagicMock()
+        app._sync_sidebar_panels = MagicMock()
+        app._sync_chrome_panels = MagicMock()
+        app._sync_aux_panels = MagicMock()
+        app._sync_error_items = MagicMock()
+        context = {"app": app}
 
         cc_dump.app.view_store.setup_reactions(store, context)
-        push_panel.reset_mock()
+        app._sync_panel_display.reset_mock()
 
         store.set("panel:active", "economics")
 
-        push_panel.assert_not_called()
+        app._sync_panel_display.assert_not_called()
 
 
 class TestReconcileWithNewKeys:
@@ -378,15 +421,19 @@ class TestErrorReaction:
         app = MagicMock()
         app.is_running = True
         app._rerender_if_mounted = MagicMock()
-        push_errors = MagicMock()
-        context = {"app": app, "push_errors": push_errors}
+        app._sync_panel_display = MagicMock()
+        app._sync_sidebar_panels = MagicMock()
+        app._sync_chrome_panels = MagicMock()
+        app._sync_aux_panels = MagicMock()
+        app._sync_error_items = MagicMock()
+        context = {"app": app}
 
         cc_dump.app.view_store.setup_reactions(store, context)
-        push_errors.reset_mock()
+        app._sync_error_items.reset_mock()
 
         store.exception_items.append(ErrorItem("exc-1", "\U0001f4a5", "RuntimeError: boom"))
 
-        push_errors.assert_called()
-        items = push_errors.call_args[0][0]
+        app._sync_error_items.assert_called()
+        items = app._sync_error_items.call_args[0][0]
         assert len(items) == 1
         assert items[0].summary == "RuntimeError: boom"
