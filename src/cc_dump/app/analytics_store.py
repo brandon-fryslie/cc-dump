@@ -29,7 +29,7 @@ from cc_dump.core.analysis import (
     HAIKU_BASE_UNIT,
     ToolEconomicsRow,
 )
-import cc_dump.core.formatting
+from cc_dump.core.formatting import parse_user_id
 from cc_dump.ai.side_channel_marker import extract_marker
 from cc_dump.core.token_counter import count_tokens
 
@@ -211,7 +211,7 @@ def _extract_session_id(request_body: dict) -> str:
     user_id = metadata.get("user_id", "")
     if not isinstance(user_id, str) or not user_id:
         return ""
-    parsed = cc_dump.core.formatting.parse_user_id(user_id)
+    parsed = parse_user_id(user_id)
     if not isinstance(parsed, dict):
         return ""
     session_id = parsed.get("session_id", "")
