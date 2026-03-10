@@ -485,15 +485,13 @@ def get_category(block: FormattedBlock) -> Category | None:
     return BLOCK_CATEGORY.get(type(block).__name__)
 
 
-def _resolve_visibility(block: FormattedBlock, filters: dict, overrides=None) -> VisState:
+def _resolve_visibility(block: FormattedBlock, filters: dict) -> VisState:
     """Determine VisState for a block given current filter state.
 
     // [LAW:one-source-of-truth] Returns THE visibility representation.
     // [LAW:dataflow-not-control-flow] Value coalescing, not branching.
-    // [LAW:single-enforcer] ViewOverrides is the sole source for per-block overrides.
 
     Filters contain VisState values keyed by category name.
-    Per-block expanded (from overrides) overrides category-level expansion.
     Returns ALWAYS_VISIBLE for blocks with no category.
     """
     cat = get_category(block)
@@ -501,15 +499,7 @@ def _resolve_visibility(block: FormattedBlock, filters: dict, overrides=None) ->
         return ALWAYS_VISIBLE  # always fully visible
 
     vis = filters.get(cat.value, ALWAYS_VISIBLE)
-    # Per-block expanded override — from overrides only
-    block_expanded = None
-    if overrides is not None:
-        bvs = overrides._blocks.get(block.block_id)
-        if bvs is not None:
-            block_expanded = bvs.expanded
-    expanded = block_expanded if block_expanded is not None else vis.expanded
-
-    return VisState(vis.visible, vis.full, expanded)
+    return VisState(vis.visible, vis.full, vis.expanded)
 
 
 # ─── Style helpers ─────────────────────────────────────────────────────────────
@@ -3808,7 +3798,7 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
     // [LAW:single-enforcer] Visibility/render/truncation/recursion policy is enforced here.
     // [LAW:dataflow-not-control-flow] Pipeline stages always execute in the same order.
     """
-    vis = _resolve_visibility(block, ctx.filters, overrides=ctx.overrides)
+    vis = _resolve_visibility(block, ctx.filters)
     max_lines = TRUNCATION_LIMITS[vis]
     if max_lines == 0:
         return
