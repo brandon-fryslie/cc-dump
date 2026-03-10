@@ -885,7 +885,7 @@ class TestIncrementalOffsets:
                 TurnData(turn_index=i, blocks=[], strips=[Strip.blank(80)])
             )
         conv._recalculate_offsets()
-        conv._scroll_anchor = ScrollAnchor(turn_index=3, block_index=0, line_in_block=0)
+        conv._scroll_anchor = ScrollAnchor(turn_index=3, line_in_turn=0)
 
         cls = type(conv)
         with patch.object(cls, 'is_attached', new_callable=PropertyMock, return_value=True), \
