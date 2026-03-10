@@ -6,6 +6,7 @@ from textual.containers import Horizontal
 
 import cc_dump.tui.rendering
 import cc_dump.io.logging_setup
+import cc_dump.core.filter_registry
 from cc_dump.core.formatting import VisState, HIDDEN
 from cc_dump.tui.follow_mode import FollowState
 from cc_dump.tui.chip import Chip
@@ -94,14 +95,8 @@ class StatusFooter(StoreWidget):
         VisState(True, True, True):    "\u25bc",  # ▼  Full Expanded
     }
 
-    _CATEGORY_ITEMS = [
-        ("1", "user"),
-        ("2", "assistant"),
-        ("3", "tools"),
-        ("4", "system"),
-        ("5", "metadata"),
-        ("6", "thinking"),
-    ]
+    # [LAW:one-source-of-truth] Footer chip order derives from canonical registry.
+    _CATEGORY_ITEMS = tuple(cc_dump.core.filter_registry.CATEGORY_ITEMS)
 
     def _setup_store_reactions(self) -> list:
         # [LAW:single-enforcer] Footer self-subscribes to footer_state; fires immediately
