@@ -9,11 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from snarfx import Observable, reaction
+from snarfx import textual as stx
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
-from textual.widget import Widget
 from textual.widgets import Markdown, Static
 
+from cc_dump.tui.store_widget import StoreWidget
 
 @dataclass(frozen=True)
 class WorkbenchResultState:
@@ -25,7 +26,7 @@ class WorkbenchResultState:
     meta: str = ""
 
 
-class WorkbenchResultsView(Widget):
+class WorkbenchResultsView(StoreWidget):
     """Renders the most recent workbench output in a full-width conversation tab."""
 
     DEFAULT_CSS = """
@@ -72,10 +73,33 @@ class WorkbenchResultsView(Widget):
             yield Markdown("No workbench output yet.", id="workbench-results-markdown")
 
     def on_mount(self) -> None:
+        super().on_mount()
         self._render_result_state(self._result_state.get())
 
     def on_unmount(self) -> None:
+        super().on_unmount()
         self._result_state_reaction.dispose()
+
+    def _setup_store_reactions(self) -> list:
+        store = self.app._view_store
+        return [
+            stx.reaction(
+                self.app,
+                lambda: store.workbench_state.get(),
+                self._apply_store_state,
+                fire_immediately=True,
+            )
+        ]
+
+    def _apply_store_state(self, payload: object) -> None:
+        state = payload if isinstance(payload, dict) else {}
+        self.update_result(
+            text=str(state.get("text", "")),
+            source=str(state.get("source", "")),
+            elapsed_ms=int(state.get("elapsed_ms", 0)),
+            action=str(state.get("action", "")),
+            context_session_id=str(state.get("context_session_id", "")),
+        )
 
     @staticmethod
     def _build_meta_line(state: WorkbenchResultState) -> str:

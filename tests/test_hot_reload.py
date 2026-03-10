@@ -485,16 +485,14 @@ class TestWidgetProtocolValidation:
         from cc_dump.tui.widget_factory import (
             ConversationView,
             StatsPanel,
-            TimelinePanel,
-            ToolEconomicsPanel,
         )
+        from cc_dump.tui.session_panel import SessionPanel
         from cc_dump.tui.protocols import validate_widget_protocol
 
         widgets = [
             ConversationView(),
             StatsPanel(),
-            TimelinePanel(),
-            ToolEconomicsPanel(),
+            SessionPanel(),
         ]
 
         for widget in widgets:
@@ -566,101 +564,6 @@ class TestHotReloadSwapValidation:
             )
 
 
-class TestHotReloadPanelRehydrate:
-    """Unit tests for post-swap panel refresh from canonical stores."""
-
-    def test_rehydrate_panels_from_store_refreshes_all_supported_panels(self):
-        from cc_dump.tui.hot_reload_controller import _rehydrate_panels_from_store
-
-        class StatsPanelStub:
-            def __init__(self):
-                self.calls = []
-
-            def refresh_from_store(self, store, **kwargs):
-                self.calls.append((store, kwargs))
-
-        class StorePanelStub:
-            def __init__(self):
-                self.calls = []
-
-            def refresh_from_store(self, store):
-                self.calls.append(store)
-
-        class SessionPanelStub:
-            def __init__(self):
-                self.calls = []
-
-            def refresh_session_state(self, *, session_id, last_message_time):
-                self.calls.append(
-                    {
-                        "session_id": session_id,
-                        "last_message_time": last_message_time,
-                    }
-                )
-
-        analytics_store = object()
-        domain_store = object()
-
-        stats = StatsPanelStub()
-        economics = StorePanelStub()
-        timeline = StorePanelStub()
-        session = SessionPanelStub()
-
-        app = SimpleNamespace(
-            _analytics_store=analytics_store,
-            _domain_store=domain_store,
-            _iter_domain_stores=lambda: (domain_store,),
-            _app_state={"last_message_time": "2026-02-22T12:00:00Z"},
-            _session_id="session-123",
-        )
-        new_panels = {
-            "stats": stats,
-            "economics": economics,
-            "timeline": timeline,
-            "session": session,
-        }
-
-        _rehydrate_panels_from_store(app, new_panels)
-
-        assert stats.calls == [
-            (
-                analytics_store,
-                {"domain_store": domain_store, "all_domain_stores": (domain_store,)},
-            )
-        ]
-        assert economics.calls == [analytics_store]
-        assert timeline.calls == [analytics_store]
-        assert session.calls == [
-            {
-                "session_id": "session-123",
-                "last_message_time": "2026-02-22T12:00:00Z",
-            }
-        ]
-
-    def test_rehydrate_panels_from_store_passes_none_store_unconditionally(self):
-        from cc_dump.tui.hot_reload_controller import _rehydrate_panels_from_store
-
-        class StorePanelStub:
-            def __init__(self):
-                self.calls = []
-
-            def refresh_from_store(self, store, **kwargs):
-                self.calls.append((store, kwargs))
-
-        stats = StorePanelStub()
-        app = SimpleNamespace(
-            _analytics_store=None,
-            _domain_store=None,
-            _iter_domain_stores=lambda: (),
-            _app_state={},
-            _session_id=None,
-        )
-
-        _rehydrate_panels_from_store(app, {"stats": stats})
-
-        assert stats.calls == [(None, {"domain_store": None, "all_domain_stores": ()})]
-
-
 class TestWidgetStatePreservation:
     """Unit tests for widget state get/restore cycle."""
 
@@ -668,17 +571,14 @@ class TestWidgetStatePreservation:
         from cc_dump.tui.widget_factory import StatsPanel
 
         widget = StatsPanel()
-        widget.update_stats(requests=10, model="claude-3-opus")
-        widget.models_seen.add("claude-3-sonnet")
+        widget._view_index = 2
 
         state = widget.get_state()
 
         new_widget = StatsPanel()
         new_widget.restore_state(state)
 
-        assert new_widget.request_count == 10
-        assert "claude-3-opus" in new_widget.models_seen
-        assert "claude-3-sonnet" in new_widget.models_seen
+        assert new_widget._view_index == 2
 
     def test_conversation_view_state_roundtrip(self):
         from cc_dump.tui.widget_factory import ConversationView, FollowState
@@ -743,17 +643,6 @@ class TestWidgetStatePreservation:
 
         assert new_widget._follow_state == FollowState.ENGAGED
 
-    def test_economics_panel_breakdown_mode_roundtrip(self):
-        from cc_dump.tui.widget_factory import ToolEconomicsPanel
-
-        widget = ToolEconomicsPanel()
-        widget._breakdown_mode = True
-        state = widget.get_state()
-
-        new_widget = ToolEconomicsPanel()
-        new_widget.restore_state(state)
-        assert new_widget._breakdown_mode is True
-
     def test_stats_panel_empty_state_roundtrip(self):
         """Restoring from empty state produces valid defaults."""
         from cc_dump.tui.widget_factory import StatsPanel
@@ -761,8 +650,7 @@ class TestWidgetStatePreservation:
         new_widget = StatsPanel()
         new_widget.restore_state({})
 
-        assert new_widget.request_count == 0
-        assert new_widget.models_seen == set()
+        assert new_widget._view_index == 0
 
     def test_content_region_state_roundtrip(self):
         """Content regions survive via domain store; expanded state in ViewOverrides.
@@ -794,17 +682,6 @@ class TestWidgetStatePreservation:
         # ViewOverrides state survives get_state/restore_state roundtrip
         state = widget.get_state()
         assert state["view_overrides"] is not None
-
-    def test_timeline_panel_state_roundtrip(self):
-        from cc_dump.tui.widget_factory import TimelinePanel
-
-        widget = TimelinePanel()
-        state = widget.get_state()
-
-        new_widget = TimelinePanel()
-        new_widget.restore_state(state)
-        assert new_widget is not None
-
 
 class TestHotReloadModuleStructure:
     """Unit tests for hot-reload module configuration."""

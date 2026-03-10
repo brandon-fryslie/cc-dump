@@ -131,22 +131,6 @@ def cycle_panel_mode(app) -> None:
         panel.cycle_mode()
 
 
-def refresh_active_panel(app, panel_name: str) -> None:
-    """Refresh data for the named panel.
-
-    // [LAW:one-type-per-behavior] Generic refresh via _get_panel + refresh_from_store.
-    Session panel uses a separate refresh path (no analytics store).
-    """
-    if panel_name == "session":
-        refresh_session(app)
-        return
-    if app._analytics_store is None:
-        return
-    panel = app._get_panel(panel_name)
-    if panel is not None:
-        panel.refresh_from_store(app._analytics_store)
-
-
 def _toggle_panel(app, panel_key: str) -> None:
     """// [LAW:dataflow-not-control-flow] Panel toggling is store-key driven data."""
     store_key = cc_dump.tui.action_config.PANEL_TOGGLE_CONFIG[panel_key]
@@ -499,50 +483,3 @@ def prev_session(app) -> None:
 
     _conv_action(app, _jump)
 
-
-# ─── Panel refresh ─────────────────────────────────────────────────────
-
-
-def refresh_panel(app, name: str) -> None:
-    """// [LAW:one-type-per-behavior] Generic refresh for store-backed panels."""
-    if not app.is_running or app._analytics_store is None:
-        return
-    panel = app._get_panel(name)
-    if panel is not None:
-        # [LAW:dataflow-not-control-flow] Per-panel refresh kwargs via lookup table.
-        all_domain_stores = ()
-        iter_stores = getattr(app, "_iter_domain_stores", None)
-        if callable(iter_stores):
-            all_domain_stores = iter_stores()
-        panel_kwargs = {
-            "stats": {"domain_store": _active_domain_store(app), "all_domain_stores": all_domain_stores},
-        }
-        panel.refresh_from_store(app._analytics_store, **panel_kwargs.get(name, {}))
-
-
-def refresh_stats(app) -> None:
-    refresh_panel(app, "stats")
-
-
-def refresh_economics(app) -> None:
-    refresh_panel(app, "economics")
-
-
-def refresh_timeline(app) -> None:
-    refresh_panel(app, "timeline")
-
-
-def refresh_session(app) -> None:
-    """Refresh the session panel with current app state."""
-    panel = app._get_panel("session")
-    if panel is None:
-        return
-    if hasattr(app, "_get_active_session_panel_state"):
-        session_id, last_message_time = app._get_active_session_panel_state()
-    else:
-        session_id = app._session_id
-        last_message_time = app._app_state.get("last_message_time")
-    panel.refresh_session_state(
-        session_id=session_id,
-        last_message_time=last_message_time,
-    )
