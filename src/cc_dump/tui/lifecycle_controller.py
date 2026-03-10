@@ -20,6 +20,7 @@ def on_mount(app) -> None:
 
     // [LAW:single-enforcer] App mount side-effects are centralized at one boundary.
     """
+    app._bind_view_store_reactions()
     _restore_theme(app)
     _connect_stderr_tee(app)
     _log_proxy_endpoints(app)
@@ -74,7 +75,15 @@ def _start_workers(app) -> None:
 
 
 def _seed_panel_state(app) -> None:
-    app.active_panel = app.active_panel
+    app._sync_panel_display(app.active_panel)
+    app._publish_session_panel_state()
+    app._sync_sidebar_panels(
+        (
+            bool(app._view_store.get("panel:settings")),
+            bool(app._view_store.get("panel:launch_config")),
+            bool(app._view_store.get("panel:side_channel")),
+        )
+    )
     info = app._get_info()
     if info is not None:
         info.update_info(app._build_server_info())

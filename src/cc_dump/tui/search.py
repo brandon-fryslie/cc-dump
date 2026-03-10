@@ -2,7 +2,7 @@
 
 State machine: INACTIVE → EDITING → NAVIGATING → INACTIVE
 Search runs incrementally during EDITING with debounce.
-Navigation (n/N) in NAVIGATING phase raises category visibility and expands blocks.
+Navigation keys in NAVIGATING phase are reserved for upcoming redesign.
 
 This module is RELOADABLE.
 """
@@ -21,7 +21,7 @@ from snarfx import textual as stx
 from rich.text import Text
 from textual.widgets import Static
 
-import cc_dump.app.view_store
+import cc_dump.core.palette
 from cc_dump.core.analysis import fmt_tokens
 import cc_dump.tui.rendering
 
@@ -187,7 +187,7 @@ class SearchState:
     view store — they survive hot-reload via reconcile() without manual
     save/restore.
 
-    Transient fields (matches, expanded_blocks, etc.) are plain attributes
+    Transient fields (matches, debounce timer, cache, etc.) are plain attributes
     rebuilt by run_search() after reload.
 
     // [LAW:one-source-of-truth] Store is the single source for identity fields.
@@ -198,7 +198,6 @@ class SearchState:
         # Transient — rebuilt by run_search() after reload
         self.matches: list[SearchMatch] = []
         self.saved_filters: dict = {}
-        self.expanded_blocks: list[tuple[int, int, object]] = []
         self.debounce_timer: object | None = None
         self.saved_scroll_y: float | None = None
         self.text_cache: SearchTextCache = SearchTextCache(max_entries=20_000)
@@ -370,7 +369,7 @@ def _collect_descendants(block, hier_idx: int) -> list[tuple[int, object]]:
 
 
 def find_all_matches(
-    turns: list,
+    turns: Sequence[object],
     pattern: re.Pattern,
     text_cache: SearchTextCache | dict[tuple[str, int], str] | None = None,
 ) -> list[SearchMatch]:
@@ -382,7 +381,7 @@ def find_all_matches(
     Walks container children recursively (arbitrary depth) so content inside
     MessageBlock, MetadataSection, ToolDefsSection→ToolDefBlock→SkillDefChild,
     etc. is searchable. Child matches use the top-level container's
-    hierarchical index as block_index (for _force_vis), but store the actual
+    hierarchical index as block_index, but store the actual
     child block in the `block` field (for identity lookup).
 
     // [LAW:dataflow-not-control-flow] searchable list is always built;
@@ -453,7 +452,6 @@ class SearchBar(Static):
                 match_count=0,
             )
         )
-        self._store_disposers: list = []
         # [LAW:single-enforcer] SearchBar rendering is owned by one local projection reaction.
         self._display_reaction = reaction(
             lambda: self._display_state.get(),
@@ -462,49 +460,43 @@ class SearchBar(Static):
         )
 
     def on_mount(self) -> None:
-        self._store_disposers = self._setup_store_reactions()
+        self._store_reaction = stx.reaction(
+            self.app,
+            lambda: self.app._view_store.search_ui_state.get(),
+            self._apply_store_state,
+            fire_immediately=True,
+        )
         self._render_display(self._display_state.get())
 
     def on_unmount(self) -> None:
-        for d in self._store_disposers:
-            d.dispose()
+        self._store_reaction.dispose()
         self._display_reaction.dispose()
 
     def update_display(self, state: SearchBarState) -> None:
         self._display_state.set(state)
 
-    def _setup_store_reactions(self) -> list:
-        store = self.app.view_store
-        return [
-            stx.reaction(
-                self.app,
-                lambda: store.search_ui_state.get(),
-                self._apply_search_projection,
-                fire_immediately=True,
-            )
-        ]
-
-    def _apply_search_projection(
-        self, projection: cc_dump.app.view_store.SearchUiProjection
-    ) -> None:
-        phase_raw = projection.phase
+    def _apply_store_state(self, payload: object) -> None:
+        state = payload if isinstance(payload, dict) else {}
+        try:
+            modes_raw = int(state.get("modes", int(SearchMode.CASE_INSENSITIVE)))
+            modes = SearchMode(modes_raw)
+        except (TypeError, ValueError):
+            modes = SearchMode.CASE_INSENSITIVE
+        phase_raw = str(state.get("phase", SearchPhase.INACTIVE.value))
         try:
             phase = SearchPhase(phase_raw)
         except ValueError:
             phase = SearchPhase.INACTIVE
-        modes_raw = projection.modes
-        try:
-            modes = SearchMode(modes_raw)
-        except ValueError:
-            modes = SearchMode.CASE_INSENSITIVE
+
+        self.display = phase != SearchPhase.INACTIVE
         self.update_display(
             SearchBarState(
                 phase=phase,
-                query=projection.query,
+                query=str(state.get("query", "")),
                 modes=modes,
-                cursor_pos=projection.cursor_pos,
-                current_index=projection.current_index,
-                match_count=projection.match_count,
+                cursor_pos=int(state.get("cursor_pos", 0)),
+                current_index=int(state.get("current_index", 0)),
+                match_count=int(state.get("match_count", 0)),
             )
         )
 

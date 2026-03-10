@@ -37,6 +37,12 @@ async def test_pre_run_view_store_reactions_rebind_on_mount():
         store_context=store_context,
     )
 
+    # Pre-bind reactions exactly like CLI startup did before app.run().
+    store_context["app"] = app
+    view_store._reaction_disposers = cc_dump.app.view_store.setup_reactions(
+        view_store, store_context
+    )
+
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         assert "Hello world" in all_turns_text(app)

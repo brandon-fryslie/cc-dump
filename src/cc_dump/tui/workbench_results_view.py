@@ -13,9 +13,8 @@ from snarfx import textual as stx
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
-import cc_dump.app.view_store
-from cc_dump.tui.store_widget import StoreWidget
 
+from cc_dump.tui.store_widget import StoreWidget
 
 @dataclass(frozen=True)
 class WorkbenchResultState:
@@ -82,25 +81,24 @@ class WorkbenchResultsView(StoreWidget):
         self._result_state_reaction.dispose()
 
     def _setup_store_reactions(self) -> list:
-        store = self.app.view_store
+        store = self.app._view_store
         return [
             stx.reaction(
                 self.app,
                 lambda: store.workbench_state.get(),
-                self._apply_workbench_projection,
+                self._apply_store_state,
                 fire_immediately=True,
             )
         ]
 
-    def _apply_workbench_projection(
-        self, projection: cc_dump.app.view_store.WorkbenchProjection
-    ) -> None:
+    def _apply_store_state(self, payload: object) -> None:
+        state = payload if isinstance(payload, dict) else {}
         self.update_result(
-            text=projection.text,
-            source=projection.source,
-            elapsed_ms=projection.elapsed_ms,
-            action=projection.action,
-            context_session_id=projection.context_session_id,
+            text=str(state.get("text", "")),
+            source=str(state.get("source", "")),
+            elapsed_ms=int(state.get("elapsed_ms", 0)),
+            action=str(state.get("action", "")),
+            context_session_id=str(state.get("context_session_id", "")),
         )
 
     @staticmethod

@@ -13,10 +13,10 @@ from unittest.mock import patch, PropertyMock, MagicMock
 from cc_dump.tui.widget_factory import (
     ConversationView,
     FollowState,
-    _FOLLOW_TOGGLE,
-    _FOLLOW_TRANSITIONS,
-    _FOLLOW_SCROLL_BOTTOM,
-    _FOLLOW_DEACTIVATE,
+)
+from cc_dump.tui.follow_mode import (
+    FollowEvent,
+    transition_follow_state,
 )
 
 
@@ -156,29 +156,20 @@ class TestFollowMode:
         assert conv._follow_state == FollowState.ACTIVE
 
 
-class TestFollowTransitionTables:
-    """Test the transition tables are complete and correct."""
+class TestFollowTransitions:
+    """Test the public follow transition API is total for all events/states."""
 
-    def test_toggle_table_complete(self):
-        """_FOLLOW_TOGGLE covers all states."""
+    def test_transition_function_complete(self):
         for state in FollowState:
-            assert state in _FOLLOW_TOGGLE
-
-    def test_transitions_table_complete(self):
-        """_FOLLOW_TRANSITIONS covers all (state, bool) pairs."""
-        for state in FollowState:
-            for at_bottom in (True, False):
-                assert (state, at_bottom) in _FOLLOW_TRANSITIONS
-
-    def test_scroll_bottom_table_complete(self):
-        """_FOLLOW_SCROLL_BOTTOM covers all states."""
-        for state in FollowState:
-            assert state in _FOLLOW_SCROLL_BOTTOM
-
-    def test_deactivate_table_complete(self):
-        """_FOLLOW_DEACTIVATE covers all states."""
-        for state in FollowState:
-            assert state in _FOLLOW_DEACTIVATE
+            for event in FollowEvent:
+                for at_bottom in (True, False):
+                    transition = transition_follow_state(
+                        state,
+                        event,
+                        at_bottom=at_bottom,
+                    )
+                    assert isinstance(transition.next_state, FollowState)
+                    assert isinstance(transition.scroll_to_end, bool)
 
 
 class TestStatePersistence:

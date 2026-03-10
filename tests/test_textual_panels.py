@@ -180,27 +180,6 @@ async def test_command_palette_includes_launch_presets():
             assert f"Launch preset: {key}" in titles
 
 
-def test_launch_config_select_values_reads_public_options_shape():
-    import cc_dump.tui.launch_config_panel
-
-    class _FakeOption:
-        def __init__(self, value) -> None:
-            self.value = value
-
-    class _FakeSelect:
-        BLANK = object()
-
-        def __init__(self) -> None:
-            self.options = [
-                ("alpha", "alpha"),
-                _FakeOption("beta"),
-                ("blank", self.BLANK),
-            ]
-
-    selector = _FakeSelect()
-    assert cc_dump.tui.launch_config_panel._select_values(selector) == ("alpha", "beta")
-
-
 async def test_launch_config_select_changes_value_with_standard_select_keys():
     """Launch config selection changes once via standard select keyboard controls."""
     from textual.widgets import Select

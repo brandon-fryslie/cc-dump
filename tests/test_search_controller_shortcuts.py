@@ -14,7 +14,6 @@ class _State:
         self.phase = None
         self.matches = []
         self.current_index = 0
-        self.expanded_blocks = []
         self.saved_filters = {}
         self.debounce_timer = None
         self.saved_scroll_y = None
@@ -84,19 +83,3 @@ def test_search_edit_ctrl_h_aliases_backspace(monkeypatch):
     ctrl.handle_search_editing_key(app, _event("ctrl+h"))
     assert state.query == "hell"
     assert state.cursor_pos == len("hell")
-
-
-def test_search_nav_ctrl_n_ctrl_p_and_tab_shortcuts(monkeypatch):
-    app = _App(_State("x", 1))
-    calls = {"next": 0, "prev": 0}
-
-    monkeypatch.setattr(ctrl, "navigate_next", lambda _app: calls.__setitem__("next", calls["next"] + 1))
-    monkeypatch.setattr(ctrl, "navigate_prev", lambda _app: calls.__setitem__("prev", calls["prev"] + 1))
-
-    assert ctrl.handle_search_nav_special_keys(app, _event("ctrl+n")) is True
-    assert ctrl.handle_search_nav_special_keys(app, _event("tab")) is True
-    assert ctrl.handle_search_nav_special_keys(app, _event("ctrl+p")) is True
-    assert ctrl.handle_search_nav_special_keys(app, _event("shift+tab")) is True
-
-    assert calls["next"] == 2
-    assert calls["prev"] == 2

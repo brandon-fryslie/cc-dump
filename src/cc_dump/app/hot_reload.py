@@ -26,6 +26,8 @@ _RELOAD_ORDER = [
     "cc_dump.core.formatting",  # facade depends on: formatting_impl
     "cc_dump.core.coerce",  # shared pure coercion helpers
     "cc_dump.tui.action_config",  # depends on: formatting (VisState), pure data
+    "cc_dump.tui.category_config",  # depends on: formatting (VisState), pure data
+    "cc_dump.tui.panel_registry",  # pure data for panel metadata
     "cc_dump.app.launch_config",  # depends on: settings (pure data + persistence)
     "cc_dump.app.error_models",  # shared pure error view-models
     "cc_dump.app.settings_store",  # depends on: settings (schema + reactions)
@@ -33,12 +35,14 @@ _RELOAD_ORDER = [
     "cc_dump.core.segmentation",  # depends on: nothing (pure parser, before rendering)
     "cc_dump.pipeline.router",  # depends on: nothing within reloadable set
     "cc_dump.tui.search",  # depends on: palette
+    "cc_dump.tui.search_controller",  # depends on: search, category_config
     "cc_dump.tui.rendering_impl",  # depends on: formatting, palette
     "cc_dump.tui.rendering",  # facade depends on: rendering_impl
     "cc_dump.tui.dump_formatting",  # depends on: formatting
     "cc_dump.tui.chip",  # depends on: nothing (pure widget)
     "cc_dump.tui.store_widget",  # depends on: nothing (pure mixin)
-    "cc_dump.tui.custom_footer",  # depends on: chip, palette, rendering, store_widget, widget_factory
+    "cc_dump.tui.follow_mode",  # depends on: nothing (pure follow-state dataflow)
+    "cc_dump.tui.custom_footer",  # depends on: chip, palette, rendering, store_widget, follow_mode
     "cc_dump.tui.panel_renderers",  # depends on: analysis
     "cc_dump.app.domain_store",  # depends on: formatting
     "cc_dump.tui.stream_registry",  # depends on: formatting
@@ -79,10 +83,7 @@ _EXCLUDED_FILES = {
 # Directories/modules to exclude
 _EXCLUDED_MODULES = {
     "tui/app.py",  # live app instance, can't safely reload
-    "tui/category_config.py",  # pure data, but referenced at init time
-    "tui/search_controller.py",  # accesses live app/widget state
     "tui/hot_reload_controller.py",  # accesses live app/widget state
-    "tui/panel_registry.py",  # stable pure data, referenced at init time
 }
 
 # Excluded files worth monitoring for staleness (files a developer would edit).
@@ -92,9 +93,7 @@ _STALENESS_WATCHLIST = {
     "pipeline/proxy.py", "pipeline/forward_proxy_tls.py", "cli.py", "pipeline/event_types.py", "pipeline/response_assembler.py",
     "app/tmux_controller.py", "io/stderr_tee.py", "ai/side_channel.py", "ai/data_dispatcher.py",
     # from _EXCLUDED_MODULES
-    "tui/app.py", "tui/category_config.py",
-    "tui/search_controller.py",
-    "tui/hot_reload_controller.py",
+    "tui/app.py", "tui/hot_reload_controller.py",
 }
 
 _watch_dirs: list[str] = []

@@ -294,6 +294,13 @@ def _base_store_context(
     }
 
 
+def _app_store_context(base_context: dict[str, object], app: CcDumpApp) -> dict[str, object]:
+    return {
+        **base_context,
+        "app": app,
+    }
+
+
 def _shutdown_binding(binding: ProviderProxyBinding, *, timeout: float) -> None:
     shutdown_thread = threading.Thread(target=binding.server.shutdown, daemon=True)
     shutdown_thread.start()
@@ -523,13 +530,14 @@ def main():
     # Set up event router with subscribers
     router = EventRouter(event_q)
 
+    # Analytics store (direct subscriber, in-memory)
+    # [LAW:single-enforcer] Analytics projection updates before UI queue fan-out to avoid races.
+    analytics_store = AnalyticsStore()
+    router.add_subscriber(DirectSubscriber(analytics_store.on_event))
+
     # Display subscriber (queue-based for async consumption)
     display_sub = QueueSubscriber()
     router.add_subscriber(display_sub)
-
-    # Analytics store (direct subscriber, in-memory)
-    analytics_store = AnalyticsStore()
-    router.add_subscriber(DirectSubscriber(analytics_store.on_event))
 
     # HAR recording subscriber (direct subscriber, inline writes)
     har_recorders: list[cc_dump.pipeline.har_recorder.HARRecordingSubscriber] = []
@@ -660,6 +668,7 @@ def main():
         auto_launch_extra_args=auto_launch_extra_args,
     )
 
+    app._store_context = _app_store_context(store_context, app)
     try:
         app.run()
     finally:

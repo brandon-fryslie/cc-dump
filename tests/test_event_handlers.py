@@ -55,19 +55,6 @@ class _FakeConv:
 
 
 @dataclass
-class _FakeStats:
-    models: list[str] = field(default_factory=list)
-
-    def update_stats(self, **kwargs):
-        model = kwargs.get("model")
-        if model:
-            self.models.append(model)
-
-    def refresh_from_store(self, store, current_turn=None, **kwargs):
-        _ = (store, current_turn, kwargs)
-
-
-@dataclass
 class _FakeViewStore:
     values: dict[str, object] = field(default_factory=dict)
 
@@ -75,13 +62,26 @@ class _FakeViewStore:
         self.values[key] = value
 
 
-def _mk_widgets(conv, stats, view_store, domain_store=None):
+@dataclass
+class _FakeAnalyticsStore:
+    snapshots: list[dict[str, object]] = field(default_factory=list)
+
+    def get_dashboard_snapshot(self, current_turn: dict | None = None) -> dict[str, object]:
+        snapshot = {
+            "summary": {"total_tokens": int((current_turn or {}).get("output_tokens", 0))},
+            "timeline": [],
+            "models": [],
+        }
+        self.snapshots.append(snapshot)
+        return snapshot
+
+
+def _mk_widgets(conv, view_store, domain_store=None):
     return {
         "conv": conv,
-        "stats": stats,
         "filters": {},
         "refresh_callbacks": {},
-        "analytics_store": object(),
+        "analytics_store": _FakeAnalyticsStore(),
         "view_store": view_store,
         "domain_store": domain_store or DomainStore(),
     }
@@ -143,10 +143,9 @@ class TestEventHandlersRequestScopedStreaming:
         }
         app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
         conv = _FakeConv()
-        stats = _FakeStats()
         view_store = _FakeViewStore()
         domain_store = DomainStore()
-        widgets = _mk_widgets(conv, stats, view_store, domain_store)
+        widgets = _mk_widgets(conv, view_store, domain_store)
         log_fn = _noop_log
 
         r1 = "req-111"
@@ -296,7 +295,7 @@ class TestEventHandlersRequestScopedStreaming:
             "current_session": None,
         }
         app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
-        widgets = _mk_widgets(_FakeConv(), _FakeStats(), _FakeViewStore(), DomainStore())
+        widgets = _mk_widgets(_FakeConv(), _FakeViewStore(), DomainStore())
         log_fn = _noop_log
 
         rid = "req-1"
@@ -383,7 +382,7 @@ class TestEventHandlersRequestScopedStreaming:
             "current_session": None,
         }
         app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
-        widgets = _mk_widgets(_FakeConv(), _FakeStats(), _FakeViewStore(), DomainStore())
+        widgets = _mk_widgets(_FakeConv(), _FakeViewStore(), DomainStore())
         domain_store = widgets["domain_store"]
         log_fn = _noop_log
 
@@ -491,3 +490,17 @@ class TestEventHandlersRequestScopedStreaming:
         response_payloads = sorted(_turn_text(turn) for turn in response_turns)
         assert response_payloads == ["final-a", "final-b", "final-c"]
         assert all("temp-" not in payload for payload in response_payloads)
+
+
+def test_capacity_total_cache_tracks_env_changes(monkeypatch):
+    monkeypatch.setattr(event_handlers, "_CACHED_CAPACITY_RAW", None)
+    monkeypatch.setattr(event_handlers, "_CACHED_CAPACITY_TOTAL", None)
+
+    monkeypatch.setenv("CC_DUMP_TOKEN_CAPACITY", "1200")
+    assert event_handlers._get_capacity_total() == 1200
+
+    monkeypatch.setenv("CC_DUMP_TOKEN_CAPACITY", "2400")
+    assert event_handlers._get_capacity_total() == 2400
+
+    monkeypatch.setenv("CC_DUMP_TOKEN_CAPACITY", "bad-value")
+    assert event_handlers._get_capacity_total() == 0

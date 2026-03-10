@@ -5,6 +5,7 @@ events arrive from the proxy. The app.py module calls into these functions
 but the actual behavior can be hot-swapped.
 """
 
+import os
 from collections.abc import Callable
 
 import cc_dump.core.analysis
@@ -30,6 +31,10 @@ EventHandler = Callable[
     [object, dict[str, object], dict[str, object], dict[str, object], Callable[[str, str], None]],
     dict[str, object],
 ]
+
+_CAPACITY_ENV_VAR = "CC_DUMP_TOKEN_CAPACITY"
+_CACHED_CAPACITY_RAW: str | None = None
+_CACHED_CAPACITY_TOTAL: int | None = None
 
 
 def _get_stream_registry(app_state):
@@ -73,55 +78,100 @@ def _pop_response_meta(app_state, request_id: str) -> tuple[int, dict]:
     return status_code, headers
 
 
-def _current_turn_from_focus(app_state, domain_store):
-    usage_map = app_state.get("current_turn_usage_by_request", {})
-    if not isinstance(usage_map, dict):
-        return None
-    focused = domain_store.get_focused_stream_id() if domain_store is not None else None
-    if not focused:
-        return None
-    usage = usage_map.get(focused)
-    return usage if isinstance(usage, dict) else None
-
-
 def _clear_current_turn_usage(app_state, request_id: str) -> None:
     """Clear per-request streaming usage tracking."""
     usage_by_request = app_state.get("current_turn_usage_by_request", {})
     if isinstance(usage_by_request, dict):
         usage_by_request.pop(request_id, None)
         app_state["current_turn_usage_by_request"] = usage_by_request
-    # Legacy key retained for backward compatibility with old app_state shape.
-    app_state["current_turn_usage"] = {}
+
+
+def _focused_current_turn_usage(app_state, domain_store) -> dict | None:
+    """Resolve in-progress usage for the currently focused stream in domain_store.
+
+    // [LAW:one-source-of-truth] Focused request_id resolves once from DomainStore.
+    """
+    usage_by_request = app_state.get("current_turn_usage_by_request", {})
+    if not isinstance(usage_by_request, dict):
+        return None
+    focused_getter = getattr(domain_store, "get_focused_stream_id", None)
+    focused_request_id = focused_getter() if callable(focused_getter) else None
+    if not focused_request_id:
+        return None
+    current_turn = usage_by_request.get(focused_request_id)
+    return current_turn if isinstance(current_turn, dict) else None
+
+
+def _get_capacity_total() -> int:
+    """Get parsed token capacity with memoized env-var parsing."""
+    global _CACHED_CAPACITY_RAW, _CACHED_CAPACITY_TOTAL
+
+    capacity_raw = str(os.environ.get(_CAPACITY_ENV_VAR, "") or "").strip()
+    if capacity_raw == _CACHED_CAPACITY_RAW and _CACHED_CAPACITY_TOTAL is not None:
+        return _CACHED_CAPACITY_TOTAL
+
+    try:
+        capacity_total = int(capacity_raw) if capacity_raw else 0
+    except ValueError:
+        capacity_total = 0
+
+    _CACHED_CAPACITY_RAW = capacity_raw
+    _CACHED_CAPACITY_TOTAL = capacity_total
+    return capacity_total
+
+
+def _with_capacity_summary(snapshot: dict[str, object]) -> dict[str, object]:
+    """Attach optional token-capacity summary fields to analytics snapshot."""
+    summary = snapshot.get("summary", {})
+    summary_dict = dict(summary) if isinstance(summary, dict) else {}
+
+    capacity_total = _get_capacity_total()
+
+    if capacity_total > 0:
+        used_tokens = int(summary_dict.get("total_tokens", 0))
+        remaining_tokens = max(0, capacity_total - used_tokens)
+        used_pct = min(100.0, (used_tokens / capacity_total) * 100.0)
+        summary_dict["capacity_total"] = capacity_total
+        summary_dict["capacity_used"] = used_tokens
+        summary_dict["capacity_remaining"] = remaining_tokens
+        summary_dict["capacity_used_pct"] = used_pct
+
+    return {
+        **snapshot,
+        "summary": summary_dict,
+    }
+
+
+def _refresh_stats_snapshot(widgets, app_state) -> None:
+    """Recompute and publish canonical stats panel snapshot.
+
+    // [LAW:single-enforcer] This is the sole writer for panel:stats_snapshot.
+    """
+    view_store = widgets.get("view_store")
+    if view_store is None:
+        return
+    analytics_store = widgets.get("analytics_store")
+    if analytics_store is None:
+        view_store.set("panel:stats_snapshot", {"summary": {}, "timeline": [], "models": []})
+        return
+
+    domain_store = widgets.get("domain_store")
+    snapshot = analytics_store.get_dashboard_snapshot(
+        current_turn=_focused_current_turn_usage(app_state, domain_store)
+    )
+    view_store.set("panel:stats_snapshot", _with_capacity_summary(snapshot))
 
 
 def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool = True) -> None:
-    """Refresh stats/panels after a response completion path."""
-    domain_store = widgets["domain_store"]
-    stats = widgets["stats"]
+    """Refresh derived UI state after a response completion path."""
     conv = widgets["conv"]
     filters = widgets["filters"]
-    refresh_callbacks = widgets.get("refresh_callbacks", {})
-    analytics_store = widgets.get("analytics_store")
-    stats_domain_store = widgets.get("stats_domain_store", domain_store)
-    all_domain_stores = widgets.get("all_domain_stores")
-
-    if analytics_store is not None:
-        stats.refresh_from_store(
-            analytics_store,
-            current_turn=_current_turn_from_focus(app_state, domain_store),
-            domain_store=stats_domain_store,
-            all_domain_stores=all_domain_stores if isinstance(all_domain_stores, tuple) else None,
-        )
 
     if rerender_budget:
         budget_vis = filters.get("metadata", cc_dump.core.formatting.HIDDEN)
         if budget_vis.visible:
             conv.rerender(filters)
-
-    for cb_name in ("refresh_session",):
-        cb = refresh_callbacks.get(cb_name)
-        if cb:
-            cb()
+    _refresh_stats_snapshot(widgets, app_state)
 
 
 def _handle_complete_response_payload(
@@ -180,8 +230,6 @@ def handle_request_headers(event: RequestHeadersEvent, state, widgets, app_state
 
 def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
     """Handle a request event."""
-    import time
-
     body = event.body
 
     try:
@@ -193,9 +241,6 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
             recv_ns=event.recv_ns,
             session_hint=state.get("current_session", "") if isinstance(state.get("current_session", ""), str) else "",
         )
-
-        # Track last message time for session panel connectivity
-        app_state["last_message_time"] = time.monotonic()
 
         # Capture recent messages for side-channel summarization
         raw_messages = body.get("messages", [])
@@ -213,13 +258,9 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
         blocks = cc_dump.core.formatting.format_request_for_provider(provider, body, state, request_headers=pending_headers)
 
         domain_store = widgets["domain_store"]
-        stats = widgets["stats"]
-
         # Non-streaming: add turn to domain store (fires callback to ConversationView)
         domain_store.add_turn(blocks)
-
-        # Update stats (only request count and model tracking - not tokens)
-        stats.update_stats(requests=state["request_counter"])
+        _refresh_stats_snapshot(widgets, app_state)
 
         log_fn("DEBUG", f"Request #{state['request_counter']} processed")
     except Exception as e:
@@ -300,10 +341,6 @@ def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_s
         )
 
         domain_store = widgets["domain_store"]
-        stats = widgets["stats"]
-        stats_domain_store = widgets.get("stats_domain_store", domain_store)
-        all_domain_stores = widgets.get("all_domain_stores")
-
         domain_store.begin_stream(event.request_id)
 
         if event.delta_text:
@@ -313,20 +350,8 @@ def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_s
             )
             domain_store.append_stream_block(event.request_id, block)
 
-        if event.model:
-            stats.update_stats(model=event.model)
-
         _upsert_current_turn_usage(app_state, event.request_id, event)
-
-        # Refresh stats with the currently focused active stream, if any.
-        analytics_store = widgets.get("analytics_store")
-        if analytics_store is not None:
-            stats.refresh_from_store(
-                analytics_store,
-                current_turn=_current_turn_from_focus(app_state, domain_store),
-                domain_store=stats_domain_store,
-                all_domain_stores=all_domain_stores if isinstance(all_domain_stores, tuple) else None,
-            )
+        _refresh_stats_snapshot(widgets, app_state)
     except Exception as e:
         log_fn("ERROR", f"Error handling response progress: {e}")
         raise
@@ -375,6 +400,7 @@ def handle_response_done(event: ResponseDoneEvent, state, widgets, app_state, lo
 
         _ = _pop_response_meta(app_state, event.request_id)
         _clear_current_turn_usage(app_state, event.request_id)
+        _refresh_stats_snapshot(widgets, app_state)
         log_fn("DEBUG", "Response done acknowledged")
     except Exception as e:
         log_fn("ERROR", f"Error handling response done: {e}")

@@ -159,6 +159,93 @@ class TestHotReloadMountSeam:
         app.mount.assert_awaited_once_with(new_conv, after=prev_widget)
 
 
+class TestHotReloadPanelIdentity:
+    def test_assign_replacement_identity_reconciles_panel_ids(self, monkeypatch):
+        import cc_dump.tui.hot_reload_controller as controller
+        import cc_dump.tui.panel_registry as panel_registry
+
+        monkeypatch.setattr(
+            panel_registry,
+            "PANEL_REGISTRY",
+            [
+                panel_registry.PanelSpec("stats", "stats-panel", "cc_dump.tui.widget_factory.create_stats_panel"),
+                panel_registry.PanelSpec("session", "session-panel", "cc_dump.tui.session_panel.create_session_panel"),
+            ],
+        )
+
+        app = SimpleNamespace(
+            _logs_id="logs-panel",
+            _info_id="info-panel",
+            _panel_ids={"stats": "old-stats-panel", "removed": "removed-panel"},
+        )
+        snapshot = controller._WidgetSwapSnapshot(
+            conversations=[],
+            old_logs=None,
+            old_info=None,
+            old_footer=None,
+            logs_state={},
+            info_state={},
+            old_panels={},
+            panel_states={},
+            active_panel="stats",
+            logs_visible=True,
+            info_visible=False,
+        )
+        new_logs = SimpleNamespace(id=None, display=None)
+        new_info = SimpleNamespace(id=None, display=None)
+        new_panels = {
+            "stats": SimpleNamespace(id=None, display=None),
+            "session": SimpleNamespace(id=None, display=None),
+        }
+
+        controller._assign_replacement_identity(
+            app,
+            snapshot=snapshot,
+            new_conversations={},
+            new_panels=new_panels,
+            new_logs=new_logs,
+            new_info=new_info,
+        )
+
+        assert app._panel_ids == {
+            "stats": "stats-panel",
+            "session": "session-panel",
+        }
+        assert new_panels["stats"].id == "stats-panel"
+        assert new_panels["stats"].display is True
+        assert new_panels["session"].id == "session-panel"
+        assert new_panels["session"].display is False
+        assert new_logs.id == "logs-panel"
+        assert new_logs.display is True
+        assert new_info.id == "info-panel"
+        assert new_info.display is False
+
+    @pytest.mark.asyncio
+    async def test_remove_old_widgets_drops_stale_panels(self):
+        import cc_dump.tui.hot_reload_controller as controller
+
+        stale_panel = AsyncMock()
+        current_panel = AsyncMock()
+        snapshot = controller._WidgetSwapSnapshot(
+            conversations=[],
+            old_logs=None,
+            old_info=None,
+            old_footer=None,
+            logs_state={},
+            info_state={},
+            old_panels={"removed": stale_panel, "stats": current_panel},
+            panel_states={},
+            active_panel="stats",
+            logs_visible=True,
+            info_visible=True,
+        )
+
+        await controller._remove_old_widgets(snapshot)
+
+        stale_panel.remove.assert_awaited_once()
+        current_panel.remove.assert_awaited_once()
+
+
 @pytest.mark.textual
 class TestHotReloadMultiSessionTabs:
     async def test_replace_all_widgets_preserves_all_session_tabs(self):
@@ -398,16 +485,14 @@ class TestWidgetProtocolValidation:
         from cc_dump.tui.widget_factory import (
             ConversationView,
             StatsPanel,
-            TimelinePanel,
-            ToolEconomicsPanel,
         )
+        from cc_dump.tui.session_panel import SessionPanel
         from cc_dump.tui.protocols import validate_widget_protocol
 
         widgets = [
             ConversationView(),
             StatsPanel(),
-            TimelinePanel(),
-            ToolEconomicsPanel(),
+            SessionPanel(),
         ]
 
         for widget in widgets:
@@ -479,101 +564,6 @@ class TestHotReloadSwapValidation:
             )
 
 
-class TestHotReloadPanelRehydrate:
-    """Unit tests for post-swap panel refresh from canonical stores."""
-
-    def test_rehydrate_panels_from_store_refreshes_all_supported_panels(self):
-        from cc_dump.tui.hot_reload_controller import _rehydrate_panels_from_store
-
-        class StatsPanelStub:
-            def __init__(self):
-                self.calls = []
-
-            def refresh_from_store(self, store, **kwargs):
-                self.calls.append((store, kwargs))
-
-        class StorePanelStub:
-            def __init__(self):
-                self.calls = []
-
-            def refresh_from_store(self, store):
-                self.calls.append(store)
-
-        class SessionPanelStub:
-            def __init__(self):
-                self.calls = []
-
-            def refresh_session_state(self, *, session_id, last_message_time):
-                self.calls.append(
-                    {
-                        "session_id": session_id,
-                        "last_message_time": last_message_time,
-                    }
-                )
-
-        analytics_store = object()
-        domain_store = object()
-
-        stats = StatsPanelStub()
-        economics = StorePanelStub()
-        timeline = StorePanelStub()
-        session = SessionPanelStub()
-
-        app = SimpleNamespace(
-            _analytics_store=analytics_store,
-            _domain_store=domain_store,
-            _iter_domain_stores=lambda: (domain_store,),
-            _app_state={"last_message_time": "2026-02-22T12:00:00Z"},
-            _session_id="session-123",
-        )
-        new_panels = {
-            "stats": stats,
-            "economics": economics,
-            "timeline": timeline,
-            "session": session,
-        }
-
-        _rehydrate_panels_from_store(app, new_panels)
-
-        assert stats.calls == [
-            (
-                analytics_store,
-                {"domain_store": domain_store, "all_domain_stores": (domain_store,)},
-            )
-        ]
-        assert economics.calls == [analytics_store]
-        assert timeline.calls == [analytics_store]
-        assert session.calls == [
-            {
-                "session_id": "session-123",
-                "last_message_time": "2026-02-22T12:00:00Z",
-            }
-        ]
-
-    def test_rehydrate_panels_from_store_passes_none_store_unconditionally(self):
-        from cc_dump.tui.hot_reload_controller import _rehydrate_panels_from_store
-
-        class StorePanelStub:
-            def __init__(self):
-                self.calls = []
-
-            def refresh_from_store(self, store, **kwargs):
-                self.calls.append((store, kwargs))
-
-        stats = StorePanelStub()
-        app = SimpleNamespace(
-            _analytics_store=None,
-            _domain_store=None,
-            _iter_domain_stores=lambda: (),
-            _app_state={},
-            _session_id=None,
-        )
-
-        _rehydrate_panels_from_store(app, {"stats": stats})
-
-        assert stats.calls == [(None, {"domain_store": None, "all_domain_stores": ()})]
-
-
 class TestWidgetStatePreservation:
     """Unit tests for widget state get/restore cycle."""
 
@@ -581,17 +571,14 @@ class TestWidgetStatePreservation:
         from cc_dump.tui.widget_factory import StatsPanel
 
         widget = StatsPanel()
-        widget.update_stats(requests=10, model="claude-3-opus")
-        widget.models_seen.add("claude-3-sonnet")
+        widget._view_index = 2
 
         state = widget.get_state()
 
         new_widget = StatsPanel()
         new_widget.restore_state(state)
 
-        assert new_widget.request_count == 10
-        assert "claude-3-opus" in new_widget.models_seen
-        assert "claude-3-sonnet" in new_widget.models_seen
+        assert new_widget._view_index == 2
 
     def test_conversation_view_state_roundtrip(self):
         from cc_dump.tui.widget_factory import ConversationView, FollowState
@@ -630,27 +617,6 @@ class TestWidgetStatePreservation:
         assert new_widget._view_overrides.get_block(block_a.block_id).expanded is True
         assert new_widget._view_overrides.get_block(block_b.block_id).expanded is False
 
-    def test_conversation_view_blocks_preserve_force_vis(self):
-        """force_vis is transient (search state) — not serialized across hot-reload."""
-        from cc_dump.core.formatting import TextContentBlock, ALWAYS_VISIBLE
-        from cc_dump.tui.widget_factory import ConversationView, TurnData
-
-        block = TextContentBlock(content="test")
-
-        widget = ConversationView()
-        td = TurnData(turn_index=0, blocks=[block], strips=[])
-        widget._turns.append(td)
-
-        # Set force_vis via ViewOverrides (search mode)
-        widget._view_overrides.get_block(block.block_id).force_vis = ALWAYS_VISIBLE
-
-        state = widget.get_state()
-        new_widget = ConversationView()
-        new_widget.restore_state(state)
-
-        # force_vis is transient — not serialized
-        assert new_widget._view_overrides.get_block(block.block_id).force_vis is None
-
     def test_conversation_view_follow_state_active_roundtrip(self):
         """follow_state=ACTIVE explicitly survives roundtrip."""
         from cc_dump.tui.widget_factory import ConversationView, FollowState
@@ -677,17 +643,6 @@ class TestWidgetStatePreservation:
 
         assert new_widget._follow_state == FollowState.ENGAGED
 
-    def test_economics_panel_breakdown_mode_roundtrip(self):
-        from cc_dump.tui.widget_factory import ToolEconomicsPanel
-
-        widget = ToolEconomicsPanel()
-        widget._breakdown_mode = True
-        state = widget.get_state()
-
-        new_widget = ToolEconomicsPanel()
-        new_widget.restore_state(state)
-        assert new_widget._breakdown_mode is True
-
     def test_stats_panel_empty_state_roundtrip(self):
         """Restoring from empty state produces valid defaults."""
         from cc_dump.tui.widget_factory import StatsPanel
@@ -695,8 +650,7 @@ class TestWidgetStatePreservation:
         new_widget = StatsPanel()
         new_widget.restore_state({})
 
-        assert new_widget.request_count == 0
-        assert new_widget.models_seen == set()
+        assert new_widget._view_index == 0
 
     def test_content_region_state_roundtrip(self):
         """Content regions survive via domain store; expanded state in ViewOverrides.
@@ -728,17 +682,6 @@ class TestWidgetStatePreservation:
         # ViewOverrides state survives get_state/restore_state roundtrip
         state = widget.get_state()
         assert state["view_overrides"] is not None
-
-    def test_timeline_panel_state_roundtrip(self):
-        from cc_dump.tui.widget_factory import TimelinePanel
-
-        widget = TimelinePanel()
-        state = widget.get_state()
-
-        new_widget = TimelinePanel()
-        new_widget.restore_state(state)
-        assert new_widget is not None
-
 
 class TestHotReloadModuleStructure:
     """Unit tests for hot-reload module configuration."""
@@ -772,9 +715,14 @@ class TestHotReloadModuleStructure:
 
         assert isinstance(_EXCLUDED_MODULES, set)
 
-        required_exclusions = ["tui/app.py"]
+        required_exclusions = ["tui/app.py", "tui/hot_reload_controller.py"]
         for exc in required_exclusions:
             assert exc in _EXCLUDED_MODULES, f"Expected {exc} to be excluded"
+
+        # [LAW:locality-or-seam] Pure/controller modules should remain reloadable.
+        assert "tui/search_controller.py" not in _EXCLUDED_MODULES
+        assert "tui/category_config.py" not in _EXCLUDED_MODULES
+        assert "tui/panel_registry.py" not in _EXCLUDED_MODULES
 
     def test_no_widgets_reexport_module(self):
         """tui/widgets.py re-export shim must not exist (regression guard)."""
@@ -834,6 +782,9 @@ class TestHotReloadFileDetection:
         assert hr.is_reloadable(str(test_dir / "core" / "palette.py")) is True
         assert hr.is_reloadable(str(test_dir / "core" / "formatting.py")) is True
         assert hr.is_reloadable(str(test_dir / "tui" / "rendering.py")) is True
+        assert hr.is_reloadable(str(test_dir / "tui" / "search_controller.py")) is True
+        assert hr.is_reloadable(str(test_dir / "tui" / "category_config.py")) is True
+        assert hr.is_reloadable(str(test_dir / "tui" / "panel_registry.py")) is True
 
     def test_is_reloadable_rejects_excluded(self):
         import cc_dump.app.hot_reload as hr
@@ -903,7 +854,7 @@ class TestSearchStateHotReload:
         assert new_state.phase == SearchPhase.NAVIGATING
 
     def test_transient_fields_reset_on_new_state(self):
-        """matches, expanded_blocks, debounce_timer reset to defaults on new SearchState."""
+        """Transient fields reset to defaults on new SearchState."""
         import cc_dump.app.view_store
         from cc_dump.tui.search import SearchState, SearchPhase, SearchMatch
 
@@ -912,7 +863,6 @@ class TestSearchStateHotReload:
         old_state.phase = SearchPhase.NAVIGATING
         old_state.query = "test"
         old_state.matches = [SearchMatch(0, 0, 0, 4)]
-        old_state.expanded_blocks = [(0, 0)]
         old_state.debounce_timer = "fake_timer"
 
         # New SearchState on same store — transient fields are fresh
@@ -924,7 +874,6 @@ class TestSearchStateHotReload:
 
         # Transient fields are fresh defaults
         assert new_state.matches == []
-        assert new_state.expanded_blocks == []
         assert new_state.debounce_timer is None
         assert new_state.saved_filters == {}
         assert new_state.saved_scroll_y is None

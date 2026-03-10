@@ -16,17 +16,19 @@ import cc_dump.tui.rendering
 import cc_dump.tui.search
 import cc_dump.tui.widget_factory
 import cc_dump.tui.info_panel
+import cc_dump.tui.keys_panel
+import cc_dump.tui.debug_settings_panel
 import cc_dump.tui.settings_panel
 import cc_dump.tui.custom_footer
 import cc_dump.app.settings_store
+import cc_dump.app.view_store
 import cc_dump.tui.launch_config_panel
 import cc_dump.tui.side_channel_panel
 import cc_dump.tui.search_controller
 import cc_dump.tui.theme_controller
 import cc_dump.tui.protocols
-from cc_dump.tui.category_config import CATEGORY_CONFIG
-
-from cc_dump.tui.panel_registry import PANEL_REGISTRY
+import cc_dump.tui.category_config
+import cc_dump.tui.panel_registry
 
 from snarfx import EventStream
 
@@ -154,55 +156,15 @@ async def start_file_watcher(app) -> None:
 async def _do_hot_reload(app) -> None:
     """Execute the actual reload after debounce settles."""
     app._app_log("DEBUG", "Hot-reload: _do_hot_reload entered")
-    try:
-        reloaded_modules = cc_dump.app.hot_reload.check_and_get_reloaded()
-    except Exception as e:
-        app.notify(f"\\[hot-reload] error reloading: {e}", severity="error")
-        app._app_log("ERROR", f"Hot-reload error reloading: {e}")
-        return
-
+    reloaded_modules = _reload_modules(app)
     if not reloaded_modules:
         app._app_log("DEBUG", "Hot-reload: no modules to reload, skipping")
         return
 
     app._app_log("INFO", f"Hot-reload: {', '.join(reloaded_modules)}")
 
-    # // [LAW:one-source-of-truth] Identity fields (phase, query, modes, cursor_pos)
-    # live in the view store — they survive reconcile() automatically.
-    # Only transient fields (matches, expanded_blocks, debounce_timer) need reset.
-    SearchPhase = cc_dump.tui.search.SearchPhase
-    old_search = app._search_state
-    search_was_active = old_search.phase != SearchPhase.INACTIVE
-
-    # Cancel debounce timer and clear expansion overrides on old blocks
-    if old_search.debounce_timer is not None:
-        old_search.debounce_timer.stop()
-    if search_was_active:
-        cc_dump.tui.search_controller.clear_search_expand(app)
-
-    # Fresh SearchState connected to same store — identity fields survive,
-    # transient fields get fresh defaults
-    app._search_state = cc_dump.tui.search.SearchState(app._view_store)
-    bar = app._get_search_bar()
-    if bar is not None:
-        bar.display = False
-
-    # Rebuild theme state after modules reload (before any rendering)
-    cc_dump.tui.rendering.set_theme(app.current_theme, runtime=app._render_runtime)
-    cc_dump.tui.theme_controller.apply_markdown_theme(app)
-
-    # Reconcile settings store (values survive, reactions re-register)
-    settings_store = getattr(app, "_settings_store", None)
-    if settings_store is not None:
-        try:
-            settings_store.reconcile(
-                cc_dump.app.settings_store.SCHEMA,
-                lambda store: cc_dump.app.settings_store.setup_reactions(
-                    store, getattr(app, "_store_context", None)
-                ),
-            )
-        except Exception as e:
-            app._app_log("ERROR", f"Hot-reload: settings store reconcile failed: {e}")
+    search_was_active = _reset_search_state_for_reload(app)
+    _rebuild_theme_and_reconcile_stores(app)
 
     # Any file change triggers full widget replacement
     # // [LAW:dataflow-not-control-flow] Unconditional — all reloads take same path
@@ -218,31 +180,92 @@ async def _do_hot_reload(app) -> None:
         app._app_log("ERROR", f"Hot-reload error applying: {e}")
         return
 
-    # Restore search after successful widget replacement.
-    # Identity fields (query, modes, cursor_pos, phase) already in store.
-    if search_was_active and app._search_state.query:
-        state = app._search_state
-        saved_phase = state.phase
+    _restore_search_state_after_reload(app, search_was_active)
 
-        # Capture fresh filter state and scroll position from new widgets
-        store = app._view_store
-        state.saved_filters = {
-            name: (
-                store.get(f"vis:{name}"),
-                store.get(f"full:{name}"),
-                store.get(f"exp:{name}"),
-            )
-            for _, name, _, _ in CATEGORY_CONFIG
-        }
-        conv = app._get_conv()
-        state.saved_scroll_y = conv.scroll_offset.y if conv is not None else None
 
-        # Re-execute search against fresh blocks
-        cc_dump.tui.search_controller.run_search(app)
+def _reload_modules(app) -> list[str]:
+    """Reload modules and surface failures through app notifications."""
+    try:
+        return cc_dump.app.hot_reload.check_and_get_reloaded()
+    except Exception as e:
+        app.notify(f"\\[hot-reload] error reloading: {e}", severity="error")
+        app._app_log("ERROR", f"Hot-reload error reloading: {e}")
+        return []
 
-        # Navigate if we were navigating and have results
-        if saved_phase == SearchPhase.NAVIGATING and state.matches:
-            cc_dump.tui.search_controller.navigate_to_current(app)
+
+def _reset_search_state_for_reload(app) -> bool:
+    """Reset transient search state while preserving store-backed identity fields.
+
+    // [LAW:one-source-of-truth] Search identity stays in view store; only transients reset.
+    """
+    SearchPhase = cc_dump.tui.search.SearchPhase
+    old_search = app._search_state
+    search_was_active = old_search.phase != SearchPhase.INACTIVE
+    if old_search.debounce_timer is not None:
+        old_search.debounce_timer.stop()
+
+    app._search_state = cc_dump.tui.search.SearchState(app._view_store)
+    bar = app._get_search_bar()
+    if bar is not None:
+        bar.display = False
+    return search_was_active
+
+
+def _rebuild_theme_and_reconcile_stores(app) -> None:
+    """Rebuild runtime theme and reconcile reactive stores after module reload."""
+    cc_dump.tui.rendering.set_theme(app.current_theme, runtime=app._render_runtime)
+    cc_dump.tui.theme_controller.apply_markdown_theme(app)
+    _reconcile_settings_store(app)
+    _reconcile_view_store(app)
+
+
+def _reconcile_settings_store(app) -> None:
+    settings_store = getattr(app, "_settings_store", None)
+    if settings_store is None:
+        return
+    try:
+        settings_store.reconcile(
+            cc_dump.app.settings_store.SCHEMA,
+            lambda store: cc_dump.app.settings_store.setup_reactions(
+                store, getattr(app, "_store_context", None)
+            ),
+        )
+    except Exception as e:
+        app._app_log("ERROR", f"Hot-reload: settings store reconcile failed: {e}")
+
+
+def _reconcile_view_store(app) -> None:
+    view_store = getattr(app, "_view_store", None)
+    if view_store is None:
+        return
+    try:
+        # // [LAW:locality-or-seam] App-owned context is passed directly to setup_reactions().
+        ctx = getattr(app, "_store_context", None)
+        view_store.reconcile(
+            cc_dump.app.view_store.SCHEMA,
+            lambda store: cc_dump.app.view_store.setup_reactions(store, ctx),
+        )
+    except Exception as e:
+        app._app_log("ERROR", f"Hot-reload: view store reconcile failed: {e}")
+
+
+def _restore_search_state_after_reload(app, search_was_active: bool) -> None:
+    """Recompute search matches/state after widget replacement."""
+    if not search_was_active or not app._search_state.query:
+        return
+    state = app._search_state
+    store = app._view_store
+    state.saved_filters = {
+        name: (
+            store.get(f"vis:{name}"),
+            store.get(f"full:{name}"),
+            store.get(f"exp:{name}"),
+        )
+        for _, name, _, _ in cc_dump.tui.category_config.CATEGORY_CONFIG
+    }
+    conv = app._get_conv()
+    state.saved_scroll_y = conv.current_scroll_y() if conv is not None else None
+    cc_dump.tui.search_controller.run_search(app)
 
 
 async def replace_all_widgets(app) -> None:
@@ -290,9 +313,8 @@ async def _replace_all_widgets_inner(app) -> None:
     for new_conv in new_conversations.values():
         new_conv.rerender(app.active_filters)
     if hasattr(app, "_get_active_domain_store"):
-        # // [LAW:one-source-of-truth] Back-compat alias points at active session store.
+        # // [LAW:one-source-of-truth] _domain_store mirrors the active session store.
         app._domain_store = app._get_active_domain_store()
-    _rehydrate_panels_from_store(app, new_panels)
 
 
 def _collect_conversation_swaps(app) -> list[_ConversationSwap]:
@@ -301,7 +323,7 @@ def _collect_conversation_swaps(app) -> list[_ConversationSwap]:
     session_conv_ids = getattr(app, "_session_conv_ids", {})
     session_domain_stores = getattr(app, "_session_domain_stores", {})
     if not isinstance(session_conv_ids, dict) or not session_conv_ids:
-        return _legacy_default_conversation_swap(app)
+        return []
 
     swaps: list[_ConversationSwap] = []
     for session_key, conv_id in session_conv_ids.items():
@@ -329,24 +351,6 @@ def _collect_conversation_swaps(app) -> list[_ConversationSwap]:
     return swaps
 
 
-def _legacy_default_conversation_swap(app) -> list[_ConversationSwap]:
-    """Back-compat path for single-conversation apps."""
-    old_conv = app._get_conv()
-    if old_conv is None:
-        return []
-    conv_widget = cast(_ConversationWidget, old_conv)
-    return [
-        _ConversationSwap(
-            session_key="__default__",
-            conv_id=str(getattr(app, "_conv_id", "conversation-view")),
-            conv=conv_widget,
-            parent=conv_widget.parent,
-            state=conv_widget.get_state(),
-            domain_store=getattr(app, "_domain_store", None),
-        )
-    ]
-
-
 def _capture_widget_snapshot(app) -> _WidgetSwapSnapshot:
     """Capture old widgets, visibility, and serializable widget state."""
     old_conversations = _collect_conversation_swaps(app)
@@ -356,13 +360,7 @@ def _capture_widget_snapshot(app) -> _WidgetSwapSnapshot:
     logs_state = old_logs.get_state() if old_logs else {}
     info_state = old_info.get_state() if old_info else {}
 
-    # [LAW:one-source-of-truth] Capture cycling panel state from registry.
-    old_panels: dict[str, object | None] = {}
-    panel_states: dict[str, dict] = {}
-    for spec in PANEL_REGISTRY:
-        old_widget = app._get_panel(spec.name)
-        old_panels[spec.name] = old_widget
-        panel_states[spec.name] = old_widget.get_state() if old_widget else {}
+    old_panels, panel_states = _capture_panel_swap_state(app)
 
     logs_visible = (
         old_logs.display
@@ -387,6 +385,25 @@ def _capture_widget_snapshot(app) -> _WidgetSwapSnapshot:
         logs_visible=logs_visible,
         info_visible=info_visible,
     )
+
+
+def _capture_panel_swap_state(app) -> tuple[dict[str, object | None], dict[str, dict]]:
+    """Capture mounted panel widgets/state using the app-owned panel ID map."""
+    # [LAW:one-source-of-truth] Existing mounted panel IDs are owned by app._panel_ids.
+    old_panels: dict[str, object | None] = {}
+    panel_states: dict[str, dict] = {}
+    panel_ids = getattr(app, "_panel_ids", {})
+    if isinstance(panel_ids, dict):
+        for name, css_id in panel_ids.items():
+            if not isinstance(name, str) or not isinstance(css_id, str):
+                continue
+            old_widget = app._query_safe("#" + css_id)
+            old_panels[name] = old_widget
+            panel_states[name] = old_widget.get_state() if old_widget else {}
+    # Ensure current registry names always have state entries for replacement creation.
+    for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
+        panel_states.setdefault(spec.name, {})
+    return old_panels, panel_states
 
 
 def _build_replacement_conversations(
@@ -414,12 +431,12 @@ def _build_replacement_panels(panel_states: dict[str, dict]) -> dict[str, object
 
     # [LAW:one-source-of-truth] Create cycling panels from registry.
     new_panels: dict[str, object] = {}
-    for spec in PANEL_REGISTRY:
+    for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
         factory = _resolve_factory(spec.factory)
         widget = factory()
         _validate_and_restore_widget_state(
             widget,
-            panel_states[spec.name],
+            panel_states.get(spec.name, {}),
             widget_name=f"Panel:{spec.name}",
         )
         new_panels[spec.name] = widget
@@ -440,6 +457,12 @@ def _build_replacement_info(info_state: dict):
 
 async def _remove_ephemeral_panels(app) -> None:
     """Drop transient overlays before remounting persisted widgets."""
+    for ephemeral_panel_type in (
+        cc_dump.tui.keys_panel.KeysPanel,
+        cc_dump.tui.debug_settings_panel.DebugSettingsPanel,
+    ):
+        await _remove_panels_by_type(app, ephemeral_panel_type)
+
     removals = (
         (cc_dump.tui.settings_panel.SettingsPanel, "panel:settings"),
         (cc_dump.tui.launch_config_panel.LaunchConfigPanel, "panel:launch_config"),
@@ -458,8 +481,9 @@ async def _remove_panels_by_type(app, panel_type) -> None:
 async def _remove_old_widgets(snapshot: _WidgetSwapSnapshot) -> None:
     for payload in snapshot.conversations:
         await payload.conv.remove()
-    for spec in PANEL_REGISTRY:
-        old_widget = snapshot.old_panels.get(spec.name)
+    # [LAW:dataflow-not-control-flow] Always process all captured panels, including
+    # names removed from the current registry.
+    for old_widget in snapshot.old_panels.values():
         if old_widget is not None:
             await old_widget.remove()
     if snapshot.old_logs is not None:
@@ -487,10 +511,31 @@ def _assign_replacement_identity(
     for payload in snapshot.conversations:
         new_conversations[payload.session_key].id = payload.conv_id
 
-    for spec in PANEL_REGISTRY:
-        panel = new_panels[spec.name]
-        panel.id = app._panel_ids[spec.name]
-        panel.display = spec.name == snapshot.active_panel
+    _assign_panel_identity_from_registry(
+        app,
+        new_panels=new_panels,
+        active_panel=snapshot.active_panel,
+    )
+
+
+def _assign_panel_identity_from_registry(
+    app,
+    *,
+    new_panels: dict[str, object],
+    active_panel: str,
+) -> None:
+    """Assign panel IDs/display from live registry and reconcile app panel ID map."""
+    resolved_panel_ids: dict[str, str] = {}
+    for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
+        panel = new_panels.get(spec.name)
+        if panel is None:
+            continue
+        css_id = spec.css_id
+        resolved_panel_ids[spec.name] = css_id
+        panel.id = css_id
+        panel.display = spec.name == active_panel
+    # [LAW:one-source-of-truth] Registry-derived IDs are canonical after each reload.
+    app._panel_ids = resolved_panel_ids
 
 
 async def _mount_replacement_widgets(
@@ -514,7 +559,7 @@ async def _mount_replacement_widgets(
 
     header = app.query_one(Header)
     prev_widget = header
-    for spec in PANEL_REGISTRY:
+    for spec in cc_dump.tui.panel_registry.PANEL_REGISTRY:
         await app.mount(new_panels[spec.name], after=prev_widget)
         prev_widget = new_panels[spec.name]
 
@@ -533,45 +578,6 @@ async def _mount_replacement_widgets(
 
     new_footer = cc_dump.tui.custom_footer.StatusFooter()
     await app.mount(new_footer, after=new_info)
-
-
-def _rehydrate_panels_from_store(app, new_panels: dict[str, object]) -> None:
-    """Rehydrate mounted panel data from canonical stores after widget swap.
-
-    // [LAW:one-source-of-truth] Panel content is always derived from live stores.
-    // [LAW:single-enforcer] Hot-reload panel hydration happens at this boundary.
-    """
-    analytics_store = getattr(app, "_analytics_store", None)
-    domain_store = getattr(app, "_domain_store", None)
-    all_domain_stores = ()
-    iter_stores = getattr(app, "_iter_domain_stores", None)
-    if callable(iter_stores):
-        all_domain_stores = iter_stores()
-    app_state = getattr(app, "_app_state", {})
-
-    stats_panel = new_panels.get("stats")
-    if stats_panel is not None:
-        stats_panel.refresh_from_store(
-            analytics_store,
-            domain_store=domain_store,
-            all_domain_stores=all_domain_stores,
-        )
-
-    economics_panel = new_panels.get("economics")
-    if economics_panel is not None:
-        economics_panel.refresh_from_store(analytics_store)
-
-    timeline_panel = new_panels.get("timeline")
-    if timeline_panel is not None:
-        timeline_panel.refresh_from_store(analytics_store)
-
-    session_panel = new_panels.get("session")
-    if session_panel is not None:
-        session_panel.refresh_session_state(
-            session_id=getattr(app, "_session_id", None),
-            last_message_time=app_state.get("last_message_time"),
-        )
-
 
 async def _mount_replacement_conversation(
     app,
