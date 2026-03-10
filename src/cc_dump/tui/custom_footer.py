@@ -5,9 +5,9 @@ from textual.color import Color
 from textual.containers import Horizontal
 
 import cc_dump.tui.rendering
-import cc_dump.tui.widget_factory
 import cc_dump.io.logging_setup
 from cc_dump.core.formatting import VisState, HIDDEN
+from cc_dump.tui.follow_mode import FollowState
 from cc_dump.tui.chip import Chip
 from cc_dump.tui.store_widget import StoreWidget
 
@@ -106,7 +106,7 @@ class StatusFooter(StoreWidget):
     def _setup_store_reactions(self) -> list:
         # [LAW:single-enforcer] Footer self-subscribes to footer_state; fires immediately
         # on mount (post-compose) so children are guaranteed ready.
-        store = self.app.view_store
+        store = self.app._view_store
         return [
             stx.reaction(
                 self.app,
@@ -116,8 +116,8 @@ class StatusFooter(StoreWidget):
             ),
             stx.reaction(
                 self.app,
-                lambda: bool(store.search_ui_state.get().footer_visible),
-                lambda footer_visible: setattr(self, "display", bool(footer_visible)),
+                lambda: store.search_ui_state.get(),
+                self._apply_footer_visibility,
                 fire_immediately=True,
             ),
         ]
@@ -184,7 +184,6 @@ class StatusFooter(StoreWidget):
             return
         tc = cc_dump.tui.rendering.get_theme_colors(runtime=runtime)
         # Enrich raw store value (follow_state string → FollowState enum)
-        FollowState = cc_dump.tui.widget_factory.FollowState
         enriched = dict(state)
         enriched["follow_state"] = FollowState(state["follow_state"])
 
@@ -193,6 +192,9 @@ class StatusFooter(StoreWidget):
         self._apply_category_row(enriched, tc)
         self._apply_follow_chip(enriched, bg_color, fg_color)
         self._apply_tmux_controls(enriched)
+
+    def _apply_footer_visibility(self, state: dict[str, object]) -> None:
+        self.display = bool(state.get("footer_visible", True))
 
     def _apply_category_row(self, state: dict[str, object], tc) -> None:
         for key, name in self._CATEGORY_ITEMS:
@@ -209,7 +211,6 @@ class StatusFooter(StoreWidget):
 
     def _apply_follow_chip(self, state: dict[str, object], bg_color: Color, fg_color: Color) -> None:
         # // [LAW:dataflow-not-control-flow] Style + label derived from follow_state via table.
-        FollowState = cc_dump.tui.widget_factory.FollowState
         follow_state = state.get("follow_state", FollowState.ACTIVE)
         follow_chip = self.query_one("#cmd-follow", Chip)
         # [LAW:dataflow-not-control-flow] Table lookup, not branches.

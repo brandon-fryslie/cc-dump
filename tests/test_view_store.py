@@ -1,10 +1,13 @@
 """Tests for view_store — reactive category visibility + panel/follow state."""
 
+from unittest.mock import MagicMock
+
 
 import cc_dump.app.view_store
 from cc_dump.core.formatting import VisState
 from cc_dump.tui.category_config import CATEGORY_CONFIG
 from snarfx import autorun, transaction
+from snarfx import textual as stx
 
 
 class TestSchema:
@@ -100,15 +103,32 @@ class TestReconcile:
         assert store.get("vis:metadata") is True
         assert store.get("full:tools") is True
 
-    def test_reconcile_with_reaction_registration_callback(self):
+    def test_reconcile_re_registers_reactions(self):
         store = cc_dump.app.view_store.create()
+        app = MagicMock()
+        app.is_running = True
+        app._rerender_if_mounted = MagicMock()
+        app._sync_panel_display = MagicMock()
+        app._sync_sidebar_panels = MagicMock()
+        app._sync_chrome_panels = MagicMock()
+        app._sync_aux_panels = MagicMock()
+        app._sync_error_items = MagicMock()
+        context = {"app": app}
+
+        disposers = cc_dump.app.view_store.setup_reactions(store, context)
+        store._reaction_disposers = disposers
+
+        # Initial autorun fires rerender
+        initial_calls = app._rerender_if_mounted.call_count
+
+        # Reconcile re-registers reactions
         store.reconcile(
             cc_dump.app.view_store.SCHEMA,
-            lambda s: [],
+            lambda s: cc_dump.app.view_store.setup_reactions(s, context),
         )
 
         store.set("vis:user", False)
-        assert store.get("vis:user") is False
+        assert app._rerender_if_mounted.call_count > initial_calls
 
 
 class TestGetCategoryState:
@@ -122,6 +142,60 @@ class TestGetCategoryState:
         store.set("vis:user", False)
         state = cc_dump.app.view_store.get_category_state(store, "user")
         assert state == VisState(False, True, True)
+
+
+class TestSetupReactions:
+    def test_autorun_calls_rerender(self):
+        store = cc_dump.app.view_store.create()
+        app = MagicMock()
+        app.is_running = True
+        app._rerender_if_mounted = MagicMock()
+        app._sync_panel_display = MagicMock()
+        app._sync_sidebar_panels = MagicMock()
+        app._sync_chrome_panels = MagicMock()
+        app._sync_aux_panels = MagicMock()
+        app._sync_error_items = MagicMock()
+        context = {"app": app}
+
+        disposers = cc_dump.app.view_store.setup_reactions(store, context)
+        store._reaction_disposers = disposers
+
+        # autorun fires immediately on setup
+        initial_calls = app._rerender_if_mounted.call_count
+        assert initial_calls >= 1
+
+        store.set("vis:tools", False)
+        assert app._rerender_if_mounted.call_count > initial_calls
+
+    def test_no_context_returns_empty(self):
+        store = cc_dump.app.view_store.create()
+        disposers = cc_dump.app.view_store.setup_reactions(store)
+        assert disposers == []
+
+    def test_no_app_in_context_returns_empty(self):
+        store = cc_dump.app.view_store.create()
+        disposers = cc_dump.app.view_store.setup_reactions(store, {})
+        assert disposers == []
+
+    def test_store_sync_reactions_fire_immediately(self):
+        store = cc_dump.app.view_store.create()
+        app = MagicMock()
+        app.is_running = True
+        app._rerender_if_mounted = MagicMock()
+        app._sync_panel_display = MagicMock()
+        app._sync_sidebar_panels = MagicMock()
+        app._sync_chrome_panels = MagicMock()
+        app._sync_aux_panels = MagicMock()
+        app._sync_error_items = MagicMock()
+        context = {"app": app}
+
+        cc_dump.app.view_store.setup_reactions(store, context)
+
+        app._sync_panel_display.assert_called_with(store.get("panel:active"))
+        app._sync_sidebar_panels.assert_called()
+        app._sync_chrome_panels.assert_called()
+        app._sync_aux_panels.assert_called()
+        app._sync_error_items.assert_called()
 
 
 class TestPanelAndFollowSchema:
@@ -155,6 +229,67 @@ class TestPanelAndFollowSchema:
         assert store.get("nav:follow") == "off"
 
 
+class TestPanelActiveReaction:
+    def test_reaction_fires_on_panel_change(self):
+        store = cc_dump.app.view_store.create()
+        app = MagicMock()
+        app.is_running = True
+        app._rerender_if_mounted = MagicMock()
+        app._sync_panel_display = MagicMock()
+        app._sync_sidebar_panels = MagicMock()
+        app._sync_chrome_panels = MagicMock()
+        app._sync_aux_panels = MagicMock()
+        app._sync_error_items = MagicMock()
+        context = {"app": app}
+
+        cc_dump.app.view_store.setup_reactions(store, context)
+
+        app._sync_panel_display.reset_mock()
+
+        store.set("panel:active", "stats")
+
+        app._sync_panel_display.assert_called_with("stats")
+
+    def test_reaction_guarded_during_stx_pause(self):
+        store = cc_dump.app.view_store.create()
+        app = MagicMock()
+        app.is_running = True
+        app._rerender_if_mounted = MagicMock()
+        app._sync_panel_display = MagicMock()
+        app._sync_sidebar_panels = MagicMock()
+        app._sync_chrome_panels = MagicMock()
+        app._sync_aux_panels = MagicMock()
+        app._sync_error_items = MagicMock()
+        context = {"app": app}
+
+        cc_dump.app.view_store.setup_reactions(store, context)
+        app._sync_panel_display.reset_mock()
+
+        with stx.pause(app):
+            store.set("panel:active", "timeline")
+
+        app._sync_panel_display.assert_not_called()
+
+    def test_reaction_guarded_before_running(self):
+        store = cc_dump.app.view_store.create()
+        app = MagicMock()
+        app.is_running = False
+        app._rerender_if_mounted = MagicMock()
+        app._sync_panel_display = MagicMock()
+        app._sync_sidebar_panels = MagicMock()
+        app._sync_chrome_panels = MagicMock()
+        app._sync_aux_panels = MagicMock()
+        app._sync_error_items = MagicMock()
+        context = {"app": app}
+
+        cc_dump.app.view_store.setup_reactions(store, context)
+        app._sync_panel_display.reset_mock()
+
+        store.set("panel:active", "economics")
+
+        app._sync_panel_display.assert_not_called()
+
+
 class TestReconcileWithNewKeys:
     def test_reconcile_preserves_panel_values(self):
         store = cc_dump.app.view_store.create()
@@ -180,6 +315,7 @@ class TestReconcileWithNewKeys:
         assert store.get("tmux:available") is False
         assert store.get("sc:loading") is False
         assert store.get("sc:active_action") == ""
+        assert store.get("sc:purpose_usage") == {}
 
 
 class TestFooterStateComputed:
@@ -254,19 +390,50 @@ class TestScPanelStateComputed:
     def test_defaults(self):
         store = cc_dump.app.view_store.create()
         state = store.sc_panel_state.get()
-        assert state.enabled is False  # no settings_store wired
-        assert state.loading is False
-        assert state.active_action == ""
-        assert state.result_text == ""
-        assert state.result_source == ""
-        assert state.result_elapsed_ms == 0
+        assert isinstance(state, dict)
+        assert state["enabled"] is False  # no settings_store wired
+        assert state["loading"] is False
+        assert state["active_action"] == ""
+        assert state["result_text"] == ""
+        assert state["result_source"] == ""
+        assert state["result_elapsed_ms"] == 0
+        assert state["purpose_usage"] == {}
 
     def test_updates_from_store(self):
         store = cc_dump.app.view_store.create()
         store.set("sc:loading", True)
         store.set("sc:active_action", "qa_submit")
         store.set("sc:result_text", "answer")
+        store.set("sc:purpose_usage", {"conversation_qa": {"turns": 1}})
         state = store.sc_panel_state.get()
-        assert state.loading is True
-        assert state.active_action == "qa_submit"
-        assert state.result_text == "answer"
+        assert state["loading"] is True
+        assert state["active_action"] == "qa_submit"
+        assert state["result_text"] == "answer"
+        assert state["purpose_usage"] == {"conversation_qa": {"turns": 1}}
+
+
+
+class TestErrorReaction:
+    def test_error_reaction_fires_on_exception_append(self):
+        import cc_dump.tui.error_indicator
+        ErrorItem = cc_dump.tui.error_indicator.ErrorItem
+        store = cc_dump.app.view_store.create()
+        app = MagicMock()
+        app.is_running = True
+        app._rerender_if_mounted = MagicMock()
+        app._sync_panel_display = MagicMock()
+        app._sync_sidebar_panels = MagicMock()
+        app._sync_chrome_panels = MagicMock()
+        app._sync_aux_panels = MagicMock()
+        app._sync_error_items = MagicMock()
+        context = {"app": app}
+
+        cc_dump.app.view_store.setup_reactions(store, context)
+        app._sync_error_items.reset_mock()
+
+        store.exception_items.append(ErrorItem("exc-1", "\U0001f4a5", "RuntimeError: boom"))
+
+        app._sync_error_items.assert_called()
+        items = app._sync_error_items.call_args[0][0]
+        assert len(items) == 1
+        assert items[0].summary == "RuntimeError: boom"

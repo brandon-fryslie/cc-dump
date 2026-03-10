@@ -14,7 +14,6 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Checkbox, Input, Select, Static
 
-import cc_dump.app.view_store
 from cc_dump.core.analysis import fmt_tokens
 from cc_dump.ai.utility_catalog import UtilityRegistry
 from cc_dump.tui.chip import Chip
@@ -31,6 +30,7 @@ class SideChannelPanelState:
     result_text: str
     result_source: str  # "ai" | "fallback" | "error" | "preview" | ""
     result_elapsed_ms: int
+    purpose_usage: dict[str, dict[str, int]]
 
 
 @dataclass(frozen=True)
@@ -126,6 +126,7 @@ _DEFAULT_SIDE_CHANNEL_PANEL_STATE = SideChannelPanelState(
     result_text="",
     result_source="",
     result_elapsed_ms=0,
+    purpose_usage={},
 )
 
 
@@ -150,6 +151,11 @@ class SideChannelPanel(StoreWidget):
     }
 
     SideChannelPanel #sc-status {
+        margin-bottom: 1;
+    }
+
+    SideChannelPanel #sc-usage-summary {
+        color: $text-muted;
         margin-bottom: 1;
     }
 
@@ -207,6 +213,10 @@ class SideChannelPanel(StoreWidget):
         margin-top: 1;
     }
 
+    SideChannelPanel #sc-usage {
+        margin-top: 1;
+        color: $text-muted;
+    }
     """
 
     def __init__(self) -> None:
@@ -224,6 +234,7 @@ class SideChannelPanel(StoreWidget):
     def compose(self) -> ComposeResult:
         yield Static("AI Workbench", id="sc-title")
         yield Static("", id="sc-status")
+        yield Static("", id="sc-usage-summary")
         for group in WORKBENCH_CONTROL_GROUPS:
             yield Static(group.title, classes="sc-group-title")
             for control in group.controls:
@@ -255,6 +266,7 @@ class SideChannelPanel(StoreWidget):
         with VerticalScroll(id="sc-result-scroll"):
             yield Static("", id="sc-result")
         yield Static("", id="sc-meta")
+        yield Static("", id="sc-usage")
 
     def update_display(self, state: SideChannelPanelState) -> None:
         """Update child widgets from state.
@@ -271,46 +283,20 @@ class SideChannelPanel(StoreWidget):
                 result_text=str(state.result_text),
                 result_source=str(state.result_source),
                 result_elapsed_ms=int(state.result_elapsed_ms),
+                purpose_usage=dict(state.purpose_usage),
             )
         )
 
     def _setup_store_reactions(self) -> list:
-        store = self.app.view_store
+        store = self.app._view_store
         return [
             stx.reaction(
                 self.app,
                 lambda: store.sc_panel_state.get(),
-                self._apply_store_projection,
+                self._apply_store_state,
                 fire_immediately=True,
-            ),
-            stx.reaction(
-                self.app,
-                lambda: bool(store.get("panel:side_channel")),
-                self._apply_panel_visibility,
-                fire_immediately=True,
-            ),
-        ]
-
-    def _apply_store_projection(
-        self, projection: cc_dump.app.view_store.SideChannelPanelProjection
-    ) -> None:
-        self.update_display(
-            SideChannelPanelState(
-                enabled=projection.enabled,
-                loading=projection.loading,
-                active_action=projection.active_action,
-                result_text=projection.result_text,
-                result_source=projection.result_source,
-                result_elapsed_ms=projection.result_elapsed_ms,
             )
-        )
-
-    def _apply_panel_visibility(self, visible: bool) -> None:
-        self.display = bool(visible)
-        if visible:
-            self.call_after_refresh(self.focus_default_control)
-        elif self.has_focus_within:
-            self.call_after_refresh(self.screen.focus_next)
+        ]
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -319,6 +305,21 @@ class SideChannelPanel(StoreWidget):
     def on_unmount(self) -> None:
         super().on_unmount()
         self._display_reaction.dispose()
+
+    def _apply_store_state(self, payload: object) -> None:
+        state = payload if isinstance(payload, dict) else {}
+        usage = state.get("purpose_usage", {})
+        self.update_display(
+            SideChannelPanelState(
+                enabled=bool(state.get("enabled", False)),
+                loading=bool(state.get("loading", False)),
+                active_action=str(state.get("active_action", "")),
+                result_text=str(state.get("result_text", "")),
+                result_source=str(state.get("result_source", "")),
+                result_elapsed_ms=int(state.get("result_elapsed_ms", 0)),
+                purpose_usage=dict(usage) if isinstance(usage, dict) else {},
+            )
+        )
 
     def _apply_display_state(self, state: SideChannelPanelState) -> None:
         # [LAW:dataflow-not-control-flow] exception: Textual widget mutation requires mounted nodes.
@@ -332,6 +333,9 @@ class SideChannelPanel(StoreWidget):
                 active_action=state.active_action,
             )
         )
+
+        usage_summary = self.query_one("#sc-usage-summary", Static)
+        usage_summary.update(_render_usage_summary(state.purpose_usage))
 
         for control in _iter_controls():
             chip = self.query_one(f"#sc-{control.key}", Chip)
@@ -353,6 +357,9 @@ class SideChannelPanel(StoreWidget):
 
         meta = self.query_one("#sc-meta", Static)
         meta.update(_render_meta(state))
+
+        usage = self.query_one("#sc-usage", Static)
+        usage.update(_render_purpose_usage(state.purpose_usage))
 
     def focus_default_control(self) -> None:
         focusable = self.query("Chip, Input, Select, Checkbox")
@@ -427,6 +434,14 @@ def _render_status_line(*, enabled: bool, loading: bool, active_action: str) -> 
     return "Status: Ready"
 
 
+def _render_usage_summary(usage: dict[str, dict[str, int]]) -> str:
+    total_runs = sum(int(row.get("turns", 0)) for row in usage.values())
+    total_purposes = sum(1 for row in usage.values() if int(row.get("turns", 0)) > 0)
+    if total_runs <= 0:
+        return "Usage: no runs yet"
+    return f"Usage: {total_runs} runs across {total_purposes} purposes"
+
+
 def _render_control_label(
     *,
     control: WorkbenchControlSpec,
@@ -464,6 +479,32 @@ def _render_meta(state: SideChannelPanelState) -> str:
     if state.active_action:
         parts.append(f"Action: {state.active_action}")
     return "  ".join(parts)
+
+
+def _render_purpose_usage(usage: dict[str, dict[str, int]]) -> str:
+    if not usage:
+        return "Purpose usage: (none)"
+    rows: list[str] = ["Purpose usage:"]
+    ordered = sorted(
+        usage.items(),
+        key=lambda item: (
+            -int(item[1].get("turns", 0)),
+            -int(item[1].get("input_tokens", 0)),
+            item[0],
+        ),
+    )
+    for purpose, row in ordered:
+        rows.append(
+            "  {}  runs={}  in={}  cache_read={}  cache_create={}  out={}".format(
+                purpose,
+                int(row.get("turns", 0)),
+                fmt_tokens(int(row.get("input_tokens", 0))),
+                fmt_tokens(int(row.get("cache_read_tokens", 0))),
+                fmt_tokens(int(row.get("cache_creation_tokens", 0))),
+                fmt_tokens(int(row.get("output_tokens", 0))),
+            )
+        )
+    return "\n".join(rows)
 
 
 def render_qa_estimate_line(

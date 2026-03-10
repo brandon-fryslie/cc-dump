@@ -1,15 +1,13 @@
 """Search controller — all search interaction logic.
 
-// [LAW:one-way-deps] Depends on search, formatting, rendering. No upward deps.
+// [LAW:one-way-deps] Depends on search model + app/widget seams. No upward deps.
 // [LAW:locality-or-seam] All search logic here — app.py keeps thin delegates.
-// [LAW:single-enforcer] _force_vis is the sole runtime visibility override for search.
+// [LAW:single-enforcer] Search key handling is centralized in this controller.
 
-Not hot-reloadable (accesses app state and widgets).
+Hot-reloadable; no module-level mutable state; behavior routed through explicit app/widget seams.
 """
 
-import cc_dump.core.formatting
 import cc_dump.tui.search
-import cc_dump.tui.location_navigation
 from cc_dump.tui.category_config import CATEGORY_CONFIG
 
 
@@ -139,7 +137,6 @@ def start_search(app) -> None:
     state.cursor_pos = 0
     state.matches = []
     state.current_index = 0
-    state.expanded_blocks = []
     # Save current filter state for restore on cancel
     store = app._view_store
     state.saved_filters = {
@@ -153,7 +150,7 @@ def start_search(app) -> None:
     # Save current scroll position
     conv = app._get_conv()
     if conv is not None:
-        state.saved_scroll_y = conv.scroll_offset.y
+        state.saved_scroll_y = conv.current_scroll_y()
     else:
         state.saved_scroll_y = None
     _sync_search_match_summary(app)
@@ -272,9 +269,6 @@ def _exit_search_common(app) -> None:
     SearchPhase = cc_dump.tui.search.SearchPhase
     state = app._search_state
 
-    # Clear block expansion overrides we set
-    clear_search_expand(app)
-
     # Restore saved filter levels — batched via store.update()
     updates = {}
     for name, (vis, full, exp) in state.saved_filters.items():
@@ -288,7 +282,6 @@ def _exit_search_common(app) -> None:
     state.query = ""
     state.matches = []
     state.current_index = 0
-    state.expanded_blocks = []
 
     # Cancel debounce timer
     if state.debounce_timer is not None:
@@ -306,7 +299,8 @@ def exit_search_keep_position(app) -> None:
     """Exit search and stay at current scroll position (Esc)."""
     conv = app._get_conv()
     if conv is not None:
-        conv._scroll_anchor = conv._compute_anchor_from_scroll()
+        # [LAW:locality-or-seam] Search uses ConversationView public seam for anchor capture.
+        conv.capture_scroll_anchor()
     _exit_search_common(app)
 
 
@@ -317,12 +311,13 @@ def exit_search_restore_position(app) -> None:
     if state.saved_scroll_y is not None:
         conv = app._get_conv()
         if conv is not None:
-            conv.scroll_to(y=state.saved_scroll_y, animate=False)
+            # [LAW:locality-or-seam] Search uses ConversationView public seam for scroll restore.
+            conv.restore_scroll_y(state.saved_scroll_y)
     state.saved_scroll_y = None
 
 
 def commit_search(app) -> None:
-    """Transition: EDITING → NAVIGATING. Run final search, navigate to first result."""
+    """Transition: EDITING → NAVIGATING. Run final search."""
     SearchPhase = cc_dump.tui.search.SearchPhase
     state = app._search_state
 
@@ -334,12 +329,11 @@ def commit_search(app) -> None:
     # Run search
     run_search(app)
 
+    # // [LAW:dataflow-not-control-flow] Commit path always enters NAVIGATING;
+    # only data (matches/current_index) varies while navigation is stubbed.
     if state.matches:
-        state.phase = SearchPhase.NAVIGATING
         state.current_index = 0
-        navigate_to_current(app)
-    else:
-        state.phase = SearchPhase.NAVIGATING
+    state.phase = SearchPhase.NAVIGATING
 
 
 def schedule_incremental_search(app) -> None:
@@ -372,17 +366,18 @@ def run_search(app) -> None:
         state.matches = []
         _sync_search_match_summary(app)
         return
+    turns = conv.get_search_turns_snapshot().turns
 
     # // [LAW:no-shared-mutable-globals] Cache is state-owned and locally bounded.
     cache = state.text_cache
     if isinstance(cache, cc_dump.tui.search.SearchTextCache):
-        cache.invalidate_missing_owners(id(td) for td in conv._turns)
+        cache.invalidate_missing_owners(id(td) for td in turns)
     elif isinstance(cache, dict) and len(cache) > 20_000:
         # Legacy fallback for tests/mocks that still provide a plain dict.
         cache.clear()
 
     state.matches = cc_dump.tui.search.find_all_matches(
-        conv._turns,
+        turns,
         pattern,
         text_cache=cache,
     )
@@ -392,112 +387,36 @@ def run_search(app) -> None:
 
 
 def navigate_next(app) -> None:
-    """Move to next match (wraps around)."""
-    state = app._search_state
-    if not state.matches:
-        return
-    state.current_index = (state.current_index + 1) % len(state.matches)
-    navigate_to_current(app)
+    """No-op navigation stub.
+
+    TODO(search-nav-redesign): reintroduce robust match navigation through
+    typed conversation navigation seams after architecture refactor.
+    """
+    # // [LAW:dataflow-not-control-flow] Keybinding pipeline remains stable while
+    # navigation behavior is intentionally removed for complexity reduction.
+    _ = app
 
 
 def navigate_prev(app) -> None:
-    """Move to previous match (wraps around)."""
-    state = app._search_state
-    if not state.matches:
-        return
-    state.current_index = (state.current_index - 1) % len(state.matches)
-    navigate_to_current(app)
+    """No-op navigation stub.
+
+    TODO(search-nav-redesign): reintroduce robust match navigation through
+    typed conversation navigation seams after architecture refactor.
+    """
+    # // [LAW:dataflow-not-control-flow] Keybinding pipeline remains stable while
+    # navigation behavior is intentionally removed for complexity reduction.
+    _ = app
 
 
 def navigate_to_current(app) -> None:
-    """Navigate to the current match: expand block with _force_vis, scroll.
+    """No-op navigation stub.
 
-    For container children, sets _force_vis on both the container (so it
-    expands to show children) AND the actual child block. Scroll uses
-    identity-based lookup against td._flat_blocks to resolve the flat index.
-
-    // [LAW:single-enforcer] _force_vis is the sole runtime visibility override.
+    TODO(search-nav-redesign): implement typed block navigation without
+    direct widget internals or runtime visibility overrides.
     """
-    state = app._search_state
-    if not state.matches:
-        return
-
-    match = state.matches[state.current_index]
-    conv = app._get_conv()
-    if conv is None:
-        return
-
-    # Clear previous expansion
-    clear_search_expand(app)
-
-    # Get the block
-    if match.turn_index >= len(conv._turns):
-        return
-    td = conv._turns[match.turn_index]
-    if match.block_index >= len(td.blocks):
-        return
-
-    # // [LAW:single-enforcer] _force_vis is the runtime visibility override
-    force_indices = {match.block_index}
-
-    # Turn header cluster (HeaderBlock, SeparatorBlock, NewlineBlock at start)
-    for i, b in enumerate(td.blocks):
-        if type(b).__name__ in ("HeaderBlock", "SeparatorBlock", "NewlineBlock"):
-            force_indices.add(i)
-        else:
-            break
-
-    # Nearest preceding MessageBlock for role context
-    for i in range(match.block_index - 1, -1, -1):
-        if type(td.blocks[i]).__name__ == "MessageBlock":
-            force_indices.add(i)
-            break
-
-    # // [LAW:one-source-of-truth] force_vis in ViewOverrides only
-    for i in force_indices:
-        if conv is not None:
-            conv._view_overrides.get_block(td.blocks[i].block_id).force_vis = cc_dump.core.formatting.ALWAYS_VISIBLE
-            conv._view_overrides._search_block_ids.add(td.blocks[i].block_id)
-        state.expanded_blocks.append((match.turn_index, i, td.blocks[i].block_id))
-
-    # Also force-vis the actual matched child block when it differs from
-    # the container (i.e., the match is inside a child, not the container itself)
-    matched_block = match.block
-    if matched_block is not None and matched_block is not td.blocks[match.block_index]:
-        if conv is not None:
-            conv._view_overrides.get_block(matched_block.block_id).force_vis = cc_dump.core.formatting.ALWAYS_VISIBLE
-            conv._view_overrides._search_block_ids.add(matched_block.block_id)
-        state.expanded_blocks.append((match.turn_index, match.block_index, matched_block.block_id))
-
-    if conv is not None and hasattr(conv, "mark_overrides_changed"):
-        conv.mark_overrides_changed()
-
-    # Re-render with search context, then navigate via shared location helper.
-    location = cc_dump.tui.location_navigation.BlockLocation(
-        turn_index=match.turn_index,
-        block_index=match.block_index,
-        block=matched_block,
-    )
-    cc_dump.tui.location_navigation.go_to_location(
-        conv,
-        location,
-        rerender=lambda: search_rerender(app),
-    )
-
-
-def clear_search_expand(app) -> None:
-    """Reset force_vis on blocks we expanded during search.
-
-    expanded_blocks entries are (turn_idx, block_idx, block_id) triples.
-    // [LAW:one-source-of-truth] Clears via ViewOverrides.clear_search() only.
-    """
-    state = app._search_state
-    conv = app._get_conv()
-    if conv is not None:
-        conv._view_overrides.clear_search()
-        if hasattr(conv, "mark_overrides_changed"):
-            conv.mark_overrides_changed()
-    state.expanded_blocks.clear()
+    # // [LAW:locality-or-seam] Future implementation must route through
+    # ConversationView public seams instead of private internals.
+    _ = app
 
 
 def search_rerender(app) -> None:

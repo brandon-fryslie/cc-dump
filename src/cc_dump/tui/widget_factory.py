@@ -6,13 +6,10 @@ instances from the updated class definitions and swap them in.
 
 import datetime
 import hashlib
-import json
 import logging
-import os
 from contextlib import contextmanager
 from collections import deque
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import TYPE_CHECKING
 from snarfx import Observable, reaction
 from snarfx import textual as stx
@@ -36,52 +33,18 @@ import cc_dump.tui.error_indicator
 import cc_dump.tui.view_overrides
 import cc_dump.app.error_models
 import cc_dump.app.domain_store
-import cc_dump.app.view_store
+from cc_dump.tui.follow_mode import (
+    FollowState,
+    FollowEvent,
+    FollowModeStore,
+    FollowTransition,
+)
 from cc_dump.io.perf_logging import monitor_slow_path
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from cc_dump.tui.rendering_impl import RenderRuntime
-
-
-# ─── Follow mode state machine ──────────────────────────────────────────────
-
-
-class FollowState(Enum):
-    OFF = "off"
-    ENGAGED = "engaged"
-    ACTIVE = "active"
-
-
-# [LAW:dataflow-not-control-flow] Transitions as data, not branches.
-# Key: (current_state, at_bottom) → new_state
-_FOLLOW_TRANSITIONS: dict[tuple[FollowState, bool], FollowState] = {
-    (FollowState.ACTIVE, True): FollowState.ACTIVE,
-    (FollowState.ACTIVE, False): FollowState.ENGAGED,
-    (FollowState.ENGAGED, True): FollowState.ACTIVE,
-    (FollowState.ENGAGED, False): FollowState.ENGAGED,
-    (FollowState.OFF, True): FollowState.OFF,
-    (FollowState.OFF, False): FollowState.OFF,
-}
-
-_FOLLOW_TOGGLE: dict[FollowState, FollowState] = {
-    FollowState.OFF: FollowState.ACTIVE,
-    FollowState.ENGAGED: FollowState.OFF,
-    FollowState.ACTIVE: FollowState.OFF,
-}
-
-_FOLLOW_SCROLL_BOTTOM: dict[FollowState, FollowState] = {
-    FollowState.OFF: FollowState.OFF,
-    FollowState.ENGAGED: FollowState.ACTIVE,
-    FollowState.ACTIVE: FollowState.ACTIVE,
-}
-
-_FOLLOW_DEACTIVATE: dict[FollowState, FollowState] = {
-    FollowState.OFF: FollowState.OFF,
-    FollowState.ENGAGED: FollowState.ENGAGED,
-    FollowState.ACTIVE: FollowState.ENGAGED,
-}
 
 
 def _compute_widest(strips: list) -> int:
@@ -232,10 +195,11 @@ class ScrollAnchor:
     line_in_block: int   # line offset within block's rendered strips
 
 
-def _resolve_view_store(view_store):
-    if view_store is not None:
-        return view_store
-    return cc_dump.app.view_store.create()
+@dataclass(frozen=True)
+class SearchTurnsSnapshot:
+    """Immutable snapshot of turns exposed to search consumers."""
+
+    turns: tuple[TurnData, ...]
 
 
 class ConversationView(ScrollView):
@@ -265,7 +229,7 @@ class ConversationView(ScrollView):
         runtime: "RenderRuntime | None" = None,
     ):
         super().__init__()
-        self._view_store = _resolve_view_store(view_store)
+        self._view_store = view_store
         # Auto-create domain store for tests that don't provide one
         self._domain_store = domain_store if domain_store is not None else cc_dump.app.domain_store.DomainStore()
         self._render_runtime: "RenderRuntime | None" = runtime
@@ -289,26 +253,31 @@ class ConversationView(ScrollView):
         self._overrides_revision: int = 0
         self._last_search_signature: tuple | None = None
         self._last_theme_generation: int = self._read_theme_generation()
+        # [LAW:one-source-of-truth] Canonical follow state lives in FollowModeStore Observable.
+        self._follow_store = FollowModeStore(self._initial_follow_state())
         self._pending_restore: dict | None = None
         self._scrolling_programmatically: bool = False
         self._scroll_anchor: ScrollAnchor | None = None
         self._indicator = cc_dump.tui.error_indicator.IndicatorState()
         self._indicator_state: Observable[tuple[list, bool]] = Observable(([], False))
-        self._filters_state: Observable[dict] = Observable(
-            dict(self._view_store.active_filters.get())
-        )
         # [LAW:single-enforcer] One reactive projection owns indicator invalidation/refresh.
         self._indicator_reaction = reaction(
             lambda: self._indicator_state.get(),
             self._apply_indicator_state,
             fire_immediately=False,
         )
-        self._filters_reaction = reaction(
-            lambda: self._filters_state.get(),
-            self._apply_filter_projection,
+        # [LAW:single-enforcer] Follow transition side effects flow from one reactive projection.
+        self._follow_transition_reaction = reaction(
+            lambda: self._follow_store.transition.get(),
+            self._apply_follow_transition,
             fire_immediately=False,
         )
-        self._store_disposers: list = []
+        # [LAW:single-enforcer] One projection syncs follow state into view_store/persistence.
+        self._follow_state_sync_reaction = reaction(
+            lambda: self._follow_store.state.get(),
+            self._persist_follow_state,
+            fire_immediately=True,
+        )
         # // [LAW:one-source-of-truth] All per-block view state lives here.
         self._view_overrides = cc_dump.tui.view_overrides.ViewOverrides()
         # Streaming preview rendering state (rendering concern).
@@ -334,8 +303,18 @@ class ConversationView(ScrollView):
         self._wire_domain_store(self._domain_store)
 
     def _read_theme_generation(self) -> int:
+        if self._view_store is None:
+            return 0
         raw = self._view_store.get("theme:generation")
         return int(raw) if isinstance(raw, int) else 0
+
+    def _initial_follow_state(self) -> FollowState:
+        follow_raw = self._view_store.get("nav:follow") if self._view_store is not None else FollowState.ACTIVE.value
+        try:
+            return FollowState(str(follow_raw))
+        except ValueError:
+            # [LAW:dataflow-not-control-flow] exception: guard malformed persisted state.
+            return FollowState.ACTIVE
 
     @staticmethod
     def _search_match_signature(match) -> tuple | None:
@@ -396,42 +375,14 @@ class ConversationView(ScrollView):
 
         // [LAW:one-source-of-truth] DomainStore remains canonical; widget cache is derived.
         """
-        self._store_disposers = self._setup_store_reactions()
         self._apply_indicator_state(self._indicator_state.get())
         self._hydrate_from_domain_store()
 
     def on_unmount(self) -> None:
-        for d in self._store_disposers:
-            d.dispose()
         self._indicator_reaction.dispose()
-        self._filters_reaction.dispose()
-
-    def _setup_store_reactions(self) -> list:
-        store = self._view_store
-        return [
-            stx.reaction(
-                self.app,
-                lambda: store.active_filters.get(),
-                self._update_filter_projection,
-                fire_immediately=False,
-            ),
-            stx.reaction(
-                self.app,
-                lambda: store.error_items.get(),
-                self._update_errors_from_store,
-                fire_immediately=True,
-            ),
-        ]
-
-    def _update_filter_projection(self, filters: dict) -> None:
-        self._filters_state.set(dict(filters))
-
-    def _apply_filter_projection(self, filters: dict) -> None:
-        # [LAW:single-enforcer] Conversation rerender on filter changes is owned locally.
-        self.rerender(filters)
-
-    def _update_errors_from_store(self, items: list) -> None:
-        self.update_error_items(items)
+        self._follow_transition_reaction.dispose()
+        self._follow_state_sync_reaction.dispose()
+        self._follow_store.dispose()
 
     def _set_indicator_state(
         self,
@@ -475,14 +426,36 @@ class ConversationView(ScrollView):
         self.refresh()
 
     # // [LAW:one-source-of-truth] Follow state stored as string in view store.
-    # String comparison is stable across hot-reloads (enum class identity changes).
+    # String persistence in view_store remains derived from this canonical Observable.
     @property
     def _follow_state(self) -> FollowState:
-        return FollowState(self._view_store.get("nav:follow"))
+        return self._follow_store.state.get()
 
     @_follow_state.setter
     def _follow_state(self, value: FollowState):
-        self._view_store.set("nav:follow", value.value)
+        self._follow_store.state.set(value)
+
+    def _persist_follow_state(self, value: FollowState) -> None:
+        if self._view_store is not None:
+            self._view_store.set("nav:follow", value.value)
+
+    def _dispatch_follow_event(
+        self,
+        event: FollowEvent,
+        *,
+        at_bottom: bool,
+    ) -> None:
+        """Dispatch a follow intent with explicit caller-owned scroll context.
+
+        // [LAW:one-source-of-truth] Caller-provided at_bottom is authoritative.
+        """
+        self._follow_store.dispatch(event, at_bottom=bool(at_bottom))
+
+    def _apply_follow_transition(self, payload: tuple[int, FollowTransition]) -> None:
+        _seq, transition = payload
+        if transition.scroll_to_end:
+            with self._programmatic_scroll():
+                self.scroll_end(animate=False)
 
     @contextmanager
     def _programmatic_scroll(self):
@@ -502,6 +475,18 @@ class ConversationView(ScrollView):
     def view_overrides(self):
         """Public accessor for ViewOverrides — used by search_controller and action_handlers."""
         return self._view_overrides
+
+    def get_search_turns_snapshot(self) -> SearchTurnsSnapshot:
+        """Return an immutable turns snapshot for search consumers.
+
+        // [LAW:locality-or-seam] Search reads turns through this seam, not `_turns`.
+        // [LAW:one-source-of-truth] ConversationView is canonical owner of turn storage.
+        """
+        return SearchTurnsSnapshot(turns=tuple(self._turns))
+
+    def current_scroll_y(self) -> float:
+        """Return current vertical scroll offset."""
+        return float(self.scroll_offset.y)
 
     def _blank_line(self, width: int) -> Strip:
         return Strip.blank(width, self.rich_style)
@@ -1790,7 +1775,7 @@ class ConversationView(ScrollView):
         """Force-render a specific turn, then recalculate offsets.
 
         Used before scroll_to_block() to ensure the target turn has accurate
-        block_strip_map and line_offset after _force_vis changes or deferred renders.
+        block_strip_map and line_offset after deferred renders.
         """
         if turn_index >= len(self._turns):
             return
@@ -1861,35 +1846,52 @@ class ConversationView(ScrollView):
         CRITICAL: Must call super() to preserve scrollbar sync and refresh.
         CRITICAL: Signature is (old_value, new_value), not (value).
 
-        // [LAW:dataflow-not-control-flow] Transition via _FOLLOW_TRANSITIONS table.
+        // [LAW:dataflow-not-control-flow] Transition dispatched to reactive follow store.
         """
         super().watch_scroll_y(old_value, new_value)
         if self._scrolling_programmatically:
             return
         # Compute anchor on user scroll (block-level anchor for vis_state changes)
         self._scroll_anchor = self._compute_anchor_from_scroll()
-        self._follow_state = _FOLLOW_TRANSITIONS[
-            (self._follow_state, self.is_vertical_scroll_end)
-        ]
+        self._dispatch_follow_event(
+            FollowEvent.USER_SCROLL,
+            at_bottom=bool(self.is_vertical_scroll_end),
+        )
 
     def toggle_follow(self):
         """Toggle follow mode.
 
-        // [LAW:dataflow-not-control-flow] Transition via _FOLLOW_TOGGLE table.
+        // [LAW:dataflow-not-control-flow] Transition dispatched to reactive follow store.
         """
-        self._follow_state = _FOLLOW_TOGGLE[self._follow_state]
-        if self._is_following:
-            with self._programmatic_scroll():
-                self.scroll_end(animate=False)
+        self._dispatch_follow_event(FollowEvent.TOGGLE, at_bottom=False)
 
     def scroll_to_bottom(self):
         """Scroll to bottom. Transitions ENGAGED→ACTIVE; OFF stays OFF.
 
-        // [LAW:dataflow-not-control-flow] Transition via _FOLLOW_SCROLL_BOTTOM table.
+        // [LAW:dataflow-not-control-flow] Transition dispatched to reactive follow store.
         """
-        self._follow_state = _FOLLOW_SCROLL_BOTTOM[self._follow_state]
+        self._dispatch_follow_event(FollowEvent.SCROLL_BOTTOM, at_bottom=False)
+
+    def scroll_to_top(self) -> None:
+        """Scroll to top and deactivate follow mode."""
+        self._dispatch_follow_event(FollowEvent.DEACTIVATE, at_bottom=False)
         with self._programmatic_scroll():
-            self.scroll_end(animate=False)
+            self.scroll_home(animate=False)
+
+    def capture_scroll_anchor(self) -> None:
+        """Capture the current block-level anchor for later restore.
+
+        // [LAW:one-source-of-truth] ConversationView owns `_scroll_anchor` lifecycle.
+        """
+        self._scroll_anchor = self._compute_anchor_from_scroll()
+
+    def restore_scroll_y(self, y: float) -> None:
+        """Restore absolute vertical scroll position without animation."""
+        with self._programmatic_scroll():
+            self.scroll_to(y=y, animate=False)
+        # // [LAW:one-source-of-truth] Refresh anchor after programmatic restore
+        # because watch_scroll_y skips recompute while the guard is active.
+        self.capture_scroll_anchor()
 
     def scroll_to_block(self, turn_index: int, block_index: int) -> None:
         """Scroll to center a specific block in the viewport."""
@@ -1907,8 +1909,8 @@ class ConversationView(ScrollView):
         viewport_height = self.scrollable_content_region.height
         centered_y = max(0, target_y - viewport_height // 2)
 
-        # // [LAW:dataflow-not-control-flow] Deactivate via table lookup.
-        self._follow_state = _FOLLOW_DEACTIVATE[self._follow_state]
+        # // [LAW:dataflow-not-control-flow] Deactivate via follow transition event.
+        self._dispatch_follow_event(FollowEvent.DEACTIVATE, at_bottom=False)
         with self._programmatic_scroll():
             self.scroll_to(y=centered_y, animate=False)
 
@@ -2271,78 +2273,34 @@ class StatsPanel(Static):
             self._apply_render_state,
             fire_immediately=False,
         )
-        self.request_count = 0
-        self.models_seen: set = set()
 
     def on_mount(self) -> None:
-        self._visibility_reaction = stx.reaction(
+        self._store_reaction = stx.reaction(
             self.app,
-            lambda: str(self.app.view_store.get("panel:active")),
-            self._apply_panel_visibility,
+            lambda: self.app._view_store.get("panel:stats_snapshot"),
+            self._apply_store_snapshot,
             fire_immediately=True,
         )
         self._apply_render_state(self._render_state.get())
 
     def on_unmount(self) -> None:
-        self._visibility_reaction.dispose()
+        self._store_reaction.dispose()
         self._render_reaction.dispose()
 
-    def _apply_panel_visibility(self, active_panel: str) -> None:
-        self.display = active_panel == "stats"
+    def _apply_store_snapshot(self, payload: object) -> None:
+        self.update_display(payload if isinstance(payload, dict) else {})
 
-    def update_stats(self, **kwargs):
-        """Update statistics and refresh display.
-
-        Only updates in-memory fields (requests, models).
-        Token counts come from analytics store via refresh_from_store().
-        """
-        if "requests" in kwargs:
-            self.request_count = kwargs["requests"]
-        if "model" in kwargs and kwargs["model"]:
-            self.models_seen.add(kwargs["model"])
-
-        # Request/model tracking is retained for compatibility with existing handlers/tests.
-
-    def refresh_from_store(
-        self,
-        store,
-        current_turn: dict | None = None,
-        domain_store=None,
-        all_domain_stores: tuple[object, ...] | None = None,
-    ):
-        """Refresh dashboard data from analytics store.
-
-        Args:
-            store: AnalyticsStore instance
-            current_turn: Optional dict with in-progress turn data to merge for real-time display
-                          Expected keys: input_tokens, output_tokens, cache_read_tokens,
-                          cache_creation_tokens, model
-        """
-        if store is None:
-            self._last_snapshot = {"summary": {}, "timeline": [], "models": []}
-            self._refresh_display()
-            return
-
-        snapshot = store.get_dashboard_snapshot(current_turn=current_turn)
-        summary = dict(snapshot.get("summary", {}))
-
-        # Optional local capacity baseline (not provided by API).
-        capacity_raw = str(os.environ.get("CC_DUMP_TOKEN_CAPACITY", "") or "").strip()
-        try:
-            capacity_total = int(capacity_raw) if capacity_raw else 0
-        except ValueError:
-            capacity_total = 0
-        if capacity_total > 0:
-            used_tokens = int(summary.get("total_tokens", 0))
-            remaining_tokens = max(0, capacity_total - used_tokens)
-            used_pct = min(100.0, (used_tokens / capacity_total) * 100.0)
-            summary["capacity_total"] = capacity_total
-            summary["capacity_used"] = used_tokens
-            summary["capacity_remaining"] = remaining_tokens
-            summary["capacity_used_pct"] = used_pct
-
-        snapshot["summary"] = summary
-        self._last_snapshot = snapshot
+    def update_display(self, snapshot: dict[str, object]) -> None:
+        """Apply canonical stats snapshot projection from view store."""
+        # [LAW:one-source-of-truth] Panel renders from canonical view-store snapshot shape.
+        summary = snapshot.get("summary", {})
+        timeline = snapshot.get("timeline", [])
+        models = snapshot.get("models", [])
+        self._last_snapshot = {
+            "summary": dict(summary) if isinstance(summary, dict) else {},
+            "timeline": list(timeline) if isinstance(timeline, list) else [],
+            "models": list(models) if isinstance(models, list) else [],
+        }
         self._refresh_display()
 
     def _refresh_display(self):
@@ -2369,173 +2327,12 @@ class StatsPanel(Static):
 
     def get_state(self) -> dict:
         """Extract state for transfer to a new instance."""
-        return {
-            "request_count": self.request_count,
-            "models_seen": set(self.models_seen),
-            "view_index": self._view_index,
-        }
+        return {"view_index": self._view_index}
 
     def restore_state(self, state: dict):
         """Restore state from a previous instance."""
-        self.request_count = state.get("request_count", 0)
-        self.models_seen = state.get("models_seen", set())
         self._view_index = int(state.get("view_index", 0)) % len(self._VIEW_ORDER)
         self._refresh_display()
-
-
-class ToolEconomicsPanel(Static):
-    """Panel showing per-tool token usage aggregates.
-
-    Queries analytics store as single source of truth.
-    Supports two view modes:
-    - Aggregate (default): one row per tool (all models combined)
-    - Breakdown (Ctrl+M): separate rows per (tool, model) combination
-    """
-
-    def __init__(self):
-        super().__init__("")
-        self._breakdown_mode = False  # Default to aggregate view
-        self._store = None
-        self._rows_state: Observable[list[dict[str, object]]] = Observable([])
-        # [LAW:single-enforcer] One reactive projection owns economics table rendering.
-        self._rows_reaction = reaction(
-            lambda: self._rows_state.get(),
-            self._apply_rows_state,
-            fire_immediately=False,
-        )
-
-    def on_mount(self) -> None:
-        self._apply_rows_state(list(self._rows_state.get()))
-
-    def on_unmount(self) -> None:
-        self._rows_reaction.dispose()
-
-    def refresh_from_store(self, store):
-        """Refresh panel data from analytics store.
-
-        Args:
-            store: AnalyticsStore instance
-        """
-        # Store for use in toggle_breakdown
-        self._store = store
-
-        if store is None:
-            self._refresh_display([])
-            return
-
-        # Query tool economics with real tokens and cache attribution
-        rows = store.get_tool_economics(group_by_model=self._breakdown_mode)
-        self._refresh_display(rows)
-
-    def toggle_breakdown(self):
-        """Toggle between aggregate and breakdown view modes."""
-        self._breakdown_mode = not self._breakdown_mode
-        # Re-query with new mode
-        if self._store is not None:
-            self.refresh_from_store(self._store)
-
-    def cycle_mode(self):
-        """Cycle intra-panel mode — delegates to toggle_breakdown."""
-        self.toggle_breakdown()
-
-    def _refresh_display(self, rows):
-        self._rows_state.set(list(rows))
-
-    def _apply_rows_state(self, rows: list[dict[str, object]]) -> None:
-        """Rebuild the economics table."""
-        # [LAW:dataflow-not-control-flow] exception: Textual update() requires mounted app context.
-        if not self.is_attached:
-            return
-        text = cc_dump.tui.panel_renderers.render_economics_panel(rows)
-        self.update(text)
-
-    def get_state(self) -> dict:
-        """Extract state for transfer to a new instance."""
-        return {
-            "breakdown_mode": self._breakdown_mode,
-        }
-
-    def restore_state(self, state: dict):
-        """Restore state from a previous instance."""
-        self._breakdown_mode = state.get("breakdown_mode", False)
-        self._refresh_display([])
-
-
-class TimelinePanel(Static):
-    """Panel showing per-turn context growth over time.
-
-    Queries analytics store as single source of truth.
-    """
-
-    def __init__(self):
-        super().__init__("")
-        self._budgets_state: Observable[list[cc_dump.core.analysis.TurnBudget]] = Observable([])
-        # [LAW:single-enforcer] One reactive projection owns timeline table rendering.
-        self._budgets_reaction = reaction(
-            lambda: self._budgets_state.get(),
-            self._apply_budgets_state,
-            fire_immediately=False,
-        )
-
-    def on_mount(self) -> None:
-        self._apply_budgets_state(list(self._budgets_state.get()))
-
-    def on_unmount(self) -> None:
-        self._budgets_reaction.dispose()
-
-    def refresh_from_store(self, store):
-        """Refresh panel data from analytics store.
-
-        Args:
-            store: AnalyticsStore instance
-        """
-        if store is None:
-            self._refresh_display([])
-            return
-
-        # Query turn timeline from store
-        turn_data = store.get_turn_timeline()
-
-        # Reconstruct TurnBudget objects from store data
-        budgets = []
-        for row in turn_data:
-            # Parse request JSON to compute budget estimates
-            request_json = row["request_json"]
-            request_body = json.loads(request_json) if request_json else {}
-
-            budget = cc_dump.core.analysis.compute_turn_budget(request_body)
-
-            # Fill in actual token counts from store
-            budget.actual_input_tokens = row["input_tokens"]
-            budget.actual_cache_read_tokens = row["cache_read_tokens"]
-            budget.actual_cache_creation_tokens = row["cache_creation_tokens"]
-            budget.actual_output_tokens = row["output_tokens"]
-
-            budgets.append(budget)
-
-        self._refresh_display(budgets)
-
-    def _refresh_display(self, budgets: list[cc_dump.core.analysis.TurnBudget]):
-        self._budgets_state.set(list(budgets))
-
-    def _apply_budgets_state(self, budgets: list[cc_dump.core.analysis.TurnBudget]) -> None:
-        """Rebuild the timeline table."""
-        # [LAW:dataflow-not-control-flow] exception: Textual update() requires mounted app context.
-        if not self.is_attached:
-            return
-        text = cc_dump.tui.panel_renderers.render_timeline_panel(budgets)
-        self.update(text)
-
-    def cycle_mode(self):
-        """No-op — TimelinePanel has no sub-modes."""
-
-    def get_state(self) -> dict:
-        """Extract state for transfer to a new instance."""
-        return {}  # No state to preserve - queries DB on demand
-
-    def restore_state(self, state: dict):
-        """Restore state from a previous instance."""
-        self._refresh_display([])
 
 
 class LogsPanel(RichLog):
@@ -2543,23 +2340,6 @@ class LogsPanel(RichLog):
 
     def __init__(self):
         super().__init__(highlight=False, markup=False, wrap=True, max_lines=1000)
-        self._visibility_reaction = None
-
-    def on_mount(self) -> None:
-        self._visibility_reaction = stx.reaction(
-            self.app,
-            lambda: bool(self.app.view_store.get("panel:logs")),
-            self._apply_panel_visibility,
-            fire_immediately=True,
-        )
-
-    def on_unmount(self) -> None:
-        if self._visibility_reaction is not None:
-            self._visibility_reaction.dispose()
-            self._visibility_reaction = None
-
-    def _apply_panel_visibility(self, visible: bool) -> None:
-        self.display = bool(visible)
 
     # [LAW:dataflow-not-control-flow] Log level style dispatch
     def _get_log_level_styles(self):
@@ -2617,16 +2397,6 @@ def create_conversation_view(
 def create_stats_panel() -> StatsPanel:
     """Create a new StatsPanel instance."""
     return StatsPanel()
-
-
-def create_economics_panel() -> ToolEconomicsPanel:
-    """Create a new ToolEconomicsPanel instance."""
-    return ToolEconomicsPanel()
-
-
-def create_timeline_panel() -> TimelinePanel:
-    """Create a new TimelinePanel instance."""
-    return TimelinePanel()
 
 
 def create_logs_panel() -> LogsPanel:

@@ -66,4 +66,12 @@ async def run_app(
         # Ensure on_mount processing (including replay) has completed
         await pilot.pause()
 
+        # View-store reactions are bound by app.on_mount(); keep test harness
+        # fallback for older app instances that don't provide mount binding.
+        if not getattr(view_store, "_reaction_disposers", None):
+            store_context = {"app": app}
+            view_store._reaction_disposers = cc_dump.app.view_store.setup_reactions(
+                view_store, store_context
+            )
+
         yield pilot, app

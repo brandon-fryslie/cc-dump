@@ -3,8 +3,7 @@
 // [LAW:one-source-of-truth] All cycling panel metadata lives here.
 // [LAW:locality-or-seam] Adding a panel = one entry here + the panel module.
 
-This module is STABLE (not hot-reloadable). It's pure data with no dependencies
-on other project modules.
+This module is RELOADABLE. It's pure data with no runtime side effects.
 """
 
 from dataclasses import dataclass
