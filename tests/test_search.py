@@ -421,6 +421,37 @@ class TestSearchContext:
         assert len(ctx.matches_in_block(1, 0)) == 1
         assert len(ctx.matches_in_block(1, 1)) == 0
 
+    def test_matches_in_block_reuses_preindexed_lookup(self):
+        class _CountingMatchList(list):
+            def __init__(self, values):
+                super().__init__(values)
+                self.iter_count = 0
+
+            def __iter__(self):
+                for item in super().__iter__():
+                    self.iter_count += 1
+                    yield item
+
+        matches = _CountingMatchList(
+            [
+                SearchMatch(turn_index=0, block_index=0, text_offset=0, text_length=4),
+                SearchMatch(turn_index=0, block_index=1, text_offset=5, text_length=3),
+                SearchMatch(turn_index=1, block_index=0, text_offset=0, text_length=4),
+            ]
+        )
+        ctx = SearchContext(
+            pattern=re.compile("test"),
+            pattern_str="test",
+            current_match=matches[0],
+            all_matches=matches,
+        )
+
+        matches.iter_count = 0
+        assert len(ctx.matches_in_block(0, 0)) == 1
+        assert len(ctx.matches_in_block(0, 1)) == 1
+        assert len(ctx.matches_in_block(1, 0)) == 1
+        assert matches.iter_count == 0
+
 
 # ─── SearchState defaults ────────────────────────────────────────────────────
 

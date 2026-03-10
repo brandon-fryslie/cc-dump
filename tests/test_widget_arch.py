@@ -1204,6 +1204,64 @@ class TestViewportOnlyRerender:
         assert min(pending_indices) >= prefetch_start
         assert max(pending_indices) < prefetch_end
 
+    def test_search_rerender_avoids_off_viewport_background_work(self):
+        """Search rerender should update visible turns only and avoid background queueing."""
+        from cc_dump.tui.search import SearchContext, SearchMode, compile_search_pattern
+
+        console = Console()
+        filters_initial = {"tools": ALWAYS_VISIBLE}
+        conv = self._make_conv_with_turns(console, 300, filters_initial)
+        pattern = compile_search_pattern("turn", SearchMode.CASE_INSENSITIVE)
+        assert pattern is not None
+        search_ctx = SearchContext(
+            pattern=pattern,
+            pattern_str="turn",
+            current_match=None,
+            all_matches=[],
+        )
+
+        with self._patch_scroll(conv, scroll_y=0, height=10):
+            conv.call_later = MagicMock()
+            conv._follow_state = FollowState.OFF
+            conv.rerender(filters_initial, search_ctx=search_ctx)
+
+        assert not conv._pending_rerender_indices
+        conv.call_later.assert_not_called()
+
+    def test_search_rerender_marks_off_viewport_turns_for_lazy_refresh(self):
+        """Search rerender leaves off-viewport turns stale so they refresh on entry."""
+        from cc_dump.tui.search import SearchContext, SearchMode, compile_search_pattern
+
+        console = Console()
+        filters_initial = {"tools": ALWAYS_VISIBLE}
+        conv = self._make_conv_with_turns(console, 200, filters_initial)
+        pattern = compile_search_pattern("turn", SearchMode.CASE_INSENSITIVE)
+        assert pattern is not None
+        search_ctx = SearchContext(
+            pattern=pattern,
+            pattern_str="turn",
+            current_match=None,
+            all_matches=[],
+        )
+
+        initial_revision = conv._active_filter_revision
+        with self._patch_scroll(conv, scroll_y=0, height=10):
+            vp_start, vp_end = conv._viewport_turn_range()
+            conv._follow_state = FollowState.OFF
+            conv.rerender(filters_initial, search_ctx=search_ctx)
+
+        target_revision = initial_revision + 1
+        assert target_revision == conv._active_filter_revision
+        for idx in range(vp_start, min(vp_end, len(conv._turns))):
+            assert conv._turns[idx]._filter_revision == target_revision
+
+        stale_off_viewport = [
+            td
+            for idx, td in enumerate(conv._turns)
+            if idx >= vp_end and td._filter_revision != target_revision
+        ]
+        assert stale_off_viewport, "expected off-viewport turns to stay stale for lazy refresh"
+
     def test_pending_snapshot_cleared_on_re_render(self):
         """When a turn with _pending_filter_snapshot is re-rendered, pending is cleared."""
         console = Console()

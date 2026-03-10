@@ -1531,10 +1531,11 @@ class ConversationView(ScrollView):
 
         render_key = self._turn_render_key(width)
 
-        # Search highlighting still uses full-scan queueing to preserve existing behavior.
+        # [LAW:dataflow-not-control-flow] Search rerenders keep the same viewport-first staging;
+        # only the search_ctx data changes what each turn renders.
         is_search = search_ctx is not None
         if is_search:
-            self._rerender_affected_full_scan(
+            self._rerender_search_viewport(
                 filters=filters,
                 search_ctx=search_ctx,
                 force=True,
@@ -1699,7 +1700,7 @@ class ConversationView(ScrollView):
             if has_deferred:
                 self._schedule_background_rerender()
 
-    def _rerender_affected_full_scan(
+    def _rerender_search_viewport(
         self,
         *,
         filters: dict,
@@ -1710,11 +1711,13 @@ class ConversationView(ScrollView):
         target_revision: int,
         render_key: tuple[int, int, int, int],
     ) -> None:
-        """Full-scan rerender path used for search highlight propagation."""
+        """Re-render visible turns for search and leave off-viewport turns stale.
+
+        Search highlighting changes styling only, so off-viewport turns can pick
+        up the new render key lazily when they enter the viewport.
+        """
         vp_start, vp_end = self._viewport_turn_range()
         first_changed = None
-        has_deferred = False
-        deferred_count = 0
         viewport_count = 0
 
         with monitor_slow_path(
@@ -1725,51 +1728,35 @@ class ConversationView(ScrollView):
                 "vp_start": vp_start,
                 "vp_end": vp_end,
                 "viewport_count": viewport_count,
-                "deferred_count": deferred_count,
+                "deferred_count": 0,
                 "force": force,
                 "search_active": True,
                 "first_changed": first_changed,
             },
         ):
-            for idx, td in enumerate(self._turns):
+            for idx in range(vp_start, min(vp_end, len(self._turns))):
+                td = self._turns[idx]
                 if td.is_streaming:
                     continue
-                if vp_start <= idx < vp_end:
-                    viewport_count += 1
-                    if td.re_render(
-                        filters,
-                        console,
-                        width,
-                        force=force,
-                        block_cache=self._block_strip_cache,
-                        search_ctx=search_ctx,
-                        overrides=self._view_overrides,
-                        render_key=render_key,
-                        runtime=self._render_runtime,
-                    ):
-                        if first_changed is None:
-                            first_changed = idx
-                    td._pending_filter_snapshot = None
-                    td._filter_revision = target_revision
-                else:
-                    snapshot = {
-                        k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE)
-                        for k in td.relevant_filter_keys
-                    }
-                    needs_render_key = render_key != td._last_render_key
-                    if force or snapshot != td._last_filter_snapshot or needs_render_key:
-                        td._pending_filter_snapshot = snapshot
-                        self._pending_rerender_indices.append(idx)
-                        has_deferred = True
-                        deferred_count += 1
-                    else:
-                        td._pending_filter_snapshot = None
-                        td._filter_revision = target_revision
+                viewport_count += 1
+                if td.re_render(
+                    filters,
+                    console,
+                    width,
+                    force=force,
+                    block_cache=self._block_strip_cache,
+                    search_ctx=search_ctx,
+                    overrides=self._view_overrides,
+                    render_key=render_key,
+                    runtime=self._render_runtime,
+                ):
+                    if first_changed is None:
+                        first_changed = idx
+                td._pending_filter_snapshot = None
+                td._filter_revision = target_revision
 
             if first_changed is not None:
                 self._recalculate_offsets_from(first_changed)
-            if has_deferred:
-                self._schedule_background_rerender()
 
     def ensure_turn_rendered(self, turn_index: int):
         """Force-render a specific turn, then recalculate offsets.

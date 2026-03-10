@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from collections import OrderedDict
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, IntFlag
 from typing import Callable
 
@@ -65,6 +65,31 @@ class SearchContext:
     pattern_str: str
     current_match: SearchMatch | None
     all_matches: list[SearchMatch]
+    _matches_by_index: dict[tuple[int, int], list[SearchMatch]] = field(
+        init=False,
+        repr=False,
+    )
+    _matches_by_identity: dict[tuple[int, int], list[SearchMatch]] = field(
+        init=False,
+        repr=False,
+    )
+
+    def __post_init__(self) -> None:
+        # [LAW:one-source-of-truth] Per-block match lookups are derived once from all_matches.
+        matches_by_index: dict[tuple[int, int], list[SearchMatch]] = {}
+        matches_by_identity: dict[tuple[int, int], list[SearchMatch]] = {}
+        for match in self.all_matches:
+            matches_by_index.setdefault(
+                (match.turn_index, match.block_index),
+                [],
+            ).append(match)
+            if match.block is not None:
+                matches_by_identity.setdefault(
+                    (match.turn_index, id(match.block)),
+                    [],
+                ).append(match)
+        self._matches_by_index = matches_by_index
+        self._matches_by_identity = matches_by_identity
 
     def matches_in_block(
         self, turn_index: int, block_index: int, block: object = None
@@ -75,18 +100,9 @@ class SearchContext:
         to resolve the flat-vs-hierarchical index mismatch introduced by
         container blocks with children.
         """
-        # // [LAW:dataflow-not-control-flow] identity_match is a value, filter always runs
         if block is not None:
-            return [
-                m
-                for m in self.all_matches
-                if m.turn_index == turn_index and m.block is block
-            ]
-        return [
-            m
-            for m in self.all_matches
-            if m.turn_index == turn_index and m.block_index == block_index
-        ]
+            return self._matches_by_identity.get((turn_index, id(block)), [])
+        return self._matches_by_index.get((turn_index, block_index), [])
 
 
 @dataclass(frozen=True)
