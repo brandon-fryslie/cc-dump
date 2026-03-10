@@ -4,38 +4,12 @@ from cc_dump.tui.side_channel_panel import (
     SideChannelPanelState,
     _utility_options,
     _render_control_label,
-    _render_purpose_usage,
     _render_result_preview,
     _render_status_line,
-    _render_usage_summary,
     _resolve_action,
     render_qa_estimate_line,
     render_qa_scope_line,
 )
-
-
-def test_render_purpose_usage_empty():
-    assert _render_purpose_usage({}) == "Purpose usage: (none)"
-
-
-def test_render_purpose_usage_masks_token_totals():
-    usage = {
-        "handoff_note": {
-            "turns": 2,
-            "input_tokens": 10,
-            "cache_read_tokens": 20,
-            "cache_creation_tokens": 3,
-            "output_tokens": 5,
-        }
-    }
-    rendered = _render_purpose_usage(usage)
-    assert "Purpose usage:" in rendered
-    assert "handoff_note" in rendered
-    assert "runs=2" in rendered
-    assert "in=x" in rendered
-    assert "cache_read=x" in rendered
-    assert "cache_create=x" in rendered
-    assert "out=x" in rendered
 
 
 def test_workbench_controls_are_grouped_by_intent():
@@ -69,16 +43,6 @@ def test_status_line_reflects_disabled_loading_ready_states():
     assert _render_status_line(enabled=True, loading=False, active_action="") == "Status: Ready"
 
 
-def test_usage_summary_totals_runs():
-    assert _render_usage_summary({}) == "Usage: no runs yet"
-    assert _render_usage_summary(
-        {
-            "handoff_note": {"turns": 2},
-            "conversation_qa": {"turns": 1},
-        }
-    ) == "Usage: 3 runs across 2 purposes"
-
-
 def test_result_preview_is_bounded():
     text = "\n".join([f"line-{i}" for i in range(24)])
     preview = _render_result_preview(text)
@@ -97,7 +61,6 @@ def test_ready_control_disabled_when_ai_disabled():
         result_text="",
         result_source="",
         result_elapsed_ms=0,
-        purpose_usage={},
     )
     action = _resolve_action(control=estimate, state=state, is_active=False)
     label = _render_control_label(
@@ -120,7 +83,6 @@ def test_qa_controls_disabled_when_ai_disabled():
         result_text="",
         result_source="",
         result_elapsed_ms=0,
-        purpose_usage={},
     )
     estimate_action = _resolve_action(control=estimate_control, state=state, is_active=False)
     submit_action = _resolve_action(control=submit_control, state=state, is_active=False)
@@ -176,7 +138,6 @@ def test_side_channel_panel_update_display_is_safe_before_mount():
             result_text="preview",
             result_source="preview",
             result_elapsed_ms=1,
-            purpose_usage={},
         )
     )
 
