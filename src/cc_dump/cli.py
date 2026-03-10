@@ -591,7 +591,6 @@ def main():
             launch_env=active_profile.environment,
             launcher_label=active_profile.launcher_label,
         )
-        tmux_ctrl.set_port(actual_port)
     # [LAW:dataflow-not-control-flow] Status message from state, not branching
     _TMUX_STATUS = {
         None: "disabled (not in tmux)" if not os.environ.get("TMUX") else "disabled (libtmux not installed)",

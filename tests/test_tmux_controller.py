@@ -22,7 +22,7 @@ from cc_dump.app.tmux_controller import (
 
 
 _VALID_ATTRS = frozenset({
-    "state", "_port",
+    "state",
     "_launch_command", "_process_names", "_launch_env", "_launcher_label",
     "_server", "_session", "_our_pane", "_tool_pane",
 })
@@ -429,7 +429,7 @@ class TestLaunchWithDeadPane:
             state=TmuxState.TOOL_RUNNING,
             _our_pane=our_pane,
             _tool_pane=dead_pane,
-            _port=8080,
+            _launch_env={"ANTHROPIC_BASE_URL": "http://127.0.0.1:8080"},
         )
 
         # After dead pane detection: no sibling claude, should split new pane
@@ -460,7 +460,7 @@ class TestLaunchWithDeadPane:
             state=TmuxState.TOOL_RUNNING,
             _our_pane=our_pane,
             _tool_pane=dead_pane,
-            _port=8080,
+            _launch_env={"ANTHROPIC_BASE_URL": "http://127.0.0.1:8080"},
         )
 
         result = ctrl.launch_tool()
@@ -492,7 +492,7 @@ class TestAutoResume:
         ctrl = make_controller(
             state=TmuxState.READY,
             _our_pane=our_pane,
-            _port=3344,
+            _launch_env={"ANTHROPIC_BASE_URL": "http://127.0.0.1:3344"},
         )
 
         session_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -521,7 +521,7 @@ class TestAutoResume:
         ctrl = make_controller(
             state=TmuxState.READY,
             _our_pane=our_pane,
-            _port=3344,
+            _launch_env={"ANTHROPIC_BASE_URL": "http://127.0.0.1:3344"},
         )
 
         config = LaunchConfig(options={"auto_resume": True})
@@ -547,7 +547,7 @@ class TestAutoResume:
         ctrl = make_controller(
             state=TmuxState.READY,
             _our_pane=our_pane,
-            _port=3344,
+            _launch_env={"ANTHROPIC_BASE_URL": "http://127.0.0.1:3344"},
         )
 
         config = LaunchConfig(options={"auto_resume": False})
