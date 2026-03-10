@@ -1513,17 +1513,30 @@ class CcDumpApp(App):
     def _sync_aux_panels(self, state: tuple[bool, bool]) -> None:
         """Mount/unmount keys + debug overlays from canonical store flags."""
         keys_visible, debug_visible = state
-        self._sync_optional_panel(
+        self._ensure_panel_mounted(
             panel_type=cc_dump.tui.keys_panel.KeysPanel,
-            visible=keys_visible,
             create_panel=cc_dump.tui.keys_panel.create_keys_panel,
         )
+        keys_panels: list[Widget] = list(self.screen.query(cc_dump.tui.keys_panel.KeysPanel))
+        for panel in keys_panels:
+            panel.display = bool(keys_visible)
         self._sync_optional_panel(
             panel_type=cc_dump.tui.debug_settings_panel.DebugSettingsPanel,
             visible=debug_visible,
             create_panel=lambda: cc_dump.tui.debug_settings_panel.create_debug_settings_panel(app_ref=self),
             on_hidden=self._focus_active_conversation,
         )
+
+    def _ensure_panel_mounted(
+        self,
+        *,
+        panel_type: type[Widget],
+        create_panel: Callable[[], Widget],
+    ) -> None:
+        """Mount a panel if missing, without changing display state."""
+        panels: list[Widget] = list(self.screen.query(panel_type))
+        if not panels:
+            self.screen.mount(create_panel())
 
     def _sync_optional_panel(
         self,
