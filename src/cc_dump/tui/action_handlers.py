@@ -74,8 +74,13 @@ def toggle_detail(app, category: str) -> None:
     _toggle_vis_dicts(app, category, "detail")
 
 
+def toggle_analytics(app, category: str) -> None:
+    _toggle_vis_dicts(app, category, "analytics")
+
+
 def toggle_expand(app, category: str) -> None:
-    _toggle_vis_dicts(app, category, "expand")
+    """Backward-compatible alias for renamed analytics toggle action."""
+    toggle_analytics(app, category)
 
 
 def cycle_vis(app, category: str) -> None:
@@ -482,4 +487,3 @@ def prev_session(app) -> None:
         conv.scroll_to_block(boundaries[-1][1], 0)
 
     _conv_action(app, _jump)
-

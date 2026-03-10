@@ -41,7 +41,7 @@ VIS_CYCLE = [
 VIS_TOGGLE_SPECS = {
     "vis": [("vis", None)],
     "detail": [("vis", True), ("full", None)],
-    "expand": [("vis", True), ("exp", None)],
+    "analytics": [("vis", True), ("exp", None)],
 }
 
 # [LAW:one-type-per-behavior] Toggle config for non-cycling panels
