@@ -225,7 +225,8 @@ def setup_reactions(store, context=None):
             ):
                 effect = getattr(app, method_name, None)
                 if callable(effect):
-                    disposers.append(stx.reaction(app, data_fn, effect))
+                    # [LAW:single-enforcer] App-level UI sync is initialized here on bind.
+                    disposers.append(stx.reaction(app, data_fn, effect, fire_immediately=True))
 
     return disposers
 
