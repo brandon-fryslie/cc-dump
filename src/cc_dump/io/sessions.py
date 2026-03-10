@@ -55,40 +55,11 @@ def _provider_from_filename(path: Path, provider_keys: set[str]) -> str | None:
     return candidate if candidate in provider_keys else None
 
 
-def _provider_from_metadata(entries: list[dict], provider_keys: set[str]) -> str | None:
+def _provider_from_entries(entries: list[dict]) -> str | None:
     if not entries:
         return None
-    metadata = entries[0].get("_cc_dump", {})
-    if not isinstance(metadata, dict):
-        return None
-    candidate = metadata.get("provider")
-    if not isinstance(candidate, str):
-        return None
-    normalized = candidate.strip().lower()
-    return normalized if normalized in provider_keys else None
-
-
-def _provider_from_request_url(entries: list[dict]) -> str | None:
-    if not entries:
-        return None
-    request = entries[0].get("request", {})
-    if not isinstance(request, dict):
-        return None
-    raw_url = request.get("url")
-    if not isinstance(raw_url, str):
-        return None
-    url = raw_url.strip().lower()
-    if not url:
-        return None
-    # [LAW:one-source-of-truth] URL marker matching uses provider registry metadata.
-    for spec in cc_dump.providers.all_provider_specs():
-        if any(marker in url for marker in spec.url_markers):
-            return spec.key
-    return None
-
-
-def _provider_from_entries(entries: list[dict], provider_keys: set[str]) -> str | None:
-    return _provider_from_metadata(entries, provider_keys) or _provider_from_request_url(entries)
+    # [LAW:one-source-of-truth] HAR provider precedence is owned by providers module.
+    return cc_dump.providers.detect_provider_from_har_entry(entries[0])
 
 
 def _entry_created_or_mtime(entries: list[dict], path: Path) -> str:
@@ -109,7 +80,7 @@ def _load_recording_info(
         "path": str(path),
         "filename": path.name,
         "provider": _provider_from_filename(path, provider_keys)
-        or _provider_from_entries(entries, provider_keys),
+        or _provider_from_entries(entries),
         "created": _entry_created_or_mtime(entries, path),
         "entry_count": len(entries),
         "size_bytes": path.stat().st_size,

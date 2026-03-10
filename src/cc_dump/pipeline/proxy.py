@@ -7,7 +7,6 @@ import queue
 import ssl
 
 import truststore
-import time
 import uuid
 import urllib.error
 import urllib.request
@@ -26,6 +25,8 @@ from cc_dump.pipeline.event_types import (
     ResponseDoneEvent,
     ResponseHeadersEvent,
     ResponseProgressEvent,
+    event_envelope,
+    new_request_id,
     parse_sse_event,
     sse_progress_payload,
 )
@@ -254,13 +255,16 @@ class EventQueueSink(StreamSink):
         if payload is None:
             return
         self._seq += 1
-        self._queue.put(ResponseProgressEvent(
-            request_id=self._request_id,
-            seq=self._seq,
-            recv_ns=time.monotonic_ns(),
-            provider=self._provider,
-            **payload,
-        ))
+        self._queue.put(
+            ResponseProgressEvent(
+                **event_envelope(
+                    request_id=self._request_id,
+                    seq=self._seq,
+                    provider=self._provider,
+                ),
+                **payload,
+            )
+        )
 
     def on_done(self):
         pass  # [LAW:single-enforcer] proxy emits ResponseDoneEvent explicitly
@@ -378,7 +382,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         return tunnel_target if tunnel_target is not None else self.target_host
 
     def _proxy(self):
-        request_id = uuid.uuid4().hex
+        request_id = new_request_id()
         content_len = int(self.headers.get("Content-Length", 0))
         body_bytes = self.rfile.read(content_len) if content_len else b""
 
@@ -394,9 +398,11 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 ErrorEvent(
                     code=target.error_status or 500,
                     reason=target.error_reason,
-                    request_id=request_id,
-                    recv_ns=time.monotonic_ns(),
-                    provider=self.provider,
+                    **event_envelope(
+                        request_id=request_id,
+                        seq=0,
+                        provider=self.provider,
+                    ),
                 )
             )
             self.send_response(target.error_status or 500)
@@ -419,17 +425,19 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             # carried by request-side events too, not only response-side events.
             self.event_queue.put(RequestHeadersEvent(
                 headers=safe_req_headers,
-                request_id=request_id,
-                seq=0,
-                recv_ns=time.monotonic_ns(),
-                provider=self.provider,
+                **event_envelope(
+                    request_id=request_id,
+                    seq=0,
+                    provider=self.provider,
+                ),
             ))
             self.event_queue.put(RequestBodyEvent(
                 body=body,
-                request_id=request_id,
-                seq=1,
-                recv_ns=time.monotonic_ns(),
-                provider=self.provider,
+                **event_envelope(
+                    request_id=request_id,
+                    seq=1,
+                    provider=self.provider,
+                ),
             ))
 
         # // [LAW:single-enforcer] Only emit response/error events for API-path requests
@@ -462,9 +470,11 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 self.event_queue.put(ErrorEvent(
                     code=e.code,
                     reason=e.reason,
-                    request_id=request_id,
-                    recv_ns=time.monotonic_ns(),
-                    provider=self.provider,
+                    **event_envelope(
+                        request_id=request_id,
+                        seq=0,
+                        provider=self.provider,
+                    ),
                 ))
             self.send_response(e.code)
             for k, v in e.headers.items():
@@ -477,9 +487,11 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             if emitted_request:
                 self.event_queue.put(ProxyErrorEvent(
                     error=str(e),
-                    request_id=request_id,
-                    recv_ns=time.monotonic_ns(),
-                    provider=self.provider,
+                    **event_envelope(
+                        request_id=request_id,
+                        seq=0,
+                        provider=self.provider,
+                    ),
                 ))
             self.send_response(502)
             self.end_headers()
@@ -501,10 +513,11 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 self.event_queue.put(ResponseHeadersEvent(
                     status_code=resp.status,
                     headers=safe_resp_headers,
-                    request_id=request_id,
-                    seq=0,
-                    recv_ns=time.monotonic_ns(),
-                    provider=self.provider,
+                    **event_envelope(
+                        request_id=request_id,
+                        seq=0,
+                        provider=self.provider,
+                    ),
                 ))
             self._stream_response(resp, request_id, emit_events=emitted_request)
         else:
@@ -516,17 +529,19 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 self.event_queue.put(ResponseHeadersEvent(
                     status_code=resp.status,
                     headers=safe_resp_headers,
-                    request_id=request_id,
-                    seq=0,
-                    recv_ns=time.monotonic_ns(),
-                    provider=self.provider,
+                    **event_envelope(
+                        request_id=request_id,
+                        seq=0,
+                        provider=self.provider,
+                    ),
                 ))
                 self.event_queue.put(ResponseCompleteEvent(
                     body=resp_body,
-                    request_id=request_id,
-                    seq=1,
-                    recv_ns=time.monotonic_ns(),
-                    provider=self.provider,
+                    **event_envelope(
+                        request_id=request_id,
+                        seq=1,
+                        provider=self.provider,
+                    ),
                 ))
 
     def _send_synthetic_response(self, response_text: str, body: dict, request_id: str) -> None:
@@ -553,10 +568,11 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             ResponseHeadersEvent(
                 status_code=200,
                 headers={"content-type": "text/event-stream"},
-                request_id=request_id,
-                seq=seq,
-                recv_ns=time.monotonic_ns(),
-                provider=self.provider,
+                **event_envelope(
+                    request_id=request_id,
+                    seq=seq,
+                    provider=self.provider,
+                ),
             )
         )
         # Parse our own SSE bytes through the event queue sink + assembler
@@ -580,10 +596,11 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 if payload is not None:
                     seq += 1
                     self.event_queue.put(ResponseProgressEvent(
-                        request_id=request_id,
-                        seq=seq,
-                        recv_ns=time.monotonic_ns(),
-                        provider=self.provider,
+                        **event_envelope(
+                            request_id=request_id,
+                            seq=seq,
+                            provider=self.provider,
+                        ),
                         **payload,
                     ))
             except ValueError:
@@ -593,17 +610,19 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             seq += 1
             self.event_queue.put(ResponseCompleteEvent(
                 body=assembler.result,
-                request_id=request_id,
-                seq=seq,
-                recv_ns=time.monotonic_ns(),
-                provider=self.provider,
+                **event_envelope(
+                    request_id=request_id,
+                    seq=seq,
+                    provider=self.provider,
+                ),
             ))
         seq += 1
         self.event_queue.put(ResponseDoneEvent(
-            request_id=request_id,
-            seq=seq,
-            recv_ns=time.monotonic_ns(),
-            provider=self.provider,
+            **event_envelope(
+                request_id=request_id,
+                seq=seq,
+                provider=self.provider,
+            ),
         ))
 
     # [LAW:dataflow-not-control-flow] Provider → assembler type.
@@ -632,17 +651,19 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             seq += 1
             self.event_queue.put(ResponseCompleteEvent(
                 body=assembler.result,
-                request_id=request_id,
-                seq=seq,
-                recv_ns=time.monotonic_ns(),
-                provider=self.provider,
+                **event_envelope(
+                    request_id=request_id,
+                    seq=seq,
+                    provider=self.provider,
+                ),
             ))
         seq += 1
         self.event_queue.put(ResponseDoneEvent(
-            request_id=request_id,
-            seq=seq,
-            recv_ns=time.monotonic_ns(),
-            provider=self.provider,
+            **event_envelope(
+                request_id=request_id,
+                seq=seq,
+                provider=self.provider,
+            ),
         ))
 
     def _expects_json_body(self, request_path: str) -> bool:
