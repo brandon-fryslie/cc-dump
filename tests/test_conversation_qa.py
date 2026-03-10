@@ -49,3 +49,21 @@ def test_budget_estimate_scales_with_selected_messages():
     )
     assert estimate.message_count == 4
     assert estimate.estimated_total_tokens >= estimate.estimated_input_tokens
+
+
+def test_budget_estimate_uses_normalized_text_blocks():
+    estimate = estimate_qa_budget(
+        question="Q",
+        selected_messages=[
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "abcde"},
+                    {"type": "image", "source": "..."},
+                ],
+            }
+        ],
+        scope_mode=SCOPE_SELECTED_RANGE,
+    )
+    assert estimate.message_count == 1
+    assert estimate.estimated_input_tokens == 5

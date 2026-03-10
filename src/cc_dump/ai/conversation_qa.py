@@ -9,7 +9,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 import json
-import math
+
+from cc_dump.ai.scope_token_helpers import (
+    build_message_context_lines,
+    estimate_tokens_from_text,
+)
 
 
 SCOPE_SELECTED_RANGE = "selected_range"
@@ -193,14 +197,13 @@ def render_qa_markdown(artifact: QAArtifact) -> str:
 
 
 def estimate_qa_budget(*, question: str, selected_messages: list[dict], scope_mode: str) -> QABudgetEstimate:
-    context_parts: list[str] = [question]
-    for msg in selected_messages:
-        role = str(msg.get("role", "unknown"))
-        content = str(msg.get("content", ""))
-        context_parts.append(f"[{role}] {content}")
-    input_chars = len("\n".join(context_parts))
-    estimated_input_tokens = max(1, math.ceil(input_chars / 4))
-    estimated_output_tokens = max(96, min(512, math.ceil(len(question) / 2) + 96))
+    context_parts = [question, *build_message_context_lines(
+        selected_messages,
+        line_template="[{role}] {content}",
+    )]
+    context_text = "\n".join(context_parts)
+    estimated_input_tokens = estimate_tokens_from_text(context_text)
+    estimated_output_tokens = max(96, min(512, estimate_tokens_from_text(question) * 2 + 96))
     return QABudgetEstimate(
         scope_mode=scope_mode,
         message_count=len(selected_messages),

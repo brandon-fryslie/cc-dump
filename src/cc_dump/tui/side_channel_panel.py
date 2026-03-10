@@ -14,8 +14,8 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Checkbox, Input, Select, Static
 
-from cc_dump.core.analysis import fmt_tokens
 from cc_dump.ai.utility_catalog import UtilityRegistry
+from cc_dump.core.analysis import fmt_tokens
 from cc_dump.tui.chip import Chip
 from cc_dump.tui.store_widget import StoreWidget
 

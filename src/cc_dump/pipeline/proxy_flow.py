@@ -24,11 +24,6 @@ class ProxyTarget:
     error_status: int = 0
 
 
-def resolve_proxy_target(path: str, target_host: str | None) -> ProxyTarget:
-    """Resolve request path and upstream URL for forward/reverse proxy modes."""
-    return resolve_proxy_target_for_origin(path, target_host, required_origin=None)
-
-
 def resolve_proxy_target_for_origin(
     path: str,
     target_host: str | None,

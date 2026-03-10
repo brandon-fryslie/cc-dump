@@ -25,8 +25,28 @@ def estimate_tokens(text: str) -> int:
 
 # [LAW:one-source-of-truth] Canonical token display formatter shared by renderers.
 def fmt_tokens(n: int) -> str:
-    """Render placeholder token value while token accounting is under remediation."""
-    return "x"
+    """Render compact token counts for tight terminal layouts."""
+    return _format_compact_tokens(int(n))
+
+
+def _format_compact_tokens(value: int) -> str:
+    """Apply compact suffix formatting for token counts."""
+    value = int(value)
+    sign = "-" if value < 0 else ""
+    abs_value = abs(value)
+
+    # [LAW:dataflow-not-control-flow] Compact suffix format is derived from numeric magnitude.
+    suffix_steps = (
+        (1_000_000_000, "B"),
+        (1_000_000, "M"),
+        (1_000, "k"),
+    )
+    for threshold, suffix in suffix_steps:
+        if abs_value >= threshold:
+            scaled = abs_value / threshold
+            number = f"{scaled:.1f}".rstrip("0").rstrip(".")
+            return f"{sign}{number}{suffix}"
+    return f"{value}"
 
 
 # ─── Turn Budget ──────────────────────────────────────────────────────────────

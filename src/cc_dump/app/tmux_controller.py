@@ -126,7 +126,6 @@ class TmuxController:
         launcher_label: str = "tool",
     ) -> None:
         self.state = TmuxState.NOT_IN_TMUX
-        self._port: int | None = None  # legacy fallback path
         self._launch_command = ""
         self._process_names: tuple[str, ...] = ()
         self._launch_env: dict[str, str] = {}
@@ -177,10 +176,6 @@ class TmuxController:
         except Exception as e:
             _log("init error: {}".format(e))
             self.state = TmuxState.NOT_IN_TMUX
-
-    def set_port(self, port: int) -> None:
-        """Set legacy proxy port fallback (used when launch_env is empty)."""
-        self._port = port
 
     def configure_launcher(
         self,
@@ -303,8 +298,7 @@ class TmuxController:
             pane_alive = self._tool_pane is not None
 
         has_launch_env = bool(self._launch_env)
-        has_port_fallback = self._port is not None
-        launch_target_ok = has_launch_env or has_port_fallback
+        launch_target_ok = has_launch_env
 
         # ── Derive action from preconditions ──
         action: LaunchAction
@@ -417,12 +411,8 @@ class TmuxController:
             return LogTailResult(LogTailAction.BLOCKED, str(e), success=False, command=shell)
 
     def _resolved_launch_env(self) -> dict[str, str]:
-        """Return launch env from configured map or legacy port fallback."""
-        if self._launch_env:
-            return dict(self._launch_env)
-        if self._port is None:
-            return {}
-        return {"ANTHROPIC_BASE_URL": "http://127.0.0.1:{}".format(self._port)}
+        """Return launch env from configured launcher profile."""
+        return dict(self._launch_env)
 
     def _exec_launch(self, command: str) -> LaunchResult:
         """Split pane and run command with configured launch environment."""

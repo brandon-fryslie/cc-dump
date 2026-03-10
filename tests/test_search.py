@@ -43,7 +43,7 @@ from cc_dump.core.formatting import (
     ConfigContentBlock,
     ThinkingBlock,
 )
-from cc_dump.core.analysis import TurnBudget
+from cc_dump.core.analysis import TurnBudget, fmt_tokens
 
 
 # ─── Text extraction ─────────────────────────────────────────────────────────
@@ -142,7 +142,7 @@ SEARCHABLE_TEXT_CASES = [
     ),
     pytest.param(
         TurnBudgetBlock(budget=TurnBudget(total_est=50000)),
-        ["Context: x tokens"],
+        [f"Context: {fmt_tokens(50000)} tokens"],
         id="turn_budget",
     ),
     pytest.param(

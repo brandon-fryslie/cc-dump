@@ -19,6 +19,7 @@ from pathlib import Path
 
 # Modules to reload in dependency order (leaves first, dependents after)
 _RELOAD_ORDER = [
+    "cc_dump.core.filter_registry",  # canonical filter/category registry (shared by palette+tui)
     "cc_dump.core.palette",  # no deps within project, base for all colors
     "cc_dump.tui.input_modes",  # no deps within project, pure data
     "cc_dump.core.analysis",  # no deps within project
@@ -26,12 +27,12 @@ _RELOAD_ORDER = [
     "cc_dump.core.formatting",  # facade depends on: formatting_impl
     "cc_dump.core.coerce",  # shared pure coercion helpers
     "cc_dump.tui.action_config",  # depends on: formatting (VisState), pure data
-    "cc_dump.tui.category_config",  # depends on: formatting (VisState), pure data
+    "cc_dump.tui.category_config",  # depends on: core.filter_registry, pure data shim
     "cc_dump.tui.panel_registry",  # pure data for panel metadata
     "cc_dump.app.launch_config",  # depends on: settings (pure data + persistence)
     "cc_dump.app.error_models",  # shared pure error view-models
     "cc_dump.app.settings_store",  # depends on: settings (schema + reactions)
-    "cc_dump.app.view_store",  # depends on: formatting (VisState), category_config
+    "cc_dump.app.view_store",  # depends on: category_config
     "cc_dump.core.segmentation",  # depends on: nothing (pure parser, before rendering)
     "cc_dump.pipeline.router",  # depends on: nothing within reloadable set
     "cc_dump.tui.search",  # depends on: palette
