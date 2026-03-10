@@ -250,7 +250,7 @@ At FULL level, individual blocks are shown with full details.
 
 ### State Persistence
 
-- **Level changes:** Toggling visibility or detail level clears all per-block expansion overrides for that category
-- **Click expansion:** Creates per-block overrides that persist until you change the level
+- **Level changes:** Toggling visibility or detail level resets category expansion state for that category
+- **No per-block expansion layer:** Expansion is controlled by category/turn-level state; region-level collapse (for segmented content) is tracked separately
 - **Remembered detail:** When you hide a category (level 1), it remembers whether it was at SUMMARY (2) or FULL (3), so toggling visibility restores the previous detail level
 - **Session:** Follow mode and scroll position persist across hot-reloads
