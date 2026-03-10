@@ -29,7 +29,7 @@ from cc_dump.core.analysis import (
     HAIKU_BASE_UNIT,
     ToolEconomicsRow,
 )
-from cc_dump.core.formatting import parse_user_id
+import cc_dump.core.formatting
 from cc_dump.ai.side_channel_marker import extract_marker
 from cc_dump.core.token_counter import count_tokens
 
@@ -47,8 +47,6 @@ _RETRY_HEADER_KEYS = (
     "retry-count",
 )
 _INTERRUPTED_STOP_REASONS = frozenset({"max_tokens", "length", "content_filter"})
-_REQUEST_META_LIMIT = 2048
-_RETRY_ORDINAL_LIMIT = 8192
 
 
 @dataclass
@@ -211,7 +209,7 @@ def _extract_session_id(request_body: dict) -> str:
     user_id = metadata.get("user_id", "")
     if not isinstance(user_id, str) or not user_id:
         return ""
-    parsed = parse_user_id(user_id)
+    parsed = cc_dump.core.formatting.parse_user_id(user_id)
     if not isinstance(parsed, dict):
         return ""
     session_id = parsed.get("session_id", "")
@@ -237,72 +235,46 @@ def _command_family(command: str) -> str:
     return tokens[0].lower()
 
 
-def _extract_tool_use_command(block: object) -> str:
-    if not isinstance(block, dict):
-        return ""
-    if block.get("type") != "tool_use":
-        return ""
-    tool_input = block.get("input", {})
-    if not isinstance(tool_input, dict):
-        return ""
-    command = tool_input.get("command", "")
-    if not isinstance(command, str):
-        return ""
-    return command.strip()
-
-
-def _parse_json_dict(raw: object) -> dict:
-    if not isinstance(raw, str) or not raw:
-        return {}
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _extract_tool_call_command(tool_call: object) -> str:
-    if not isinstance(tool_call, dict):
-        return ""
-    function = tool_call.get("function", {})
-    if not isinstance(function, dict):
-        return ""
-    parsed_args = _parse_json_dict(function.get("arguments", ""))
-    command = parsed_args.get("command", "")
-    if not isinstance(command, str):
-        return ""
-    return command.strip()
-
-
-def _extract_commands_from_content(content: object) -> list[str]:
-    if not isinstance(content, list):
-        return []
-    commands: list[str] = []
-    for block in content:
-        command = _extract_tool_use_command(block)
-        if command:
-            commands.append(command)
-    return commands
-
-
-def _extract_commands_from_tool_calls(tool_calls: object) -> list[str]:
-    if not isinstance(tool_calls, list):
-        return []
-    commands: list[str] = []
-    for tool_call in tool_calls:
-        command = _extract_tool_call_command(tool_call)
-        if command:
-            commands.append(command)
-    return commands
-
-
 def _extract_command_usage(messages: list) -> tuple[int, tuple[str, ...]]:
     commands: list[str] = []
     for message in messages:
         if not isinstance(message, dict):
             continue
-        commands.extend(_extract_commands_from_content(message.get("content", [])))
-        commands.extend(_extract_commands_from_tool_calls(message.get("tool_calls", [])))
+
+        content = message.get("content", [])
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") != "tool_use":
+                    continue
+                tool_input = block.get("input", {})
+                if not isinstance(tool_input, dict):
+                    continue
+                command = tool_input.get("command", "")
+                if isinstance(command, str) and command.strip():
+                    commands.append(command.strip())
+
+        tool_calls = message.get("tool_calls", [])
+        if isinstance(tool_calls, list):
+            for tool_call in tool_calls:
+                if not isinstance(tool_call, dict):
+                    continue
+                function = tool_call.get("function", {})
+                if not isinstance(function, dict):
+                    continue
+                arguments_raw = function.get("arguments", "")
+                if not isinstance(arguments_raw, str) or not arguments_raw:
+                    continue
+                try:
+                    parsed_args = json.loads(arguments_raw)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(parsed_args, dict):
+                    continue
+                command = parsed_args.get("command", "")
+                if isinstance(command, str) and command.strip():
+                    commands.append(command.strip())
 
     families = tuple(
         sorted({family for family in (_command_family(command) for command in commands) if family})
@@ -344,52 +316,6 @@ def _is_interrupted_stop_reason(stop_reason: str) -> bool:
     return stop_reason in _INTERRUPTED_STOP_REASONS
 
 
-def _prune_mapping(mapping: dict, *, limit: int) -> None:
-    # [LAW:dataflow-not-control-flow] Pruning is an unconditional bounded-data transform.
-    while len(mapping) > limit:
-        mapping.pop(next(iter(mapping)))
-
-
-def _coerce_str(value: object, *, default: str = "") -> str:
-    return str(value or default)
-
-
-def _coerce_int(value: object, *, default: int = 0) -> int:
-    if value is None or value == "":
-        return default
-    if isinstance(value, (int, float)):
-        return int(value)
-    if isinstance(value, (str, bytes, bytearray)):
-        try:
-            return int(value)
-        except ValueError:
-            return default
-    return default
-
-
-def _coerce_float(value: object, *, default: float = 0.0) -> float:
-    if value is None or value == "":
-        return default
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, (str, bytes, bytearray)):
-        try:
-            return float(value)
-        except ValueError:
-            return default
-    return default
-
-
-def _coerce_dict(value: object) -> dict:
-    return value if isinstance(value, dict) else {}
-
-
-def _coerce_str_tuple(value: object) -> tuple[str, ...]:
-    if not isinstance(value, list):
-        return ()
-    return tuple(str(item) for item in value if isinstance(item, str))
-
-
 class AnalyticsStore:
     """In-memory event subscriber that accumulates analytics data.
 
@@ -427,106 +353,73 @@ class AnalyticsStore:
         if event.kind == PipelineEventKind.RESPONSE_COMPLETE:
             self._handle_response_complete(event)
 
-    def _handle_request_headers(self, event: PipelineEvent) -> None:
-        assert isinstance(event, RequestHeadersEvent)
-        # [LAW:single-enforcer] Retry header normalization happens at this boundary only.
-        headers = {str(key).lower(): str(value) for key, value in event.headers.items()}
-        self._request_meta[event.request_id] = _RequestMeta(
-            request_recv_ns=event.recv_ns,
-            transport_retry_count=_extract_transport_retry_count(headers),
-        )
-        _prune_mapping(self._request_meta, limit=_REQUEST_META_LIMIT)
+        if kind == PipelineEventKind.REQUEST_HEADERS:
+            assert isinstance(event, RequestHeadersEvent)
+            # [LAW:single-enforcer] Retry header normalization happens at this boundary only.
+            headers = {
+                str(key).lower(): str(value)
+                for key, value in event.headers.items()
+            }
+            self._request_meta[event.request_id] = _RequestMeta(
+                request_recv_ns=event.recv_ns,
+                transport_retry_count=_extract_transport_retry_count(headers),
+            )
 
-    def _handle_request(self, event: PipelineEvent) -> None:
-        assert isinstance(event, RequestBodyEvent)
-        body = event.body if isinstance(event.body, dict) else {}
-        marker = extract_marker(body)
-        request_meta = self._request_meta.pop(event.request_id, _RequestMeta())
-        request_recv_ns = request_meta.request_recv_ns if request_meta.request_recv_ns > 0 else event.recv_ns
-        purpose = marker.purpose if marker is not None else "primary"
-        prompt_version = marker.prompt_version if marker is not None else ""
-        policy_version = marker.policy_version if marker is not None else ""
-        self._pending[event.request_id] = _PendingTurn(
-            request_id=event.request_id,
-            request_body=body,
-            model=str(body.get("model", "") or ""),
-            purpose=purpose,
-            prompt_version=prompt_version,
-            policy_version=policy_version,
-            is_side_channel=marker is not None,
-            session_id=_extract_session_id(body),
-            request_recv_ns=request_recv_ns,
-            transport_retry_count=request_meta.transport_retry_count,
-            provider=event.provider,
-        )
-
-    def _handle_response_complete(self, event: PipelineEvent) -> None:
-        # [LAW:one-source-of-truth] Extract all response data from complete body.
-        assert isinstance(event, ResponseCompleteEvent)
-        pending = self._pending.get(event.request_id)
-        if pending is None:
-            return
-        body = event.body
-        self._commit_turn(
-            pending=pending,
-            usage=self._normalize_usage(body),
-            model=str(body.get("model", "") or pending.model),
-            stop_reason=self._extract_stop_reason(body),
-            response_recv_ns=event.recv_ns,
-        )
-
-    def _normalize_usage(self, body: dict) -> dict[str, int]:
-        usage = body.get("usage", {})
-        if not isinstance(usage, dict):
-            usage = {}
-        # [LAW:single-enforcer] Normalize provider-specific usage keys at this boundary.
-        return {
-            "input_tokens": usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0),
-            "output_tokens": usage.get("output_tokens", 0) or usage.get("completion_tokens", 0),
-            "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0),
-            "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0),
-        }
-
-    def _extract_stop_reason(self, body: dict) -> str:
-        # Anthropic: top-level stop_reason. OpenAI: choices[0].finish_reason.
-        stop_reason = str(body.get("stop_reason", "") or "")
-        if stop_reason:
-            return stop_reason
-        choices = body.get("choices", [])
-        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
-            return str(choices[0].get("finish_reason", "") or "")
-        return ""
-
-    def _messages_from_request(self, request_body: dict) -> list:
-        messages = request_body.get("messages", [])
-        return messages if isinstance(messages, list) else []
-
-    def _build_tool_records(self, messages: list) -> list[ToolInvocationRecord]:
-        records: list[ToolInvocationRecord] = []
-        for inv in correlate_tools(messages):
-            records.append(
-                ToolInvocationRecord(
-                    tool_name=inv.name,
-                    tool_use_id=inv.tool_use_id,
-                    input_tokens=count_tokens(inv.input_str),
-                    result_tokens=count_tokens(inv.result_str),
-                    is_error=inv.is_error,
-                )
+        elif kind == PipelineEventKind.REQUEST:
+            assert isinstance(event, RequestBodyEvent)
+            body = event.body if isinstance(event.body, dict) else {}
+            marker = extract_marker(body)
+            request_meta = self._request_meta.pop(event.request_id, _RequestMeta())
+            request_recv_ns = (
+                request_meta.request_recv_ns
+                if request_meta.request_recv_ns > 0
+                else event.recv_ns
+            )
+            self._pending[event.request_id] = _PendingTurn(
+                request_id=event.request_id,
+                request_body=body,
+                model=str(body.get("model", "") or ""),
+                purpose=marker.purpose if marker is not None else "primary",
+                prompt_version=marker.prompt_version if marker is not None else "",
+                policy_version=marker.policy_version if marker is not None else "",
+                is_side_channel=marker is not None,
+                session_id=_extract_session_id(body),
+                request_recv_ns=request_recv_ns,
+                transport_retry_count=request_meta.transport_retry_count,
+                provider=event.provider,
             )
         return records
 
-    def _next_retry_ordinal(self, pending: _PendingTurn, model: str) -> tuple[str, int]:
-        retry_key = _retry_fingerprint(
-            provider=pending.provider,
-            session_id=pending.session_id,
-            purpose=pending.purpose,
-            model=model,
-            request_body=pending.request_body,
-        )
-        retry_ordinal = self._retry_ordinals.get(retry_key, 0)
-        self._retry_ordinals[retry_key] = retry_ordinal + 1
-        _prune_mapping(self._retry_ordinals, limit=_RETRY_ORDINAL_LIMIT)
-        return retry_key, retry_ordinal
+        elif kind == PipelineEventKind.RESPONSE_COMPLETE:
+            # [LAW:one-source-of-truth] Extract all response data from complete body
+            assert isinstance(event, ResponseCompleteEvent)
+            pending = self._pending.get(event.request_id)
+            if pending is None:
+                return
+            body = event.body
+            usage = body.get("usage", {})
+            # [LAW:single-enforcer] Normalize OpenAI usage keys to Anthropic names at boundary.
+            # OpenAI uses prompt_tokens/completion_tokens; Anthropic uses input_tokens/output_tokens.
+            usage_map = {
+                "input_tokens": usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0),
+                "output_tokens": usage.get("output_tokens", 0) or usage.get("completion_tokens", 0),
+                "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0),
+                "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0),
+            }
+            model = body.get("model", "") or pending.model
+            # Anthropic: top-level stop_reason. OpenAI: choices[0].finish_reason.
+            stop_reason = body.get("stop_reason", "") or ""
+            if not stop_reason:
+                choices = body.get("choices", [])
+                if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                    stop_reason = str(choices[0].get("finish_reason", "") or "")
+            self._commit_turn(
+                pending=pending,
+                usage=usage_map,
+                model=str(model),
+                stop_reason=str(stop_reason),
+                response_recv_ns=event.recv_ns,
+            )
 
     def _build_turn_record(
         self,
@@ -536,12 +429,46 @@ class AnalyticsStore:
         model: str,
         stop_reason: str,
         response_recv_ns: int,
-    ) -> TurnRecord:
-        messages = self._messages_from_request(pending.request_body)
-        tool_records = self._build_tool_records(messages)
+    ) -> None:
+        """Store accumulated turn in memory."""
+        if not pending.request_body:
+            return
+
+        self._seq += 1
+
+        # Build tool invocations with token counts
+        messages_raw = pending.request_body.get("messages", [])
+        messages = messages_raw if isinstance(messages_raw, list) else []
+        invocations = correlate_tools(messages)
+        tool_records = []
+        for inv in invocations:
+            # Count actual tokens using tiktoken
+            input_tokens = count_tokens(inv.input_str)
+            result_tokens = count_tokens(inv.result_str)
+
+            tool_records.append(
+                ToolInvocationRecord(
+                    tool_name=inv.name,
+                    tool_use_id=inv.tool_use_id,
+                    input_tokens=input_tokens,
+                    result_tokens=result_tokens,
+                    is_error=inv.is_error,
+                )
+            )
+
         command_count, command_families = _extract_command_usage(messages)
-        retry_key, retry_ordinal = self._next_retry_ordinal(pending, model)
-        return TurnRecord(
+        retry_key = _retry_fingerprint(
+            provider=pending.provider,
+            session_id=pending.session_id,
+            purpose=pending.purpose,
+            model=model,
+            request_body=pending.request_body,
+        )
+        retry_ordinal = self._retry_ordinals.get(retry_key, 0)
+        self._retry_ordinals[retry_key] = retry_ordinal + 1
+
+        # Create turn record
+        turn = TurnRecord(
             sequence_num=self._seq,
             request_id=pending.request_id,
             session_id=pending.session_id,
@@ -1013,42 +940,71 @@ class AnalyticsStore:
 
     def _serialize_tool_invocation(self, inv: ToolInvocationRecord) -> dict:
         return {
-            "tool_name": inv.tool_name,
-            "tool_use_id": inv.tool_use_id,
-            "input_tokens": inv.input_tokens,
-            "result_tokens": inv.result_tokens,
-            "is_error": inv.is_error,
-        }
-
-    def _serialize_turn(self, turn: TurnRecord) -> dict:
-        return {
-            "sequence_num": turn.sequence_num,
-            "request_id": turn.request_id,
-            "session_id": turn.session_id,
-            "model": turn.model,
-            "stop_reason": turn.stop_reason,
-            "input_tokens": turn.input_tokens,
-            "output_tokens": turn.output_tokens,
-            "cache_read_tokens": turn.cache_read_tokens,
-            "cache_creation_tokens": turn.cache_creation_tokens,
-            "request_json": turn.request_json,
-            "request_recv_ns": turn.request_recv_ns,
-            "response_recv_ns": turn.response_recv_ns,
-            "latency_ms": turn.latency_ms,
-            "retry_key": turn.retry_key,
-            "retry_ordinal": turn.retry_ordinal,
-            "transport_retry_count": turn.transport_retry_count,
-            "was_interrupted": turn.was_interrupted,
-            "command_count": turn.command_count,
-            "command_families": list(turn.command_families),
-            "purpose": turn.purpose,
-            "prompt_version": turn.prompt_version,
-            "policy_version": turn.policy_version,
-            "is_side_channel": turn.is_side_channel,
-            "provider": turn.provider,
-            "tool_invocations": [
-                self._serialize_tool_invocation(inv) for inv in turn.tool_invocations
+            "turns": [
+                {
+                    "sequence_num": t.sequence_num,
+                    "request_id": t.request_id,
+                    "session_id": t.session_id,
+                    "model": t.model,
+                    "stop_reason": t.stop_reason,
+                    "input_tokens": t.input_tokens,
+                    "output_tokens": t.output_tokens,
+                    "cache_read_tokens": t.cache_read_tokens,
+                    "cache_creation_tokens": t.cache_creation_tokens,
+                    "request_json": t.request_json,
+                    "request_recv_ns": t.request_recv_ns,
+                    "response_recv_ns": t.response_recv_ns,
+                    "latency_ms": t.latency_ms,
+                    "retry_key": t.retry_key,
+                    "retry_ordinal": t.retry_ordinal,
+                    "transport_retry_count": t.transport_retry_count,
+                    "was_interrupted": t.was_interrupted,
+                    "command_count": t.command_count,
+                    "command_families": list(t.command_families),
+                    "purpose": t.purpose,
+                    "prompt_version": t.prompt_version,
+                    "policy_version": t.policy_version,
+                    "is_side_channel": t.is_side_channel,
+                    "provider": t.provider,
+                    "tool_invocations": [
+                        {
+                            "tool_name": inv.tool_name,
+                            "tool_use_id": inv.tool_use_id,
+                            "input_tokens": inv.input_tokens,
+                            "result_tokens": inv.result_tokens,
+                            "is_error": inv.is_error,
+                        }
+                        for inv in t.tool_invocations
+                    ],
+                }
+                for t in self._turns
             ],
+            "seq": self._seq,
+            "pending": [
+                {
+                    "request_id": p.request_id,
+                    "request_body": p.request_body,
+                    "model": p.model,
+                    "purpose": p.purpose,
+                    "prompt_version": p.prompt_version,
+                    "policy_version": p.policy_version,
+                    "is_side_channel": p.is_side_channel,
+                    "session_id": p.session_id,
+                    "request_recv_ns": p.request_recv_ns,
+                    "transport_retry_count": p.transport_retry_count,
+                    "provider": p.provider,
+                }
+                for p in self._pending.values()
+            ],
+            "request_meta": [
+                {
+                    "request_id": request_id,
+                    "request_recv_ns": meta.request_recv_ns,
+                    "transport_retry_count": meta.transport_retry_count,
+                }
+                for request_id, meta in self._request_meta.items()
+            ],
+            "retry_ordinals": dict(self._retry_ordinals),
         }
 
     def _serialize_pending_turn(self, pending: _PendingTurn) -> dict:
@@ -1103,6 +1059,40 @@ class AnalyticsStore:
                     input_tokens=inv["input_tokens"],
                     result_tokens=inv["result_tokens"],
                     is_error=inv["is_error"],
+                )
+                for inv in t_data.get("tool_invocations", [])
+            ]
+            self._turns.append(
+                TurnRecord(
+                    sequence_num=t_data["sequence_num"],
+                    request_id=str(t_data.get("request_id", "") or ""),
+                    session_id=str(t_data.get("session_id", "") or ""),
+                    model=t_data["model"],
+                    stop_reason=t_data["stop_reason"],
+                    input_tokens=t_data["input_tokens"],
+                    output_tokens=t_data["output_tokens"],
+                    cache_read_tokens=t_data["cache_read_tokens"],
+                    cache_creation_tokens=t_data["cache_creation_tokens"],
+                    request_json=t_data["request_json"],
+                    request_recv_ns=int(t_data.get("request_recv_ns", 0) or 0),
+                    response_recv_ns=int(t_data.get("response_recv_ns", 0) or 0),
+                    latency_ms=float(t_data.get("latency_ms", 0.0) or 0.0),
+                    retry_key=str(t_data.get("retry_key", "") or ""),
+                    retry_ordinal=int(t_data.get("retry_ordinal", 0) or 0),
+                    transport_retry_count=int(t_data.get("transport_retry_count", 0) or 0),
+                    was_interrupted=bool(t_data.get("was_interrupted", False)),
+                    command_count=int(t_data.get("command_count", 0) or 0),
+                    command_families=tuple(
+                        str(family)
+                        for family in t_data.get("command_families", [])
+                        if isinstance(family, str)
+                    ),
+                    purpose=str(t_data.get("purpose", "primary") or "primary"),
+                    prompt_version=str(t_data.get("prompt_version", "") or ""),
+                    policy_version=str(t_data.get("policy_version", "") or ""),
+                    is_side_channel=bool(t_data.get("is_side_channel", False)),
+                    provider=str(t_data.get("provider", "anthropic") or "anthropic"),
+                    tool_invocations=tool_invocations,
                 )
             )
         return tool_invocations
@@ -1191,31 +1181,39 @@ class AnalyticsStore:
             request_id = str(meta_data.get("request_id", "") or "")
             if not request_id:
                 continue
-            request_meta[request_id] = _RequestMeta(
+            request_body = p_data.get("request_body", {})
+            if not isinstance(request_body, dict):
+                request_body = {}
+            self._pending[request_id] = _PendingTurn(
+                request_id=request_id,
+                request_body=request_body,
+                model=str(p_data.get("model", "") or ""),
+                purpose=str(p_data.get("purpose", "primary") or "primary"),
+                prompt_version=str(p_data.get("prompt_version", "") or ""),
+                policy_version=str(p_data.get("policy_version", "") or ""),
+                is_side_channel=bool(p_data.get("is_side_channel", False)),
+                session_id=str(p_data.get("session_id", "") or ""),
+                request_recv_ns=int(p_data.get("request_recv_ns", 0) or 0),
+                transport_retry_count=int(p_data.get("transport_retry_count", 0) or 0),
+                provider=str(p_data.get("provider", "anthropic") or "anthropic"),
+            )
+
+        self._request_meta = {}
+        for meta_data in state.get("request_meta", []):
+            if not isinstance(meta_data, dict):
+                continue
+            request_id = str(meta_data.get("request_id", "") or "")
+            if not request_id:
+                continue
+            self._request_meta[request_id] = _RequestMeta(
                 request_recv_ns=int(meta_data.get("request_recv_ns", 0) or 0),
                 transport_retry_count=int(meta_data.get("transport_retry_count", 0) or 0),
             )
-        return request_meta
 
-    def _restore_retry_ordinals(self, serialized: object) -> dict[str, int]:
-        if not isinstance(serialized, dict):
-            return {}
-        retry_ordinals: dict[str, int] = {}
-        for key, value in serialized.items():
-            if not isinstance(key, str):
-                continue
-            retry_ordinals[key] = int(value or 0)
-        return retry_ordinals
-
-    def restore_state(self, state: dict):
-        """Restore state from a previous instance."""
-        # [LAW:dataflow-not-control-flow] Restore every slice from snapshot in a fixed sequence.
-        self._turns = self._restore_turns(state.get("turns", []))
-        self._seq = state.get("seq", 0)
-        self._pending = self._restore_pending(state.get("pending", []))
-        self._request_meta = self._restore_request_meta(state.get("request_meta", []))
-        _prune_mapping(self._request_meta, limit=_REQUEST_META_LIMIT)
-        self._retry_ordinals = self._restore_retry_ordinals(
-            state.get("retry_ordinals", {})
-        )
-        _prune_mapping(self._retry_ordinals, limit=_RETRY_ORDINAL_LIMIT)
+        retry_ordinals = state.get("retry_ordinals", {})
+        self._retry_ordinals = {}
+        if isinstance(retry_ordinals, dict):
+            for key, value in retry_ordinals.items():
+                if not isinstance(key, str):
+                    continue
+                self._retry_ordinals[key] = int(value or 0)
