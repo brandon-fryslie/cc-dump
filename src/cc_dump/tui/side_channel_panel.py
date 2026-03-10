@@ -14,7 +14,6 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Checkbox, Input, Select, Static
 
-from cc_dump.core.analysis import fmt_tokens
 from cc_dump.ai.utility_catalog import UtilityRegistry
 from cc_dump.tui.chip import Chip
 from cc_dump.tui.store_widget import StoreWidget
@@ -499,10 +498,10 @@ def _render_purpose_usage(usage: dict[str, dict[str, int]]) -> str:
             "  {}  runs={}  in={}  cache_read={}  cache_create={}  out={}".format(
                 purpose,
                 int(row.get("turns", 0)),
-                fmt_tokens(int(row.get("input_tokens", 0))),
-                fmt_tokens(int(row.get("cache_read_tokens", 0))),
-                fmt_tokens(int(row.get("cache_creation_tokens", 0))),
-                fmt_tokens(int(row.get("output_tokens", 0))),
+                _mask_token_total(int(row.get("input_tokens", 0))),
+                _mask_token_total(int(row.get("cache_read_tokens", 0))),
+                _mask_token_total(int(row.get("cache_creation_tokens", 0))),
+                _mask_token_total(int(row.get("output_tokens", 0))),
             )
         )
     return "\n".join(rows)
@@ -521,11 +520,17 @@ def render_qa_estimate_line(
         "estimate: scope={} messages={} in={} out={} total={}".format(
             scope_mode,
             message_count,
-            fmt_tokens(estimated_input_tokens),
-            fmt_tokens(estimated_output_tokens),
-            fmt_tokens(estimated_total_tokens),
+            _mask_token_total(estimated_input_tokens),
+            _mask_token_total(estimated_output_tokens),
+            _mask_token_total(estimated_total_tokens),
         )
     )
+
+
+def _mask_token_total(_token_total: int) -> str:
+    """Mask sensitive token totals in user-visible workbench copy."""
+    # [LAW:single-enforcer] Side-channel token masking policy is centralized here.
+    return "x"
 
 
 def render_qa_scope_line(*, scope_mode: str, selected_indices: tuple[int, ...]) -> str:

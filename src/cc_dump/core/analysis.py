@@ -26,7 +26,12 @@ def estimate_tokens(text: str) -> int:
 # [LAW:one-source-of-truth] Canonical token display formatter shared by renderers.
 def fmt_tokens(n: int) -> str:
     """Render compact token counts for tight terminal layouts."""
-    value = int(n)
+    return _format_compact_tokens(int(n))
+
+
+def _format_compact_tokens(value: int) -> str:
+    """Apply compact suffix formatting for token counts."""
+    value = int(value)
     sign = "-" if value < 0 else ""
     abs_value = abs(value)
 
