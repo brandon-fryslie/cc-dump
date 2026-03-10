@@ -316,14 +316,17 @@ def _normalize_connect_host(host: str) -> str:
     return str(host or "").strip().strip("[]").rstrip(".").lower()
 
 
-def infer_provider_from_complete_message(message: dict[str, object]) -> str:
-    """Best-effort provider inference from complete response shape."""
+def infer_provider_from_complete_message(message: dict[str, object]) -> str | None:
+    """Best-effort provider inference from complete response shape.
+
+    Returns None when message shape does not identify a known provider family.
+    """
     # // [LAW:dataflow-not-control-flow] Provider family is derived from response markers.
     if message.get("type") == "message":
         return "anthropic"
     if message.get("object") == "chat.completion":
         return "openai"
-    return DEFAULT_PROVIDER_KEY
+    return None
 
 
 def is_complete_response_for_provider(provider: str, message: dict[str, object]) -> bool:
