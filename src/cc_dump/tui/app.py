@@ -1099,12 +1099,19 @@ class CcDumpApp(App):
         if conv is None:
             return
         domain_store = self._get_domain_store(session_key)
+        active_session_key = self._active_session_key_from_tabs()
+        # [LAW:single-enforcer] Active-session gating for stats snapshot writes is enforced here.
+        event_view_store = (
+            self._view_store
+            if session_key == active_session_key
+            else None
+        )
 
         # [LAW:dataflow-not-control-flow] Unified context dict
         widgets = {
             "conv": conv,
             "filters": self.active_filters,
-            "view_store": self._view_store,
+            "view_store": event_view_store,
             "domain_store": domain_store,
             "analytics_store": self._analytics_store,
         }
