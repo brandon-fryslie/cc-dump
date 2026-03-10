@@ -1188,8 +1188,11 @@ class CcDumpApp(App):
     def action_toggle_detail(self, category: str):
         _actions.toggle_detail(self, category)
 
+    def action_toggle_analytics(self, category: str):
+        _actions.toggle_analytics(self, category)
+
     def action_toggle_expand(self, category: str):
-        _actions.toggle_expand(self, category)
+        self.action_toggle_analytics(category)
 
     def action_cycle_vis(self, category: str):
         _actions.cycle_vis(self, category)
