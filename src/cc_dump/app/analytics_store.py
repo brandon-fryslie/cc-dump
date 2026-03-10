@@ -29,7 +29,7 @@ from cc_dump.core.analysis import (
     HAIKU_BASE_UNIT,
     ToolEconomicsRow,
 )
-import cc_dump.core.formatting
+from cc_dump.core.formatting import parse_user_id
 from cc_dump.ai.side_channel_marker import extract_marker
 from cc_dump.core.token_counter import count_tokens
 
@@ -211,7 +211,7 @@ def _extract_session_id(request_body: dict) -> str:
     user_id = metadata.get("user_id", "")
     if not isinstance(user_id, str) or not user_id:
         return ""
-    parsed = cc_dump.core.formatting.parse_user_id(user_id)
+    parsed = parse_user_id(user_id)
     if not isinstance(parsed, dict):
         return ""
     session_id = parsed.get("session_id", "")
@@ -355,11 +355,29 @@ def _coerce_str(value: object, *, default: str = "") -> str:
 
 
 def _coerce_int(value: object, *, default: int = 0) -> int:
-    return int(value or default)
+    if value is None or value == "":
+        return default
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, (str, bytes, bytearray)):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
 
 
 def _coerce_float(value: object, *, default: float = 0.0) -> float:
-    return float(value or default)
+    if value is None or value == "":
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, (str, bytes, bytearray)):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default
 
 
 def _coerce_dict(value: object) -> dict:
