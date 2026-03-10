@@ -111,5 +111,5 @@ class TestFooterMarkupRendering:
     def test_footer_shows_log_path_when_idle(self, class_proc):
         """Log-path row shows log file path when no streams are active."""
         proc = class_proc
-        content = _get_footer_content(proc)
+        content = wait_for_content(proc, lambda c: "log:" in c.lower(), timeout=5)
         assert "log:" in content.lower(), f"Expected 'log:' row. Content:\n{content}"
