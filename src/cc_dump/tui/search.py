@@ -22,6 +22,7 @@ from rich.text import Text
 from textual.widgets import Static
 
 import cc_dump.core.palette
+from cc_dump.core.analysis import fmt_tokens
 import cc_dump.tui.rendering
 
 
@@ -273,7 +274,7 @@ _TEXT_EXTRACTORS: dict[str, Callable] = {
     "ErrorBlock": lambda b: f"HTTP {b.code} {b.reason}",
     "ProxyErrorBlock": lambda b: b.error,
     "NewlineBlock": lambda b: "",
-    "TurnBudgetBlock": lambda b: "Context: x tokens",
+    "TurnBudgetBlock": lambda b: f"Context: {fmt_tokens(b.budget.total_est)} tokens",
     # Container child types — searchable when find_all_matches walks children
     "ToolDefBlock": lambda b: f"{b.name} {b.description}",
     "SkillDefChild": lambda b: f"{b.name} {b.description}",
