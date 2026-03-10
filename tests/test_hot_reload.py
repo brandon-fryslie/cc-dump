@@ -593,8 +593,8 @@ class TestWidgetStatePreservation:
 
         assert new_widget._follow_state == FollowState.OFF
 
-    def test_conversation_view_blocks_preserve_expansion(self):
-        """Block expanded overrides survive roundtrip via ViewOverrides serialization."""
+    def test_conversation_view_blocks_preserve_expandable_metadata(self):
+        """Block expandability metadata survives roundtrip via ViewOverrides serialization."""
         from cc_dump.core.formatting import TextContentBlock
         from cc_dump.tui.widget_factory import ConversationView, TurnData
 
@@ -605,17 +605,17 @@ class TestWidgetStatePreservation:
         td = TurnData(turn_index=0, blocks=[block_a, block_b], strips=[])
         widget._turns.append(td)
 
-        # Set expanded overrides via ViewOverrides
-        widget._view_overrides.get_block(block_a.block_id).expanded = True
-        widget._view_overrides.get_block(block_b.block_id).expanded = False
+        # Set expandability metadata via ViewOverrides
+        widget._view_overrides.get_block(block_a.block_id).expandable = True
+        widget._view_overrides.get_block(block_b.block_id).expandable = False
 
         state = widget.get_state()
         new_widget = ConversationView()
         new_widget.restore_state(state)
 
-        # ViewOverrides roundtrip preserves expanded state
-        assert new_widget._view_overrides.get_block(block_a.block_id).expanded is True
-        assert new_widget._view_overrides.get_block(block_b.block_id).expanded is False
+        # ViewOverrides roundtrip preserves block metadata
+        assert new_widget._view_overrides.get_block(block_a.block_id).expandable is True
+        assert new_widget._view_overrides.get_block(block_b.block_id).expandable is False
 
     def test_conversation_view_follow_state_active_roundtrip(self):
         """follow_state=ACTIVE explicitly survives roundtrip."""
