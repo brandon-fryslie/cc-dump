@@ -55,6 +55,7 @@ from cc_dump.core.formatting import (
 )
 
 import cc_dump.core.palette
+import cc_dump.core.filter_registry
 import cc_dump.core.special_content
 
 import re
@@ -536,8 +537,8 @@ def _build_filter_indicators(tc: ThemeColors) -> dict[str, tuple[str, str]]:
     // [LAW:one-source-of-truth] Filter indicator colors derived from theme via tc.filter_colors.
     // [LAW:single-enforcer] Rebuilt by _configure_runtime_theme() with all runtime style fields.
     """
-    # // [LAW:one-source-of-truth] 6 categories matching Category enum.
-    names = ["tools", "system", "metadata", "user", "assistant", "thinking"]
+    # [LAW:one-source-of-truth] Indicator order comes from canonical filter registry.
+    names = cc_dump.core.filter_registry.FILTER_INDICATOR_NAMES
     # [LAW:one-source-of-truth] Use chip_bg (element [1]) to match footer chip colors.
     return {name: ("\u258c", tc.filter_colors[name][1]) for name in names}
 
