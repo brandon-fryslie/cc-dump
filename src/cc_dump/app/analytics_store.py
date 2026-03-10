@@ -47,6 +47,8 @@ _RETRY_HEADER_KEYS = (
     "retry-count",
 )
 _INTERRUPTED_STOP_REASONS = frozenset({"max_tokens", "length", "content_filter"})
+_REQUEST_META_LIMIT = 2048
+_RETRY_ORDINAL_LIMIT = 8192
 
 
 @dataclass
@@ -316,6 +318,12 @@ def _is_interrupted_stop_reason(stop_reason: str) -> bool:
     return stop_reason in _INTERRUPTED_STOP_REASONS
 
 
+def _prune_mapping(mapping: dict, *, limit: int) -> None:
+    # [LAW:dataflow-not-control-flow] Pruning is an unconditional bounded-data transform.
+    while len(mapping) > limit:
+        mapping.pop(next(iter(mapping)))
+
+
 class AnalyticsStore:
     """In-memory event subscriber that accumulates analytics data.
 
@@ -364,6 +372,7 @@ class AnalyticsStore:
                 request_recv_ns=event.recv_ns,
                 transport_retry_count=_extract_transport_retry_count(headers),
             )
+            _prune_mapping(self._request_meta, limit=_REQUEST_META_LIMIT)
 
         elif kind == PipelineEventKind.REQUEST:
             assert isinstance(event, RequestBodyEvent)
@@ -466,6 +475,7 @@ class AnalyticsStore:
         )
         retry_ordinal = self._retry_ordinals.get(retry_key, 0)
         self._retry_ordinals[retry_key] = retry_ordinal + 1
+        _prune_mapping(self._retry_ordinals, limit=_RETRY_ORDINAL_LIMIT)
 
         # Create turn record
         turn = TurnRecord(
@@ -1209,6 +1219,7 @@ class AnalyticsStore:
                 request_recv_ns=int(meta_data.get("request_recv_ns", 0) or 0),
                 transport_retry_count=int(meta_data.get("transport_retry_count", 0) or 0),
             )
+        _prune_mapping(self._request_meta, limit=_REQUEST_META_LIMIT)
 
         retry_ordinals = state.get("retry_ordinals", {})
         self._retry_ordinals = {}
@@ -1217,3 +1228,4 @@ class AnalyticsStore:
                 if not isinstance(key, str):
                     continue
                 self._retry_ordinals[key] = int(value or 0)
+        _prune_mapping(self._retry_ordinals, limit=_RETRY_ORDINAL_LIMIT)

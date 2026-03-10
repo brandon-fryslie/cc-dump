@@ -477,10 +477,10 @@ class SearchBar(Static):
 
     def _apply_store_state(self, payload: object) -> None:
         state = payload if isinstance(payload, dict) else {}
-        modes_raw = int(state.get("modes", int(SearchMode.CASE_INSENSITIVE)))
         try:
+            modes_raw = int(state.get("modes", int(SearchMode.CASE_INSENSITIVE)))
             modes = SearchMode(modes_raw)
-        except ValueError:
+        except (TypeError, ValueError):
             modes = SearchMode.CASE_INSENSITIVE
         phase_raw = str(state.get("phase", SearchPhase.INACTIVE.value))
         try:
