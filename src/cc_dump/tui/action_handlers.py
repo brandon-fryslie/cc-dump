@@ -46,7 +46,7 @@ def _toggle_vis_dicts(app, category: str, spec_key: str) -> None:
 
 
 def clear_overrides(app, category_name: str) -> None:
-    """Reset per-block expanded overrides and content region states for a category.
+    """Reset region expansion overrides for a category.
 
     // [LAW:one-source-of-truth] Clears via ViewOverrides.clear_category() only.
     // [LAW:one-source-of-truth] Reads blocks from domain store.
@@ -108,7 +108,7 @@ def cycle_vis(app, category: str) -> None:
     next_idx = (idx + 1) % len(vis_cycle)
     next_state = vis_cycle[next_idx]
 
-    # Clear per-block overrides and invalidate active filterset
+    # Clear region overrides and invalidate active filterset
     clear_overrides(app, category)
     app._view_store.set("filter:active", None)
 
