@@ -64,13 +64,13 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         "T": "toggle_detail('metadata')",
         "Y": "toggle_detail('thinking')",
 
-        # Expand toggles (q-y for categories 1-6)
-        "q": "toggle_expand('user')",
-        "w": "toggle_expand('assistant')",
-        "e": "toggle_expand('tools')",
-        "r": "toggle_expand('system')",
-        "t": "toggle_expand('metadata')",
-        "y": "toggle_expand('thinking')",
+        # Analytics detail toggles (q-y for categories 1-6)
+        "q": "toggle_analytics('user')",
+        "w": "toggle_analytics('assistant')",
+        "e": "toggle_analytics('tools')",
+        "r": "toggle_analytics('system')",
+        "t": "toggle_analytics('metadata')",
+        "y": "toggle_analytics('thinking')",
 
         # Panels (printable — NORMAL only)
         ".": "cycle_panel",
@@ -154,7 +154,7 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
 FOOTER_KEYS: dict[InputMode, list[tuple[str, str]]] = {
     InputMode.NORMAL: [
         ("1-6", "filters"),
-        ("qwerty", "expand"),
+        ("qwerty", "analytics"),
         ("QWERTY", "detail"),
         (".", "panel"),
         (",", "mode"),
@@ -201,7 +201,7 @@ KEY_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ("Categories", [
         ("1-6", "Toggle on/off"),
         ("Q-Y", "Detail level"),
-        ("q-y", "Expand all"),
+        ("q-y", "Analytics detail"),
     ]),
     ("Panels", [
         (".", "Cycle panel"),
