@@ -32,6 +32,10 @@ EventHandler = Callable[
     dict[str, object],
 ]
 
+_CAPACITY_ENV_VAR = "CC_DUMP_TOKEN_CAPACITY"
+_CACHED_CAPACITY_RAW: str | None = None
+_CACHED_CAPACITY_TOTAL: int | None = None
+
 
 def _get_stream_registry(app_state):
     """Get or create the stream registry in app_state."""
@@ -98,16 +102,30 @@ def _focused_current_turn_usage(app_state, domain_store) -> dict | None:
     return current_turn if isinstance(current_turn, dict) else None
 
 
+def _get_capacity_total() -> int:
+    """Get parsed token capacity with memoized env-var parsing."""
+    global _CACHED_CAPACITY_RAW, _CACHED_CAPACITY_TOTAL
+
+    capacity_raw = str(os.environ.get(_CAPACITY_ENV_VAR, "") or "").strip()
+    if capacity_raw == _CACHED_CAPACITY_RAW and _CACHED_CAPACITY_TOTAL is not None:
+        return _CACHED_CAPACITY_TOTAL
+
+    try:
+        capacity_total = int(capacity_raw) if capacity_raw else 0
+    except ValueError:
+        capacity_total = 0
+
+    _CACHED_CAPACITY_RAW = capacity_raw
+    _CACHED_CAPACITY_TOTAL = capacity_total
+    return capacity_total
+
+
 def _with_capacity_summary(snapshot: dict[str, object]) -> dict[str, object]:
     """Attach optional token-capacity summary fields to analytics snapshot."""
     summary = snapshot.get("summary", {})
     summary_dict = dict(summary) if isinstance(summary, dict) else {}
 
-    capacity_raw = str(os.environ.get("CC_DUMP_TOKEN_CAPACITY", "") or "").strip()
-    try:
-        capacity_total = int(capacity_raw) if capacity_raw else 0
-    except ValueError:
-        capacity_total = 0
+    capacity_total = _get_capacity_total()
 
     if capacity_total > 0:
         used_tokens = int(summary_dict.get("total_tokens", 0))

@@ -177,6 +177,26 @@ class TestSetupReactions:
         disposers = cc_dump.app.view_store.setup_reactions(store, {})
         assert disposers == []
 
+    def test_store_sync_reactions_fire_immediately(self):
+        store = cc_dump.app.view_store.create()
+        app = MagicMock()
+        app.is_running = True
+        app._rerender_if_mounted = MagicMock()
+        app._sync_panel_display = MagicMock()
+        app._sync_sidebar_panels = MagicMock()
+        app._sync_chrome_panels = MagicMock()
+        app._sync_aux_panels = MagicMock()
+        app._sync_error_items = MagicMock()
+        context = {"app": app}
+
+        cc_dump.app.view_store.setup_reactions(store, context)
+
+        app._sync_panel_display.assert_called_with(store.get("panel:active"))
+        app._sync_sidebar_panels.assert_called()
+        app._sync_chrome_panels.assert_called()
+        app._sync_aux_panels.assert_called()
+        app._sync_error_items.assert_called()
+
 
 class TestPanelAndFollowSchema:
     def test_panel_active_default(self):

@@ -490,3 +490,17 @@ class TestEventHandlersRequestScopedStreaming:
         response_payloads = sorted(_turn_text(turn) for turn in response_turns)
         assert response_payloads == ["final-a", "final-b", "final-c"]
         assert all("temp-" not in payload for payload in response_payloads)
+
+
+def test_capacity_total_cache_tracks_env_changes(monkeypatch):
+    monkeypatch.setattr(event_handlers, "_CACHED_CAPACITY_RAW", None)
+    monkeypatch.setattr(event_handlers, "_CACHED_CAPACITY_TOTAL", None)
+
+    monkeypatch.setenv("CC_DUMP_TOKEN_CAPACITY", "1200")
+    assert event_handlers._get_capacity_total() == 1200
+
+    monkeypatch.setenv("CC_DUMP_TOKEN_CAPACITY", "2400")
+    assert event_handlers._get_capacity_total() == 2400
+
+    monkeypatch.setenv("CC_DUMP_TOKEN_CAPACITY", "bad-value")
+    assert event_handlers._get_capacity_total() == 0

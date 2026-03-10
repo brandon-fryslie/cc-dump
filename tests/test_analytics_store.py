@@ -2,6 +2,7 @@
 
 import pytest
 
+import cc_dump.app.analytics_store as analytics_store_mod
 from cc_dump.app.analytics_store import AnalyticsStore, TurnRecord, ToolInvocationRecord
 from cc_dump.pipeline.event_types import (
     RequestHeadersEvent,
@@ -899,3 +900,51 @@ def test_turn_metrics_snapshot_derives_retry_ordinal_from_request_fingerprint():
     assert records[1]["retry_ordinal"] == 1
     assert records[1]["is_retry"] is True
     assert records[0]["retry_key"] == records[1]["retry_key"]
+
+
+def test_request_meta_prunes_unmatched_header_entries(monkeypatch):
+    monkeypatch.setattr(analytics_store_mod, "_REQUEST_META_LIMIT", 3)
+    store = AnalyticsStore()
+
+    for idx in range(5):
+        store.on_event(
+            RequestHeadersEvent(
+                headers={},
+                request_id=f"req-{idx}",
+                recv_ns=idx + 1,
+            )
+        )
+
+    assert len(store._request_meta) == 3
+    assert set(store._request_meta.keys()) == {"req-2", "req-3", "req-4"}
+
+
+def test_retry_ordinals_prune_unique_fingerprints(monkeypatch):
+    monkeypatch.setattr(analytics_store_mod, "_RETRY_ORDINAL_LIMIT", 2)
+    store = AnalyticsStore()
+
+    for idx in range(4):
+        request_id = f"req-{idx}"
+        store.on_event(
+            RequestBodyEvent(
+                body={
+                    "model": "claude-haiku-4-5",
+                    "messages": [{"role": "user", "content": f"prompt-{idx}"}],
+                },
+                request_id=request_id,
+            )
+        )
+        store.on_event(
+            ResponseCompleteEvent(
+                body={
+                    "model": "claude-haiku-4-5",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                    "stop_reason": "end_turn",
+                },
+                request_id=request_id,
+            )
+        )
+
+    assert len(store._retry_ordinals) == 2
+    expected_retry_keys = {store._turns[-2].retry_key, store._turns[-1].retry_key}
+    assert set(store._retry_ordinals.keys()) == expected_retry_keys

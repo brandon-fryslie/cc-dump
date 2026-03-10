@@ -74,7 +74,7 @@ class CyclingPanel(Protocol):
     """
 
     def cycle_mode(self) -> None:
-        """Cycle intra-panel display mode (e.g. aggregate vs breakdown)."""
+        """Cycle intra-panel display mode (for example stats summary/timeline/models)."""
         ...
 
     def get_state(self) -> WidgetState:
