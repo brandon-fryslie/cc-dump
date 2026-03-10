@@ -487,3 +487,4 @@ def prev_session(app) -> None:
         conv.scroll_to_block(boundaries[-1][1], 0)
 
     _conv_action(app, _jump)
+
