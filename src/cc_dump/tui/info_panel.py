@@ -7,6 +7,7 @@ All field values are click-to-copy.
 """
 
 from snarfx import Observable, reaction
+from snarfx import textual as stx
 from textual.widgets import Static
 
 # Use module-level imports for hot-reload
@@ -59,6 +60,12 @@ class InfoPanel(Static):
         self.update(text)
 
     def on_mount(self) -> None:
+        self._visibility_reaction = stx.reaction(
+            self.app,
+            lambda: bool(self.app.view_store.get("panel:info")),
+            self._apply_panel_visibility,
+            fire_immediately=True,
+        )
         self._render_info(dict(self._info.get()))
 
     def on_click(self, event) -> None:
@@ -85,7 +92,11 @@ class InfoPanel(Static):
         self._info.set(dict(state.get("info", {})))
 
     def on_unmount(self) -> None:
+        self._visibility_reaction.dispose()
         self._info_reaction.dispose()
+
+    def _apply_panel_visibility(self, visible: bool) -> None:
+        self.display = bool(visible)
 
 
 def create_info_panel() -> InfoPanel:

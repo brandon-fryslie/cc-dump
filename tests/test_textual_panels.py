@@ -311,6 +311,7 @@ async def test_launch_config_hidden_mount_hydrates_from_store(monkeypatch):
 
     async with run_app() as (pilot, app):
         panel = await _open_launch_config_panel(app, pilot)
+        await settle(pilot, ticks=2)
         selector = panel.query_one("#lc-config-selector", Select)
         assert str(selector.value) == active_name
 

@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from snarfx import Observable, reaction
+from snarfx import textual as stx
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
 from textual.containers import Horizontal, VerticalScroll
@@ -186,12 +187,21 @@ class SettingsPanel(VerticalScroll):
 
     def on_mount(self) -> None:
         """Initialize focus only when panel is visible."""
+        self._visibility_reaction = stx.reaction(
+            self.app,
+            lambda: bool(self.app.view_store.get("panel:settings")),
+            self._apply_panel_visibility,
+            fire_immediately=True,
+        )
         self._apply_view_state(self._view_state.get())
-        if self.display:
-            self.focus_default_control()
 
     def on_unmount(self) -> None:
+        self._visibility_reaction.dispose()
         self._view_reaction.dispose()
+
+    def _apply_panel_visibility(self, visible: bool) -> None:
+        # [LAW:single-enforcer] App-level sidebar coordinator owns cross-panel focus policy.
+        self.display = bool(visible)
 
     def _apply_view_state(self, view_state: SettingsPanelViewState) -> None:
         if not self.is_attached:

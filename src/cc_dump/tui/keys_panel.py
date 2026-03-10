@@ -7,6 +7,8 @@ removed during hot-reload (stateless, user can re-open with ?).
 from dataclasses import dataclass
 
 from snarfx import Observable, reaction
+from snarfx import textual as stx
+from rich.text import Text
 from textual.widgets import Static
 
 # Use module-level imports for hot-reload
@@ -15,7 +17,7 @@ import cc_dump.tui.panel_renderers
 
 @dataclass(frozen=True)
 class KeysPanelState:
-    text: object
+    text: Text
 
 
 class KeysPanel(Static):
@@ -47,10 +49,20 @@ class KeysPanel(Static):
         )
 
     def on_mount(self) -> None:
+        self._visibility_reaction = stx.reaction(
+            self.app,
+            lambda: bool(self.app.view_store.get("panel:keys")),
+            self._apply_panel_visibility,
+            fire_immediately=True,
+        )
         self._apply_state(self._state.get())
 
     def on_unmount(self) -> None:
+        self._visibility_reaction.dispose()
         self._state_reaction.dispose()
+
+    def _apply_panel_visibility(self, visible: bool) -> None:
+        self.display = bool(visible)
 
     def _apply_state(self, state: KeysPanelState) -> None:
         self.update(state.text)
