@@ -20,7 +20,6 @@ from cc_dump.tui.rendering import get_category
 class BlockViewState:
     """Per-block view state, keyed by block_id."""
 
-    expanded: bool | None = None  # click toggle override
     expandable: bool = False  # renderer-computed
 
 
@@ -61,7 +60,7 @@ class ViewOverrides:
         return state
 
     def clear_category(self, blocks: Iterable[FormattedBlock], category: Category) -> None:
-        """Reset expanded overrides for all blocks matching a category.
+        """Reset region expanded overrides for all blocks matching a category.
 
         Recursively walks children.
         """
@@ -69,10 +68,7 @@ class ViewOverrides:
             for block in block_list:
                 block_cat = get_category(block)
                 if block_cat == category:
-                    bvs = self._blocks.get(block.block_id)
-                    if bvs is not None:
-                        bvs.expanded = None
-                    # Clear region overrides
+                    # // [LAW:one-source-of-truth] Region expansion overrides live only in _regions.
                     for region in block.content_regions:
                         key = (block.block_id, region.index)
                         rvs = self._regions.get(key)
@@ -90,8 +86,6 @@ class ViewOverrides:
         blocks = {}
         for bid, bvs in self._blocks.items():
             entry = {}
-            if bvs.expanded is not None:
-                entry["expanded"] = bvs.expanded
             if bvs.expandable:
                 entry["expandable"] = True
             if entry:
@@ -115,7 +109,6 @@ class ViewOverrides:
         for bid_str, entry in data.get("blocks", {}).items():
             bid = int(bid_str) if isinstance(bid_str, str) else bid_str
             bvs = BlockViewState(
-                expanded=entry.get("expanded"),
                 expandable=entry.get("expandable", False),
             )
             vo._blocks[bid] = bvs

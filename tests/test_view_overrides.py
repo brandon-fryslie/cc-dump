@@ -57,26 +57,25 @@ def test_block_id_monotonic():
 
 
 def test_view_overrides_clear_category():
-    """Set overrides on 3 categories, clear one — other two unchanged."""
+    """Set region overrides on 2 categories, clear one — the other remains."""
     _setup_theme()
 
     vo = ViewOverrides()
 
     user_block = TextContentBlock(content="hi", category=Category.USER)
     asst_block = TextContentBlock(content="hello", category=Category.ASSISTANT)
-    tool_block = ToolUseBlock(name="Read", input_size=10, msg_color_idx=0)
+    populate_content_regions(user_block)
+    populate_content_regions(asst_block)
 
-    # Set expanded overrides
-    vo.get_block(user_block.block_id).expanded = True
-    vo.get_block(asst_block.block_id).expanded = False
-    vo.get_block(tool_block.block_id).expanded = True
+    # Set region overrides
+    vo.get_region(user_block.block_id, 0).expanded = False
+    vo.get_region(asst_block.block_id, 0).expanded = False
 
     # Clear only USER category
-    vo.clear_category([user_block, asst_block, tool_block], Category.USER)
+    vo.clear_category([user_block, asst_block], Category.USER)
 
-    assert vo.get_block(user_block.block_id).expanded is None  # cleared
-    assert vo.get_block(asst_block.block_id).expanded is False  # untouched
-    assert vo.get_block(tool_block.block_id).expanded is True  # untouched
+    assert vo.get_region(user_block.block_id, 0).expanded is None  # cleared
+    assert vo.get_region(asst_block.block_id, 0).expanded is False  # untouched
 
 
 # ─── AC4: serialization round-trip ────────────────────────────────────────
@@ -89,9 +88,8 @@ def test_view_overrides_serialization():
     b1 = TextContentBlock(content="one")
     b2 = TextContentBlock(content="two")
 
-    vo.get_block(b1.block_id).expanded = True
     vo.get_block(b1.block_id).expandable = True
-    vo.get_block(b2.block_id).expanded = False
+    vo.get_block(b2.block_id).expandable = False
 
     vo.get_region(b1.block_id, 0).expanded = False
     vo.get_region(b1.block_id, 1).expanded = None  # default — not serialized
@@ -100,9 +98,8 @@ def test_view_overrides_serialization():
     restored = ViewOverrides.from_dict(data)
 
     # Block state
-    assert restored.get_block(b1.block_id).expanded is True
     assert restored.get_block(b1.block_id).expandable is True
-    assert restored.get_block(b2.block_id).expanded is False
+    assert restored.get_block(b2.block_id).expandable is False
 
     # Region state
     assert restored.get_region(b1.block_id, 0).expanded is False
@@ -158,7 +155,6 @@ def test_auto_create_on_miss():
     vo = ViewOverrides()
     bvs = vo.get_block(999)
     assert isinstance(bvs, BlockViewState)
-    assert bvs.expanded is None
     assert bvs.expandable is False
 
     rvs = vo.get_region(999, 0)
