@@ -7,6 +7,7 @@ from cc_dump.core.formatting import (
     TextContentBlock,
     ToolUseBlock,
     HeaderBlock,
+    ErrorBlock,
     Category,
     ALWAYS_VISIBLE,
     populate_content_regions,
@@ -167,3 +168,17 @@ def test_auto_create_on_miss():
     assert isinstance(rvs, RegionViewState)
     assert rvs.expanded is None
     assert rvs.strip_range is None
+
+
+def test_categoryless_block_respects_block_expansion_override():
+    from cc_dump.tui.rendering import _resolve_visibility
+
+    block = ErrorBlock(code=500, reason="boom")
+    vo = ViewOverrides()
+    vo.get_block(block.block_id).expanded = False
+
+    vis = _resolve_visibility(block, {}, overrides=vo)
+
+    assert vis.visible is True
+    assert vis.full is True
+    assert vis.expanded is False

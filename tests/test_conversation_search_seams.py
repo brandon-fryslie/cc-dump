@@ -143,3 +143,17 @@ def test_clear_category_overrides_clears_block_expansion_for_category():
 
     assert conv._view_overrides.get_block(user_block.block_id).expanded is None
     assert conv._view_overrides.get_block(assistant_block.block_id).expanded is False
+
+
+def test_iter_blocks_with_descendants_preserves_turn_order():
+    conv = ConversationView()
+    first = cc_dump.core.formatting.TextContentBlock(content="first")
+    second = cc_dump.core.formatting.TextContentBlock(content="second")
+    conv._turns = [
+        TurnData(turn_index=0, blocks=[first], strips=[]),
+        TurnData(turn_index=1, blocks=[second], strips=[]),
+    ]
+
+    ordered = list(conv._iter_blocks_with_descendants())
+
+    assert ordered == [first, second]
