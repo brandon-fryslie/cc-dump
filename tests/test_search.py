@@ -42,6 +42,7 @@ from cc_dump.core.formatting import (
     SkillDefChild,
     ConfigContentBlock,
     ThinkingBlock,
+    populate_content_regions,
 )
 from cc_dump.core.analysis import TurnBudget, fmt_tokens
 
@@ -398,6 +399,20 @@ class TestFindAllMatches:
         pattern = re.compile("Bash")
         matches = find_all_matches(turns, pattern)
         assert len(matches) == 2
+
+    def test_region_index_captured_for_text_region_match(self):
+        block = TextContentBlock(
+            content="intro\n<thinking>\nneedle\n</thinking>\noutro",
+        )
+        populate_content_regions(block)
+        turns = [_FakeTurnData(0, [block])]
+        pattern = re.compile("needle")
+
+        matches = find_all_matches(turns, pattern)
+
+        assert len(matches) == 1
+        assert matches[0].region_index is not None
+        assert block.content_regions[matches[0].region_index].kind == "xml_block"
 
 
 # ─── SearchContext ────────────────────────────────────────────────────────────

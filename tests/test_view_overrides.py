@@ -10,6 +10,7 @@ from cc_dump.core.formatting import (
     ErrorBlock,
     Category,
     ALWAYS_VISIBLE,
+    VisState,
     populate_content_regions,
 )
 from cc_dump.tui.view_overrides import (
@@ -182,3 +183,66 @@ def test_categoryless_block_respects_block_expansion_override():
     assert vis.visible is True
     assert vis.full is True
     assert vis.expanded is False
+
+
+def test_search_reveal_block_forces_expanded_visibility():
+    from cc_dump.tui.rendering import _resolve_visibility
+
+    block = TextContentBlock(content="hidden", category=Category.ASSISTANT)
+    filters = {"assistant": VisState(True, True, False)}
+    vo = ViewOverrides()
+    vo.set_search_reveal(block_id=block.block_id)
+
+    vis = _resolve_visibility(block, filters, overrides=vo)
+
+    assert vis.visible is True
+    assert vis.full is True
+    assert vis.expanded is True
+
+
+def test_search_reveal_state_is_not_serialized():
+    vo = ViewOverrides()
+    vo.set_search_reveal(block_id=123, region_index=4)
+
+    data = vo.to_dict()
+    restored = ViewOverrides.from_dict(data)
+
+    assert vo.has_search_reveal_block(123) is True
+    assert restored.has_search_reveal_block(123) is False
+    assert restored.has_search_reveal_region(123, 4) is False
+
+
+def test_search_reveal_region_forces_region_expanded():
+    from rich.console import Console
+    from cc_dump.tui.rendering import render_turn_to_strips
+
+    _setup_theme()
+    block = TextContentBlock(
+        content="intro\n<thinking>\nline1\nline2\n</thinking>\noutro",
+        category=Category.ASSISTANT,
+    )
+    populate_content_regions(block)
+    xml_idx = next(i for i, r in enumerate(block.content_regions) if r.kind == "xml_block")
+
+    vo = ViewOverrides()
+    vo.get_region(block.block_id, xml_idx).expanded = False
+    filters = {"assistant": ALWAYS_VISIBLE}
+    console = Console()
+    strips_collapsed, _, _ = render_turn_to_strips(
+        blocks=[block],
+        filters=filters,
+        console=console,
+        width=80,
+        overrides=vo,
+    )
+
+    vo.set_search_reveal(block_id=block.block_id, region_index=xml_idx)
+    strips_revealed, _, _ = render_turn_to_strips(
+        blocks=[block],
+        filters=filters,
+        console=console,
+        width=80,
+        overrides=vo,
+    )
+
+    assert len(strips_revealed) > len(strips_collapsed)
