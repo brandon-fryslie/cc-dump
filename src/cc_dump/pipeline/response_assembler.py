@@ -321,7 +321,7 @@ class ResponseAssembler:
         return self._result
 
 
-class OpenAIResponseAssembler:
+class OpenAiChatResponseAssembler:
     """Assembles OpenAI SSE fragments into a complete response dict.
 
     Accumulates text deltas and tool call fragments from OpenAI's streaming
@@ -341,7 +341,7 @@ class OpenAIResponseAssembler:
     def on_done(self) -> None:
         if not self._chunks:
             return
-        self._result = _reconstruct_openai_message(self._chunks)
+        self._result = _reconstruct_openai_chat_message(self._chunks)
 
     @property
     def result(self) -> dict | None:
@@ -349,7 +349,7 @@ class OpenAIResponseAssembler:
 
 
 @dataclass
-class _OpenAIReconstructionState:
+class _OpenAiChatReconstructionState:
     """Canonical in-flight state for OpenAI chunk reconstruction.
 
     // [LAW:one-source-of-truth] All reconstruction state lives in one canonical value.
@@ -363,14 +363,20 @@ class _OpenAIReconstructionState:
     usage: dict[str, int] = field(default_factory=dict)
 
 
-def _merge_openai_chunk_identity(chunk: dict, state: _OpenAIReconstructionState) -> None:
+def _merge_openai_chat_chunk_identity(
+    chunk: dict,
+    state: _OpenAiChatReconstructionState,
+) -> None:
     if not state.message_id:
         state.message_id = str(chunk.get("id", "") or "")
     if not state.model:
         state.model = str(chunk.get("model", "") or "")
 
 
-def _merge_openai_chunk_usage(chunk: dict, state: _OpenAIReconstructionState) -> None:
+def _merge_openai_chat_chunk_usage(
+    chunk: dict,
+    state: _OpenAiChatReconstructionState,
+) -> None:
     chunk_usage = chunk.get("usage")
     if not isinstance(chunk_usage, dict):
         return
@@ -379,13 +385,16 @@ def _merge_openai_chunk_usage(chunk: dict, state: _OpenAIReconstructionState) ->
             state.usage[key] = chunk_usage[key]
 
 
-def _merge_openai_delta_content(delta: dict, state: _OpenAIReconstructionState) -> None:
+def _merge_openai_chat_delta_content(
+    delta: dict,
+    state: _OpenAiChatReconstructionState,
+) -> None:
     content = delta.get("content")
     if isinstance(content, str):
         state.message_content_parts.append(content)
 
 
-def _openai_tool_call_entry(
+def _openai_chat_tool_call_entry(
     tool_calls: dict[int, dict],
     index: int,
 ) -> dict:
@@ -398,7 +407,10 @@ def _openai_tool_call_entry(
     return tool_calls[index]
 
 
-def _merge_openai_delta_tool_calls(delta: dict, state: _OpenAIReconstructionState) -> None:
+def _merge_openai_chat_delta_tool_calls(
+    delta: dict,
+    state: _OpenAiChatReconstructionState,
+) -> None:
     raw_tool_calls = delta.get("tool_calls")
     if not isinstance(raw_tool_calls, list):
         return
@@ -407,7 +419,7 @@ def _merge_openai_delta_tool_calls(delta: dict, state: _OpenAIReconstructionStat
             continue
         raw_index = tool_call.get("index", 0)
         index = raw_index if isinstance(raw_index, int) else 0
-        entry = _openai_tool_call_entry(state.tool_calls, index)
+        entry = _openai_chat_tool_call_entry(state.tool_calls, index)
 
         tool_call_id = tool_call.get("id")
         if isinstance(tool_call_id, str) and tool_call_id:
@@ -425,13 +437,16 @@ def _merge_openai_delta_tool_calls(delta: dict, state: _OpenAIReconstructionStat
 
 
 # [LAW:dataflow-not-control-flow] Fixed-order reducers keep operation order constant per delta.
-_OPENAI_DELTA_REDUCERS = (
-    _merge_openai_delta_content,
-    _merge_openai_delta_tool_calls,
+_OPENAI_CHAT_DELTA_REDUCERS = (
+    _merge_openai_chat_delta_content,
+    _merge_openai_chat_delta_tool_calls,
 )
 
 
-def _merge_openai_choice(choice: dict, state: _OpenAIReconstructionState) -> None:
+def _merge_openai_chat_choice(
+    choice: dict,
+    state: _OpenAiChatReconstructionState,
+) -> None:
     finish_reason = choice.get("finish_reason")
     if isinstance(finish_reason, str) and finish_reason:
         state.finish_reason = finish_reason
@@ -439,11 +454,11 @@ def _merge_openai_choice(choice: dict, state: _OpenAIReconstructionState) -> Non
     delta = choice.get("delta", {})
     if not isinstance(delta, dict):
         return
-    for reducer in _OPENAI_DELTA_REDUCERS:
+    for reducer in _OPENAI_CHAT_DELTA_REDUCERS:
         reducer(delta, state)
 
 
-def _openai_response_usage(state: _OpenAIReconstructionState) -> dict[str, int]:
+def _openai_chat_response_usage(state: _OpenAiChatReconstructionState) -> dict[str, int]:
     return state.usage or {
         "prompt_tokens": 0,
         "completion_tokens": 0,
@@ -451,7 +466,7 @@ def _openai_response_usage(state: _OpenAIReconstructionState) -> dict[str, int]:
     }
 
 
-def _openai_response_message(state: _OpenAIReconstructionState) -> dict:
+def _openai_chat_response_message(state: _OpenAiChatReconstructionState) -> dict:
     message_content = "".join(state.message_content_parts)
     result_message: dict = {"role": "assistant", "content": message_content or None}
     if state.tool_calls:
@@ -459,25 +474,25 @@ def _openai_response_message(state: _OpenAIReconstructionState) -> dict:
     return result_message
 
 
-def _reconstruct_openai_message(chunks: list[dict]) -> dict:
+def _reconstruct_openai_chat_message(chunks: list[dict]) -> dict:
     """Reconstruct a complete OpenAI chat completion from streaming chunks.
 
     Accumulates delta.content and delta.tool_calls into the non-streaming shape.
     """
-    state = _OpenAIReconstructionState()
+    state = _OpenAiChatReconstructionState()
 
     for chunk in chunks:
         if not isinstance(chunk, dict):
             continue
-        _merge_openai_chunk_identity(chunk, state)
-        _merge_openai_chunk_usage(chunk, state)
+        _merge_openai_chat_chunk_identity(chunk, state)
+        _merge_openai_chat_chunk_usage(chunk, state)
         choices = chunk.get("choices", [])
         if not isinstance(choices, list):
             continue
         for choice in choices:
             if not isinstance(choice, dict):
                 continue
-            _merge_openai_choice(choice, state)
+            _merge_openai_chat_choice(choice, state)
 
     return {
         "id": state.message_id,
@@ -486,9 +501,9 @@ def _reconstruct_openai_message(chunks: list[dict]) -> dict:
         "choices": [
             {
                 "index": 0,
-                "message": _openai_response_message(state),
+                "message": _openai_chat_response_message(state),
                 "finish_reason": state.finish_reason,
             }
         ],
-        "usage": _openai_response_usage(state),
+        "usage": _openai_chat_response_usage(state),
     }

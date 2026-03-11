@@ -30,7 +30,10 @@ from cc_dump.pipeline.event_types import (
     parse_sse_event,
     sse_progress_payload,
 )
-from cc_dump.pipeline.response_assembler import ResponseAssembler, OpenAIResponseAssembler
+from cc_dump.pipeline.response_assembler import (
+    OpenAiChatResponseAssembler,
+    ResponseAssembler,
+)
 import cc_dump.pipeline.proxy_flow
 import cc_dump.providers
 
@@ -250,7 +253,7 @@ class EventQueueSink(StreamSink):
     def on_event(self, event_type, event):
         # [LAW:dataflow-not-control-flow] Provider family selects extraction strategy.
         family = cc_dump.providers.get_provider_spec(self._provider).protocol_family
-        extract = _PROGRESS_EXTRACTORS_BY_FAMILY.get(family, _extract_openai_progress)
+        extract = _PROGRESS_EXTRACTORS_BY_FAMILY.get(family, _extract_openai_chat_progress)
         payload = extract(event_type, event)
         if payload is None:
             return
@@ -283,7 +286,7 @@ def _extract_anthropic_progress(event_type: str, event: dict) -> dict[str, objec
     return sse_progress_payload(sse)
 
 
-def _extract_openai_progress(_event_type: str, event: dict) -> dict[str, object] | None:
+def _extract_openai_chat_progress(_event_type: str, event: dict) -> dict[str, object] | None:
     """Extract progress payload from OpenAI SSE event (stub).
 
     OpenAI SSE format: {"id":"...","choices":[{"index":0,"delta":{"content":"..."}}]}
@@ -323,7 +326,7 @@ def _extract_openai_progress(_event_type: str, event: dict) -> dict[str, object]
 # [LAW:dataflow-not-control-flow] Protocol family → progress extraction strategy.
 _PROGRESS_EXTRACTORS_BY_FAMILY: dict[str, Callable[[str, dict], dict[str, object] | None]] = {
     "anthropic": _extract_anthropic_progress,
-    "openai": _extract_openai_progress,
+    "openai": _extract_openai_chat_progress,
 }
 
 
@@ -628,7 +631,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
     # [LAW:dataflow-not-control-flow] Provider → assembler type.
     _ASSEMBLER_CLASSES_BY_FAMILY: dict[str, type] = {
         "anthropic": ResponseAssembler,
-        "openai": OpenAIResponseAssembler,
+        "openai": OpenAiChatResponseAssembler,
     }
 
     def _stream_response(self, resp, request_id: str = "", *, emit_events: bool = True):
@@ -638,7 +641,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             return
 
         family = cc_dump.providers.get_provider_spec(self.provider).protocol_family
-        assembler_cls = self._ASSEMBLER_CLASSES_BY_FAMILY.get(family, OpenAIResponseAssembler)
+        assembler_cls = self._ASSEMBLER_CLASSES_BY_FAMILY.get(family, OpenAiChatResponseAssembler)
         assembler = assembler_cls()
         event_sink = EventQueueSink(self.event_queue, request_id=request_id, provider=self.provider)
         _fan_out_sse(resp, [
