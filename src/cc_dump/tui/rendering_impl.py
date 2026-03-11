@@ -486,6 +486,39 @@ def get_category(block: FormattedBlock) -> Category | None:
     return BLOCK_CATEGORY.get(type(block).__name__)
 
 
+def _block_visibility_overrides(
+    block_id: int,
+    overrides: object | None,
+) -> tuple[bool | None, bool]:
+    block_expanded_override = None
+    search_forced_expanded = False
+    if overrides is None:
+        return block_expanded_override, search_forced_expanded
+    get_block_state = getattr(overrides, "block_state", None)
+    if callable(get_block_state):
+        block_vs = get_block_state(block_id)
+        if block_vs is not None:
+            block_expanded_override = block_vs.expanded
+    has_search_reveal_block = getattr(overrides, "has_search_reveal_block", None)
+    if callable(has_search_reveal_block):
+        search_forced_expanded = bool(has_search_reveal_block(block_id))
+    return block_expanded_override, search_forced_expanded
+
+
+def _resolve_expanded_state(
+    base_expanded: bool,
+    block_expanded_override: bool | None,
+    *,
+    search_forced_expanded: bool,
+) -> bool:
+    expanded = (
+        base_expanded
+        if block_expanded_override is None
+        else bool(block_expanded_override)
+    )
+    return True if search_forced_expanded else expanded
+
+
 def _resolve_visibility(
     block: FormattedBlock,
     filters: dict,
@@ -499,25 +532,18 @@ def _resolve_visibility(
     Filters contain VisState values keyed by category name.
     Returns ALWAYS_VISIBLE for blocks with no category.
     """
-    block_expanded_override = None
-    if overrides is not None:
-        get_block_state = getattr(overrides, "block_state", None)
-        if callable(get_block_state):
-            block_vs = get_block_state(block.block_id)
-            if block_vs is not None:
-                block_expanded_override = block_vs.expanded
+    block_expanded_override, search_forced_expanded = _block_visibility_overrides(
+        block.block_id,
+        overrides,
+    )
     cat = get_category(block)
-    if cat is None:
-        expanded = (
-            ALWAYS_VISIBLE.expanded
-            if block_expanded_override is None
-            else bool(block_expanded_override)
-        )
-        return VisState(ALWAYS_VISIBLE.visible, ALWAYS_VISIBLE.full, expanded)
-
-    vis = filters.get(cat.value, ALWAYS_VISIBLE)
+    vis = ALWAYS_VISIBLE if cat is None else filters.get(cat.value, ALWAYS_VISIBLE)
     # // [LAW:single-enforcer] Category-level and per-block expansion precedence resolves here.
-    expanded = vis.expanded if block_expanded_override is None else bool(block_expanded_override)
+    expanded = _resolve_expanded_state(
+        vis.expanded,
+        block_expanded_override,
+        search_forced_expanded=search_forced_expanded,
+    )
     return VisState(vis.visible, vis.full, expanded)
 
 
@@ -1117,6 +1143,33 @@ def _render_region_parts(
 
     tc = get_theme_colors()
     seg = _get_or_segment(block)
+    has_search_reveal_region = (
+        getattr(overrides, "has_search_reveal_region", None)
+        if overrides is not None
+        else None
+    )
+
+    def _is_search_revealed_region(region) -> bool:
+        if (
+            region is None
+            or not callable(has_search_reveal_region)
+        ):
+            return False
+        return bool(has_search_reveal_region(block.block_id, region.index))
+
+    def _resolve_region_expanded(
+        *,
+        default_expanded: bool,
+        region_expanded_override: bool | None,
+        search_revealed: bool,
+    ) -> bool:
+        expanded = (
+            default_expanded
+            if region_expanded_override is None
+            else (region_expanded_override is not False)
+        )
+        # // [LAW:single-enforcer] Search reveal precedence for region expansion lives in renderer boundary.
+        return True if search_revealed else expanded
 
     parts: list[tuple[ConsoleRenderable, int | None]] = []
 
@@ -1141,7 +1194,11 @@ def _render_region_parts(
                     region_exp = rvs.expanded
 
             default_expanded = _md_fence_default_expanded(inner)
-            is_expanded = default_expanded if region_exp is None else (region_exp is not False)
+            is_expanded = _resolve_region_expanded(
+                default_expanded=default_expanded,
+                region_expanded_override=region_exp,
+                search_revealed=_is_search_revealed_region(region),
+            )
 
             wrapped = cc_dump.core.segmentation.wrap_tags_in_backticks(inner)
             if wrapped.strip():
@@ -1159,7 +1216,11 @@ def _render_region_parts(
                 if rvs is not None:
                     region_exp = rvs.expanded
             default_expanded = _code_fence_default_expanded(inner)
-            is_expanded = default_expanded if region_exp is None else (region_exp is not False)
+            is_expanded = _resolve_region_expanded(
+                default_expanded=default_expanded,
+                region_expanded_override=region_exp,
+                search_revealed=_is_search_revealed_region(region),
+            )
 
             if is_expanded:
                 parts.append(
@@ -1188,7 +1249,11 @@ def _render_region_parts(
             m = sb.meta
             inner = text[m.inner_span.start : m.inner_span.end]
             default_expanded = _xml_block_default_expanded(inner)
-            is_expanded = default_expanded if region_exp is None else (region_exp is not False)
+            is_expanded = _resolve_region_expanded(
+                default_expanded=default_expanded,
+                region_expanded_override=region_exp,
+                search_revealed=_is_search_revealed_region(region),
+            )
 
             if is_expanded:
                 # Full XML rendering with syntax-highlighted tags

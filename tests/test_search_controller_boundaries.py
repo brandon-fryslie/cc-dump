@@ -17,6 +17,8 @@ class _Conv:
         self.anchor_calls = 0
         self.restore_calls: list[float] = []
         self.rerender_calls = 0
+        self.reveal_calls: list[tuple[object, object, bool]] = []
+        self.clear_reveal_calls: list[tuple[object, bool]] = []
 
     def get_search_turns_snapshot(self):
         self.snapshot_calls += 1
@@ -31,6 +33,14 @@ class _Conv:
     def rerender(self, _filters, search_ctx=None):
         _ = search_ctx
         self.rerender_calls += 1
+
+    def reveal_search_match(self, match, *, search_ctx=None, rerender=True):
+        self.reveal_calls.append((match, search_ctx, rerender))
+        return True
+
+    def clear_search_reveal(self, *, search_ctx=None, rerender=False):
+        self.clear_reveal_calls.append((search_ctx, rerender))
+        return True
 
 
 class _App:
@@ -74,6 +84,7 @@ def test_exit_search_keep_position_uses_public_anchor_capture():
     ctrl.exit_search_keep_position(app)
 
     assert conv.anchor_calls == 1
+    assert conv.clear_reveal_calls == [(None, False)]
     assert conv.rerender_calls == 1
 
 
@@ -87,10 +98,11 @@ def test_exit_search_restore_position_uses_public_scroll_restore():
     ctrl.exit_search_restore_position(app)
 
     assert conv.restore_calls == [42.0]
+    assert conv.clear_reveal_calls == [(None, False)]
     assert state.saved_scroll_y is None
 
 
-def test_commit_search_does_not_invoke_navigation(monkeypatch):
+def test_commit_search_invokes_navigation_to_current(monkeypatch):
     state, store = _make_state_and_store()
     state.query = "needle"
     state.modes = SearchMode.CASE_INSENSITIVE
@@ -108,4 +120,38 @@ def test_commit_search_does_not_invoke_navigation(monkeypatch):
     ctrl.commit_search(app)
 
     assert state.phase == SearchPhase.NAVIGATING
-    assert called["navigate"] == 0
+    assert called["navigate"] == 1
+
+
+def test_navigate_next_uses_public_reveal_seam():
+    state, store = _make_state_and_store()
+    state.query = "needle"
+    state.modes = SearchMode.CASE_INSENSITIVE
+    turns = [types.SimpleNamespace(is_streaming=False, blocks=[TextContentBlock(content="needle needle")])]
+    conv = _Conv(turns)
+    app = _App(state, store, conv)
+
+    ctrl.run_search(app)
+    state.phase = SearchPhase.NAVIGATING
+    state.current_index = 0
+
+    ctrl.navigate_next(app)
+
+    assert state.current_index == 1 % len(state.matches)
+    assert len(conv.reveal_calls) == 1
+    assert conv.reveal_calls[0][2] is True
+
+
+def test_navigate_to_current_clears_reveal_when_no_matches():
+    state, store = _make_state_and_store()
+    state.query = "missing"
+    state.modes = SearchMode.CASE_INSENSITIVE
+    turns = [types.SimpleNamespace(is_streaming=False, blocks=[TextContentBlock(content="needle")])]
+    conv = _Conv(turns)
+    app = _App(state, store, conv)
+    ctrl.run_search(app)
+
+    ctrl.navigate_to_current(app)
+
+    assert conv.clear_reveal_calls
+    assert conv.reveal_calls == []

@@ -1,5 +1,7 @@
 """Tests for ConversationView public seam methods used by search."""
 
+from types import SimpleNamespace
+
 import cc_dump.core.formatting
 from cc_dump.tui.widget_factory import ConversationView, ScrollAnchor, TurnData
 
@@ -157,3 +159,40 @@ def test_iter_blocks_with_descendants_preserves_turn_order():
     ordered = list(conv._iter_blocks_with_descendants())
 
     assert ordered == [first, second]
+
+
+def test_reveal_search_match_sets_temporary_reveal_state(monkeypatch):
+    conv = ConversationView()
+    block = cc_dump.core.formatting.TextContentBlock(content="needle")
+    conv._turns = [
+        TurnData(
+            turn_index=0,
+            blocks=[block],
+            strips=[],
+            block_strip_map={0: 0},
+            _flat_blocks=[block],
+        )
+    ]
+    calls: list[tuple[int, int]] = []
+    monkeypatch.setattr(conv, "ensure_turn_rendered", lambda _idx: None)
+    monkeypatch.setattr(conv, "scroll_to_block", lambda turn_index, block_index: calls.append((turn_index, block_index)))
+
+    match = SimpleNamespace(
+        turn_index=0,
+        block_index=0,
+        block=block,
+        region_index=0,
+    )
+    assert conv.reveal_search_match(match, rerender=False) is True
+    assert conv._view_overrides.has_search_reveal_block(block.block_id) is True
+    assert conv._view_overrides.has_search_reveal_region(block.block_id, 0) is True
+    assert calls == [(0, 0)]
+
+
+def test_clear_search_reveal_clears_temporary_state():
+    conv = ConversationView()
+    conv._view_overrides.set_search_reveal(block_id=1, region_index=0)
+
+    assert conv.clear_search_reveal(rerender=False) is True
+    assert conv._view_overrides.has_search_reveal_block(1) is False
+    assert conv._view_overrides.has_search_reveal_region(1, 0) is False
