@@ -1,5 +1,7 @@
 """Tests for token_counter module."""
 
+import pytest
+
 from cc_dump.core.token_counter import count_tokens
 
 
@@ -11,7 +13,13 @@ def test_count_tokens_empty_string_returns_zero_for_compat():
 def test_count_tokens_simple_text():
     """Simple text follows 4-char heuristic."""
     text = "Hello, world!"
-    assert count_tokens(text) == len(text) // 4
+    assert count_tokens(text) == 3
+
+
+def test_count_tokens_short_non_empty_uses_minimum_one():
+    """Short non-empty strings still produce at least one token."""
+    assert count_tokens("a") == 1
+    assert count_tokens("abc") == 1
 
 
 def test_count_tokens_longer_text():
@@ -62,3 +70,9 @@ def hello_world():
     return 42
 """
     assert count_tokens(code) == len(code) // 4
+
+
+def test_count_tokens_rejects_unsupported_model():
+    """Unsupported model names must fail loudly."""
+    with pytest.raises(ValueError, match="unsupported token counter model"):
+        count_tokens("hello", model="o200k_base")

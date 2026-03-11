@@ -53,7 +53,11 @@ _RETRY_ORDINAL_LIMIT = 8192
 
 @dataclass
 class ToolInvocationRecord:
-    """Record of a single tool invocation within a turn."""
+    """Record of a single tool invocation within a turn.
+
+    // [LAW:one-source-of-truth] `input_tokens` and `result_tokens` are
+    // heuristic estimates produced by `core.token_counter.count_tokens`.
+    """
 
     tool_name: str
     tool_use_id: str
@@ -903,7 +907,7 @@ class AnalyticsStore:
         return summary
 
     def get_tool_economics(self, group_by_model: bool = False) -> list[ToolEconomicsRow]:
-        """Query per-tool economics with real token counts and cache attribution.
+        """Query per-tool economics with estimated token counts and cache attribution.
 
         Args:
             group_by_model: If False (default), aggregate by tool name only.
@@ -911,7 +915,7 @@ class AnalyticsStore:
 
         Returns:
             List of ToolEconomicsRow with:
-            - Real token counts from tool_invocations (input_tokens, result_tokens)
+            - Estimated token counts from tool_invocations (input_tokens, result_tokens)
             - Proportional cache attribution from parent turn
             - Normalized cost using model pricing
             - model field: None for aggregate mode, model string for breakdown mode
