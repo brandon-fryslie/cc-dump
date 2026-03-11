@@ -491,9 +491,9 @@ def _block_visibility_overrides(
     overrides: object | None,
 ) -> tuple[bool | None, bool]:
     block_expanded_override = None
-    search_forced_expanded = False
+    search_revealed = False
     if overrides is None:
-        return block_expanded_override, search_forced_expanded
+        return block_expanded_override, search_revealed
     get_block_state = getattr(overrides, "block_state", None)
     if callable(get_block_state):
         block_vs = get_block_state(block_id)
@@ -501,22 +501,22 @@ def _block_visibility_overrides(
             block_expanded_override = block_vs.expanded
     has_search_reveal_block = getattr(overrides, "has_search_reveal_block", None)
     if callable(has_search_reveal_block):
-        search_forced_expanded = bool(has_search_reveal_block(block_id))
-    return block_expanded_override, search_forced_expanded
+        search_revealed = bool(has_search_reveal_block(block_id))
+    return block_expanded_override, search_revealed
 
 
 def _resolve_expanded_state(
     base_expanded: bool,
     block_expanded_override: bool | None,
     *,
-    search_forced_expanded: bool,
+    search_revealed: bool,
 ) -> bool:
     expanded = (
         base_expanded
         if block_expanded_override is None
         else bool(block_expanded_override)
     )
-    return True if search_forced_expanded else expanded
+    return True if search_revealed else expanded
 
 
 def _resolve_visibility(
@@ -532,7 +532,7 @@ def _resolve_visibility(
     Filters contain VisState values keyed by category name.
     Returns ALWAYS_VISIBLE for blocks with no category.
     """
-    block_expanded_override, search_forced_expanded = _block_visibility_overrides(
+    block_expanded_override, search_revealed = _block_visibility_overrides(
         block.block_id,
         overrides,
     )
@@ -542,9 +542,14 @@ def _resolve_visibility(
     expanded = _resolve_expanded_state(
         vis.expanded,
         block_expanded_override,
-        search_forced_expanded=search_forced_expanded,
+        search_revealed=search_revealed,
     )
-    return VisState(vis.visible, vis.full, expanded)
+    # // [LAW:single-enforcer] Search reveal precedence for visibility/fullness is resolved at this boundary.
+    return VisState(
+        vis.visible or search_revealed,
+        vis.full or search_revealed,
+        expanded,
+    )
 
 
 # ─── Style helpers ─────────────────────────────────────────────────────────────
@@ -3734,7 +3739,12 @@ def _render_region_block_strips(
 
     block_strips: list[Strip] = []
     for part_renderable, _region_idx in region_parts:
-        part_segments = ctx.console.render(part_renderable, ctx.render_options)
+        part_segments = list(ctx.console.render(part_renderable, ctx.render_options))
+        if search_hash is not None and ctx.search_ctx is not None:
+            # // [LAW:dataflow-not-control-flow] Region path always renders parts; search rewrites the part value only.
+            highlighted_part = Text("".join(seg.text for seg in part_segments))
+            _apply_search_dim_highlights(highlighted_part, ctx.search_ctx)
+            part_segments = list(ctx.console.render(highlighted_part, ctx.render_options))
         part_lines = list(Segment.split_lines(part_segments))
         if part_lines:
             part_strips = [
@@ -4107,6 +4117,18 @@ def render_turn_to_strips(
         return ctx.all_strips, ctx.block_strip_map, ctx.flat_blocks
 
 
+def _apply_search_dim_highlights(text: Text, search_ctx) -> None:
+    """Apply dim background search highlights to every regex match in text."""
+    tc = get_theme_colors()
+    try:
+        text.highlight_regex(
+            search_ctx.pattern,
+            Style(bgcolor=tc.search_all_bg),
+        )
+    except Exception:
+        return
+
+
 def _apply_search_highlights(
     text: Text, search_ctx, turn_index: int, block_index: int, block: object = None
 ) -> None:
@@ -4120,15 +4142,7 @@ def _apply_search_highlights(
     """
 
     tc = get_theme_colors()
-
-    # Dim highlight on ALL matches in this block
-    try:
-        text.highlight_regex(
-            search_ctx.pattern,
-            Style(bgcolor=tc.search_all_bg),
-        )
-    except Exception:
-        return  # Regex may fail on rendered text, silently skip
+    _apply_search_dim_highlights(text, search_ctx)
 
     # Bright highlight on the CURRENT match (if it's in this block)
     # // [LAW:dataflow-not-control-flow] identity_match is a value

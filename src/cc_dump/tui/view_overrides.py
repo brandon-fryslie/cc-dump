@@ -72,9 +72,11 @@ class ViewOverrides:
         *,
         block_id: int,
         region_index: int | None = None,
+        block_ids: Iterable[int] | None = None,
     ) -> bool:
         """Set temporary search reveal target state."""
-        next_blocks = {block_id}
+        next_blocks = set(block_ids or ())
+        next_blocks.add(block_id)
         next_regions = (
             {(block_id, region_index)} if region_index is not None else set()
         )
@@ -82,10 +84,9 @@ class ViewOverrides:
             next_blocks != self._search_reveal_blocks
             or next_regions != self._search_reveal_regions
         )
-        self._search_reveal_blocks = {block_id}
-        self._search_reveal_regions = (
-            {(block_id, region_index)} if region_index is not None else set()
-        )
+        # // [LAW:one-source-of-truth] Persist the computed reveal projection exactly once.
+        self._search_reveal_blocks = next_blocks
+        self._search_reveal_regions = next_regions
         return changed
 
     def clear_search_reveal(self) -> bool:

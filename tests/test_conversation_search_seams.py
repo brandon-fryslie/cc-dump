@@ -189,6 +189,39 @@ def test_reveal_search_match_sets_temporary_reveal_state(monkeypatch):
     assert calls == [(0, 0)]
 
 
+def test_reveal_search_match_reveals_ancestor_path(monkeypatch):
+    conv = ConversationView()
+    child = cc_dump.core.formatting.TextContentBlock(content="needle")
+    parent = cc_dump.core.formatting.MessageBlock(
+        role="assistant",
+        children=[child],
+    )
+    conv._turns = [
+        TurnData(
+            turn_index=0,
+            blocks=[parent],
+            strips=[],
+            block_strip_map={0: 0, 1: 1},
+            _flat_blocks=[parent, child],
+        )
+    ]
+    calls: list[tuple[int, int]] = []
+    monkeypatch.setattr(conv, "ensure_turn_rendered", lambda _idx: None)
+    monkeypatch.setattr(conv, "scroll_to_block", lambda turn_index, block_index: calls.append((turn_index, block_index)))
+
+    match = SimpleNamespace(
+        turn_index=0,
+        block_index=0,
+        block=child,
+        region_index=None,
+    )
+
+    assert conv.reveal_search_match(match, rerender=False) is True
+    assert conv._view_overrides.has_search_reveal_block(parent.block_id) is True
+    assert conv._view_overrides.has_search_reveal_block(child.block_id) is True
+    assert calls == [(0, 1)]
+
+
 def test_clear_search_reveal_clears_temporary_state():
     conv = ConversationView()
     conv._view_overrides.set_search_reveal(block_id=1, region_index=0)

@@ -604,6 +604,44 @@ class ConversationView(ScrollView):
         fallback_id = getattr(turn.blocks[block_index], "block_id", None)
         return fallback_id if isinstance(fallback_id, int) else None
 
+    def _path_block_ids(self, block: object, target: object) -> list[int] | None:
+        block_id = getattr(block, "block_id", None)
+        if not isinstance(block_id, int):
+            return None
+        if block is target:
+            return [block_id]
+        for child in getattr(block, "children", []) or []:
+            child_path = self._path_block_ids(child, target)
+            if child_path is not None:
+                return [block_id, *child_path]
+        return None
+
+    def _search_reveal_block_ids(self, match: object, block_id: int) -> set[int]:
+        reveal_ids = {block_id}
+        turn_index = getattr(match, "turn_index", -1)
+        block_index = getattr(match, "block_index", -1)
+        block = getattr(match, "block", None)
+        if (
+            not isinstance(turn_index, int)
+            or not isinstance(block_index, int)
+            or turn_index < 0
+            or turn_index >= len(self._turns)
+        ):
+            return reveal_ids
+        turn = self._turns[turn_index]
+        if block_index < 0 or block_index >= len(turn.blocks):
+            return reveal_ids
+        top = turn.blocks[block_index]
+        top_id = getattr(top, "block_id", None)
+        if isinstance(top_id, int):
+            reveal_ids.add(top_id)
+        if block is None:
+            return reveal_ids
+        path_ids = self._path_block_ids(top, block)
+        if path_ids is not None:
+            reveal_ids.update(path_ids)
+        return reveal_ids
+
     def _scroll_to_search_match(self, match: object) -> bool:
         turn_index = getattr(match, "turn_index", -1)
         block_index = getattr(match, "block_index", -1)
@@ -644,9 +682,11 @@ class ConversationView(ScrollView):
         if block_id is None:
             return False
         region_index = getattr(match, "region_index", None)
+        reveal_block_ids = self._search_reveal_block_ids(match, block_id)
         changed = self._view_overrides.set_search_reveal(
             block_id=block_id,
             region_index=region_index if isinstance(region_index, int) else None,
+            block_ids=reveal_block_ids,
         )
         if changed:
             self.mark_overrides_changed()
