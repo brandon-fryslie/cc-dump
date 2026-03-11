@@ -407,6 +407,42 @@ def _openai_chat_tool_call_entry(
     return tool_calls[index]
 
 
+def _openai_chat_tool_call_index(tool_call: dict) -> int:
+    raw_index = tool_call.get("index", 0)
+    return raw_index if isinstance(raw_index, int) else 0
+
+
+def _openai_chat_tool_call_id(tool_call: dict) -> str:
+    tool_call_id = tool_call.get("id")
+    return tool_call_id if isinstance(tool_call_id, str) and tool_call_id else ""
+
+
+def _openai_chat_tool_call_function(tool_call: dict) -> dict:
+    func = tool_call.get("function", {})
+    return func if isinstance(func, dict) else {}
+
+
+def _merge_openai_chat_tool_function(entry_function: dict, source_function: dict) -> None:
+    name = source_function.get("name")
+    if isinstance(name, str) and name:
+        entry_function["name"] = name
+    arguments = source_function.get("arguments")
+    if isinstance(arguments, str):
+        entry_function["arguments"] += arguments
+
+
+def _merge_openai_chat_tool_call(tool_call: dict, state: _OpenAiChatReconstructionState) -> None:
+    index = _openai_chat_tool_call_index(tool_call)
+    entry = _openai_chat_tool_call_entry(state.tool_calls, index)
+    tool_call_id = _openai_chat_tool_call_id(tool_call)
+    if tool_call_id:
+        entry["id"] = tool_call_id
+    _merge_openai_chat_tool_function(
+        entry["function"],
+        _openai_chat_tool_call_function(tool_call),
+    )
+
+
 def _merge_openai_chat_delta_tool_calls(
     delta: dict,
     state: _OpenAiChatReconstructionState,
@@ -417,23 +453,7 @@ def _merge_openai_chat_delta_tool_calls(
     for tool_call in raw_tool_calls:
         if not isinstance(tool_call, dict):
             continue
-        raw_index = tool_call.get("index", 0)
-        index = raw_index if isinstance(raw_index, int) else 0
-        entry = _openai_chat_tool_call_entry(state.tool_calls, index)
-
-        tool_call_id = tool_call.get("id")
-        if isinstance(tool_call_id, str) and tool_call_id:
-            entry["id"] = tool_call_id
-
-        func = tool_call.get("function", {})
-        if not isinstance(func, dict):
-            continue
-        name = func.get("name")
-        if isinstance(name, str) and name:
-            entry["function"]["name"] = name
-        arguments = func.get("arguments")
-        if isinstance(arguments, str):
-            entry["function"]["arguments"] += arguments
+        _merge_openai_chat_tool_call(tool_call, state)
 
 
 # [LAW:dataflow-not-control-flow] Fixed-order reducers keep operation order constant per delta.
