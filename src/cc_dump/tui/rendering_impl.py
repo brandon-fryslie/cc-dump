@@ -499,11 +499,6 @@ def _resolve_visibility(
     Filters contain VisState values keyed by category name.
     Returns ALWAYS_VISIBLE for blocks with no category.
     """
-    cat = get_category(block)
-    if cat is None:
-        return ALWAYS_VISIBLE  # always fully visible
-
-    vis = filters.get(cat.value, ALWAYS_VISIBLE)
     block_expanded_override = None
     if overrides is not None:
         get_block_state = getattr(overrides, "block_state", None)
@@ -511,6 +506,16 @@ def _resolve_visibility(
             block_vs = get_block_state(block.block_id)
             if block_vs is not None:
                 block_expanded_override = block_vs.expanded
+    cat = get_category(block)
+    if cat is None:
+        expanded = (
+            ALWAYS_VISIBLE.expanded
+            if block_expanded_override is None
+            else bool(block_expanded_override)
+        )
+        return VisState(ALWAYS_VISIBLE.visible, ALWAYS_VISIBLE.full, expanded)
+
+    vis = filters.get(cat.value, ALWAYS_VISIBLE)
     # // [LAW:single-enforcer] Category-level and per-block expansion precedence resolves here.
     expanded = vis.expanded if block_expanded_override is None else bool(block_expanded_override)
     return VisState(vis.visible, vis.full, expanded)

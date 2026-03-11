@@ -487,7 +487,7 @@ class ConversationView(ScrollView):
     def _iter_blocks_with_descendants(self):
         """Yield all blocks in render-order pre-order traversal."""
         stack: list = []
-        for td in self._turns:
+        for td in reversed(self._turns):
             stack.extend(reversed(td.blocks))
         while stack:
             block = stack.pop()
