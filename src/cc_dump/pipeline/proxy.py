@@ -286,41 +286,48 @@ def _extract_anthropic_progress(event_type: str, event: dict) -> dict[str, objec
     return sse_progress_payload(sse)
 
 
+def _openai_chat_model_payload(event: dict) -> dict[str, object] | None:
+    model = event.get("model")
+    return {"model": model} if isinstance(model, str) and model else None
+
+
+def _openai_chat_first_choice(event: dict) -> dict | None:
+    choices = event.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    first_choice = choices[0]
+    return first_choice if isinstance(first_choice, dict) else None
+
+
+def _openai_chat_delta_text_payload(choice: dict) -> dict[str, object] | None:
+    delta = choice.get("delta", {})
+    if not isinstance(delta, dict):
+        return None
+    content = delta.get("content")
+    return {"delta_text": content} if isinstance(content, str) and content else None
+
+
+def _openai_chat_finish_reason_payload(choice: dict) -> dict[str, object] | None:
+    finish_reason = choice.get("finish_reason")
+    return (
+        {"stop_reason": finish_reason}
+        if isinstance(finish_reason, str) and finish_reason
+        else None
+    )
+
+
 def _extract_openai_chat_progress(_event_type: str, event: dict) -> dict[str, object] | None:
     """Extract progress payload from OpenAI SSE event (stub).
 
     OpenAI SSE format: {"id":"...","choices":[{"index":0,"delta":{"content":"..."}}]}
     """
-    choices = event.get("choices")
-    if not isinstance(choices, list) or not choices:
-        # First chunk often has model info
-        model = event.get("model")
-        if isinstance(model, str) and model:
-            return {"model": model}
-        return None
-
-    choice = choices[0]
-    if not isinstance(choice, dict):
-        return None
-
-    # Text delta
-    delta = choice.get("delta", {})
-    if isinstance(delta, dict):
-        content = delta.get("content")
-        if isinstance(content, str) and content:
-            return {"delta_text": content}
-
-    # Finish reason
-    finish_reason = choice.get("finish_reason")
-    if isinstance(finish_reason, str) and finish_reason:
-        return {"stop_reason": finish_reason}
-
-    # Model from first chunk
-    model = event.get("model")
-    if isinstance(model, str) and model:
-        return {"model": model}
-
-    return None
+    choice = _openai_chat_first_choice(event)
+    candidate_payloads = (
+        _openai_chat_delta_text_payload(choice or {}),
+        _openai_chat_finish_reason_payload(choice or {}),
+        _openai_chat_model_payload(event),
+    )
+    return next((payload for payload in candidate_payloads if payload is not None), None)
 
 
 # [LAW:dataflow-not-control-flow] Protocol family → progress extraction strategy.

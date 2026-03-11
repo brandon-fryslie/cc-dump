@@ -390,7 +390,7 @@ def _build_cli_parser(
         const=20,
         type=int,
         default=None,
-        help="Delete older recordings, keeping newest N (default: 20).",
+        help="Delete older recordings, keeping newest N (default: 20), and exit.",
     )
     parser.add_argument(
         "--cleanup-dry-run",
@@ -434,6 +434,10 @@ def _build_cli_parser(
 
 
 def _handle_recording_admin_commands(args: argparse.Namespace) -> bool:
+    """Handle one-shot recording admin commands.
+
+    Returns True when a command was handled and startup should exit.
+    """
     if args.list_recordings:
         recordings = cc_dump.io.sessions.list_recordings()
         # [LAW:single-enforcer] CLI owns terminal side effects; renderer stays pure.
