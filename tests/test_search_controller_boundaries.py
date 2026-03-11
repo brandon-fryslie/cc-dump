@@ -154,4 +154,5 @@ def test_navigate_to_current_clears_reveal_when_no_matches():
     ctrl.navigate_to_current(app)
 
     assert conv.clear_reveal_calls
+    assert conv.clear_reveal_calls[0][1] is True
     assert conv.reveal_calls == []

@@ -72,12 +72,21 @@ class ViewOverrides:
         *,
         block_id: int,
         region_index: int | None = None,
-    ) -> None:
+    ) -> bool:
         """Set temporary search reveal target state."""
+        next_blocks = {block_id}
+        next_regions = (
+            {(block_id, region_index)} if region_index is not None else set()
+        )
+        changed = (
+            next_blocks != self._search_reveal_blocks
+            or next_regions != self._search_reveal_regions
+        )
         self._search_reveal_blocks = {block_id}
         self._search_reveal_regions = (
             {(block_id, region_index)} if region_index is not None else set()
         )
+        return changed
 
     def clear_search_reveal(self) -> bool:
         """Clear temporary search reveal state and return whether it changed."""
