@@ -22,6 +22,7 @@ from rich.text import Text
 from textual.widgets import Static
 
 import cc_dump.core.palette
+import cc_dump.core.segmentation
 from cc_dump.core.analysis import fmt_tokens
 import cc_dump.tui.rendering
 
@@ -55,6 +56,7 @@ class SearchMatch:
     text_offset: int
     text_length: int
     block: object = None
+    region_index: int | None = None
 
 
 @dataclass
@@ -368,6 +370,28 @@ def _collect_descendants(block, hier_idx: int) -> list[tuple[int, object]]:
     return items
 
 
+def _match_region_index(
+    block: object,
+    text_offset: int,
+    *,
+    segmentation_cache: dict[int, cc_dump.core.segmentation.SegmentResult],
+) -> int | None:
+    """Resolve content region index for a match offset inside a text-like block."""
+    content = getattr(block, "content", None)
+    regions = getattr(block, "content_regions", None) or []
+    if not isinstance(content, str) or not regions:
+        return None
+    cache_key = id(block)
+    seg = segmentation_cache.get(cache_key)
+    if seg is None:
+        seg = cc_dump.core.segmentation.segment(content)
+        segmentation_cache[cache_key] = seg
+    for i, sb in enumerate(seg.sub_blocks):
+        if sb.span.start <= text_offset < sb.span.end and i < len(regions):
+            return regions[i].index
+    return None
+
+
 def find_all_matches(
     turns: Sequence[object],
     pattern: re.Pattern,
@@ -388,6 +412,7 @@ def find_all_matches(
     // blocks without children contribute only themselves.
     """
     matches: list[SearchMatch] = []
+    segmentation_cache: dict[int, cc_dump.core.segmentation.SegmentResult] = {}
 
     for turn_idx in range(len(turns) - 1, -1, -1):
         td = turns[turn_idx]
@@ -406,6 +431,11 @@ def find_all_matches(
 
                 block_matches = list(pattern.finditer(text))
                 for m in reversed(block_matches):
+                    region_index = _match_region_index(
+                        block,
+                        m.start(),
+                        segmentation_cache=segmentation_cache,
+                    )
                     matches.append(
                         SearchMatch(
                             turn_index=turn_idx,
@@ -413,6 +443,7 @@ def find_all_matches(
                             text_offset=m.start(),
                             text_length=m.end() - m.start(),
                             block=block,
+                            region_index=region_index,
                         )
                     )
 
