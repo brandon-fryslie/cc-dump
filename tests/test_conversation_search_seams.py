@@ -196,3 +196,25 @@ def test_clear_search_reveal_clears_temporary_state():
     assert conv.clear_search_reveal(rerender=False) is True
     assert conv._view_overrides.has_search_reveal_block(1) is False
     assert conv._view_overrides.has_search_reveal_region(1, 0) is False
+
+
+def test_clear_search_reveal_honors_rerender_when_state_is_already_clear(monkeypatch):
+    conv = ConversationView()
+    calls: list[tuple[object, object]] = []
+    marker = object()
+    conv._last_search_ctx = marker
+    monkeypatch.setattr(
+        ConversationView,
+        "is_attached",
+        property(lambda _self: True),
+    )
+    monkeypatch.setattr(
+        conv,
+        "rerender",
+        lambda filters, search_ctx=None: calls.append((filters, search_ctx)),
+    )
+
+    changed = conv.clear_search_reveal(search_ctx=None, rerender=True)
+
+    assert changed is False
+    assert calls == [(conv._last_filters, marker)]

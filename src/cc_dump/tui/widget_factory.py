@@ -644,17 +644,23 @@ class ConversationView(ScrollView):
         if block_id is None:
             return False
         region_index = getattr(match, "region_index", None)
-        self._view_overrides.set_search_reveal(
+        changed = self._view_overrides.set_search_reveal(
             block_id=block_id,
             region_index=region_index if isinstance(region_index, int) else None,
         )
-        self.mark_overrides_changed()
-        if rerender and self.is_attached:
-            self.rerender(
-                self._last_filters,
-                search_ctx=self._last_search_ctx if search_ctx is None else search_ctx,
-            )
+        if changed:
+            self.mark_overrides_changed()
+        self._rerender_search_projection(search_ctx=search_ctx, rerender=rerender)
         return self._scroll_to_search_match(match)
+
+    def _rerender_search_projection(self, *, search_ctx: object = None, rerender: bool) -> None:
+        """Apply search projection rerender when requested."""
+        if not rerender or not self.is_attached:
+            return
+        self.rerender(
+            self._last_filters,
+            search_ctx=self._last_search_ctx if search_ctx is None else search_ctx,
+        )
 
     def clear_search_reveal(
         self,
@@ -664,15 +670,11 @@ class ConversationView(ScrollView):
     ) -> bool:
         """Clear temporary search reveal overrides owned by ConversationView."""
         changed = self._view_overrides.clear_search_reveal()
-        if not changed:
-            return False
-        self.mark_overrides_changed()
-        if rerender and self.is_attached:
-            self.rerender(
-                self._last_filters,
-                search_ctx=self._last_search_ctx if search_ctx is None else search_ctx,
-            )
-        return True
+        if changed:
+            self.mark_overrides_changed()
+        # [LAW:dataflow-not-control-flow] Render intent is honored independent of change detection.
+        self._rerender_search_projection(search_ctx=search_ctx, rerender=rerender)
+        return changed
 
     def current_scroll_y(self) -> float:
         """Return current vertical scroll offset."""
