@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-cc-dump is a transparent HTTP proxy for monitoring Claude Code API traffic. It intercepts Anthropic API requests, tracks system prompt changes with diffs, and provides a real-time Textual TUI with HAR recording/replay capabilities. Python 3.10+, production dependencies: `textual`, `textual-serve`, `tiktoken`. See [PROJECT_SPEC.md](PROJECT_SPEC.md) for goals and [ARCHITECTURE.md](ARCHITECTURE.md) for system design.
+cc-dump is a transparent HTTP proxy for monitoring Claude Code API traffic. It intercepts Anthropic API requests, tracks system prompt changes with diffs, and provides a real-time Textual TUI with HAR recording/replay capabilities. Python 3.10+, production dependencies: `textual`, `textual-serve`, `libtmux`, `watchfiles`, `snarfx`. See [PROJECT_SPEC.md](PROJECT_SPEC.md) for goals and [ARCHITECTURE.md](ARCHITECTURE.md) for system design.
 
 **Product decisions:** See [PRODUCT_DECISIONS.md](PRODUCT_DECISIONS.md) before proposing feature removal.
 
