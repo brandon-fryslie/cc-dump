@@ -188,11 +188,10 @@ class TurnData:
 
 @dataclass
 class ScrollAnchor:
-    """Block-level scroll anchor for stable scroll position across vis_state changes."""
+    """Turn-level scroll anchor for stable viewport preservation across rerenders."""
 
     turn_index: int      # index into _turns
-    block_index: int     # original block index (key in block_strip_map)
-    line_in_block: int   # line offset within block's rendered strips
+    line_in_turn: int    # top-of-viewport offset within rendered turn strips
 
 
 @dataclass(frozen=True)
@@ -849,7 +848,7 @@ class ConversationView(ScrollView):
     def _deferred_offset_recalc(self, from_turn_index: int):
         """Recalculate offsets after a lazy re-render, then refresh display.
 
-        Resolves stored block-level anchor to prevent viewport drift
+        Resolves stored turn-level anchor to prevent viewport drift
         when off-viewport turns lazily re-render and shift line offsets.
         """
         self._deferred_offset_recalc_start_idx = from_turn_index
@@ -1138,8 +1137,7 @@ class ConversationView(ScrollView):
             return
         self._scroll_anchor = ScrollAnchor(
             turn_index=max(0, anchor.turn_index - pruned_count),
-            block_index=anchor.block_index,
-            line_in_block=anchor.line_in_block,
+            line_in_turn=anchor.line_in_turn,
         )
 
     def _clear_pending_filter_snapshots(self) -> None:
@@ -1851,7 +1849,7 @@ class ConversationView(ScrollView):
         super().watch_scroll_y(old_value, new_value)
         if self._scrolling_programmatically:
             return
-        # Compute anchor on user scroll (block-level anchor for vis_state changes)
+        # Compute anchor on user scroll (turn-level anchor for vis_state changes)
         self._scroll_anchor = self._compute_anchor_from_scroll()
         self._dispatch_follow_event(
             FollowEvent.USER_SCROLL,
@@ -1879,7 +1877,7 @@ class ConversationView(ScrollView):
             self.scroll_home(animate=False)
 
     def capture_scroll_anchor(self) -> None:
-        """Capture the current block-level anchor for later restore.
+        """Capture the current turn-level anchor for later restore.
 
         // [LAW:one-source-of-truth] ConversationView owns `_scroll_anchor` lifecycle.
         """
@@ -1946,33 +1944,10 @@ class ConversationView(ScrollView):
 
         return next_start - block_start
 
-    def _nearest_visible_block_offset(self, turn: TurnData, target_block_index: int) -> int:
-        """Find nearest visible block to target_block_index, prefer earlier blocks.
-
-        Returns strip offset (line within turn) of the nearest visible block.
-        If no blocks visible, returns 0.
-        """
-        if not turn.block_strip_map:
-            return 0
-
-        # Find nearest earlier block
-        best_idx = None
-        best_offset = -1
-        for idx, offset in turn.block_strip_map.items():
-            if idx <= target_block_index and offset > best_offset:
-                best_idx = idx
-                best_offset = offset
-
-        if best_idx is not None:
-            return best_offset
-
-        # No earlier block, use first visible block
-        return min(turn.block_strip_map.values())
-
     def _compute_anchor_from_scroll(self) -> ScrollAnchor | None:
-        """Compute block-level anchor from current scroll_y.
+        """Compute turn-level anchor from current scroll_y.
 
-        Returns ScrollAnchor(turn_index, block_index, line_in_block).
+        Returns ScrollAnchor(turn_index, line_in_turn).
         Returns None if no turns or scroll position invalid.
         """
         if not self._turns:
@@ -1983,67 +1958,57 @@ class ConversationView(ScrollView):
         if turn is None:
             return None
 
-        local_y = scroll_y - turn.line_offset
-
-        # Find which block contains local_y
-        block_idx = self._block_index_at_line(turn, scroll_y)
-        if block_idx is None:
-            # No block mapped to this line, anchor to turn start
-            return ScrollAnchor(turn.turn_index, 0, 0)
-
-        # Compute line offset within the block
-        block_start = turn.block_strip_map[block_idx]
-        line_in_block = local_y - block_start
-
-        return ScrollAnchor(turn.turn_index, block_idx, line_in_block)
+        line_in_turn = scroll_y - turn.line_offset
+        return ScrollAnchor(turn_index=turn.turn_index, line_in_turn=max(0, line_in_turn))
 
     def _scroll_programmatically_to(self, *, y: int) -> None:
         with self._programmatic_scroll():
             self.scroll_to(y=y, animate=False)
 
-    def _scroll_to_last_visible_turn(self) -> None:
-        if not self._turns:
-            return
-        last_turn = self._turns[-1]
-        if last_turn.line_count > 0:
-            self._scroll_programmatically_to(y=last_turn.line_offset)
-
-    def _nearest_visible_turn_index(self, *, anchor_turn_index: int) -> int | None:
-        for delta in range(1, len(self._turns)):
-            for idx in (anchor_turn_index + delta, anchor_turn_index - delta):
-                if 0 <= idx < len(self._turns) and self._turns[idx].line_count > 0:
-                    return idx
+    def _last_visible_turn_index(self) -> int | None:
+        for idx in range(len(self._turns) - 1, -1, -1):
+            if self._turns[idx].line_count > 0:
+                return idx
         return None
 
-    def _resolve_anchor_block(
-        self,
-        *,
-        turn: TurnData,
-        anchor_block_index: int,
-    ) -> tuple[int, int]:
-        block_start = turn.block_strip_map.get(anchor_block_index)
-        actual_block_idx = anchor_block_index
-        if block_start is None:
-            block_start = self._nearest_visible_block_offset(turn, anchor_block_index)
-            for idx, offset in turn.block_strip_map.items():
-                if offset == block_start:
-                    actual_block_idx = idx
-                    break
-        return (block_start, actual_block_idx)
+    def _resolve_anchor_turn_index(self, *, anchor_turn_index: int) -> int | None:
+        """Resolve the canonical topmost-visible-turn anchor index.
 
-    def _clamp_anchor_line(
-        self,
-        *,
-        turn: TurnData,
-        anchor: ScrollAnchor,
-        actual_block_idx: int,
-    ) -> int:
-        block_size = self._block_strip_count(turn, actual_block_idx)
-        if block_size == 0:
-            return 0
-        if actual_block_idx != anchor.block_index:
-            return block_size - 1
-        return min(anchor.line_in_block, block_size - 1)
+        // [LAW:one-source-of-truth] One anchor strategy: scan forward from anchor turn,
+        // wrapping once, and pick the first visible turn.
+        """
+        turn_count = len(self._turns)
+        if turn_count == 0:
+            return None
+
+        if anchor_turn_index >= turn_count:
+            # // [LAW:dataflow-not-control-flow] Stale out-of-range anchors map to
+            # // the last visible turn to preserve bottom-of-viewport semantics.
+            return self._last_visible_turn_index()
+
+        start = min(max(anchor_turn_index, 0), turn_count - 1)
+        for step in range(turn_count):
+            idx = (start + step) % turn_count
+            if self._turns[idx].line_count > 0:
+                return idx
+        return None
+
+    @staticmethod
+    def _coerce_non_negative_int(raw_value: object, *, default: int = 0) -> int:
+        """Convert persisted state to a safe, non-negative integer."""
+        # // [LAW:single-enforcer] Persisted anchor integer coercion is centralized here.
+        if isinstance(raw_value, int):
+            coerced = raw_value
+        elif isinstance(raw_value, float):
+            coerced = int(raw_value)
+        elif isinstance(raw_value, (str, bytes, bytearray)):
+            try:
+                coerced = int(raw_value)
+            except ValueError:
+                return default
+        else:
+            return default
+        return max(0, coerced)
 
     def _resolve_anchor(self):
         """Resolve stored anchor to scroll_y after content changes.
@@ -2055,37 +2020,19 @@ class ConversationView(ScrollView):
         if anchor is None:
             return
 
-        # Find anchor turn (or nearest visible)
-        if anchor.turn_index >= len(self._turns):
-            # Anchor turn no longer exists, scroll to last turn
-            self._scroll_to_last_visible_turn()
+        resolved_turn_index = self._resolve_anchor_turn_index(
+            anchor_turn_index=anchor.turn_index
+        )
+        if resolved_turn_index is None:
             return
 
-        turn = self._turns[anchor.turn_index]
-
-        # If turn is hidden (0 lines), find nearest visible turn
-        if turn.line_count == 0:
-            nearest_turn_index = self._nearest_visible_turn_index(
-                anchor_turn_index=anchor.turn_index
-            )
-            if nearest_turn_index is None:
-                return
-            self._scroll_programmatically_to(
-                y=self._turns[nearest_turn_index].line_offset
-            )
-            return
-
-        # Find anchor block (or nearest visible)
-        block_start, actual_block_idx = self._resolve_anchor_block(
-            turn=turn,
-            anchor_block_index=anchor.block_index,
+        turn = self._turns[resolved_turn_index]
+        line_in_turn = (
+            min(anchor.line_in_turn, turn.line_count - 1)
+            if resolved_turn_index == anchor.turn_index
+            else 0
         )
-        clamped_line = self._clamp_anchor_line(
-            turn=turn,
-            anchor=anchor,
-            actual_block_idx=actual_block_idx,
-        )
-        target_y = turn.line_offset + block_start + clamped_line
+        target_y = turn.line_offset + line_in_turn
         self._scroll_programmatically_to(y=target_y)
 
     def text_select_all(self) -> None:
@@ -2166,7 +2113,7 @@ class ConversationView(ScrollView):
         # Serialize scroll anchor for position preservation across hot-reload
         anchor = self._scroll_anchor
         anchor_dict = (
-            {"turn_index": anchor.turn_index, "block_index": anchor.block_index, "line_in_block": anchor.line_in_block}
+            {"turn_index": anchor.turn_index, "line_in_turn": anchor.line_in_turn}
             if anchor is not None
             else None
         )
@@ -2217,10 +2164,15 @@ class ConversationView(ScrollView):
         if state is not None:
             anchor_dict = state.get("scroll_anchor")
             if anchor_dict is not None:
+                line_in_turn_raw = anchor_dict.get(
+                    "line_in_turn",
+                    anchor_dict.get("line_in_block", 0),  # Legacy hot-reload state shape.
+                )
                 self._scroll_anchor = ScrollAnchor(
-                    turn_index=anchor_dict["turn_index"],
-                    block_index=anchor_dict["block_index"],
-                    line_in_block=anchor_dict["line_in_block"],
+                    turn_index=self._coerce_non_negative_int(
+                        anchor_dict.get("turn_index", 0)
+                    ),
+                    line_in_turn=self._coerce_non_negative_int(line_in_turn_raw),
                 )
                 if not self._is_following:
                     self._resolve_anchor()
