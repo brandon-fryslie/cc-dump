@@ -16,9 +16,7 @@ from typing import NamedTuple
 def estimate_tokens(text: str) -> int:
     """Estimate token count from text using ~4 chars/token heuristic.
 
-    Fast approximation for real-time display (TurnBudget analytics).
-    For accuracy-sensitive storage (DB tool invocations), see
-    token_counter.count_tokens() which uses tiktoken.
+    Fast approximation used for all estimated-token features.
     """
     return max(1, len(text) // 4)
 
