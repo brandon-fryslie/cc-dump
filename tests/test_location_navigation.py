@@ -1,5 +1,7 @@
 """Tests for shared block-location navigation helpers."""
 
+from types import SimpleNamespace
+
 from cc_dump.tui.location_navigation import BlockLocation, go_to_location, resolve_scroll_key
 
 
@@ -15,12 +17,16 @@ class _Conv:
         self._turns = turns
         self.ensure_calls: list[int] = []
         self.scroll_calls: list[tuple[int, int]] = []
+        self.expand_calls: list[tuple[int, bool, bool]] = []
 
     def ensure_turn_rendered(self, turn_index: int):
         self.ensure_calls.append(turn_index)
 
     def scroll_to_block(self, turn_index: int, block_index: int):
         self.scroll_calls.append((turn_index, block_index))
+
+    def set_block_expansion(self, block_id: int, expanded: bool, *, rerender: bool):
+        self.expand_calls.append((block_id, expanded, rerender))
 
 
 def test_resolve_scroll_key_uses_block_identity_when_available():
@@ -66,6 +72,25 @@ def test_go_to_location_runs_rerender_and_scroll():
     assert calls["rerender"] == 1
     assert conv.ensure_calls == [0]
     assert conv.scroll_calls == [(0, 0)]
+
+
+def test_go_to_location_expands_target_block_via_public_seam():
+    block = SimpleNamespace(block_id=777)
+    turn = _Turn(
+        blocks=[block],
+        block_strip_map={0: 0},
+        flat_blocks=[block],
+    )
+    conv = _Conv([turn])
+
+    ok = go_to_location(
+        conv,
+        BlockLocation(turn_index=0, block_index=0, block_id=block.block_id, block=block),
+        rerender=lambda: None,
+    )
+
+    assert ok is True
+    assert conv.expand_calls == [(777, True, False)]
 
 
 def test_go_to_location_rejects_invalid_indices():

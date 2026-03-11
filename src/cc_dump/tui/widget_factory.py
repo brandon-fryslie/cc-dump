@@ -483,6 +483,107 @@ class ConversationView(ScrollView):
         """
         return SearchTurnsSnapshot(turns=tuple(self._turns))
 
+    def _iter_blocks_with_descendants(self):
+        """Yield all blocks in render-order pre-order traversal."""
+        stack: list = []
+        for td in reversed(self._turns):
+            stack.extend(reversed(td.blocks))
+        while stack:
+            block = stack.pop()
+            yield block
+            children = getattr(block, "children", []) or []
+            for child in reversed(children):
+                stack.append(child)
+
+    def _find_block_by_id(self, block_id: int):
+        """Locate a block object by stable block_id across rendered turns."""
+        for block in self._iter_blocks_with_descendants():
+            if getattr(block, "block_id", None) == block_id:
+                return block
+        return None
+
+    def _default_block_expanded(self, block) -> bool:
+        category = cc_dump.tui.rendering.get_category(block)
+        if category is None:
+            return True
+        vis = self._last_filters.get(category.value, cc_dump.core.formatting.ALWAYS_VISIBLE)
+        return bool(vis.expanded)
+
+    def _rerender_after_block_override_change(self, *, rerender: bool) -> None:
+        if not rerender or not self.is_attached:
+            return
+        if not self._is_following:
+            self.capture_scroll_anchor()
+        self.rerender(self._last_filters, search_ctx=self._last_search_ctx)
+
+    def is_block_expandable(self, block_id: int) -> bool:
+        """Return whether a block is currently expandable per renderer metadata."""
+        block_vs = self._view_overrides.block_state(block_id)
+        return bool(block_vs is not None and block_vs.expandable)
+
+    def set_block_expansion(
+        self,
+        block_id: int,
+        expanded: bool,
+        *,
+        rerender: bool = True,
+    ) -> bool:
+        """Set per-block expansion override through canonical view state.
+
+        Returns True when override state changed, False for no-op.
+        """
+        block = self._find_block_by_id(block_id)
+        block_vs = self._view_overrides.block_state(block_id)
+        if block is None or block_vs is None or not block_vs.expandable:
+            return False
+        next_expanded = bool(expanded)
+        if block_vs.expanded == next_expanded:
+            return False
+        # // [LAW:one-source-of-truth] Per-block expansion override lives in ViewOverrides only.
+        block_vs.expanded = next_expanded
+        self.mark_overrides_changed()
+        self._rerender_after_block_override_change(rerender=rerender)
+        return True
+
+    def toggle_block_expansion(self, block_id: int, *, rerender: bool = True) -> bool:
+        """Toggle per-block expansion state for an expandable block."""
+        block = self._find_block_by_id(block_id)
+        block_vs = self._view_overrides.block_state(block_id)
+        if block is None or block_vs is None or not block_vs.expandable:
+            return False
+        current_expanded = (
+            self._default_block_expanded(block)
+            if block_vs.expanded is None
+            else bool(block_vs.expanded)
+        )
+        return self.set_block_expansion(
+            block_id,
+            not current_expanded,
+            rerender=rerender,
+        )
+
+    def clear_block_expansion(self, block_id: int, *, rerender: bool = True) -> bool:
+        """Clear per-block expansion override back to category default."""
+        block_vs = self._view_overrides.block_state(block_id)
+        if block_vs is None or not block_vs.expandable or block_vs.expanded is None:
+            return False
+        block_vs.expanded = None
+        self.mark_overrides_changed()
+        self._rerender_after_block_override_change(rerender=rerender)
+        return True
+
+    def clear_category_overrides(
+        self,
+        category: cc_dump.core.formatting.Category,
+        *,
+        rerender: bool = False,
+    ) -> None:
+        """Clear per-category block + region expansion overrides."""
+        top_level_blocks = [block for td in self._turns for block in td.blocks]
+        self._view_overrides.clear_category(top_level_blocks, category)
+        self.mark_overrides_changed()
+        self._rerender_after_block_override_change(rerender=rerender)
+
     def current_scroll_y(self) -> float:
         """Return current vertical scroll offset."""
         return float(self.scroll_offset.y)

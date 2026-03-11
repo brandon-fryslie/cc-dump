@@ -7,6 +7,7 @@ from cc_dump.core.formatting import (
     TextContentBlock,
     ToolUseBlock,
     HeaderBlock,
+    ErrorBlock,
     Category,
     ALWAYS_VISIBLE,
     populate_content_regions,
@@ -70,12 +71,16 @@ def test_view_overrides_clear_category():
     # Set region overrides
     vo.get_region(user_block.block_id, 0).expanded = False
     vo.get_region(asst_block.block_id, 0).expanded = False
+    vo.get_block(user_block.block_id).expanded = False
+    vo.get_block(asst_block.block_id).expanded = False
 
     # Clear only USER category
     vo.clear_category([user_block, asst_block], Category.USER)
 
     assert vo.get_region(user_block.block_id, 0).expanded is None  # cleared
     assert vo.get_region(asst_block.block_id, 0).expanded is False  # untouched
+    assert vo.get_block(user_block.block_id).expanded is None  # cleared
+    assert vo.get_block(asst_block.block_id).expanded is False  # untouched
 
 
 # ─── AC4: serialization round-trip ────────────────────────────────────────
@@ -90,6 +95,7 @@ def test_view_overrides_serialization():
 
     vo.get_block(b1.block_id).expandable = True
     vo.get_block(b2.block_id).expandable = False
+    vo.get_block(b1.block_id).expanded = False
 
     vo.get_region(b1.block_id, 0).expanded = False
     vo.get_region(b1.block_id, 1).expanded = None  # default — not serialized
@@ -100,6 +106,7 @@ def test_view_overrides_serialization():
     # Block state
     assert restored.get_block(b1.block_id).expandable is True
     assert restored.get_block(b2.block_id).expandable is False
+    assert restored.get_block(b1.block_id).expanded is False
 
     # Region state
     assert restored.get_region(b1.block_id, 0).expanded is False
@@ -161,3 +168,17 @@ def test_auto_create_on_miss():
     assert isinstance(rvs, RegionViewState)
     assert rvs.expanded is None
     assert rvs.strip_range is None
+
+
+def test_categoryless_block_respects_block_expansion_override():
+    from cc_dump.tui.rendering import _resolve_visibility
+
+    block = ErrorBlock(code=500, reason="boom")
+    vo = ViewOverrides()
+    vo.get_block(block.block_id).expanded = False
+
+    vis = _resolve_visibility(block, {}, overrides=vo)
+
+    assert vis.visible is True
+    assert vis.full is True
+    assert vis.expanded is False
