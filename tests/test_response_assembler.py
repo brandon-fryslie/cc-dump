@@ -2,7 +2,7 @@
 
 
 from cc_dump.pipeline.response_assembler import (
-    OpenAIResponseAssembler,
+    OpenAiChatResponseAssembler,
     ResponseAssembler,
     reconstruct_message_from_events,
     sse_event_to_dict,
@@ -508,12 +508,12 @@ def test_sse_event_to_dict_tool_use_roundtrip():
     assert result["stop_reason"] == "tool_use"
 
 
-# ─── OpenAIResponseAssembler ────────────────────────────────────────────────
+# ─── OpenAiChatResponseAssembler ────────────────────────────────────────────
 
 
 def test_openai_assembler_text_stream():
     """OpenAI assembler reconstructs text content from streaming chunks."""
-    assembler = OpenAIResponseAssembler()
+    assembler = OpenAiChatResponseAssembler()
 
     chunks = [
         {
@@ -561,7 +561,7 @@ def test_openai_assembler_text_stream():
 
 def test_openai_assembler_tool_calls():
     """OpenAI assembler reconstructs tool calls from streaming chunks."""
-    assembler = OpenAIResponseAssembler()
+    assembler = OpenAiChatResponseAssembler()
 
     chunks = [
         {
@@ -608,7 +608,7 @@ def test_openai_assembler_tool_calls():
 
 def test_openai_assembler_multiple_tool_calls():
     """OpenAI assembler handles multiple parallel tool calls."""
-    assembler = OpenAIResponseAssembler()
+    assembler = OpenAiChatResponseAssembler()
 
     chunks = [
         {
@@ -657,14 +657,14 @@ def test_openai_assembler_multiple_tool_calls():
 
 def test_openai_assembler_no_events():
     """OpenAI assembler with no events returns None."""
-    assembler = OpenAIResponseAssembler()
+    assembler = OpenAiChatResponseAssembler()
     assembler.on_done()
     assert assembler.result is None
 
 
 def test_openai_assembler_empty_content():
     """OpenAI assembler with no content produces None content."""
-    assembler = OpenAIResponseAssembler()
+    assembler = OpenAiChatResponseAssembler()
 
     chunks = [
         {
@@ -687,4 +687,30 @@ def test_openai_assembler_empty_content():
     assert result is not None
     # Empty string → None via `message_content or None`
     assert result["choices"][0]["message"]["content"] is None
+    assert result["choices"][0]["finish_reason"] == "stop"
+
+
+def test_openai_assembler_ignores_malformed_chunks_and_choices():
+    """Malformed chunk/choice payloads are ignored without breaking assembly."""
+    assembler = OpenAiChatResponseAssembler()
+
+    chunks: list[object] = [
+        "not-a-dict",
+        {"id": "chatcmpl-malformed", "model": "gpt-4o-mini", "choices": "bad-choices"},
+        {"id": "chatcmpl-malformed", "model": "gpt-4o-mini", "choices": [123, {"delta": "bad-delta"}]},
+        {
+            "id": "chatcmpl-malformed",
+            "model": "gpt-4o-mini",
+            "choices": [{"index": 0, "delta": {"content": "ok"}, "finish_reason": "stop"}],
+        },
+    ]
+
+    for chunk in chunks:
+        assembler.on_event("data", chunk)
+    assembler.on_done()
+
+    result = assembler.result
+    assert result is not None
+    assert result["id"] == "chatcmpl-malformed"
+    assert result["choices"][0]["message"]["content"] == "ok"
     assert result["choices"][0]["finish_reason"] == "stop"

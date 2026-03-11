@@ -321,9 +321,9 @@ def _resume_path(primary_record_path: str | None, replay_path: str | None) -> st
     return _existing_path(primary_record_path) or _existing_path(replay_path)
 
 
-def main():
-    auto_launch_config, _argv, auto_launch_extra_args = _detect_run_subcommand(sys.argv[1:])
-
+def _build_cli_parser(
+    default_provider_spec: cc_dump.providers.ProviderSpec,
+) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Claude Code API monitor proxy",
         epilog=(
@@ -332,8 +332,6 @@ def main():
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    default_provider_key = cc_dump.providers.DEFAULT_PROVIDER_KEY
-    default_provider_spec = cc_dump.providers.get_provider_spec(default_provider_key)
     target = os.environ.get(
         default_provider_spec.base_url_env,
         default_provider_spec.default_target,
@@ -392,7 +390,7 @@ def main():
         const=20,
         type=int,
         default=None,
-        help="Delete older recordings, keeping newest N (default: 20).",
+        help="Delete older recordings, keeping newest N (default: 20), and exit.",
     )
     parser.add_argument(
         "--cleanup-dry-run",
@@ -432,6 +430,199 @@ def main():
             default=False,
             help=f"Disable the {spec.display_name} proxy server",
         )
+    return parser
+
+
+def _handle_recording_admin_commands(args: argparse.Namespace) -> bool:
+    """Handle one-shot recording admin commands.
+
+    Returns True when a command was handled and startup should exit.
+    """
+    if args.list_recordings:
+        recordings = cc_dump.io.sessions.list_recordings()
+        # [LAW:single-enforcer] CLI owns terminal side effects; renderer stays pure.
+        print(cc_dump.cli_presentation.render_recordings_list(recordings), end="")
+        return True
+
+    if args.cleanup_recordings is None:
+        return False
+    result = cc_dump.io.sessions.cleanup_recordings(
+        keep=args.cleanup_recordings,
+        dry_run=bool(args.cleanup_dry_run),
+    )
+    mode = "Dry run" if result["dry_run"] else "Cleanup"
+    print(
+        f"{mode}: removed {result['removed']} recording(s), "
+        f"kept {result['kept']}, freed {cc_dump.io.sessions.format_size(result['bytes_freed'])}"
+    )
+    if result["removed_paths"]:
+        for path in result["removed_paths"]:
+            print(f"  - {path}")
+    return True
+
+
+def _apply_resume_argument(args: argparse.Namespace) -> bool:
+    if args.resume is None:
+        return True
+    if args.resume == "latest":
+        latest = cc_dump.io.sessions.get_latest_recording()
+        if latest is None:
+            print("No recordings found to resume from.")
+            return False
+        args.replay = latest
+    else:
+        args.replay = args.resume
+    print(f"🔄 Resuming from: {args.replay}")
+    return True
+
+
+def _apply_continue_argument(args: argparse.Namespace) -> bool:
+    if not args.continue_session:
+        return True
+    latest = cc_dump.io.sessions.get_latest_recording()
+    if latest is None:
+        print("No recordings found to continue from.")
+        return False
+    args.replay = latest
+    print(f"🔄 Continuing from: {latest}")
+    return True
+
+
+ReplayData = list[tuple[dict, dict, int, dict, dict, str]]
+
+
+def _load_replay_data(replay_path: str | None) -> tuple[ReplayData | None, bool]:
+    if not replay_path:
+        return None, True
+    print(f"   Loading replay: {replay_path}")
+    try:
+        replay_data = cc_dump.pipeline.har_replayer.load_har(replay_path)
+    except Exception as exc:
+        print(f"   Error loading HAR file: {exc}")
+        return None, False
+    print(f"   Found {len(replay_data)} request/response pairs")
+    return replay_data, True
+
+
+def _configure_har_recording_subscribers(
+    *,
+    args: argparse.Namespace,
+    router: EventRouter,
+    bindings: tuple[ProviderProxyBinding, ...],
+) -> tuple[list[cc_dump.pipeline.har_recorder.HARRecordingSubscriber], str | None]:
+    har_recorders: list[cc_dump.pipeline.har_recorder.HARRecordingSubscriber] = []
+    recording_paths: dict[str, str] = {}
+    if args.no_record:
+        print("   Recording: disabled (--no-record)")
+        return har_recorders, None
+
+    # [LAW:one-source-of-truth] Recording output directory is centralized in one resolver.
+    recordings_dir = _recordings_output_dir(args.record)
+    recordings_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
+    active_providers = [binding.spec.key for binding in bindings]
+
+    for provider in active_providers:
+        record_path = _recording_path_for_provider(recordings_dir, provider, timestamp)
+        recording_paths[provider] = record_path
+        recorder = cc_dump.pipeline.har_recorder.HARRecordingSubscriber(
+            record_path,
+            provider_filter=provider,
+        )
+        har_recorders.append(recorder)
+        router.add_subscriber(DirectSubscriber(recorder.on_event))
+        print(f"   Recording ({provider}): {record_path} (created on first API call)")
+    primary_record_path = next(
+        (
+            recording_paths.get(binding.spec.key)
+            for binding in bindings
+            if recording_paths.get(binding.spec.key)
+        ),
+        None,
+    )
+    return har_recorders, primary_record_path
+
+
+def _build_tmux_controller(provider_endpoints):
+    tmux_ctrl = None
+    active_launcher_label = "tool"
+    tmux_state_cls = cc_dump.app.tmux_controller.TmuxState
+    if cc_dump.app.tmux_controller.is_available():
+        active_config = cc_dump.app.launch_config.get_active_config()
+        active_profile = cc_dump.app.launch_config.build_launch_profile(
+            active_config,
+            provider_endpoints=provider_endpoints,
+        )
+        active_launcher_label = active_profile.launcher_label.lower()
+        tmux_ctrl = cc_dump.app.tmux_controller.TmuxController(
+            launch_command=active_config.resolved_command,
+            process_names=active_profile.process_names,
+            launch_env=active_profile.environment,
+            launcher_label=active_profile.launcher_label,
+        )
+    return tmux_ctrl, active_launcher_label, tmux_state_cls
+
+
+def _tmux_status_message(tmux_ctrl, tmux_state_cls, active_launcher_label: str) -> str:
+    # [LAW:dataflow-not-control-flow] Status message comes from a state map.
+    status_map = {
+        None: "disabled (not in tmux)" if not os.environ.get("TMUX") else "disabled (libtmux not installed)",
+        tmux_state_cls.READY: f"enabled (press 'c' to launch {active_launcher_label})",
+        tmux_state_cls.TOOL_RUNNING: f"enabled ({active_launcher_label} running)",
+        tmux_state_cls.NOT_IN_TMUX: "disabled (not in tmux)",
+        tmux_state_cls.NO_LIBTMUX: "disabled (libtmux not installed)",
+    }
+    tmux_state = tmux_ctrl.state if tmux_ctrl else None
+    return status_map[tmux_state]
+
+
+def _shutdown_runtime(
+    *,
+    app: CcDumpApp,
+    tmux_ctrl,
+    bindings: tuple[ProviderProxyBinding, ...],
+    router: EventRouter,
+    har_recorders: list[cc_dump.pipeline.har_recorder.HARRecordingSubscriber],
+    actual_port: int,
+    primary_record_path: str | None,
+    replay_arg: str | None,
+) -> None:
+    # Dump buffered errors to stderr (TUI is gone, terminal is restored)
+    if app._error_log:
+        logger.error("[cc-dump] Errors during session:")
+        for line in app._error_log:
+            logger.error("  %s", line)
+
+    # Clean up tmux state (unzoom)
+    if tmux_ctrl:
+        tmux_ctrl.cleanup()
+    # Graceful shutdown with timeout for in-flight requests
+    if bindings:
+        logger.info("Shutting down gracefully (press Ctrl+C again to force quit)...")
+    for binding in bindings:
+        _shutdown_binding(binding, timeout=3.0)
+
+    # Clean up other resources
+    router.stop()
+    for recorder in har_recorders:
+        recorder.close()
+
+    # Print restart command — unstoppable (mask SIGINT so Ctrl+C can't suppress it)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    replay_path = _resume_path(primary_record_path, replay_arg)
+    cmd = f"{sys.argv[0]} --port {actual_port}"
+    if replay_path:
+        cmd += f" --resume {replay_path}"
+    logger.info("To resume: %s", cmd)
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+
+def main():
+    auto_launch_config, _argv, auto_launch_extra_args = _detect_run_subcommand(sys.argv[1:])
+
+    default_provider_key = cc_dump.providers.DEFAULT_PROVIDER_KEY
+    default_provider_spec = cc_dump.providers.get_provider_spec(default_provider_key)
+    parser = _build_cli_parser(default_provider_spec)
     args = parser.parse_args(_argv)
     auto_launch_config = _resolve_auto_launch_config_name(auto_launch_config)
 
@@ -448,62 +639,18 @@ def main():
     # Initialize color palette before anything else imports it
     cc_dump.core.palette.init_palette()
 
-    if args.list_recordings:
-        recordings = cc_dump.io.sessions.list_recordings()
-        # [LAW:single-enforcer] CLI owns terminal side effects; renderer stays pure.
-        print(cc_dump.cli_presentation.render_recordings_list(recordings), end="")
+    if _handle_recording_admin_commands(args):
         return
 
-    if args.cleanup_recordings is not None:
-        result = cc_dump.io.sessions.cleanup_recordings(
-            keep=args.cleanup_recordings,
-            dry_run=bool(args.cleanup_dry_run),
-        )
-        mode = "Dry run" if result["dry_run"] else "Cleanup"
-        print(
-            f"{mode}: removed {result['removed']} recording(s), "
-            f"kept {result['kept']}, freed {cc_dump.io.sessions.format_size(result['bytes_freed'])}"
-        )
-        if result["removed_paths"]:
-            for path in result["removed_paths"]:
-                print(f"  - {path}")
+    if not _apply_resume_argument(args):
         return
-
-    # Resolve --continue / --resume to load latest recording
-    if args.resume is not None:
-        if args.resume == "latest":
-            latest = cc_dump.io.sessions.get_latest_recording()
-            if latest is None:
-                print("No recordings found to resume from.")
-                return
-            args.replay = latest
-        else:
-            args.replay = args.resume
-        print(f"🔄 Resuming from: {args.replay}")
-
-    if args.continue_session:
-        latest = cc_dump.io.sessions.get_latest_recording()
-        if latest is None:
-            print("No recordings found to continue from.")
-            return
-        args.replay = latest
-        print(f"🔄 Continuing from: {latest}")
+    if not _apply_continue_argument(args):
+        return
 
     event_q: queue.Queue[PipelineEvent] = queue.Queue()
-
-    # Load replay data if specified, but always start proxy
-    replay_data = None
-
-    if args.replay:
-        # Load HAR file (complete messages, NO event conversion)
-        print(f"   Loading replay: {args.replay}")
-
-        try:
-            replay_data = cc_dump.pipeline.har_replayer.load_har(args.replay)
-            print(f"   Found {len(replay_data)} request/response pairs")
-        except Exception as e:
-            print(f"   Error loading HAR file: {e}")
-            return
+    replay_data, replay_ok = _load_replay_data(args.replay)
+    if not replay_ok:
+        return
 
     # ─── Start proxy servers ────────────────────────────────────────────────
     # // [LAW:one-type-per-behavior] All providers share ProxyHandler, parameterized by factory.
@@ -540,67 +687,18 @@ def main():
     router.add_subscriber(display_sub)
 
     # HAR recording subscriber (direct subscriber, inline writes)
-    har_recorders: list[cc_dump.pipeline.har_recorder.HARRecordingSubscriber] = []
-    recording_paths: dict[str, str] = {}
-    primary_record_path = None
-    if not args.no_record:
-        # [LAW:one-source-of-truth] Recording output directory is centralized in one resolver.
-        recordings_dir = _recordings_output_dir(args.record)
-        recordings_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
-        active_providers = [binding.spec.key for binding in bindings]
-
-        for provider in active_providers:
-            record_path = _recording_path_for_provider(recordings_dir, provider, timestamp)
-            recording_paths[provider] = record_path
-            recorder = cc_dump.pipeline.har_recorder.HARRecordingSubscriber(
-                record_path,
-                provider_filter=provider,
-            )
-            har_recorders.append(recorder)
-            router.add_subscriber(DirectSubscriber(recorder.on_event))
-            print(f"   Recording ({provider}): {record_path} (created on first API call)")
-        primary_record_path = next(
-            (
-                recording_paths.get(binding.spec.key)
-                for binding in bindings
-                if recording_paths.get(binding.spec.key)
-            ),
-            None,
-        )
-    else:
-        print("   Recording: disabled (--no-record)")
+    har_recorders, primary_record_path = _configure_har_recording_subscribers(
+        args=args,
+        router=router,
+        bindings=bindings,
+    )
 
     # Tmux integration (optional — no-op when not in tmux or libtmux missing)
     # Create settings store (reactive, hot-reloadable)
     settings_store = cc_dump.app.settings_store.create()
 
-    tmux_ctrl = None
-    active_launcher_label = "tool"
-    TmuxState = cc_dump.app.tmux_controller.TmuxState
-    if cc_dump.app.tmux_controller.is_available():
-        active_config = cc_dump.app.launch_config.get_active_config()
-        active_profile = cc_dump.app.launch_config.build_launch_profile(
-            active_config,
-            provider_endpoints=provider_endpoints,
-        )
-        active_launcher_label = active_profile.launcher_label.lower()
-        tmux_ctrl = cc_dump.app.tmux_controller.TmuxController(
-            launch_command=active_config.resolved_command,
-            process_names=active_profile.process_names,
-            launch_env=active_profile.environment,
-            launcher_label=active_profile.launcher_label,
-        )
-    # [LAW:dataflow-not-control-flow] Status message from state, not branching
-    _TMUX_STATUS = {
-        None: "disabled (not in tmux)" if not os.environ.get("TMUX") else "disabled (libtmux not installed)",
-        TmuxState.READY: "enabled (press 'c' to launch {})".format(active_launcher_label),
-        TmuxState.TOOL_RUNNING: "enabled ({} running)".format(active_launcher_label),
-        TmuxState.NOT_IN_TMUX: "disabled (not in tmux)",
-        TmuxState.NO_LIBTMUX: "disabled (libtmux not installed)",
-    }
-    tmux_state = tmux_ctrl.state if tmux_ctrl else None
-    print(f"   Tmux: {_TMUX_STATUS[tmux_state]}")
+    tmux_ctrl, active_launcher_label, tmux_state_cls = _build_tmux_controller(provider_endpoints)
+    print(f"   Tmux: {_tmux_status_message(tmux_ctrl, tmux_state_cls, active_launcher_label)}")
 
     side_channel_mgr, data_dispatcher = _configure_side_channel_runtime(
         settings_store=settings_store,
@@ -671,31 +769,13 @@ def main():
     try:
         app.run()
     finally:
-        # Dump buffered errors to stderr (TUI is gone, terminal is restored)
-        if app._error_log:
-            logger.error("[cc-dump] Errors during session:")
-            for line in app._error_log:
-                logger.error("  %s", line)
-
-        # Clean up tmux state (unzoom)
-        if tmux_ctrl:
-            tmux_ctrl.cleanup()
-        # Graceful shutdown with timeout for in-flight requests
-        if bindings:
-            logger.info("Shutting down gracefully (press Ctrl+C again to force quit)...")
-        for binding in bindings:
-            _shutdown_binding(binding, timeout=3.0)
-
-        # Clean up other resources
-        router.stop()
-        for recorder in har_recorders:
-            recorder.close()
-
-        # Print restart command — unstoppable (mask SIGINT so Ctrl+C can't suppress it)
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-        replay_path = _resume_path(primary_record_path, args.replay)
-        cmd = f"{sys.argv[0]} --port {actual_port}"
-        if replay_path:
-            cmd += f" --resume {replay_path}"
-        logger.info("To resume: %s", cmd)
-        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        _shutdown_runtime(
+            app=app,
+            tmux_ctrl=tmux_ctrl,
+            bindings=bindings,
+            router=router,
+            har_recorders=har_recorders,
+            actual_port=actual_port,
+            primary_record_path=primary_record_path,
+            replay_arg=args.replay,
+        )
