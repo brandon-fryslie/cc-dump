@@ -690,6 +690,28 @@ class TestScrollPreservation:
         assert conv._turns[1].line_count == 0
         assert conv.scroll_to.called
 
+    def test_out_of_range_anchor_resolves_to_last_visible_turn(self):
+        """Stale anchors beyond turn count should resolve to the last visible turn."""
+        conv = ConversationView()
+        conv._turns.extend(
+            [
+                TurnData(turn_index=0, blocks=[], strips=[Strip.blank(80)]),
+                TurnData(turn_index=1, blocks=[], strips=[Strip.blank(80)]),
+                TurnData(turn_index=2, blocks=[], strips=[]),
+                TurnData(turn_index=3, blocks=[], strips=[]),
+            ]
+        )
+        conv._recalculate_offsets()
+        conv._scroll_anchor = ScrollAnchor(turn_index=999, line_in_turn=0)
+        conv.scroll_to = MagicMock()
+
+        conv._resolve_anchor()
+
+        conv.scroll_to.assert_called_with(
+            y=conv._turns[1].line_offset,
+            animate=False,
+        )
+
 
 class TestWidestStripCache:
     """Test _widest_strip caching on TurnData."""
