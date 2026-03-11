@@ -584,6 +584,98 @@ class ConversationView(ScrollView):
         self.mark_overrides_changed()
         self._rerender_after_block_override_change(rerender=rerender)
 
+    def _search_match_block_id(self, match: object) -> int | None:
+        block = getattr(match, "block", None)
+        block_id = getattr(block, "block_id", None)
+        if isinstance(block_id, int):
+            return block_id
+        turn_index = getattr(match, "turn_index", -1)
+        block_index = getattr(match, "block_index", -1)
+        if (
+            not isinstance(turn_index, int)
+            or not isinstance(block_index, int)
+            or turn_index < 0
+            or turn_index >= len(self._turns)
+        ):
+            return None
+        turn = self._turns[turn_index]
+        if block_index < 0 or block_index >= len(turn.blocks):
+            return None
+        fallback_id = getattr(turn.blocks[block_index], "block_id", None)
+        return fallback_id if isinstance(fallback_id, int) else None
+
+    def _scroll_to_search_match(self, match: object) -> bool:
+        turn_index = getattr(match, "turn_index", -1)
+        block_index = getattr(match, "block_index", -1)
+        if (
+            not isinstance(turn_index, int)
+            or not isinstance(block_index, int)
+            or turn_index < 0
+            or turn_index >= len(self._turns)
+        ):
+            return False
+        self.ensure_turn_rendered(turn_index)
+        if turn_index >= len(self._turns):
+            return False
+        turn = self._turns[turn_index]
+        if block_index < 0 or block_index >= len(turn.blocks):
+            return False
+        from cc_dump.tui.location_navigation import BlockLocation, resolve_scroll_key
+        block = getattr(match, "block", None)
+        location = BlockLocation(
+            turn_index=turn_index,
+            block_index=block_index,
+            block_id=self._search_match_block_id(match),
+            block=block if block is not None else None,
+        )
+        scroll_key = resolve_scroll_key(turn, location)
+        self.scroll_to_block(turn_index, scroll_key)
+        return True
+
+    def reveal_search_match(
+        self,
+        match: object,
+        *,
+        search_ctx: object = None,
+        rerender: bool = True,
+    ) -> bool:
+        """Reveal and navigate to a specific search match via view-state seams."""
+        block_id = self._search_match_block_id(match)
+        if block_id is None:
+            return False
+        region_index = getattr(match, "region_index", None)
+        changed = self._view_overrides.set_search_reveal(
+            block_id=block_id,
+            region_index=region_index if isinstance(region_index, int) else None,
+        )
+        if changed:
+            self.mark_overrides_changed()
+        self._rerender_search_projection(search_ctx=search_ctx, rerender=rerender)
+        return self._scroll_to_search_match(match)
+
+    def _rerender_search_projection(self, *, search_ctx: object = None, rerender: bool) -> None:
+        """Apply search projection rerender when requested."""
+        if not rerender or not self.is_attached:
+            return
+        self.rerender(
+            self._last_filters,
+            search_ctx=self._last_search_ctx if search_ctx is None else search_ctx,
+        )
+
+    def clear_search_reveal(
+        self,
+        *,
+        search_ctx: object = None,
+        rerender: bool = False,
+    ) -> bool:
+        """Clear temporary search reveal overrides owned by ConversationView."""
+        changed = self._view_overrides.clear_search_reveal()
+        if changed:
+            self.mark_overrides_changed()
+        # [LAW:dataflow-not-control-flow] Render intent is honored independent of change detection.
+        self._rerender_search_projection(search_ctx=search_ctx, rerender=rerender)
+        return changed
+
     def current_scroll_y(self) -> float:
         """Return current vertical scroll offset."""
         return float(self.scroll_offset.y)

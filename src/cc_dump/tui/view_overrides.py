@@ -42,6 +42,9 @@ class ViewOverrides:
     def __init__(self):
         self._blocks: dict[int, BlockViewState] = {}
         self._regions: dict[tuple[int, int], RegionViewState] = {}
+        # // [LAW:one-source-of-truth] Search reveal state is owned here with other mutable view overrides.
+        self._search_reveal_blocks: set[int] = set()
+        self._search_reveal_regions: set[tuple[int, int]] = set()
 
     def get_block(self, block_id: int) -> BlockViewState:
         """Get or create BlockViewState for a block_id."""
@@ -63,6 +66,40 @@ class ViewOverrides:
             state = RegionViewState()
             self._regions[key] = state
         return state
+
+    def set_search_reveal(
+        self,
+        *,
+        block_id: int,
+        region_index: int | None = None,
+    ) -> bool:
+        """Set temporary search reveal target state."""
+        next_blocks = {block_id}
+        next_regions = (
+            {(block_id, region_index)} if region_index is not None else set()
+        )
+        changed = (
+            next_blocks != self._search_reveal_blocks
+            or next_regions != self._search_reveal_regions
+        )
+        self._search_reveal_blocks = {block_id}
+        self._search_reveal_regions = (
+            {(block_id, region_index)} if region_index is not None else set()
+        )
+        return changed
+
+    def clear_search_reveal(self) -> bool:
+        """Clear temporary search reveal state and return whether it changed."""
+        had_state = bool(self._search_reveal_blocks or self._search_reveal_regions)
+        self._search_reveal_blocks.clear()
+        self._search_reveal_regions.clear()
+        return had_state
+
+    def has_search_reveal_block(self, block_id: int) -> bool:
+        return block_id in self._search_reveal_blocks
+
+    def has_search_reveal_region(self, block_id: int, idx: int) -> bool:
+        return (block_id, idx) in self._search_reveal_regions
 
     def clear_category(self, blocks: Iterable[FormattedBlock], category: Category) -> None:
         """Reset region expanded overrides for all blocks matching a category.

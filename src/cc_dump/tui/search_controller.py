@@ -128,6 +128,19 @@ def _sync_search_match_summary(app) -> None:
     app._view_store.set("search:match_count", len(state.matches))
 
 
+def _build_search_context(state):
+    pattern = cc_dump.tui.search.compile_search_pattern(state.query, state.modes)
+    if pattern is None:
+        return None
+    current_match = state.matches[state.current_index] if state.matches else None
+    return cc_dump.tui.search.SearchContext(
+        pattern=pattern,
+        pattern_str=state.query,
+        current_match=current_match,
+        all_matches=state.matches,
+    )
+
+
 def start_search(app) -> None:
     """Transition: INACTIVE → EDITING. Save filter state and scroll position."""
     SearchPhase = cc_dump.tui.search.SearchPhase
@@ -292,6 +305,8 @@ def _exit_search_common(app) -> None:
     # Re-render without search context (highlights removed)
     conv = app._get_conv()
     if conv is not None:
+        # [LAW:locality-or-seam] Search reveal cleanup uses ConversationView public seam.
+        conv.clear_search_reveal(rerender=False)
         conv.rerender(app.active_filters)
 
 
@@ -330,10 +345,11 @@ def commit_search(app) -> None:
     run_search(app)
 
     # // [LAW:dataflow-not-control-flow] Commit path always enters NAVIGATING;
-    # only data (matches/current_index) varies while navigation is stubbed.
+    # only data (matches/current_index) varies while navigation flow stays fixed.
     if state.matches:
         state.current_index = 0
     state.phase = SearchPhase.NAVIGATING
+    navigate_to_current(app)
 
 
 def schedule_incremental_search(app) -> None:
@@ -387,36 +403,40 @@ def run_search(app) -> None:
 
 
 def navigate_next(app) -> None:
-    """No-op navigation stub.
-
-    TODO(search-nav-redesign): reintroduce robust match navigation through
-    typed conversation navigation seams after architecture refactor.
-    """
-    # // [LAW:dataflow-not-control-flow] Keybinding pipeline remains stable while
-    # navigation behavior is intentionally removed for complexity reduction.
-    _ = app
+    """Navigate to next search match and reveal it."""
+    state = app._search_state
+    if not state.matches:
+        navigate_to_current(app)
+        return
+    state.current_index = (state.current_index + 1) % len(state.matches)
+    navigate_to_current(app)
 
 
 def navigate_prev(app) -> None:
-    """No-op navigation stub.
-
-    TODO(search-nav-redesign): reintroduce robust match navigation through
-    typed conversation navigation seams after architecture refactor.
-    """
-    # // [LAW:dataflow-not-control-flow] Keybinding pipeline remains stable while
-    # navigation behavior is intentionally removed for complexity reduction.
-    _ = app
+    """Navigate to previous search match and reveal it."""
+    state = app._search_state
+    if not state.matches:
+        navigate_to_current(app)
+        return
+    state.current_index = (state.current_index - 1) % len(state.matches)
+    navigate_to_current(app)
 
 
 def navigate_to_current(app) -> None:
-    """No-op navigation stub.
-
-    TODO(search-nav-redesign): implement typed block navigation without
-    direct widget internals or runtime visibility overrides.
-    """
-    # // [LAW:locality-or-seam] Future implementation must route through
-    # ConversationView public seams instead of private internals.
-    _ = app
+    """Reveal and navigate to current search match via ConversationView seam."""
+    state = app._search_state
+    conv = app._get_conv()
+    if conv is None:
+        return
+    search_ctx = _build_search_context(state)
+    if not state.matches:
+        conv.clear_search_reveal(search_ctx=search_ctx, rerender=True)
+        return
+    if state.current_index >= len(state.matches):
+        state.current_index = 0
+    current_match = state.matches[state.current_index]
+    # // [LAW:locality-or-seam] Search reveal/navigation goes through ConversationView public seam.
+    conv.reveal_search_match(current_match, search_ctx=search_ctx, rerender=True)
 
 
 def search_rerender(app) -> None:
@@ -426,15 +446,7 @@ def search_rerender(app) -> None:
     if conv is None:
         return
 
-    pattern = cc_dump.tui.search.compile_search_pattern(state.query, state.modes)
-    search_ctx = None
-    if pattern is not None:
-        current_match = state.matches[state.current_index] if state.matches else None
-        search_ctx = cc_dump.tui.search.SearchContext(
-            pattern=pattern,
-            pattern_str=state.query,
-            current_match=current_match,
-            all_matches=state.matches,
-        )
-
+    search_ctx = _build_search_context(state)
+    if state.phase != cc_dump.tui.search.SearchPhase.NAVIGATING:
+        conv.clear_search_reveal(rerender=False)
     conv.rerender(app.active_filters, search_ctx=search_ctx)
