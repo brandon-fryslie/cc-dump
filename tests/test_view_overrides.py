@@ -1,6 +1,9 @@
 """Tests for ViewOverrides — block identity, override store, serialization."""
 
 
+from types import SimpleNamespace
+
+from rich.color import Color
 from textual.theme import BUILTIN_THEMES
 
 from cc_dump.core.formatting import (
@@ -12,6 +15,12 @@ from cc_dump.core.formatting import (
     ALWAYS_VISIBLE,
     VisState,
     populate_content_regions,
+)
+from cc_dump.tui.search import (
+    SearchContext,
+    SearchMode,
+    compile_search_pattern,
+    find_all_matches,
 )
 from cc_dump.tui.view_overrides import (
     BlockViewState,
@@ -189,7 +198,7 @@ def test_search_reveal_block_forces_expanded_visibility():
     from cc_dump.tui.rendering import _resolve_visibility
 
     block = TextContentBlock(content="hidden", category=Category.ASSISTANT)
-    filters = {"assistant": VisState(True, True, False)}
+    filters = {"assistant": VisState(False, False, False)}
     vo = ViewOverrides()
     vo.set_search_reveal(block_id=block.block_id)
 
@@ -198,6 +207,15 @@ def test_search_reveal_block_forces_expanded_visibility():
     assert vis.visible is True
     assert vis.full is True
     assert vis.expanded is True
+
+
+def test_search_reveal_tracks_all_reveal_block_ids():
+    vo = ViewOverrides()
+    vo.set_search_reveal(block_id=22, block_ids={11, 22, 33})
+
+    assert vo.has_search_reveal_block(11) is True
+    assert vo.has_search_reveal_block(22) is True
+    assert vo.has_search_reveal_block(33) is True
 
 
 def test_search_reveal_state_is_not_serialized():
@@ -246,3 +264,52 @@ def test_search_reveal_region_forces_region_expanded():
     )
 
     assert len(strips_revealed) > len(strips_collapsed)
+
+
+def test_search_highlight_applies_for_region_rendering_path():
+    from rich.console import Console
+    from cc_dump.tui.rendering import get_theme_colors, render_turn_to_strips
+
+    _setup_theme()
+    block = TextContentBlock(
+        content="intro\n<thinking>\nneedle value\n</thinking>\noutro",
+        category=Category.ASSISTANT,
+    )
+    populate_content_regions(block)
+    assert block.content_regions
+
+    pattern = compile_search_pattern("needle", SearchMode.CASE_INSENSITIVE)
+    assert pattern is not None
+    turn = SimpleNamespace(is_streaming=False, blocks=[block])
+    matches = find_all_matches([turn], pattern)
+    assert matches
+
+    search_ctx = SearchContext(
+        pattern=pattern,
+        pattern_str="needle",
+        current_match=matches[0],
+        all_matches=matches,
+    )
+
+    strips, _, _ = render_turn_to_strips(
+        blocks=[block],
+        filters={"assistant": ALWAYS_VISIBLE},
+        console=Console(),
+        width=80,
+        search_ctx=search_ctx,
+        turn_index=0,
+    )
+
+    target_bg = Color.parse(get_theme_colors().search_all_bg).triplet
+
+    def _has_search_bg() -> bool:
+        for strip in strips:
+            for seg in strip:
+                style = getattr(seg, "style", None)
+                if style is None or style.bgcolor is None:
+                    continue
+                if style.bgcolor.triplet == target_bg:
+                    return True
+        return False
+
+    assert _has_search_bg() is True
