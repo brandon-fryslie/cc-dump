@@ -8,7 +8,7 @@ Transparent HTTP proxy for monitoring Claude Code API traffic. Intercepts reques
 uv tool install -e .
 ```
 
-Requires Python 3.10+. Production dependencies: [Textual](https://github.com/Textualize/textual), [textual-serve](https://github.com/Textualize/textual-serve), tiktoken.
+Requires Python 3.10+. Production dependencies: [Textual](https://github.com/Textualize/textual), [textual-serve](https://github.com/Textualize/textual-serve), [libtmux](https://github.com/tmux-python/libtmux), [watchfiles](https://github.com/samuelcolvin/watchfiles), [snarfx](https://github.com/brandon-fryslie/snarfx).
 
 **Optional:** For tmux integration (split-pane CLI launching, auto-zoom):
 
@@ -133,7 +133,7 @@ Tool use/result pairs are correlated by ID. At tools level SUMMARY or below, con
 
 ### Token and Cost Analysis
 
-**Cost panel** (`.` to cycle) — Per-tool token usage aggregates. Press `,` to toggle between aggregate and per-model breakdown views.
+**Cost panel** (`.` to cycle) — Per-tool token usage estimates (from tool payload size heuristics). Press `,` to toggle between aggregate and per-model breakdown views.
 
 **Timeline panel** (`.` to cycle) — Context growth visualization across requests.
 
