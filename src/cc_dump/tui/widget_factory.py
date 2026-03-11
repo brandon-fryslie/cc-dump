@@ -1965,6 +1965,12 @@ class ConversationView(ScrollView):
         with self._programmatic_scroll():
             self.scroll_to(y=y, animate=False)
 
+    def _last_visible_turn_index(self) -> int | None:
+        for idx in range(len(self._turns) - 1, -1, -1):
+            if self._turns[idx].line_count > 0:
+                return idx
+        return None
+
     def _resolve_anchor_turn_index(self, *, anchor_turn_index: int) -> int | None:
         """Resolve the canonical topmost-visible-turn anchor index.
 
@@ -1975,12 +1981,34 @@ class ConversationView(ScrollView):
         if turn_count == 0:
             return None
 
+        if anchor_turn_index >= turn_count:
+            # // [LAW:dataflow-not-control-flow] Stale out-of-range anchors map to
+            # // the last visible turn to preserve bottom-of-viewport semantics.
+            return self._last_visible_turn_index()
+
         start = min(max(anchor_turn_index, 0), turn_count - 1)
         for step in range(turn_count):
             idx = (start + step) % turn_count
             if self._turns[idx].line_count > 0:
                 return idx
         return None
+
+    @staticmethod
+    def _coerce_non_negative_int(raw_value: object, *, default: int = 0) -> int:
+        """Convert persisted state to a safe, non-negative integer."""
+        # // [LAW:single-enforcer] Persisted anchor integer coercion is centralized here.
+        if isinstance(raw_value, int):
+            coerced = raw_value
+        elif isinstance(raw_value, float):
+            coerced = int(raw_value)
+        elif isinstance(raw_value, (str, bytes, bytearray)):
+            try:
+                coerced = int(raw_value)
+            except ValueError:
+                return default
+        else:
+            return default
+        return max(0, coerced)
 
     def _resolve_anchor(self):
         """Resolve stored anchor to scroll_y after content changes.
@@ -2141,8 +2169,10 @@ class ConversationView(ScrollView):
                     anchor_dict.get("line_in_block", 0),  # Legacy hot-reload state shape.
                 )
                 self._scroll_anchor = ScrollAnchor(
-                    turn_index=anchor_dict["turn_index"],
-                    line_in_turn=int(line_in_turn_raw),
+                    turn_index=self._coerce_non_negative_int(
+                        anchor_dict.get("turn_index", 0)
+                    ),
+                    line_in_turn=self._coerce_non_negative_int(line_in_turn_raw),
                 )
                 if not self._is_following:
                     self._resolve_anchor()

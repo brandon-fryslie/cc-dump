@@ -643,6 +643,25 @@ class TestWidgetStatePreservation:
 
         assert new_widget._follow_state == FollowState.ENGAGED
 
+    def test_conversation_view_restore_state_coerces_invalid_scroll_anchor(self):
+        """Malformed persisted anchor values are coerced to safe defaults."""
+        from cc_dump.tui.widget_factory import ConversationView
+
+        widget = ConversationView()
+        widget.restore_state(
+            {
+                "scroll_anchor": {
+                    "turn_index": "not-an-int",
+                    "line_in_turn": "-9",
+                }
+            }
+        )
+        widget._rebuild_from_state({})
+
+        assert widget._scroll_anchor is not None
+        assert widget._scroll_anchor.turn_index == 0
+        assert widget._scroll_anchor.line_in_turn == 0
+
     def test_stats_panel_empty_state_roundtrip(self):
         """Restoring from empty state produces valid defaults."""
         from cc_dump.tui.widget_factory import StatsPanel
