@@ -46,24 +46,16 @@ def _toggle_vis_dicts(app, category: str, spec_key: str) -> None:
 
 
 def clear_overrides(app, category_name: str) -> None:
-    """Reset region expansion overrides for a category.
+    """Reset block/region expansion overrides for a category.
 
     // [LAW:one-source-of-truth] Clears via ViewOverrides.clear_category() only.
-    // [LAW:one-source-of-truth] Reads blocks from domain store.
+    // [LAW:locality-or-seam] Callers route through ConversationView public seam.
     """
     cat = cc_dump.core.formatting.Category(category_name)
     conv = app._get_conv()
     if conv is None:
         return
-
-    ds = _active_domain_store(app)
-    if ds is not None:
-        all_blocks = [block for block_list in ds.iter_completed_blocks() for block in block_list]
-    else:
-        all_blocks = [block for td in conv._turns for block in td.blocks]
-    conv._view_overrides.clear_category(all_blocks, cat)
-    if hasattr(conv, "mark_overrides_changed"):
-        conv.mark_overrides_changed()
+    conv.clear_category_overrides(cat)
 
 
 def toggle_vis(app, category: str) -> None:
@@ -323,6 +315,7 @@ def _navigate_special(app, marker_key: str, direction: int) -> None:
     location = cc_dump.tui.location_navigation.BlockLocation(
         turn_index=loc.turn_index,
         block_index=loc.block_index,
+        block_id=getattr(loc.block, "block_id", None),
         block=loc.block,
     )
     ok = cc_dump.tui.location_navigation.go_to_location(
@@ -368,6 +361,7 @@ def _navigate_region_tag(app, tag: str, direction: int) -> None:
     location = cc_dump.tui.location_navigation.BlockLocation(
         turn_index=loc.turn_index,
         block_index=loc.block_index,
+        block_id=getattr(loc.block, "block_id", None),
         block=loc.block,
     )
     ok = cc_dump.tui.location_navigation.go_to_location(
@@ -487,4 +481,3 @@ def prev_session(app) -> None:
         conv.scroll_to_block(boundaries[-1][1], 0)
 
     _conv_action(app, _jump)
-

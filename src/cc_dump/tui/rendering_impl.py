@@ -486,7 +486,11 @@ def get_category(block: FormattedBlock) -> Category | None:
     return BLOCK_CATEGORY.get(type(block).__name__)
 
 
-def _resolve_visibility(block: FormattedBlock, filters: dict) -> VisState:
+def _resolve_visibility(
+    block: FormattedBlock,
+    filters: dict,
+    overrides: object | None = None,
+) -> VisState:
     """Determine VisState for a block given current filter state.
 
     // [LAW:one-source-of-truth] Returns THE visibility representation.
@@ -500,7 +504,16 @@ def _resolve_visibility(block: FormattedBlock, filters: dict) -> VisState:
         return ALWAYS_VISIBLE  # always fully visible
 
     vis = filters.get(cat.value, ALWAYS_VISIBLE)
-    return VisState(vis.visible, vis.full, vis.expanded)
+    block_expanded_override = None
+    if overrides is not None:
+        get_block_state = getattr(overrides, "block_state", None)
+        if callable(get_block_state):
+            block_vs = get_block_state(block.block_id)
+            if block_vs is not None:
+                block_expanded_override = block_vs.expanded
+    # // [LAW:single-enforcer] Category-level and per-block expansion precedence resolves here.
+    expanded = vis.expanded if block_expanded_override is None else bool(block_expanded_override)
+    return VisState(vis.visible, vis.full, expanded)
 
 
 # ─── Style helpers ─────────────────────────────────────────────────────────────
@@ -3793,13 +3806,29 @@ def _recurse_visible_children(
         _render_block_tree(child, ctx)
 
 
+def _update_block_expandability_state(
+    block: FormattedBlock,
+    *,
+    is_expandable: bool,
+    ctx: _RenderContext,
+) -> None:
+    """Project renderer-derived expandability into canonical block view state."""
+    if ctx.overrides is None:
+        return
+    block_vs = ctx.overrides.get_block(block.block_id)
+    block_vs.expandable = bool(is_expandable)
+    if not block_vs.expandable:
+        # // [LAW:single-enforcer] Non-expandable blocks drop stale expansion overrides at render boundary.
+        block_vs.expanded = None
+
+
 def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
     """Recursively render a block and its children into ctx accumulators.
 
     // [LAW:single-enforcer] Visibility/render/truncation/recursion policy is enforced here.
     // [LAW:dataflow-not-control-flow] Pipeline stages always execute in the same order.
     """
-    vis = _resolve_visibility(block, ctx.filters)
+    vis = _resolve_visibility(block, ctx.filters, ctx.overrides)
     max_lines = TRUNCATION_LIMITS[vis]
     if max_lines == 0:
         return
@@ -3830,6 +3859,11 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
     )
 
     is_expandable = _compute_expandable(block_type, vis, children, block_strips)
+    _update_block_expandability_state(
+        block,
+        is_expandable=is_expandable,
+        ctx=ctx,
+    )
 
     strips_for_gutter, arrow = _prepare_gutter_inputs(
         block_strips, vis, max_lines, is_expandable, ctx

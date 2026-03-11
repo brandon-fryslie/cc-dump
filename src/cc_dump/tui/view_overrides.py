@@ -21,6 +21,7 @@ class BlockViewState:
     """Per-block view state, keyed by block_id."""
 
     expandable: bool = False  # renderer-computed
+    expanded: bool | None = None  # user override; None means category default
 
 
 @dataclass
@@ -50,6 +51,10 @@ class ViewOverrides:
             self._blocks[block_id] = state
         return state
 
+    def block_state(self, block_id: int) -> BlockViewState | None:
+        """Read BlockViewState for block_id without creating an entry."""
+        return self._blocks.get(block_id)
+
     def get_region(self, block_id: int, idx: int) -> RegionViewState:
         """Get or create RegionViewState for a (block_id, region_index)."""
         key = (block_id, idx)
@@ -68,6 +73,10 @@ class ViewOverrides:
             for block in block_list:
                 block_cat = get_category(block)
                 if block_cat == category:
+                    block_state = self._blocks.get(block.block_id)
+                    if block_state is not None:
+                        # // [LAW:one-source-of-truth] Category reset clears per-block expansion override here.
+                        block_state.expanded = None
                     # // [LAW:one-source-of-truth] Region expansion overrides live only in _regions.
                     for region in block.content_regions:
                         key = (block.block_id, region.index)
@@ -88,6 +97,8 @@ class ViewOverrides:
             entry = {}
             if bvs.expandable:
                 entry["expandable"] = True
+            if bvs.expanded is not None:
+                entry["expanded"] = bvs.expanded
             if entry:
                 blocks[bid] = entry
 
@@ -110,6 +121,7 @@ class ViewOverrides:
             bid = int(bid_str) if isinstance(bid_str, str) else bid_str
             bvs = BlockViewState(
                 expandable=entry.get("expandable", False),
+                expanded=entry.get("expanded"),
             )
             vo._blocks[bid] = bvs
 
