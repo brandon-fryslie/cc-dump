@@ -593,8 +593,8 @@ class TestWidgetStatePreservation:
 
         assert new_widget._follow_state == FollowState.OFF
 
-    def test_conversation_view_blocks_preserve_expandable_metadata(self):
-        """Block expandability metadata survives roundtrip via ViewOverrides serialization."""
+    def test_conversation_view_blocks_preserve_expansion_metadata(self):
+        """Block expandability + expansion overrides survive ViewOverrides roundtrip."""
         from cc_dump.core.formatting import TextContentBlock
         from cc_dump.tui.widget_factory import ConversationView, TurnData
 
@@ -608,6 +608,7 @@ class TestWidgetStatePreservation:
         # Set expandability metadata via ViewOverrides
         widget._view_overrides.get_block(block_a.block_id).expandable = True
         widget._view_overrides.get_block(block_b.block_id).expandable = False
+        widget._view_overrides.get_block(block_a.block_id).expanded = False
 
         state = widget.get_state()
         new_widget = ConversationView()
@@ -616,6 +617,7 @@ class TestWidgetStatePreservation:
         # ViewOverrides roundtrip preserves block metadata
         assert new_widget._view_overrides.get_block(block_a.block_id).expandable is True
         assert new_widget._view_overrides.get_block(block_b.block_id).expandable is False
+        assert new_widget._view_overrides.get_block(block_a.block_id).expanded is False
 
     def test_conversation_view_follow_state_active_roundtrip(self):
         """follow_state=ACTIVE explicitly survives roundtrip."""
