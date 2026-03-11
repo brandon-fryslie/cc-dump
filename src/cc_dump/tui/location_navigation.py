@@ -16,6 +16,7 @@ class BlockLocation:
 
     turn_index: int
     block_index: int
+    block_id: int | None = None
     block: object | None = None
 
 
@@ -36,6 +37,32 @@ def resolve_scroll_key(turn, location: BlockLocation) -> int:
     return scroll_key
 
 
+def _turn_for_location(conv, location: BlockLocation):
+    if location.turn_index < 0 or location.turn_index >= len(conv._turns):
+        return None
+    turn = conv._turns[location.turn_index]
+    if location.block_index < 0 or location.block_index >= len(turn.blocks):
+        return None
+    return turn
+
+
+def _location_block_id(turn, location: BlockLocation) -> int | None:
+    if location.block_id is not None:
+        return location.block_id
+    target_block = location.block if location.block is not None else turn.blocks[location.block_index]
+    target_block_id = getattr(target_block, "block_id", None)
+    return target_block_id if isinstance(target_block_id, int) else None
+
+
+def _expand_location_block(conv, turn, location: BlockLocation) -> None:
+    target_block_id = _location_block_id(turn, location)
+    set_block_expansion = getattr(conv, "set_block_expansion", None)
+    if target_block_id is None or not callable(set_block_expansion):
+        return
+    # // [LAW:locality-or-seam] Navigation reveals block content through ConversationView seam.
+    set_block_expansion(target_block_id, True, rerender=False)
+
+
 def go_to_location(
     conv,
     location: BlockLocation,
@@ -46,12 +73,11 @@ def go_to_location(
 
     Returns True when navigation succeeded, False when the location is invalid.
     """
-    if location.turn_index < 0 or location.turn_index >= len(conv._turns):
+    turn = _turn_for_location(conv, location)
+    if turn is None:
         return False
 
-    turn = conv._turns[location.turn_index]
-    if location.block_index < 0 or location.block_index >= len(turn.blocks):
-        return False
+    _expand_location_block(conv, turn, location)
 
     if rerender is not None:
         rerender()
