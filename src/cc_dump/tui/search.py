@@ -277,6 +277,7 @@ _TEXT_EXTRACTORS: dict[str, Callable] = {
     "ProxyErrorBlock": lambda b: b.error,
     "NewlineBlock": lambda b: "",
     "TurnBudgetBlock": lambda b: f"Context: {fmt_tokens(b.budget.total_est)} tokens",
+    "ResponseUsageBlock": lambda b: f"Usage: {fmt_tokens(b.input_tokens + b.cache_read_tokens)} in {fmt_tokens(b.output_tokens)} out",
     # Container child types — searchable when find_all_matches walks children
     "ToolDefBlock": lambda b: f"{b.name} {b.description}",
     "SkillDefChild": lambda b: f"{b.name} {b.description}",

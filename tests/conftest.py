@@ -233,7 +233,6 @@ def class_proc():
 
 @pytest.fixture
 def fresh_state():
-    """Fresh formatting state dict."""
-    return {
-        "request_counter": 0,
-    }
+    """Fresh formatting state."""
+    from cc_dump.core.formatting_impl import ProviderRuntimeState
+    return ProviderRuntimeState()

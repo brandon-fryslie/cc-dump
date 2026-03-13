@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import cc_dump.app.view_store
+from cc_dump.core.formatting_impl import ProviderRuntimeState
 from cc_dump.tui.app import CcDumpApp
 from tests.harness import all_turns_text, make_replay_entry
 
@@ -18,13 +19,7 @@ async def test_pre_run_view_store_reactions_rebind_on_mount():
 
     Simulates CLI startup order where view-store reactions are configured before app.run().
     """
-    state = {
-        "positions": {},
-        "known_hashes": {},
-        "next_id": 0,
-        "next_color": 0,
-        "request_counter": 0,
-    }
+    state = ProviderRuntimeState()
     view_store = cc_dump.app.view_store.create()
     store_context: dict[str, object] = {}
 

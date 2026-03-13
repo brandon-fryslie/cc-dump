@@ -561,15 +561,10 @@ class TestAutoResume:
     def test_session_id_from_metadata_to_launch(self):
         """Full chain: metadata.user_id → format_request → state → build_full_command."""
         from cc_dump.core.formatting import format_request
+        from cc_dump.core.formatting_impl import ProviderRuntimeState
         from cc_dump.app.launch_config import LaunchConfig, build_full_command
 
-        state = {
-            "request_counter": 0,
-            "positions": {},
-            "known_hashes": {},
-            "next_id": 1,
-            "next_color": 0,
-        }
+        state = ProviderRuntimeState()
         body = {
             "model": "claude-3-opus-20240229",
             "max_tokens": 4096,
@@ -581,7 +576,7 @@ class TestAutoResume:
 
         format_request(body, state)
 
-        session_id = state["current_session"]
+        session_id = state.current_session
         assert session_id == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
         config = LaunchConfig(options={"auto_resume": True})

@@ -363,6 +363,8 @@ class ConversationView(ScrollView):
     def _wire_domain_store(self, ds) -> None:
         """Register rendering callbacks on domain store."""
         ds.on_turn_added = self._on_turn_added
+        ds.on_turn_replaced = self._on_turn_replaced
+        ds.on_stream_preview_cleanup = self._on_stream_preview_cleanup
         ds.on_stream_started = self._on_stream_started
         ds.on_stream_block = self._on_stream_block
         ds.on_stream_finalized = self._on_stream_finalized
@@ -1312,6 +1314,37 @@ class ConversationView(ScrollView):
             return
         self._invalidate("new_turn", blocks=blocks)
 
+    def _on_turn_replaced(self, turn_index: int, new_blocks: list) -> None:
+        """Domain store callback: a completed turn was replaced (provisional → final).
+
+        Re-renders the turn in-place, invalidates caches, and recalculates
+        offsets if line count changed. Scroll position preserved by anchor.
+        // [LAW:dataflow-not-control-flow] Always re-render; let render pipeline
+        // decide what changed.
+        """
+        if not self.is_attached:
+            return
+        if turn_index < 0 or turn_index >= len(self._turns):
+            return
+        td = self._turns[turn_index]
+        td.blocks = new_blocks
+        td.compute_relevant_keys()
+        width = self._content_width if self._size_known else self._last_width
+        td.re_render(
+            self._last_filters,
+            self.app.console,
+            width,
+            force=True,
+            block_cache=self._block_strip_cache,
+            search_ctx=self._last_search_ctx,
+            overrides=self._view_overrides,
+            render_key=self._turn_render_key(width),
+            runtime=self._render_runtime,
+        )
+        self._invalidate_cache_for_turns(turn_index, turn_index + 1)
+        self._recalculate_offsets_from(turn_index)
+        self.refresh()
+
     def _prune_all_turns(self) -> None:
         self._turns.clear()
         self._scroll_anchor = None
@@ -1461,6 +1494,20 @@ class ConversationView(ScrollView):
         self._recalculate_offsets()
 
     # ─── Domain store callbacks (rendering side) ─────────────────────────────
+
+    def _on_stream_preview_cleanup(self, request_id: str, was_focused: bool) -> None:
+        """Domain store callback: stream preview should be removed without creating a turn.
+
+        // [LAW:one-way-deps] Called before on_turn_replaced so turn list is clean
+        // before re-rendering the combined turn.
+        """
+        if not self.is_attached:
+            return
+        if was_focused:
+            self._detach_stream_preview()
+        self._stream_preview_turns.pop(request_id, None)
+        self._pending_stream_delta_request_ids.discard(request_id)
+        self._attach_stream_preview()
 
     def _on_stream_started(self, request_id: str, meta: dict) -> None:
         """Domain store callback: a new stream was created."""
