@@ -186,11 +186,7 @@ def check_and_get_reloaded() -> list[str]:
     _refresh_top_level_import_aliases(old_exports, reloaded)
 
     if reloaded:
-        logger.info(
-            "hot-reload reloaded %d module(s): %s",
-            len(reloaded),
-            ", ".join(reloaded),
-        )
+        logger.info("hot-reload reloaded %d module(s)", len(reloaded))
 
     return reloaded
 
