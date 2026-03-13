@@ -141,14 +141,11 @@ class ProxyRuntime:
     provider_states: dict[str, "ProviderRuntimeState"]
 
 
-ProviderRuntimeState = dict[str, object]
+ProviderRuntimeState = cc_dump.core.formatting_impl.ProviderRuntimeState
 
 
 def _new_provider_state() -> ProviderRuntimeState:
-    return {
-        "request_counter": 0,
-        "current_session": None,
-    }
+    return ProviderRuntimeState()
 
 
 def _active_provider_specs(

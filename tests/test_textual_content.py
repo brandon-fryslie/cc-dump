@@ -33,8 +33,8 @@ async def test_replay_populates_turns():
     """Loading replay data creates turns in the conversation view."""
     async with run_app(replay_data=_REPLAY_DATA) as (pilot, app):
         count = get_turn_count(app)
-        # Each replay entry produces a request turn + response turn
-        assert count == 2, f"Expected 2 turns, got {count}"
+        # Combined turns: 1 request-response pair = 1 turn.
+        assert count == 1, f"Expected 1 combined turn, got {count}"
 
 
 async def test_replay_content_visible():
