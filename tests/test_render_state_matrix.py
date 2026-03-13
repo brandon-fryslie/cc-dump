@@ -1152,8 +1152,6 @@ def test_turn_budget_summary_expanded_differs_from_collapsed_and_full():
         assistant_text_tokens_est=22000,
         tool_use_tokens_est=18000,
         tool_result_tokens_est=17000,
-        actual_input_tokens=1200,
-        actual_cache_read_tokens=800,
     )
     block = TurnBudgetBlock(
         budget=budget,
@@ -1166,13 +1164,11 @@ def test_turn_budget_summary_expanded_differs_from_collapsed_and_full():
     fe_text, _ = _render_plain(block, "metadata", FULL_EXPANDED)
 
     assert "Context:" in sc_text
-    assert "cache:" not in sc_text
-    assert "cache:" in se_text
+    # Cache info is now in ResponseUsageBlock, not TurnBudget
     assert "top tools:" in se_text
     assert se_text != sc_text
     assert se_text != fe_text
     assert "tools:" in fc_text
-    assert "cache:" not in fc_text
     assert "top tools:" not in fc_text
     assert fc_lines <= 2
 

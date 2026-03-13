@@ -439,13 +439,13 @@ class TestReplayEndToEnd:
             elif kind == PipelineEventKind.RESPONSE_COMPLETE:
                 app_state = handle_response_complete(event, state, widgets, app_state, lambda *a: None)
 
-        # domain_store should have 2 completed turns (request + response)
+        # Combined turns: 1 request-response pair = 1 turn.
         ds = widgets["domain_store"]
-        assert ds.completed_count == 2
+        assert ds.completed_count == 1
 
-        # Response turn should contain the answer text
-        response_blocks = ds.iter_completed_blocks()[1]
-        text_blocks = _find_blocks(response_blocks, TextContentBlock)
+        # Combined turn should contain the answer text
+        combined_blocks = ds.iter_completed_blocks()[0]
+        text_blocks = _find_blocks(combined_blocks, TextContentBlock)
         assert any("2+2 = 4" in b.content for b in text_blocks)
 
     def test_replay_captures_session_id(self, tmp_path):
@@ -487,8 +487,9 @@ class TestReplayEndToEnd:
 
         assert state["current_session"] == session_uuid
         ds = widgets["domain_store"]
-        response_blocks = ds.iter_completed_blocks()[1]
-        assert len(response_blocks) > 0
+        # Combined turn at index 0 contains both request and response blocks.
+        combined_blocks = ds.iter_completed_blocks()[0]
+        assert len(combined_blocks) > 0
 
     def test_multi_turn_replay(self, tmp_path):
         """Multiple HAR entries produce multiple turns."""
@@ -527,9 +528,9 @@ class TestReplayEndToEnd:
                 elif kind == PipelineEventKind.RESPONSE_COMPLETE:
                     app_state = handle_response_complete(event, state, widgets, app_state, lambda *a: None)
 
-        # 2 request turns + 2 response turns = 4 completed turns
+        # Combined turns: 2 request-response pairs = 2 turns.
         ds = widgets["domain_store"]
-        assert ds.completed_count == 4
+        assert ds.completed_count == 2
 
 
 class TestLiveReplayParityContracts:
@@ -652,11 +653,12 @@ class TestLiveReplayParityContracts:
 
         live_ds = live_widgets["domain_store"]
         replay_ds = replay_widgets["domain_store"]
-        assert live_ds.completed_count == 2
-        assert replay_ds.completed_count == 2
+        # Combined turns: 1 request-response pair = 1 turn.
+        assert live_ds.completed_count == 1
+        assert replay_ds.completed_count == 1
         assert live_state["current_session"] == session_uuid
         assert replay_state["current_session"] == session_uuid
 
-        live_projection = _project_response_turn(live_ds.iter_completed_blocks()[1])
-        replay_projection = _project_response_turn(replay_ds.iter_completed_blocks()[1])
+        live_projection = _project_response_turn(live_ds.iter_completed_blocks()[0])
+        replay_projection = _project_response_turn(replay_ds.iter_completed_blocks()[0])
         assert live_projection == replay_projection

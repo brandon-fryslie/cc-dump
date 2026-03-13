@@ -7,6 +7,7 @@ cc_dump modules.
 import json
 import re
 from dataclasses import dataclass
+from enum import Enum
 from typing import NamedTuple
 
 
@@ -206,6 +207,108 @@ def compute_turn_budget(request_body: dict) -> TurnBudget:
     )
 
     return budget
+
+
+# ─── Cache Zone Analysis ─────────────────────────────────────────────────────
+
+
+class CacheZone(Enum):
+    """Contiguous token zone in the Anthropic prefix-caching model."""
+
+    CACHE_READ = "cached"
+    CACHE_WRITE = "cache write"
+    FRESH = "fresh"
+
+
+def compute_cache_zones(
+    request_body: dict,
+    *,
+    cache_read: int,
+    cache_creation: int,
+    input_tokens: int,
+) -> dict[str, CacheZone]:
+    """Map request sections to cache zones using response usage data.
+
+    Walks the request body in API wire order (tools → system → messages)
+    and assigns each section to a zone based on cumulative token position
+    relative to the cache boundaries.
+
+    Args:
+        request_body: The full API request body dict.
+        cache_read: Tokens served from cache (cache_read_input_tokens).
+        cache_creation: Tokens written to cache (cache_creation_input_tokens).
+        input_tokens: Fresh input tokens (input_tokens).
+
+    Returns:
+        Mapping of section keys to CacheZone values. Keys are:
+        "tools", "system", "message:{index}" for each message.
+    """
+    # [LAW:dataflow-not-control-flow] Build section layout, then classify.
+    # Sections in API wire order with estimated token counts.
+    sections: list[tuple[str, int]] = []
+
+    tools = request_body.get("tools", [])
+    if tools:
+        sections.append(("tools", estimate_tokens(json.dumps(tools))))
+
+    system = request_body.get("system", "")
+    if system:
+        if isinstance(system, str):
+            sections.append(("system", estimate_tokens(system)))
+        elif isinstance(system, list):
+            total = sum(
+                estimate_tokens(b.get("text", "") if isinstance(b, dict) else str(b))
+                for b in system
+            )
+            sections.append(("system", total))
+
+    messages = request_body.get("messages", [])
+    for i, msg in enumerate(messages):
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            tokens = estimate_tokens(content)
+        elif isinstance(content, list):
+            tokens = sum(estimate_tokens(json.dumps(b)) for b in content)
+        else:
+            tokens = estimate_tokens(json.dumps(content))
+        # Include tool_calls on assistant messages (OpenAI format)
+        tool_calls = msg.get("tool_calls", [])
+        if isinstance(tool_calls, list):
+            for tc in tool_calls:
+                if isinstance(tc, dict):
+                    tokens += estimate_tokens(json.dumps(tc))
+        sections.append((f"message:{i}", max(1, tokens)))
+
+    # Total estimated tokens from sections
+    est_total = sum(t for _, t in sections)
+    if est_total == 0:
+        return {}
+
+    # Self-calibrating ratio: actual total / estimated total
+    actual_total = cache_read + cache_creation + input_tokens
+    if actual_total == 0:
+        return {}
+    ratio = actual_total / est_total
+
+    # Zone boundaries (cumulative token positions)
+    cache_read_end = cache_read
+    cache_write_end = cache_read + cache_creation
+
+    # Assign zones based on section midpoint position
+    zones: dict[str, CacheZone] = {}
+    cumulative = 0.0
+    for key, est_tokens in sections:
+        scaled = est_tokens * ratio
+        midpoint = cumulative + scaled / 2.0
+        if midpoint < cache_read_end:
+            zones[key] = CacheZone.CACHE_READ
+        elif midpoint < cache_write_end:
+            zones[key] = CacheZone.CACHE_WRITE
+        else:
+            zones[key] = CacheZone.FRESH
+        cumulative += scaled
+
+    return zones
 
 
 # ─── Tool Correlation ─────────────────────────────────────────────────────────

@@ -103,6 +103,17 @@ def _write_stop_reason_block(f: TextIO, block: fmt.StopReasonBlock) -> None:
     f.write(f"  Stop reason: {block.reason}\n")
 
 
+def _write_response_usage_block(f: TextIO, block: fmt.ResponseUsageBlock) -> None:
+    total_in = block.input_tokens + block.cache_read_tokens
+    f.write(f"  Usage: {total_in} in → {block.output_tokens} out")
+    if block.cache_read_tokens > 0:
+        f.write(f" (cache_read: {block.cache_read_tokens}")
+        if block.cache_creation_tokens > 0:
+            f.write(f", cache_creation: {block.cache_creation_tokens}")
+        f.write(")")
+    f.write("\n")
+
+
 def _write_error_block(f: TextIO, block: fmt.ErrorBlock) -> None:
     f.write(f"  Error: {block.code}\n")
     if block.reason:
@@ -197,6 +208,7 @@ BLOCK_WRITERS: dict[type[object], BlockWriter] = {
     fmt.StreamToolUseBlock: _write_stream_tool_use_block,
     fmt.TextDeltaBlock: _write_text_delta_block,
     fmt.StopReasonBlock: _write_stop_reason_block,
+    fmt.ResponseUsageBlock: _write_response_usage_block,
     fmt.ErrorBlock: _write_error_block,
     fmt.ProxyErrorBlock: _write_proxy_error_block,
     fmt.TurnBudgetBlock: _write_turn_budget_block,

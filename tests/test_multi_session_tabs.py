@@ -77,8 +77,8 @@ async def test_all_sessions_route_to_default_tab():
         default_ds = app._get_domain_store(app._default_session_key)
 
         # Both sessions' turns land in the single default DomainStore.
-        # Each replay entry produces a request turn + response turn = 2 per session.
-        assert default_ds.completed_count >= 4
+        # Combined turns: each request-response pair is 1 turn = 1 per session.
+        assert default_ds.completed_count >= 2
 
         # Only one Claude tab exists (the default), not per-session tabs.
         non_side_channel_tabs = [
@@ -201,8 +201,9 @@ async def test_side_channel_replay_routes_to_separate_lane_without_primary_conta
         primary_ds = app._get_domain_store(session_a)
         side_ds = app._get_domain_store(side_key)
 
-        assert primary_ds.completed_count == 2
-        assert side_ds.completed_count == 2
+        # Combined turns: 1 request-response pair per session = 1 turn each.
+        assert primary_ds.completed_count == 1
+        assert side_ds.completed_count == 1
 
         primary_conv = app._get_conv(session_key=session_a)
         side_conv = app._get_conv(session_key=side_key)

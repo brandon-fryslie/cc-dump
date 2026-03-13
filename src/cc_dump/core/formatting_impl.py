@@ -106,6 +106,23 @@ class Category(Enum):
     THINKING = "thinking"
 
 
+# ─── Provider Runtime State ───────────────────────────────────────────────────
+
+
+@dataclass
+class ProviderRuntimeState:
+    """Per-provider formatting state.
+
+    // [LAW:one-source-of-truth] Canonical container for all mutable state
+    // that formatting functions read. Mutations happen at the caller boundary
+    // (event_handlers), not inside formatting functions.
+    """
+
+    request_counter: int = 0
+    current_session: str | None = None
+    tool_descriptions: dict[str, str] = field(default_factory=dict)
+
+
 # ─── Structured IR ────────────────────────────────────────────────────────────
 
 @dataclass
@@ -260,6 +277,10 @@ class FormattedBlock:
     # // [LAW:one-source-of-truth] All sub-region state lives here, not in shadow attrs.
     content_regions: list[ContentRegion] = field(default_factory=list)
 
+    # Generic key-value metadata set at construction time.
+    # // [LAW:dataflow-not-control-flow] Formatting populates, rendering reads.
+    metadata: dict[str, str] = field(default_factory=dict)
+
     # Optional text payload for generic render/search paths.
     # // [LAW:one-type-per-behavior] Shared content behavior is represented once.
     content: str = ""
@@ -409,6 +430,21 @@ class StopReasonBlock(FormattedBlock):
     """Stop reason from message_delta."""
 
     reason: str = ""
+
+
+@dataclass
+class ResponseUsageBlock(FormattedBlock):
+    """Actual token usage reported by the API response.
+
+    // [LAW:one-source-of-truth] Canonical source of actual usage data
+    // for a completed response. Lives in the response turn.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+    model: str = ""
 
 
 @dataclass
@@ -657,7 +693,7 @@ class _ContentContext:
     """Shared context for content block formatters."""
 
     role_cat: Category | None
-    state: dict
+    state: ProviderRuntimeState
     tool_id_map: dict
     tool_color_counter: int
     msg_index: int
@@ -778,7 +814,7 @@ def _format_tool_use_content(cblock, ctx: _ContentContext) -> list:
     input_size = sum(v.count('\n') + 1 for v in tool_input.values() if isinstance(v, str)) or 1
     tool_use_id = cblock.get("id", "")
     detail = _tool_detail(name, tool_input)
-    description = ctx.state.get("tool_descriptions", {}).get(name, "")
+    description = ctx.state.tool_descriptions.get(name, "")
     # Assign correlation color
     tool_color_idx = ctx.tool_color_counter % MSG_COLOR_CYCLE
     ctx.tool_color_counter += 1
@@ -939,7 +975,7 @@ _COMPOUND_TOOL_PARSERS: dict[str, "Callable[[str], list[FormattedBlock]]"] = {
 
 
 
-def format_request(body, state, request_headers: dict | None = None):
+def format_request(body, state: ProviderRuntimeState, request_headers: dict | None = None, cache_zones: dict | None = None):
     """Format a full API request as a list of FormattedBlock.
 
     Produces hierarchical container blocks (MetadataSection, ToolDefsSection,
@@ -948,14 +984,17 @@ def format_request(body, state, request_headers: dict | None = None):
 
     Args:
         body: Request body dict
-        state: Content tracking state dict
+        state: Provider runtime state
         request_headers: Optional HTTP request headers to include in MetadataSection
+        cache_zones: Optional mapping from section keys to CacheZone values.
+            When provided, sets metadata["cache"] on section container blocks.
+            Keys: "tools", "system", "message:{index}".
 
     Returns:
         List of FormattedBlock objects (hierarchical — containers with children)
     """
-    state["request_counter"] += 1
-    request_num = state["request_counter"]
+    state.request_counter += 1
+    request_num = state.request_counter
 
     blocks: list[FormattedBlock] = []
     blocks.append(NewlineBlock())
@@ -990,10 +1029,10 @@ def format_request(body, state, request_headers: dict | None = None):
                 session_id = parsed["session_id"]
 
     # Track session changes — emit NewSessionBlock when session changes
-    current_session = state.get("current_session")
+    current_session = state.current_session
     if session_id and session_id != current_session:
         blocks.append(NewSessionBlock(session_id=session_id))
-        state["current_session"] = session_id
+        state.current_session = session_id
 
     # MetadataSection container — groups model params, HTTP headers, budget
     # // [LAW:one-source-of-truth] Single container for all request metadata.
@@ -1011,7 +1050,7 @@ def format_request(body, state, request_headers: dict | None = None):
 
     # Store tool descriptions in state for ToolUseBlock enrichment
     # // [LAW:one-source-of-truth] tool_descriptions populated here, consumed by _format_tool_use_content
-    state["tool_descriptions"] = {
+    state.tool_descriptions = {
         t.get("name", ""): t.get("description", "") for t in tools
     }
 
@@ -1050,11 +1089,16 @@ def format_request(body, state, request_headers: dict | None = None):
         ))
 
     # Emit ToolDefsSection container
+    # // [LAW:dataflow-not-control-flow] cache_zones flows through; metadata set at construction.
+    _tools_meta = {}
+    if cache_zones and "tools" in cache_zones:
+        _tools_meta["cache"] = cache_zones["tools"].value
     blocks.append(ToolDefsSection(
         tool_count=len(tools),
         total_tokens=total_tool_tokens,
         children=tool_def_children,
         category=Category.TOOLS,
+        metadata=_tools_meta,
     ))
 
     blocks.append(SeparatorBlock(style="thin"))
@@ -1063,9 +1107,13 @@ def format_request(body, state, request_headers: dict | None = None):
     system_children = _make_system_prompt_children(body.get("system", ""))
 
     # Emit SystemSection container (always — renderer handles empty children)
+    _system_meta = {}
+    if cache_zones and "system" in cache_zones:
+        _system_meta["cache"] = cache_zones["system"].value
     blocks.append(SystemSection(
         children=system_children,
         category=Category.SYSTEM,
+        metadata=_system_meta,
     ))
     blocks.append(SeparatorBlock(style="thin"))
 
@@ -1127,12 +1175,17 @@ def format_request(body, state, request_headers: dict | None = None):
         tool_color_counter = ctx.tool_color_counter
 
         # // [LAW:one-source-of-truth] MessageBlock container replaces RoleBlock + flat children.
+        _msg_meta = {}
+        _msg_zone_key = f"message:{i}"
+        if cache_zones and _msg_zone_key in cache_zones:
+            _msg_meta["cache"] = cache_zones[_msg_zone_key].value
         blocks.append(MessageBlock(
             role=role,
             msg_index=i,
             timestamp=_get_timestamp(),
             children=msg_children,
             category=role_cat,
+            metadata=_msg_meta,
         ))
 
     blocks.append(NewlineBlock())
@@ -1266,6 +1319,16 @@ def format_complete_response(complete_message):
     stop_reason = complete_message.get("stop_reason", "")
     result.append(StopReasonBlock(reason=stop_reason))
 
+    # [LAW:dataflow-not-control-flow] Always emit usage block; renderer handles zeros.
+    usage = complete_message.get("usage", {})
+    result.append(ResponseUsageBlock(
+        input_tokens=usage.get("input_tokens", 0),
+        output_tokens=usage.get("output_tokens", 0),
+        cache_read_tokens=usage.get("cache_read_input_tokens", 0),
+        cache_creation_tokens=usage.get("cache_creation_input_tokens", 0),
+        model=model,
+    ))
+
     return result
 
 
@@ -1306,7 +1369,7 @@ def format_response_headers(status_code: int, headers_dict: dict) -> list:
 
 def format_openai_request(
     body,
-    state,
+    state: ProviderRuntimeState,
     request_headers=None,
     *,
     provider_label: str = "OpenAI",
@@ -1319,8 +1382,8 @@ def format_openai_request(
 
     // [LAW:one-source-of-truth] OpenAI request formatting happens here only.
     """
-    state["request_counter"] += 1
-    request_num = state["request_counter"]
+    state.request_counter += 1
+    request_num = state.request_counter
 
     blocks: list[FormattedBlock] = []
     blocks.append(NewlineBlock())
@@ -1554,7 +1617,7 @@ _COMPLETE_RESPONSE_FORMATTERS_BY_FAMILY: dict[str, _CompleteResponseFormatter] =
 }
 
 
-def format_request_for_provider(provider: str, body, state, request_headers=None) -> list:
+def format_request_for_provider(provider: str, body, state: ProviderRuntimeState, request_headers=None, cache_zones=None) -> list:
     """Dispatch request formatting by provider."""
     spec = cc_dump.providers.get_provider_spec(provider)
     if spec.protocol_family == "openai":
@@ -1564,7 +1627,7 @@ def format_request_for_provider(provider: str, body, state, request_headers=None
             request_headers=request_headers,
             provider_label=spec.display_name,
         )
-    return format_request(body, state, request_headers=request_headers)
+    return format_request(body, state, request_headers=request_headers, cache_zones=cache_zones)
 
 
 def format_complete_response_for_provider(provider: str, complete_message) -> list:

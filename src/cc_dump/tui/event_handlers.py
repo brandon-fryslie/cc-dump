@@ -193,6 +193,40 @@ def _handle_complete_response_payload(
         recv_ns=recv_ns,
     )
 
+    domain_store = widgets["domain_store"]
+
+    # // [LAW:one-source-of-truth] Popping provisional data stored in handle_request.
+    provisional = app_state.get("provisional_requests", {}).pop(request_id, None)
+
+    # ── Build request blocks (with cache zones if usage available) ──
+    request_blocks: list = []
+    turn_index = -1
+    if provisional:
+        turn_index = provisional["turn_index"]
+        usage = complete_body.get("usage", {})
+        cache_zones = None
+        if usage:
+            cache_zones = cc_dump.core.analysis.compute_cache_zones(
+                provisional["body"],
+                cache_read=usage.get("cache_read_input_tokens", 0),
+                cache_creation=usage.get("cache_creation_input_tokens", 0),
+                input_tokens=usage.get("input_tokens", 0),
+            )
+        if cache_zones:
+            # Compensate for request_counter increment in format_request —
+            # reconstruction replaces an existing turn, not a new request.
+            state["request_counter"] -= 1
+            request_blocks = cc_dump.core.formatting.format_request_for_provider(
+                provisional["provider"],
+                provisional["body"],
+                state,
+                request_headers=provisional.get("request_headers"),
+                cache_zones=cache_zones,
+            )
+        else:
+            request_blocks = list(domain_store.get_turn_blocks(turn_index))
+
+    # ── Build response blocks ──
     status_code, headers_dict = _pop_response_meta(app_state, request_id)
     response_blocks: list = []
     if status_code > 0 or headers_dict:
@@ -201,11 +235,20 @@ def _handle_complete_response_payload(
         )
     response_blocks.extend(cc_dump.core.formatting.format_complete_response_for_provider(provider, complete_body))
 
-    domain_store = widgets["domain_store"]
-    if domain_store.get_stream_blocks(request_id):
-        domain_store.finalize_stream_with_blocks(request_id, response_blocks)
+    # ── Combine and replace, or fall back to separate turn ──
+    # // [LAW:one-source-of-truth] Request+response is a single conversation turn.
+    if provisional and 0 <= turn_index < domain_store.completed_count:
+        combined = request_blocks + response_blocks
+        if domain_store.get_stream_blocks(request_id):
+            domain_store.finalize_stream_replacing_turn(request_id, turn_index, combined)
+        else:
+            domain_store.replace_turn(turn_index, combined)
     else:
-        domain_store.add_turn(response_blocks)
+        # No provisional data or stale index — graceful degradation
+        if domain_store.get_stream_blocks(request_id):
+            domain_store.finalize_stream_with_blocks(request_id, response_blocks)
+        else:
+            domain_store.add_turn(response_blocks)
 
     _clear_current_turn_usage(app_state, request_id)
     _refresh_post_response(state, widgets, app_state, rerender_budget=True)
@@ -259,7 +302,16 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
 
         domain_store = widgets["domain_store"]
         # Non-streaming: add turn to domain store (fires callback to ConversationView)
-        domain_store.add_turn(blocks)
+        turn_index = domain_store.add_turn(blocks)
+        # Store provisional request data for cache zone reconstruction on response.
+        # // [LAW:one-source-of-truth] Popped in _handle_complete_response_payload.
+        provisional = app_state.setdefault("provisional_requests", {})
+        provisional[event.request_id] = {
+            "turn_index": turn_index,
+            "body": body,
+            "provider": provider,
+            "request_headers": pending_headers,
+        }
         _refresh_stats_snapshot(widgets, app_state)
 
         log_fn("DEBUG", f"Request #{state['request_counter']} processed")
@@ -387,6 +439,9 @@ def handle_response_done(event: ResponseDoneEvent, state, widgets, app_state, lo
             recv_ns=event.recv_ns,
         )
         domain_store = widgets["domain_store"]
+
+        # Clean up provisional request data so it doesn't leak.
+        _ = app_state.get("provisional_requests", {}).pop(event.request_id, None)
 
         # [LAW:single-enforcer] RESPONSE_COMPLETE is canonical finalization path.
         # RESPONSE_DONE only handles rare fallback where complete payload never arrived.
