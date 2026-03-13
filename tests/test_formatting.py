@@ -84,7 +84,7 @@ def test_format_request_minimal(fresh_state):
     assert has_metadata
 
     # Request counter should increment
-    assert fresh_state["request_counter"] == 1
+    assert fresh_state.request_counter == 1
 
 
 def test_format_request_with_system(fresh_state):
@@ -661,13 +661,13 @@ def test_format_request_multiple_calls_increment_counter(fresh_state):
     body = {"model": "claude", "max_tokens": 100, "messages": []}
 
     format_request(body, fresh_state)
-    assert fresh_state["request_counter"] == 1
+    assert fresh_state.request_counter == 1
 
     format_request(body, fresh_state)
-    assert fresh_state["request_counter"] == 2
+    assert fresh_state.request_counter == 2
 
     format_request(body, fresh_state)
-    assert fresh_state["request_counter"] == 3
+    assert fresh_state.request_counter == 3
 
 
 # ─── Tool Detail Tests ────────────────────────────────────────────────────────
@@ -1050,7 +1050,7 @@ class TestToolCorrelation:
         uses1 = _find_blocks(blocks1, ToolUseBlock)
 
         # Reset state but format again
-        fresh_state["request_counter"] = 0
+        fresh_state.request_counter = 0
         blocks2 = format_request(body, fresh_state)
         uses2 = _find_blocks(blocks2, ToolUseBlock)
 
@@ -1228,9 +1228,9 @@ class TestToolDefinitionsBlock:
         """state['tool_descriptions'] populated after format_request."""
         body = _make_body_with_tools(SAMPLE_TOOLS)
         format_request(body, fresh_state)
-        assert "tool_descriptions" in fresh_state
-        assert fresh_state["tool_descriptions"]["Read"] == "Read a file from disk"
-        assert fresh_state["tool_descriptions"]["Write"] == "Write content to a file"
+        assert fresh_state.tool_descriptions
+        assert fresh_state.tool_descriptions["Read"] == "Read a file from disk"
+        assert fresh_state.tool_descriptions["Write"] == "Write content to a file"
 
     def test_tool_def_block_instantiation(self):
         """ToolDefBlock can be instantiated with expected fields."""
@@ -1327,9 +1327,8 @@ class TestToolUseBlockDescription:
 
 
 def _fresh_openai_state():
-    return {
-        "request_counter": 0,
-    }
+    from cc_dump.core.formatting_impl import ProviderRuntimeState
+    return ProviderRuntimeState()
 
 
 class TestFormatOpenAIRequest:
@@ -1464,10 +1463,10 @@ class TestFormatOpenAIRequest:
         body = {"model": "gpt-4o", "messages": [{"role": "user", "content": "1"}]}
 
         format_openai_request(body, state)
-        assert state["request_counter"] == 1
+        assert state.request_counter == 1
 
         format_openai_request(body, state)
-        assert state["request_counter"] == 2
+        assert state.request_counter == 2
 
     def test_multi_turn_conversation(self):
         """Multiple conversation messages produce separate MessageBlocks."""

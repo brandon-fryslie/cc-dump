@@ -31,6 +31,7 @@ from rich.style import Style
 
 # Module-level imports for hot-reload (never use `from` for these)
 import cc_dump.core.formatting
+import cc_dump.core.formatting_impl
 import cc_dump.io.settings
 import cc_dump.io.logging_setup
 import cc_dump.tui.rendering
@@ -175,7 +176,7 @@ class CcDumpApp(App):
         event_queue,
         state,
         router,
-        provider_states: dict[str, dict[str, object]] | None = None,
+        provider_states: dict[str, cc_dump.core.formatting_impl.ProviderRuntimeState] | None = None,
         analytics_store=None,
         host: str = "127.0.0.1",
         port: int = 3344,
@@ -381,19 +382,11 @@ class CcDumpApp(App):
     def _iter_domain_stores(self):
         return tuple(self._session_domain_stores.values())
 
-    def _provider_state(self, provider: str) -> dict[str, object]:
+    def _provider_state(self, provider: str) -> cc_dump.core.formatting_impl.ProviderRuntimeState:
         return self._provider_states.get(provider, self._state)
 
     def _total_request_count(self) -> int:
-        return sum(
-            count
-            for count in (
-                state.get("request_counter", 0)
-                for state in self._provider_states.values()
-                if isinstance(state, dict)
-            )
-            if isinstance(count, int)
-        )
+        return sum(state.request_counter for state in self._provider_states.values())
 
     def _session_tab_title(self, session_key: str) -> str:
         if session_key == self._default_session_key:
@@ -545,11 +538,10 @@ class CcDumpApp(App):
         self._app_state["last_message_time_by_session"] = per_session
         self._publish_session_panel_state()
 
-    def _sync_detected_session(self, state: dict[str, object]) -> None:
+    def _sync_detected_session(self, state: cc_dump.core.formatting_impl.ProviderRuntimeState) -> None:
         # // [LAW:one-source-of-truth] Session ID comes from formatting state,
         # not from blocks or app_state side-channels.
-        current_session = state.get("current_session", "")
-        current_session = current_session if isinstance(current_session, str) else ""
+        current_session = state.current_session or ""
         if not current_session or current_session == self._session_id:
             return
         self._app_log("INFO", f"Session detected: {current_session}")

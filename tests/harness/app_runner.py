@@ -11,6 +11,7 @@ from typing import AsyncIterator, Callable
 from textual.pilot import Pilot
 
 from cc_dump.app.analytics_store import AnalyticsStore
+from cc_dump.core.formatting_impl import ProviderRuntimeState
 from cc_dump.pipeline.router import EventRouter, QueueSubscriber
 from cc_dump.tui.app import CcDumpApp
 
@@ -39,9 +40,7 @@ async def run_app(
     router.add_subscriber(tui_sub)
     # Router NOT started — no background thread
 
-    state = {
-        "request_counter": 0,
-    }
+    state = ProviderRuntimeState()
 
     # Create in-memory analytics store for testing
     analytics_store = AnalyticsStore()
