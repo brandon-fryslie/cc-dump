@@ -2637,10 +2637,13 @@ def _render_response_usage_full_collapsed(block: ResponseUsageBlock) -> Text | N
 # ─── Block metadata renderer ──────────────────────────────────────────────────
 
 
-def _render_metadata_line(block: FormattedBlock) -> Text | None:
-    """Render block metadata as a dim info line. Returns None if no metadata."""
+def _render_metadata_line(block: FormattedBlock) -> Text:
+    """Render block metadata as a dim info line.
+
+    // [LAW:dataflow-not-control-flow] Always returns Text; empty when no metadata.
+    """
     if not block.metadata:
-        return None
+        return Text()
     parts = ["{}: {}".format(k, v) for k, v in block.metadata.items()]
     t = Text("    ")
     t.append(" | ".join(parts), style="dim italic")
@@ -2896,11 +2899,8 @@ def _render_message_header(
 
 def _render_message_block(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render MessageBlock full-expanded header."""
-    header = _render_message_header(block, include_timestamp=True)
-    meta_line = _render_metadata_line(block)
-    if meta_line:
-        return Group(header, meta_line)
-    return header
+    # // [LAW:dataflow-not-control-flow] Always compose; empty metadata renders as nothing.
+    return Group(_render_message_header(block, include_timestamp=True), _render_metadata_line(block))
 
 
 def _message_child_counts(children: list[FormattedBlock]) -> Counter[str]:
@@ -3070,10 +3070,12 @@ def _render_system_section_full_expanded(block: FormattedBlock) -> ConsoleRender
     """Render system section full-expanded with child type composition."""
     children = getattr(block, "children", None) or []
     t = _render_section_with_all_types("SYSTEM", children)
-    meta_line = _render_metadata_line(block)
-    if meta_line and isinstance(t, Text):
-        t.append("\n")
-        t.append_text(meta_line)
+    # // [LAW:dataflow-not-control-flow] Always compose; empty metadata is invisible.
+    if isinstance(t, Text):
+        meta_line = _render_metadata_line(block)
+        if meta_line.plain:
+            t.append("\n")
+            t.append_text(meta_line)
     return t
 
 
@@ -3116,24 +3118,16 @@ def _render_tool_defs_section_full_collapsed(block: FormattedBlock) -> ConsoleRe
 
 def _render_tool_defs_section_full_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render tool defs section full-expanded with top tool names."""
+    # // [LAW:dataflow-not-control-flow] Always compose header + detail + metadata;
+    # empty children/names produce header-only output via empty detail.
     header = _render_tool_defs_section(block)
-    children = getattr(block, "children", None) or []
-    if not children:
-        meta_line = _render_metadata_line(block)
-        if meta_line:
-            return Group(header, meta_line)
-        return header
-
-    names: list[str] = []
-    for child in children:
-        name = getattr(child, "name", "")
-        if isinstance(name, str) and name:
-            names.append(name)
+    names = [
+        name
+        for child in (getattr(block, "children", None) or [])
+        if isinstance((name := getattr(child, "name", "")), str) and name
+    ]
     if not names:
-        meta_line = _render_metadata_line(block)
-        if meta_line:
-            return Group(header, meta_line)
-        return header
+        return Group(header, _render_metadata_line(block))
 
     shown = names[:6]
     hidden = max(len(names) - len(shown), 0)
@@ -3141,11 +3135,7 @@ def _render_tool_defs_section_full_expanded(block: FormattedBlock) -> ConsoleRen
     detail.append(", ".join(shown), style="dim")
     if hidden > 0:
         detail.append(f" (+{hidden} more)", style="dim")
-    meta_line = _render_metadata_line(block)
-    parts: list[ConsoleRenderable] = [header, detail]
-    if meta_line:
-        parts.append(meta_line)
-    return Group(*parts)
+    return Group(header, detail, _render_metadata_line(block))
 
 
 def _render_tool_def(block: FormattedBlock) -> ConsoleRenderable | None:

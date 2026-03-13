@@ -220,6 +220,96 @@ class CacheZone(Enum):
     FRESH = "fresh"
 
 
+@dataclass(frozen=True)
+class TokenSection:
+    """A named section of the request with its estimated token count."""
+
+    key: str
+    tokens: int
+
+
+def _estimate_content_tokens(content) -> int:
+    """Estimate tokens for a message content field (str, list, or dict)."""
+    if isinstance(content, str):
+        return estimate_tokens(content)
+    if isinstance(content, list):
+        return sum(estimate_tokens(json.dumps(b)) for b in content)
+    return estimate_tokens(json.dumps(content))
+
+
+def _estimate_message_tokens(msg: dict) -> int:
+    """Estimate total tokens for a message including tool_calls."""
+    tokens = _estimate_content_tokens(msg.get("content", ""))
+    tool_calls = msg.get("tool_calls", [])
+    if isinstance(tool_calls, list):
+        tokens += sum(
+            estimate_tokens(json.dumps(tc))
+            for tc in tool_calls
+            if isinstance(tc, dict)
+        )
+    return max(1, tokens)
+
+
+def _estimate_system_tokens(system) -> int:
+    """Estimate tokens for the system prompt (str or content block list)."""
+    if isinstance(system, str):
+        return estimate_tokens(system)
+    if isinstance(system, list):
+        return sum(
+            estimate_tokens(b.get("text", "") if isinstance(b, dict) else str(b))
+            for b in system
+        )
+    return 0
+
+
+def _estimate_request_sections(request_body: dict) -> list[TokenSection]:
+    """Build token-estimated sections in API wire order (tools → system → messages)."""
+    sections: list[TokenSection] = []
+    tools = request_body.get("tools", [])
+    if tools:
+        sections.append(TokenSection("tools", estimate_tokens(json.dumps(tools))))
+    system = request_body.get("system", "")
+    if system:
+        tokens = _estimate_system_tokens(system)
+        if tokens > 0:
+            sections.append(TokenSection("system", tokens))
+    for i, msg in enumerate(request_body.get("messages", [])):
+        sections.append(TokenSection(f"message:{i}", _estimate_message_tokens(msg)))
+    return sections
+
+
+def _classify_zones(
+    sections: list[TokenSection],
+    cache_read: int,
+    cache_creation: int,
+    input_tokens: int,
+) -> dict[str, CacheZone]:
+    """Assign each section to a cache zone based on its midpoint position."""
+    est_total = sum(s.tokens for s in sections)
+    actual_total = cache_read + cache_creation + input_tokens
+    if est_total == 0 or actual_total == 0:
+        return {}
+    ratio = actual_total / est_total
+    cache_read_end = cache_read
+    cache_write_end = cache_read + cache_creation
+
+    # // [LAW:dataflow-not-control-flow] Zone boundaries are value thresholds,
+    # not control-flow branches — each section gets exactly one zone assignment.
+    zones: dict[str, CacheZone] = {}
+    cumulative = 0.0
+    for section in sections:
+        scaled = section.tokens * ratio
+        midpoint = cumulative + scaled / 2.0
+        if midpoint < cache_read_end:
+            zones[section.key] = CacheZone.CACHE_READ
+        elif midpoint < cache_write_end:
+            zones[section.key] = CacheZone.CACHE_WRITE
+        else:
+            zones[section.key] = CacheZone.FRESH
+        cumulative += scaled
+    return zones
+
+
 def compute_cache_zones(
     request_body: dict,
     *,
@@ -229,86 +319,10 @@ def compute_cache_zones(
 ) -> dict[str, CacheZone]:
     """Map request sections to cache zones using response usage data.
 
-    Walks the request body in API wire order (tools → system → messages)
-    and assigns each section to a zone based on cumulative token position
-    relative to the cache boundaries.
-
-    Args:
-        request_body: The full API request body dict.
-        cache_read: Tokens served from cache (cache_read_input_tokens).
-        cache_creation: Tokens written to cache (cache_creation_input_tokens).
-        input_tokens: Fresh input tokens (input_tokens).
-
-    Returns:
-        Mapping of section keys to CacheZone values. Keys are:
-        "tools", "system", "message:{index}" for each message.
+    // [LAW:dataflow-not-control-flow] Build section layout, then classify.
     """
-    # [LAW:dataflow-not-control-flow] Build section layout, then classify.
-    # Sections in API wire order with estimated token counts.
-    sections: list[tuple[str, int]] = []
-
-    tools = request_body.get("tools", [])
-    if tools:
-        sections.append(("tools", estimate_tokens(json.dumps(tools))))
-
-    system = request_body.get("system", "")
-    if system:
-        if isinstance(system, str):
-            sections.append(("system", estimate_tokens(system)))
-        elif isinstance(system, list):
-            total = sum(
-                estimate_tokens(b.get("text", "") if isinstance(b, dict) else str(b))
-                for b in system
-            )
-            sections.append(("system", total))
-
-    messages = request_body.get("messages", [])
-    for i, msg in enumerate(messages):
-        content = msg.get("content", "")
-        if isinstance(content, str):
-            tokens = estimate_tokens(content)
-        elif isinstance(content, list):
-            tokens = sum(estimate_tokens(json.dumps(b)) for b in content)
-        else:
-            tokens = estimate_tokens(json.dumps(content))
-        # Include tool_calls on assistant messages (OpenAI format)
-        tool_calls = msg.get("tool_calls", [])
-        if isinstance(tool_calls, list):
-            for tc in tool_calls:
-                if isinstance(tc, dict):
-                    tokens += estimate_tokens(json.dumps(tc))
-        sections.append((f"message:{i}", max(1, tokens)))
-
-    # Total estimated tokens from sections
-    est_total = sum(t for _, t in sections)
-    if est_total == 0:
-        return {}
-
-    # Self-calibrating ratio: actual total / estimated total
-    actual_total = cache_read + cache_creation + input_tokens
-    if actual_total == 0:
-        return {}
-    ratio = actual_total / est_total
-
-    # Zone boundaries (cumulative token positions)
-    cache_read_end = cache_read
-    cache_write_end = cache_read + cache_creation
-
-    # Assign zones based on section midpoint position
-    zones: dict[str, CacheZone] = {}
-    cumulative = 0.0
-    for key, est_tokens in sections:
-        scaled = est_tokens * ratio
-        midpoint = cumulative + scaled / 2.0
-        if midpoint < cache_read_end:
-            zones[key] = CacheZone.CACHE_READ
-        elif midpoint < cache_write_end:
-            zones[key] = CacheZone.CACHE_WRITE
-        else:
-            zones[key] = CacheZone.FRESH
-        cumulative += scaled
-
-    return zones
+    sections = _estimate_request_sections(request_body)
+    return _classify_zones(sections, cache_read, cache_creation, input_tokens)
 
 
 # ─── Tool Correlation ─────────────────────────────────────────────────────────

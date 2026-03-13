@@ -5,8 +5,11 @@ events arrive from the proxy. The app.py module calls into these functions
 but the actual behavior can be hot-swapped.
 """
 
+from __future__ import annotations
+
 import os
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import cc_dump.core.analysis
 import cc_dump.core.formatting
@@ -26,6 +29,9 @@ from cc_dump.pipeline.event_types import (
     LogEvent,
     sse_progress_payload,
 )
+
+if TYPE_CHECKING:
+    from cc_dump.core.formatting_impl import ProviderRuntimeState
 
 EventHandler = Callable[
     [object, dict[str, object], dict[str, object], dict[str, object], Callable[[str, str], None]],
@@ -174,11 +180,65 @@ def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool =
     _refresh_stats_snapshot(widgets, app_state)
 
 
+def _reconstruct_request_blocks(
+    provisional: dict,
+    complete_body: dict,
+    state: ProviderRuntimeState,
+    domain_store,
+) -> list:
+    """Rebuild request blocks with cache zone annotations if usage data is available.
+
+    Returns the original turn blocks when cache zones cannot be computed.
+    """
+    usage = complete_body.get("usage", {})
+    cache_zones = (
+        cc_dump.core.analysis.compute_cache_zones(
+            provisional["body"],
+            cache_read=usage.get("cache_read_input_tokens", 0),
+            cache_creation=usage.get("cache_creation_input_tokens", 0),
+            input_tokens=usage.get("input_tokens", 0),
+        )
+        if usage
+        else {}
+    )
+    if not cache_zones:
+        return list(domain_store.get_turn_blocks(provisional["turn_index"]))
+
+    # Compensate for request_counter increment in format_request —
+    # reconstruction replaces an existing turn, not a new request.
+    state.request_counter -= 1
+    return cc_dump.core.formatting.format_request_for_provider(
+        provisional["provider"],
+        provisional["body"],
+        state,
+        request_headers=provisional.get("request_headers"),
+        cache_zones=cache_zones,
+    )
+
+
+def _commit_combined_turn(
+    request_id: str,
+    turn_index: int,
+    request_blocks: list,
+    response_blocks: list,
+    domain_store,
+) -> None:
+    """Commit combined request+response blocks into a single conversation turn.
+
+    // [LAW:one-source-of-truth] Request+response is a single conversation turn.
+    """
+    combined = request_blocks + response_blocks
+    if domain_store.get_stream_blocks(request_id):
+        domain_store.finalize_stream_replacing_turn(request_id, turn_index, combined)
+    else:
+        domain_store.replace_turn(turn_index, combined)
+
+
 def _handle_complete_response_payload(
     *,
     request_id: str,
     complete_body: dict,
-    state,
+    state: ProviderRuntimeState,
     widgets,
     app_state,
     seq: int = 0,
@@ -187,11 +247,7 @@ def _handle_complete_response_payload(
 ) -> dict[str, object]:
     """Canonical response finalization path for both streaming and non-streaming transport."""
     stream_registry = _get_stream_registry(app_state)
-    stream_registry.mark_done(
-        request_id,
-        seq=seq,
-        recv_ns=recv_ns,
-    )
+    stream_registry.mark_done(request_id, seq=seq, recv_ns=recv_ns)
 
     domain_store = widgets["domain_store"]
 
@@ -200,31 +256,9 @@ def _handle_complete_response_payload(
 
     # ── Build request blocks (with cache zones if usage available) ──
     request_blocks: list = []
-    turn_index = -1
+    turn_index = provisional["turn_index"] if provisional else -1
     if provisional:
-        turn_index = provisional["turn_index"]
-        usage = complete_body.get("usage", {})
-        cache_zones = None
-        if usage:
-            cache_zones = cc_dump.core.analysis.compute_cache_zones(
-                provisional["body"],
-                cache_read=usage.get("cache_read_input_tokens", 0),
-                cache_creation=usage.get("cache_creation_input_tokens", 0),
-                input_tokens=usage.get("input_tokens", 0),
-            )
-        if cache_zones:
-            # Compensate for request_counter increment in format_request —
-            # reconstruction replaces an existing turn, not a new request.
-            state["request_counter"] -= 1
-            request_blocks = cc_dump.core.formatting.format_request_for_provider(
-                provisional["provider"],
-                provisional["body"],
-                state,
-                request_headers=provisional.get("request_headers"),
-                cache_zones=cache_zones,
-            )
-        else:
-            request_blocks = list(domain_store.get_turn_blocks(turn_index))
+        request_blocks = _reconstruct_request_blocks(provisional, complete_body, state, domain_store)
 
     # ── Build response blocks ──
     status_code, headers_dict = _pop_response_meta(app_state, request_id)
@@ -236,13 +270,8 @@ def _handle_complete_response_payload(
     response_blocks.extend(cc_dump.core.formatting.format_complete_response_for_provider(provider, complete_body))
 
     # ── Combine and replace, or fall back to separate turn ──
-    # // [LAW:one-source-of-truth] Request+response is a single conversation turn.
     if provisional and 0 <= turn_index < domain_store.completed_count:
-        combined = request_blocks + response_blocks
-        if domain_store.get_stream_blocks(request_id):
-            domain_store.finalize_stream_replacing_turn(request_id, turn_index, combined)
-        else:
-            domain_store.replace_turn(turn_index, combined)
+        _commit_combined_turn(request_id, turn_index, request_blocks, response_blocks, domain_store)
     else:
         # No provisional data or stale index — graceful degradation
         if domain_store.get_stream_blocks(request_id):
@@ -282,7 +311,7 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
             body if isinstance(body, dict) else {},
             seq=event.seq,
             recv_ns=event.recv_ns,
-            session_hint=state.get("current_session", "") if isinstance(state.get("current_session", ""), str) else "",
+            session_hint=state.current_session or "",
         )
 
         # Capture recent messages for side-channel summarization
@@ -314,7 +343,7 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
         }
         _refresh_stats_snapshot(widgets, app_state)
 
-        log_fn("DEBUG", f"Request #{state['request_counter']} processed")
+        log_fn("DEBUG", f"Request #{state.request_counter} processed")
     except Exception as e:
         log_fn("ERROR", f"Error handling request: {e}")
         raise

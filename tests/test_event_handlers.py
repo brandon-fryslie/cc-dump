@@ -18,6 +18,7 @@ from cc_dump.pipeline.event_types import (
     Usage,
 )
 from cc_dump.app.domain_store import DomainStore
+from cc_dump.core.formatting_impl import ProviderRuntimeState
 from cc_dump.tui import event_handlers
 
 
@@ -133,14 +134,7 @@ def _noop_log(*_args, **_kwargs) -> None:
 
 class TestEventHandlersRequestScopedStreaming:
     def test_interleaved_stream_events_are_partitioned_by_request_id(self):
-        state = {
-            "positions": {},
-            "known_hashes": {},
-            "next_id": 0,
-            "next_color": 0,
-            "request_counter": 0,
-            "current_session": None,
-        }
+        state = ProviderRuntimeState()
         app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
         conv = _FakeConv()
         view_store = _FakeViewStore()
@@ -286,14 +280,7 @@ class TestEventHandlersRequestScopedStreaming:
         assert domain_store.completed_count >= 4  # both streams finalized
 
     def test_response_complete_finalizes_stream_before_done(self):
-        state = {
-            "positions": {},
-            "known_hashes": {},
-            "next_id": 0,
-            "next_color": 0,
-            "request_counter": 0,
-            "current_session": None,
-        }
+        state = ProviderRuntimeState()
         app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
         widgets = _mk_widgets(_FakeConv(), _FakeViewStore(), DomainStore())
         log_fn = _noop_log
@@ -374,14 +361,7 @@ class TestEventHandlersRequestScopedStreaming:
         assert ds.completed_count == completed_before
 
     def test_three_interleaved_streams_finalize_out_of_order_without_cross_talk(self):
-        state = {
-            "positions": {},
-            "known_hashes": {},
-            "next_id": 0,
-            "next_color": 0,
-            "request_counter": 0,
-            "current_session": None,
-        }
+        state = ProviderRuntimeState()
         app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
         widgets = _mk_widgets(_FakeConv(), _FakeViewStore(), DomainStore())
         domain_store = widgets["domain_store"]
