@@ -1,9 +1,11 @@
 """Unit tests for analysis.py - token estimation, budgets, tool correlation."""
 
 from cc_dump.core.analysis import (
+    CacheZone,
     TurnBudget,
     MODEL_PRICING,
     classify_model,
+    compute_cache_zones,
     compute_turn_budget,
     correlate_tools,
     estimate_tokens,
@@ -675,3 +677,106 @@ def test_correlate_tools_mixed_formats_independent():
     assert len(invocations) == 2
     names = {inv.name for inv in invocations}
     assert names == {"Read", "search"}
+
+
+# ─── Cache Zone Tests ────────────────────────────────────────────────────────
+
+
+def _make_request(*, tools=None, system=None, messages=None):
+    """Build a minimal request body for cache zone testing."""
+    body = {}
+    if tools is not None:
+        body["tools"] = tools
+    if system is not None:
+        body["system"] = system
+    if messages is not None:
+        body["messages"] = messages
+    return body
+
+
+def test_cache_zones_empty_request():
+    """Empty request body → no zones."""
+    zones = compute_cache_zones({}, cache_read=0, cache_creation=0, input_tokens=0)
+    assert zones == {}
+
+
+def test_cache_zones_zero_usage():
+    """Non-empty request but zero usage → empty zones (no actual tokens)."""
+    body = _make_request(
+        system="Hello world",
+        messages=[{"role": "user", "content": "Hi"}],
+    )
+    zones = compute_cache_zones(body, cache_read=0, cache_creation=0, input_tokens=0)
+    assert zones == {}
+
+
+def test_cache_zones_all_fresh():
+    """All tokens are fresh (no caching) → every section is FRESH."""
+    body = _make_request(
+        system="System prompt text for testing",
+        messages=[{"role": "user", "content": "User message here"}],
+    )
+    zones = compute_cache_zones(body, cache_read=0, cache_creation=0, input_tokens=100)
+    assert "system" in zones
+    assert "message:0" in zones
+    assert all(z == CacheZone.FRESH for z in zones.values())
+
+
+def test_cache_zones_all_cached():
+    """All tokens are cache_read → every section is CACHE_READ."""
+    body = _make_request(
+        system="System prompt text for testing",
+        messages=[{"role": "user", "content": "User message here"}],
+    )
+    zones = compute_cache_zones(body, cache_read=100, cache_creation=0, input_tokens=0)
+    assert all(z == CacheZone.CACHE_READ for z in zones.values())
+
+
+def test_cache_zones_section_ordering():
+    """Sections follow API wire order: tools → system → messages."""
+    tools = [{"name": "read_file", "description": "Read a file", "input_schema": {"type": "object"}}]
+    body = _make_request(
+        tools=tools,
+        system="System prompt",
+        messages=[
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "reply"},
+            {"role": "user", "content": "second"},
+        ],
+    )
+    zones = compute_cache_zones(body, cache_read=50, cache_creation=0, input_tokens=50)
+    assert "tools" in zones
+    assert "system" in zones
+    assert "message:0" in zones
+    assert "message:1" in zones
+    assert "message:2" in zones
+
+
+def test_cache_zones_mixed_read_and_fresh():
+    """Large cache_read with some fresh tokens → early sections cached, later fresh."""
+    # Construct a request where tools + system are ~80% of tokens, messages ~20%
+    big_system = "x " * 500  # ~250 tokens estimated
+    body = _make_request(
+        system=big_system,
+        messages=[{"role": "user", "content": "short"}],
+    )
+    # Most tokens come from cache_read → system should be CACHE_READ, message FRESH
+    zones = compute_cache_zones(body, cache_read=200, cache_creation=0, input_tokens=20)
+    assert zones.get("system") == CacheZone.CACHE_READ
+    assert zones.get("message:0") == CacheZone.FRESH
+
+
+def test_cache_zones_cache_write_region():
+    """cache_creation tokens create a CACHE_WRITE zone between read and fresh."""
+    big_tools = [{"name": f"tool_{i}", "description": f"Description {i}" * 20, "input_schema": {}} for i in range(5)]
+    big_system = "System " * 200
+    body = _make_request(
+        tools=big_tools,
+        system=big_system,
+        messages=[{"role": "user", "content": "msg"}],
+    )
+    # tools=cached, system=cache_write, message=fresh (roughly)
+    zones = compute_cache_zones(body, cache_read=300, cache_creation=200, input_tokens=50)
+    zone_values = set(zones.values())
+    # Should have at least two distinct zone types
+    assert len(zone_values) >= 2

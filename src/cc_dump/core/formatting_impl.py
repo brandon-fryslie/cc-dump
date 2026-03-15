@@ -114,8 +114,9 @@ class ProviderRuntimeState:
     """Per-provider formatting state.
 
     // [LAW:one-source-of-truth] Canonical container for all mutable state
-    // that formatting functions read. Mutations happen at the caller boundary
-    // (event_handlers), not inside formatting functions.
+    // that formatting functions use. format_request/format_openai_request
+    // increment request_counter as a side-effect — callers must not
+    // manipulate the counter directly.
     """
 
     request_counter: int = 0

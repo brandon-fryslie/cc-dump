@@ -193,40 +193,52 @@ def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool =
     _refresh_stats_snapshot(widgets, app_state)
 
 
-def _reconstruct_request_blocks(
+def _annotate_cache_zones(blocks: list, cache_zones: dict[str, object]) -> list:
+    """Annotate existing request blocks with cache zone metadata in-place.
+
+    // [LAW:dataflow-not-control-flow] Zones are data annotations on existing blocks,
+    // not control flow that rebuilds the block tree.
+    """
+    # Section key → block type + field for matching
+    for block in blocks:
+        block_type = type(block).__name__
+        zone_key: str | None = None
+        if block_type == "ToolDefsSection":
+            zone_key = "tools"
+        elif block_type == "SystemSection":
+            zone_key = "system"
+        elif block_type == "MessageBlock":
+            zone_key = f"message:{block.msg_index}"
+        if zone_key is not None and zone_key in cache_zones:
+            if block.metadata is None:
+                block.metadata = {}
+            block.metadata["cache"] = cache_zones[zone_key].value
+    return blocks
+
+
+def _get_request_blocks_with_zones(
     provisional: dict,
     complete_body: dict,
-    state: ProviderRuntimeState,
     domain_store,
 ) -> list:
-    """Rebuild request blocks with cache zone annotations if usage data is available.
+    """Get request blocks annotated with cache zone metadata if usage data is available.
 
-    Returns the original turn blocks when cache zones cannot be computed.
+    Returns the original turn blocks, annotated in-place with cache zones.
+    No state mutation — overlap-safe for concurrent requests.
     """
+    blocks = list(domain_store.get_turn_blocks(provisional["turn_index"]))
     usage = complete_body.get("usage", {})
-    cache_zones = (
-        cc_dump.core.analysis.compute_cache_zones(
-            provisional["body"],
-            cache_read=usage.get("cache_read_input_tokens", 0),
-            cache_creation=usage.get("cache_creation_input_tokens", 0),
-            input_tokens=usage.get("input_tokens", 0),
-        )
-        if usage
-        else {}
+    if not usage:
+        return blocks
+    cache_zones = cc_dump.core.analysis.compute_cache_zones(
+        provisional["body"],
+        cache_read=usage.get("cache_read_input_tokens", 0),
+        cache_creation=usage.get("cache_creation_input_tokens", 0),
+        input_tokens=usage.get("input_tokens", 0),
     )
     if not cache_zones:
-        return list(domain_store.get_turn_blocks(provisional["turn_index"]))
-
-    # Compensate for request_counter increment in format_request —
-    # reconstruction replaces an existing turn, not a new request.
-    state.request_counter -= 1
-    return cc_dump.core.formatting.format_request_for_provider(
-        provisional["provider"],
-        provisional["body"],
-        state,
-        request_headers=provisional.get("request_headers"),
-        cache_zones=cache_zones,
-    )
+        return blocks
+    return _annotate_cache_zones(blocks, cache_zones)
 
 
 def _commit_combined_turn(
@@ -271,7 +283,7 @@ def _handle_complete_response_payload(
     request_blocks: list = []
     turn_index = provisional["turn_index"] if provisional else -1
     if provisional:
-        request_blocks = _reconstruct_request_blocks(provisional, complete_body, state, domain_store)
+        request_blocks = _get_request_blocks_with_zones(provisional, complete_body, domain_store)
 
     # ── Build response blocks ──
     status_code, headers_dict = _pop_response_meta(app_state, request_id)
