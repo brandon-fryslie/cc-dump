@@ -18,6 +18,7 @@ from cc_dump.pipeline.event_types import (
     Usage,
 )
 from cc_dump.app.domain_store import DomainStore
+from cc_dump.core.formatting_impl import ProviderRuntimeState
 from cc_dump.tui import event_handlers
 
 
@@ -133,14 +134,7 @@ def _noop_log(*_args, **_kwargs) -> None:
 
 class TestEventHandlersRequestScopedStreaming:
     def test_interleaved_stream_events_are_partitioned_by_request_id(self):
-        state = {
-            "positions": {},
-            "known_hashes": {},
-            "next_id": 0,
-            "next_color": 0,
-            "request_counter": 0,
-            "current_session": None,
-        }
+        state = ProviderRuntimeState()
         app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
         conv = _FakeConv()
         view_store = _FakeViewStore()
@@ -286,14 +280,7 @@ class TestEventHandlersRequestScopedStreaming:
         assert domain_store.completed_count >= 4  # both streams finalized
 
     def test_response_complete_finalizes_stream_before_done(self):
-        state = {
-            "positions": {},
-            "known_hashes": {},
-            "next_id": 0,
-            "next_color": 0,
-            "request_counter": 0,
-            "current_session": None,
-        }
+        state = ProviderRuntimeState()
         app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
         widgets = _mk_widgets(_FakeConv(), _FakeViewStore(), DomainStore())
         log_fn = _noop_log
@@ -355,13 +342,14 @@ class TestEventHandlersRequestScopedStreaming:
 
         ds = widgets["domain_store"]
         assert rid not in ds._stream_turns
-        assert ds.completed_count == completed_before + 1
-        response_turn = ds.iter_completed_blocks()[-1]
+        # Combined turn: request turn replaced in place, no new turn added.
+        assert ds.completed_count == completed_before
+        combined_turn = ds.iter_completed_blocks()[-1]
         def _walk(blocks):
             for block in blocks:
                 yield block
                 yield from _walk(getattr(block, "children", []))
-        assert any(getattr(block, "content", "") == "canonical final" for block in _walk(response_turn))
+        assert any(getattr(block, "content", "") == "canonical final" for block in _walk(combined_turn))
 
         event_handlers.handle_response_done(
             ResponseDoneEvent(request_id=rid, seq=5, recv_ns=5),
@@ -370,17 +358,10 @@ class TestEventHandlersRequestScopedStreaming:
             app_state,
             log_fn,
         )
-        assert ds.completed_count == completed_before + 1
+        assert ds.completed_count == completed_before
 
     def test_three_interleaved_streams_finalize_out_of_order_without_cross_talk(self):
-        state = {
-            "positions": {},
-            "known_hashes": {},
-            "next_id": 0,
-            "next_color": 0,
-            "request_counter": 0,
-            "current_session": None,
-        }
+        state = ProviderRuntimeState()
         app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
         widgets = _mk_widgets(_FakeConv(), _FakeViewStore(), DomainStore())
         domain_store = widgets["domain_store"]
@@ -482,14 +463,13 @@ class TestEventHandlersRequestScopedStreaming:
             assert set(domain_store.get_active_stream_ids()) == remaining
 
         assert domain_store.get_active_stream_ids() == ()
-        response_turns = [
-            turn
-            for turn in domain_store.iter_completed_blocks()
-            if _turn_text(turn).startswith("final-")
-        ]
-        response_payloads = sorted(_turn_text(turn) for turn in response_turns)
-        assert response_payloads == ["final-a", "final-b", "final-c"]
-        assert all("temp-" not in payload for payload in response_payloads)
+        # Combined turns: each request turn is replaced with request+response blocks.
+        # Verify each combined turn contains the final response text (not streaming temp text).
+        combined_texts = [_turn_text(turn) for turn in domain_store.iter_completed_blocks()]
+        for label in ("final-a", "final-b", "final-c"):
+            assert any(label in text for text in combined_texts), f"{label} not found in any turn"
+        for text in combined_texts:
+            assert "temp-" not in text
 
 
 def test_capacity_total_cache_tracks_env_changes(monkeypatch):

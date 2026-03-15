@@ -5,7 +5,6 @@ instances from the updated class definitions and swap them in.
 """
 
 import datetime
-import hashlib
 import logging
 from contextlib import contextmanager
 from collections import deque
@@ -60,17 +59,14 @@ def _compute_widest(strips: list) -> int:
     return widest
 
 
-def _hash_strips(strips: list[Strip]) -> str:
-    """Compute stable content hash for rendered strips."""
-    digest = hashlib.blake2b(digest_size=16)
-    for strip in strips:
-        for seg in strip:
-            digest.update(seg.text.encode("utf-8", errors="replace"))
-            digest.update(b"\x1f")
-            digest.update(str(seg.style).encode("utf-8", errors="replace"))
-            digest.update(b"\x1e")
-        digest.update(b"\x00")
-    return digest.hexdigest()
+_strip_version_counter = 0
+
+
+def _next_strip_version() -> int:
+    """Allocate a monotonically increasing strip version. O(1) replacement for _hash_strips."""
+    global _strip_version_counter
+    _strip_version_counter += 1
+    return _strip_version_counter
 
 
 @dataclass
@@ -96,7 +92,7 @@ class TurnData:
     _widest_strip: int = 0  # cached max(s.cell_length for s in strips)
     _stream_last_delta_version: int = -1  # last rendered delta version
     _stream_last_render_width: int = 0  # width used for last preview render
-    _strip_hash: str = ""  # hash of rendered strips for no-op rerender detection
+    _strip_version: int = 0  # monotonic version for change detection
     _last_render_key: tuple | None = None  # width/search/theme/override revision tuple
     _pending_filter_snapshot: dict | None = (
         None  # deferred filters for lazy off-viewport re-render
@@ -170,14 +166,11 @@ class TurnData:
             overrides=overrides,
             runtime=runtime,
         )
-        strip_hash = _hash_strips(strips)
-        if strip_hash == self._strip_hash:
-            return False
 
         self.strips = strips
         self.block_strip_map = block_strip_map
         self._flat_blocks = flat_blocks
-        self._strip_hash = strip_hash
+        self._strip_version = _next_strip_version()
         self._widest_strip = _compute_widest(self.strips)
         return True
 
@@ -297,6 +290,8 @@ class ConversationView(ScrollView):
         self._widest_strip_max: int = 0
         self._offset_recalc_incremental_count: int = 0
         self._offset_recalc_full_width_interval: int = 128
+        # // [LAW:one-source-of-truth] Block ID → block object index for O(1) lookup.
+        self._block_index: dict[int, object] = {}
 
         # Wire domain store callbacks
         self._wire_domain_store(self._domain_store)
@@ -363,6 +358,8 @@ class ConversationView(ScrollView):
     def _wire_domain_store(self, ds) -> None:
         """Register rendering callbacks on domain store."""
         ds.on_turn_added = self._on_turn_added
+        ds.on_turn_replaced = self._on_turn_replaced
+        ds.on_stream_preview_cleanup = self._on_stream_preview_cleanup
         ds.on_stream_started = self._on_stream_started
         ds.on_stream_block = self._on_stream_block
         ds.on_stream_finalized = self._on_stream_finalized
@@ -495,12 +492,34 @@ class ConversationView(ScrollView):
             for child in reversed(children):
                 stack.append(child)
 
+    def _unindex_blocks(self, blocks) -> None:
+        """Remove blocks and their descendants from the block_id index."""
+        stack = list(blocks)
+        while stack:
+            block = stack.pop()
+            block_id = getattr(block, "block_id", None)
+            if block_id is not None:
+                self._block_index.pop(block_id, None)
+            stack.extend(getattr(block, "children", []) or [])
+
+    def _index_blocks(self, blocks) -> None:
+        """Add blocks and their descendants to the block_id index."""
+        stack = list(blocks)
+        while stack:
+            block = stack.pop()
+            block_id = getattr(block, "block_id", None)
+            if block_id is not None:
+                self._block_index[block_id] = block
+            stack.extend(getattr(block, "children", []) or [])
+
+    def _unindex_turn_range(self, turns) -> None:
+        """Remove all blocks from a sequence of TurnData from the block_id index."""
+        for td in turns:
+            self._unindex_blocks(td.blocks)
+
     def _find_block_by_id(self, block_id: int):
-        """Locate a block object by stable block_id across rendered turns."""
-        for block in self._iter_blocks_with_descendants():
-            if getattr(block, "block_id", None) == block_id:
-                return block
-        return None
+        """Locate a block object by stable block_id. O(1) via index."""
+        return self._block_index.get(block_id)
 
     def _default_block_expanded(self, block) -> bool:
         category = cc_dump.tui.rendering.get_category(block)
@@ -1175,7 +1194,7 @@ class ConversationView(ScrollView):
         "focus_changed":     "_render_focus_changed",
         "filters_changed":   "_rerender_affected",
         "search":            "_rerender_affected",
-        "resize":            "_render_all_turns",
+        "resize":            "_render_resize",
         "restore":           "_render_restore",
     }
 
@@ -1312,8 +1331,47 @@ class ConversationView(ScrollView):
             return
         self._invalidate("new_turn", blocks=blocks)
 
+    def _on_turn_replaced(self, turn_index: int, new_blocks: list) -> None:
+        """Domain store callback: a completed turn was replaced (provisional → final).
+
+        Re-renders the turn in-place, invalidates caches, and recalculates
+        offsets if line count changed. Scroll position preserved by anchor.
+        // [LAW:dataflow-not-control-flow] Always re-render; let render pipeline
+        // decide what changed.
+        """
+        if not self.is_attached:
+            return
+        if turn_index < 0 or turn_index >= len(self._turns):
+            return
+        preserve_scroll = not self._is_following
+        if preserve_scroll:
+            self.capture_scroll_anchor()
+        td = self._turns[turn_index]
+        self._unindex_blocks(td.blocks)
+        td.blocks = new_blocks
+        self._index_blocks(new_blocks)
+        td.compute_relevant_keys()
+        width = self._content_width if self._size_known else self._last_width
+        td.re_render(
+            self._last_filters,
+            self.app.console,
+            width,
+            force=True,
+            block_cache=self._block_strip_cache,
+            search_ctx=self._last_search_ctx,
+            overrides=self._view_overrides,
+            render_key=self._turn_render_key(width),
+            runtime=self._render_runtime,
+        )
+        self._invalidate_cache_for_turns(turn_index, turn_index + 1)
+        self._recalculate_offsets_from(turn_index)
+        if preserve_scroll:
+            self._resolve_anchor()
+        self.refresh()
+
     def _prune_all_turns(self) -> None:
         self._turns.clear()
+        self._block_index.clear()
         self._scroll_anchor = None
         self._reset_background_rerender_state()
         self._recalculate_offsets()
@@ -1355,6 +1413,8 @@ class ConversationView(ScrollView):
             self._prune_all_turns()
             return
 
+        # // [LAW:one-source-of-truth] Unindex pruned blocks before removing turns.
+        self._unindex_turn_range(self._turns[:pruned_count])
         del self._turns[:pruned_count]
         self._reindex_turns()
         self._rebase_scroll_anchor_after_prune(pruned_count)
@@ -1394,7 +1454,7 @@ class ConversationView(ScrollView):
             block_strip_map=block_strip_map,
             _flat_blocks=flat_blocks,
         )
-        td._strip_hash = _hash_strips(strips)
+        td._strip_version = _next_strip_version()
         td._last_render_key = render_key
         td._widest_strip = _compute_widest(strips)
         td.compute_relevant_keys()
@@ -1404,6 +1464,7 @@ class ConversationView(ScrollView):
             k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
         }
         td._filter_revision = self._active_filter_revision
+        self._index_blocks(blocks)
         self._append_completed_turn(td)
 
     def add_turn(self, blocks: list, filters: dict | None = None):
@@ -1462,6 +1523,20 @@ class ConversationView(ScrollView):
 
     # ─── Domain store callbacks (rendering side) ─────────────────────────────
 
+    def _on_stream_preview_cleanup(self, request_id: str, was_focused: bool) -> None:
+        """Domain store callback: stream preview should be removed without creating a turn.
+
+        // [LAW:one-way-deps] Called before on_turn_replaced so turn list is clean
+        // before re-rendering the combined turn.
+        """
+        if not self.is_attached:
+            return
+        if was_focused:
+            self._detach_stream_preview()
+        self._stream_preview_turns.pop(request_id, None)
+        self._pending_stream_delta_request_ids.discard(request_id)
+        self._attach_stream_preview()
+
     def _on_stream_started(self, request_id: str, meta: dict) -> None:
         """Domain store callback: a new stream was created."""
         if not self.is_attached:
@@ -1512,7 +1587,7 @@ class ConversationView(ScrollView):
         delta_text = self._domain_store.get_delta_preview_text(request_id)
         if not delta_text:
             td.strips = td.strips[: td._stable_strip_count]
-            td._strip_hash = _hash_strips(td.strips)
+            td._strip_version = _next_strip_version()
             td._widest_strip = _compute_widest(td.strips)
             td._stream_last_delta_version = delta_version
             td._stream_last_render_width = width
@@ -1524,7 +1599,7 @@ class ConversationView(ScrollView):
         )
 
         td.strips = td.strips[: td._stable_strip_count] + delta_strips
-        td._strip_hash = _hash_strips(td.strips)
+        td._strip_version = _next_strip_version()
         td._widest_strip = _compute_widest(td.strips)
         td._stream_last_delta_version = delta_version
         td._stream_last_render_width = width
@@ -1607,7 +1682,7 @@ class ConversationView(ScrollView):
         td.strips = strips
         td.block_strip_map = block_strip_map
         td._flat_blocks = flat_blocks
-        td._strip_hash = _hash_strips(strips)
+        td._strip_version = _next_strip_version()
         td._widest_strip = _compute_widest(td.strips)
         td.is_streaming = False
         td._text_delta_buffer.clear()
@@ -1621,6 +1696,7 @@ class ConversationView(ScrollView):
             k: self._last_filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
         }
         td._filter_revision = self._active_filter_revision
+        self._index_blocks(final_blocks)
 
         # Remove from preview registry
         self._stream_preview_turns.pop(request_id, None)
@@ -1999,35 +2075,29 @@ class ConversationView(ScrollView):
             self._last_width = width
             self._invalidate("resize")
 
-    def _render_all_turns(self) -> None:
-        """Re-render all turns at current width. Used for resize."""
+    def _render_resize(self) -> None:
+        """Re-render at new width using viewport-bounded strategy.
+
+        // [LAW:dataflow-not-control-flow] Reuses bounded rerender; width in render_key drives change detection.
+        """
         width = self._last_width
         console = self.app.console
         self._update_render_revisions(self._last_search_ctx)
+        self._active_filter_revision += 1
+        target_revision = self._active_filter_revision
+        self._reset_background_rerender_state()
+        self._deferred_offset_recalc_scheduled = False
+        self._deferred_offset_recalc_start_idx = None
         render_key = self._turn_render_key(width)
-        for td in self._turns:
-            # Skip re-rendering streaming turns on resize
-            if td.is_streaming:
-                continue
-            td.strips, td.block_strip_map, td._flat_blocks = (
-                cc_dump.tui.rendering.render_turn_to_strips(
-                    td.blocks,
-                    self._last_filters,
-                    console,
-                    width,
-                    block_cache=self._block_strip_cache,
-                    search_ctx=self._last_search_ctx,
-                    turn_index=td.turn_index,
-                    overrides=self._view_overrides,
-                    runtime=self._render_runtime,
-                )
-            )
-            td._strip_hash = _hash_strips(td.strips)
-            td._last_render_key = render_key
-            td._widest_strip = _compute_widest(td.strips)
-            td._pending_filter_snapshot = None
-            td._filter_revision = self._active_filter_revision
-        self._recalculate_offsets()
+
+        self._rerender_affected_bounded(
+            filters=self._last_filters,
+            force=True,
+            width=width,
+            console=console,
+            target_revision=target_revision,
+            render_key=render_key,
+        )
 
     # ─── Sprint 2: Follow mode ───────────────────────────────────────────────
 
@@ -2346,6 +2416,7 @@ class ConversationView(ScrollView):
         state = self._pending_restore
         self._pending_restore = None
         self._turns.clear()
+        self._block_index.clear()
         self._stream_preview_turns.clear()
         self._attached_stream_id = None
         self._pending_stream_delta_request_ids.clear()

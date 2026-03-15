@@ -5,7 +5,10 @@ events arrive from the proxy. The app.py module calls into these functions
 but the actual behavior can be hot-swapped.
 """
 
+from __future__ import annotations
+
 import os
+import time
 from collections.abc import Callable
 
 import cc_dump.core.analysis
@@ -26,6 +29,8 @@ from cc_dump.pipeline.event_types import (
     LogEvent,
     sse_progress_payload,
 )
+
+from cc_dump.core.formatting_impl import ProviderRuntimeState
 
 EventHandler = Callable[
     [object, dict[str, object], dict[str, object], dict[str, object], Callable[[str, str], None]],
@@ -162,6 +167,20 @@ def _refresh_stats_snapshot(widgets, app_state) -> None:
     view_store.set("panel:stats_snapshot", _with_capacity_summary(snapshot))
 
 
+_last_stats_refresh_ns: int = 0
+_STATS_REFRESH_INTERVAL_NS = 1_000_000_000  # 1 second
+
+
+def _refresh_stats_snapshot_throttled(widgets, app_state) -> None:
+    """Throttled variant for streaming hot path — at most once per second."""
+    global _last_stats_refresh_ns
+    now = time.monotonic_ns()
+    if now - _last_stats_refresh_ns < _STATS_REFRESH_INTERVAL_NS:
+        return
+    _last_stats_refresh_ns = now
+    _refresh_stats_snapshot(widgets, app_state)
+
+
 def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool = True) -> None:
     """Refresh derived UI state after a response completion path."""
     conv = widgets["conv"]
@@ -174,11 +193,78 @@ def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool =
     _refresh_stats_snapshot(widgets, app_state)
 
 
+def _annotate_cache_zones(blocks: list, cache_zones: dict[str, object]) -> list:
+    """Annotate existing request blocks with cache zone metadata in-place.
+
+    // [LAW:dataflow-not-control-flow] Zones are data annotations on existing blocks,
+    // not control flow that rebuilds the block tree.
+    """
+    # Section key → block type + field for matching
+    for block in blocks:
+        block_type = type(block).__name__
+        zone_key: str | None = None
+        if block_type == "ToolDefsSection":
+            zone_key = "tools"
+        elif block_type == "SystemSection":
+            zone_key = "system"
+        elif block_type == "MessageBlock":
+            zone_key = f"message:{block.msg_index}"
+        if zone_key is not None and zone_key in cache_zones:
+            if block.metadata is None:
+                block.metadata = {}
+            block.metadata["cache"] = cache_zones[zone_key].value
+    return blocks
+
+
+def _get_request_blocks_with_zones(
+    provisional: dict,
+    complete_body: dict,
+    domain_store,
+) -> list:
+    """Get request blocks annotated with cache zone metadata if usage data is available.
+
+    Returns the original turn blocks, annotated in-place with cache zones.
+    No state mutation — overlap-safe for concurrent requests.
+    """
+    blocks = list(domain_store.get_turn_blocks(provisional["turn_index"]))
+    # // [LAW:single-enforcer] Coerce None → {} at boundary.
+    usage = complete_body.get("usage") or {}
+    if not usage:
+        return blocks
+    cache_zones = cc_dump.core.analysis.compute_cache_zones(
+        provisional["body"],
+        cache_read=usage.get("cache_read_input_tokens", 0),
+        cache_creation=usage.get("cache_creation_input_tokens", 0),
+        input_tokens=usage.get("input_tokens", 0),
+    )
+    if not cache_zones:
+        return blocks
+    return _annotate_cache_zones(blocks, cache_zones)
+
+
+def _commit_combined_turn(
+    request_id: str,
+    turn_index: int,
+    request_blocks: list,
+    response_blocks: list,
+    domain_store,
+) -> None:
+    """Commit combined request+response blocks into a single conversation turn.
+
+    // [LAW:one-source-of-truth] Request+response is a single conversation turn.
+    """
+    combined = request_blocks + response_blocks
+    if domain_store.get_stream_blocks(request_id):
+        domain_store.finalize_stream_replacing_turn(request_id, turn_index, combined)
+    else:
+        domain_store.replace_turn(turn_index, combined)
+
+
 def _handle_complete_response_payload(
     *,
     request_id: str,
     complete_body: dict,
-    state,
+    state: ProviderRuntimeState,
     widgets,
     app_state,
     seq: int = 0,
@@ -187,12 +273,20 @@ def _handle_complete_response_payload(
 ) -> dict[str, object]:
     """Canonical response finalization path for both streaming and non-streaming transport."""
     stream_registry = _get_stream_registry(app_state)
-    stream_registry.mark_done(
-        request_id,
-        seq=seq,
-        recv_ns=recv_ns,
-    )
+    stream_registry.mark_done(request_id, seq=seq, recv_ns=recv_ns)
 
+    domain_store = widgets["domain_store"]
+
+    # // [LAW:one-source-of-truth] Popping provisional data stored in handle_request.
+    provisional = app_state.get("provisional_requests", {}).pop(request_id, None)
+
+    # ── Build request blocks (with cache zones if usage available) ──
+    request_blocks: list = []
+    turn_index = provisional["turn_index"] if provisional else -1
+    if provisional:
+        request_blocks = _get_request_blocks_with_zones(provisional, complete_body, domain_store)
+
+    # ── Build response blocks ──
     status_code, headers_dict = _pop_response_meta(app_state, request_id)
     response_blocks: list = []
     if status_code > 0 or headers_dict:
@@ -201,11 +295,15 @@ def _handle_complete_response_payload(
         )
     response_blocks.extend(cc_dump.core.formatting.format_complete_response_for_provider(provider, complete_body))
 
-    domain_store = widgets["domain_store"]
-    if domain_store.get_stream_blocks(request_id):
-        domain_store.finalize_stream_with_blocks(request_id, response_blocks)
+    # ── Combine and replace, or fall back to separate turn ──
+    if provisional and 0 <= turn_index < domain_store.completed_count:
+        _commit_combined_turn(request_id, turn_index, request_blocks, response_blocks, domain_store)
     else:
-        domain_store.add_turn(response_blocks)
+        # No provisional data or stale index — graceful degradation
+        if domain_store.get_stream_blocks(request_id):
+            domain_store.finalize_stream_with_blocks(request_id, response_blocks)
+        else:
+            domain_store.add_turn(response_blocks)
 
     _clear_current_turn_usage(app_state, request_id)
     _refresh_post_response(state, widgets, app_state, rerender_budget=True)
@@ -239,7 +337,7 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
             body if isinstance(body, dict) else {},
             seq=event.seq,
             recv_ns=event.recv_ns,
-            session_hint=state.get("current_session", "") if isinstance(state.get("current_session", ""), str) else "",
+            session_hint=state.current_session or "",
         )
 
         # Capture recent messages for side-channel summarization
@@ -259,10 +357,19 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
 
         domain_store = widgets["domain_store"]
         # Non-streaming: add turn to domain store (fires callback to ConversationView)
-        domain_store.add_turn(blocks)
+        turn_index = domain_store.add_turn(blocks)
+        # Store provisional request data for cache zone reconstruction on response.
+        # // [LAW:one-source-of-truth] Popped in _handle_complete_response_payload.
+        provisional = app_state.setdefault("provisional_requests", {})
+        provisional[event.request_id] = {
+            "turn_index": turn_index,
+            "body": body,
+            "provider": provider,
+            "request_headers": pending_headers,
+        }
         _refresh_stats_snapshot(widgets, app_state)
 
-        log_fn("DEBUG", f"Request #{state['request_counter']} processed")
+        log_fn("DEBUG", f"Request #{state.request_counter} processed")
     except Exception as e:
         log_fn("ERROR", f"Error handling request: {e}")
         raise
@@ -351,7 +458,7 @@ def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_s
             domain_store.append_stream_block(event.request_id, block)
 
         _upsert_current_turn_usage(app_state, event.request_id, event)
-        _refresh_stats_snapshot(widgets, app_state)
+        _refresh_stats_snapshot_throttled(widgets, app_state)
     except Exception as e:
         log_fn("ERROR", f"Error handling response progress: {e}")
         raise
@@ -387,6 +494,9 @@ def handle_response_done(event: ResponseDoneEvent, state, widgets, app_state, lo
             recv_ns=event.recv_ns,
         )
         domain_store = widgets["domain_store"]
+
+        # Clean up provisional request data so it doesn't leak.
+        _ = app_state.get("provisional_requests", {}).pop(event.request_id, None)
 
         # [LAW:single-enforcer] RESPONSE_COMPLETE is canonical finalization path.
         # RESPONSE_DONE only handles rare fallback where complete payload never arrived.

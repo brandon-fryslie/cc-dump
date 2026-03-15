@@ -7,6 +7,7 @@ cc_dump modules.
 import json
 import re
 from dataclasses import dataclass
+from enum import Enum
 from typing import NamedTuple
 
 
@@ -206,6 +207,122 @@ def compute_turn_budget(request_body: dict) -> TurnBudget:
     )
 
     return budget
+
+
+# ─── Cache Zone Analysis ─────────────────────────────────────────────────────
+
+
+class CacheZone(Enum):
+    """Contiguous token zone in the Anthropic prefix-caching model."""
+
+    CACHE_READ = "cached"
+    CACHE_WRITE = "cache write"
+    FRESH = "fresh"
+
+
+@dataclass(frozen=True)
+class TokenSection:
+    """A named section of the request with its estimated token count."""
+
+    key: str
+    tokens: int
+
+
+def _estimate_content_tokens(content) -> int:
+    """Estimate tokens for a message content field (str, list, or dict)."""
+    if isinstance(content, str):
+        return estimate_tokens(content)
+    if isinstance(content, list):
+        return sum(estimate_tokens(json.dumps(b)) for b in content)
+    return estimate_tokens(json.dumps(content))
+
+
+def _estimate_message_tokens(msg: dict) -> int:
+    """Estimate total tokens for a message including tool_calls."""
+    tokens = _estimate_content_tokens(msg.get("content", ""))
+    tool_calls = msg.get("tool_calls", [])
+    if isinstance(tool_calls, list):
+        tokens += sum(
+            estimate_tokens(json.dumps(tc))
+            for tc in tool_calls
+            if isinstance(tc, dict)
+        )
+    return max(1, tokens)
+
+
+def _estimate_system_tokens(system) -> int:
+    """Estimate tokens for the system prompt (str or content block list)."""
+    if isinstance(system, str):
+        return estimate_tokens(system)
+    if isinstance(system, list):
+        return sum(
+            estimate_tokens(b.get("text", "") if isinstance(b, dict) else str(b))
+            for b in system
+        )
+    return 0
+
+
+def _estimate_request_sections(request_body: dict) -> list[TokenSection]:
+    """Build token-estimated sections in API wire order (tools → system → messages)."""
+    sections: list[TokenSection] = []
+    tools = request_body.get("tools", [])
+    if tools:
+        sections.append(TokenSection("tools", estimate_tokens(json.dumps(tools))))
+    system = request_body.get("system", "")
+    if system:
+        tokens = _estimate_system_tokens(system)
+        if tokens > 0:
+            sections.append(TokenSection("system", tokens))
+    for i, msg in enumerate(request_body.get("messages", [])):
+        sections.append(TokenSection(f"message:{i}", _estimate_message_tokens(msg)))
+    return sections
+
+
+def _classify_zones(
+    sections: list[TokenSection],
+    cache_read: int,
+    cache_creation: int,
+    input_tokens: int,
+) -> dict[str, CacheZone]:
+    """Assign each section to a cache zone based on its midpoint position."""
+    est_total = sum(s.tokens for s in sections)
+    actual_total = cache_read + cache_creation + input_tokens
+    if est_total == 0 or actual_total == 0:
+        return {}
+    ratio = actual_total / est_total
+    cache_read_end = cache_read
+    cache_write_end = cache_read + cache_creation
+
+    # // [LAW:dataflow-not-control-flow] Zone boundaries are value thresholds,
+    # not control-flow branches — each section gets exactly one zone assignment.
+    zones: dict[str, CacheZone] = {}
+    cumulative = 0.0
+    for section in sections:
+        scaled = section.tokens * ratio
+        midpoint = cumulative + scaled / 2.0
+        if midpoint < cache_read_end:
+            zones[section.key] = CacheZone.CACHE_READ
+        elif midpoint < cache_write_end:
+            zones[section.key] = CacheZone.CACHE_WRITE
+        else:
+            zones[section.key] = CacheZone.FRESH
+        cumulative += scaled
+    return zones
+
+
+def compute_cache_zones(
+    request_body: dict,
+    *,
+    cache_read: int,
+    cache_creation: int,
+    input_tokens: int,
+) -> dict[str, CacheZone]:
+    """Map request sections to cache zones using response usage data.
+
+    // [LAW:dataflow-not-control-flow] Build section layout, then classify.
+    """
+    sections = _estimate_request_sections(request_body)
+    return _classify_zones(sections, cache_read, cache_creation, input_tokens)
 
 
 # ─── Tool Correlation ─────────────────────────────────────────────────────────

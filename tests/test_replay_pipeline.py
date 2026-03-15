@@ -9,6 +9,7 @@ import json
 from unittest.mock import MagicMock
 
 from cc_dump.app.domain_store import DomainStore
+from cc_dump.core.formatting_impl import ProviderRuntimeState
 
 from cc_dump.core.formatting import (
     FormattedBlock,
@@ -19,7 +20,7 @@ from cc_dump.core.formatting import (
     StreamToolUseBlock,
     ThinkingBlock,
     format_complete_response,
-    format_request,
+    format_request_for_provider,
 )
 from cc_dump.pipeline.har_replayer import load_har, convert_to_events
 from cc_dump.tui.event_handlers import (
@@ -126,13 +127,7 @@ def _walk_blocks(blocks):
 def _run_pipeline_events(events):
     """Run request/response events through the canonical handler boundary."""
     widgets = _mock_widgets()
-    state = {
-        "request_counter": 0,
-        "positions": {},
-        "known_hashes": {},
-        "next_id": 1,
-        "next_color": 0,
-    }
+    state = ProviderRuntimeState()
     app_state = {}
 
     for event in events:
@@ -362,13 +357,7 @@ class TestSessionDetectionViaRequest:
     """Verify session_id is captured in formatting state from request body."""
 
     def test_session_id_extracted_from_user_id(self):
-        state = {
-            "request_counter": 0,
-            "positions": {},
-            "known_hashes": {},
-            "next_id": 1,
-            "next_color": 0,
-        }
+        state = ProviderRuntimeState()
         body = {
             "model": "claude-3-opus-20240229",
             "max_tokens": 4096,
@@ -378,27 +367,21 @@ class TestSessionDetectionViaRequest:
             },
         }
 
-        format_request(body, state)
+        format_request_for_provider("anthropic", body, state)
 
-        assert state["current_session"] == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        assert state.current_session == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
     def test_no_metadata_leaves_session_unset(self):
-        state = {
-            "request_counter": 0,
-            "positions": {},
-            "known_hashes": {},
-            "next_id": 1,
-            "next_color": 0,
-        }
+        state = ProviderRuntimeState()
         body = {
             "model": "claude-3-opus-20240229",
             "max_tokens": 4096,
             "messages": [{"role": "user", "content": "Hello"}],
         }
 
-        format_request(body, state)
+        format_request_for_provider("anthropic", body, state)
 
-        assert "current_session" not in state
+        assert state.current_session is None
 
 
 # ─── End-to-end: HAR → events → blocks ───────────────────────────────────────
@@ -426,8 +409,7 @@ class TestReplayEndToEnd:
 
         # Feed through handlers
         widgets = _mock_widgets()
-        state = {"request_counter": 0, "positions": {}, "known_hashes": {},
-                 "next_id": 1, "next_color": 0}
+        state = ProviderRuntimeState()
         app_state = {}
 
         for event in events:
@@ -439,13 +421,13 @@ class TestReplayEndToEnd:
             elif kind == PipelineEventKind.RESPONSE_COMPLETE:
                 app_state = handle_response_complete(event, state, widgets, app_state, lambda *a: None)
 
-        # domain_store should have 2 completed turns (request + response)
+        # Combined turns: 1 request-response pair = 1 turn.
         ds = widgets["domain_store"]
-        assert ds.completed_count == 2
+        assert ds.completed_count == 1
 
-        # Response turn should contain the answer text
-        response_blocks = ds.iter_completed_blocks()[1]
-        text_blocks = _find_blocks(response_blocks, TextContentBlock)
+        # Combined turn should contain the answer text
+        combined_blocks = ds.iter_completed_blocks()[0]
+        text_blocks = _find_blocks(combined_blocks, TextContentBlock)
         assert any("2+2 = 4" in b.content for b in text_blocks)
 
     def test_replay_captures_session_id(self, tmp_path):
@@ -472,8 +454,7 @@ class TestReplayEndToEnd:
         events = convert_to_events(*pairs[0])
 
         widgets = _mock_widgets()
-        state = {"request_counter": 0, "positions": {}, "known_hashes": {},
-                 "next_id": 1, "next_color": 0}
+        state = ProviderRuntimeState()
         app_state = {}
 
         for event in events:
@@ -485,10 +466,11 @@ class TestReplayEndToEnd:
             elif kind == PipelineEventKind.RESPONSE_COMPLETE:
                 app_state = handle_response_complete(event, state, widgets, app_state, lambda *a: None)
 
-        assert state["current_session"] == session_uuid
+        assert state.current_session == session_uuid
         ds = widgets["domain_store"]
-        response_blocks = ds.iter_completed_blocks()[1]
-        assert len(response_blocks) > 0
+        # Combined turn at index 0 contains both request and response blocks.
+        combined_blocks = ds.iter_completed_blocks()[0]
+        assert len(combined_blocks) > 0
 
     def test_multi_turn_replay(self, tmp_path):
         """Multiple HAR entries produce multiple turns."""
@@ -512,8 +494,7 @@ class TestReplayEndToEnd:
         assert len(pairs) == 2
 
         widgets = _mock_widgets()
-        state = {"request_counter": 0, "positions": {}, "known_hashes": {},
-                 "next_id": 1, "next_color": 0}
+        state = ProviderRuntimeState()
         app_state = {}
 
         for pair in pairs:
@@ -527,9 +508,9 @@ class TestReplayEndToEnd:
                 elif kind == PipelineEventKind.RESPONSE_COMPLETE:
                     app_state = handle_response_complete(event, state, widgets, app_state, lambda *a: None)
 
-        # 2 request turns + 2 response turns = 4 completed turns
+        # Combined turns: 2 request-response pairs = 2 turns.
         ds = widgets["domain_store"]
-        assert ds.completed_count == 4
+        assert ds.completed_count == 2
 
 
 class TestLiveReplayParityContracts:
@@ -652,11 +633,12 @@ class TestLiveReplayParityContracts:
 
         live_ds = live_widgets["domain_store"]
         replay_ds = replay_widgets["domain_store"]
-        assert live_ds.completed_count == 2
-        assert replay_ds.completed_count == 2
-        assert live_state["current_session"] == session_uuid
-        assert replay_state["current_session"] == session_uuid
+        # Combined turns: 1 request-response pair = 1 turn.
+        assert live_ds.completed_count == 1
+        assert replay_ds.completed_count == 1
+        assert live_state.current_session == session_uuid
+        assert replay_state.current_session == session_uuid
 
-        live_projection = _project_response_turn(live_ds.iter_completed_blocks()[1])
-        replay_projection = _project_response_turn(replay_ds.iter_completed_blocks()[1])
+        live_projection = _project_response_turn(live_ds.iter_completed_blocks()[0])
+        replay_projection = _project_response_turn(replay_ds.iter_completed_blocks()[0])
         assert live_projection == replay_projection

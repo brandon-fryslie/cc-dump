@@ -307,7 +307,8 @@ class TestHotReloadMultiSessionTabs:
             assert id(new_conv) != old_conv_id
 
             # Both sessions' turns should be in the default tab's ConversationView.
-            assert len(new_conv._turns) >= 4  # At least 2 turns per replay entry
+            # Combined turns: each request-response pair is 1 turn.
+            assert len(new_conv._turns) >= 2  # At least 1 combined turn per replay entry
             assert tabs.active == default_tab
             assert app._domain_store is app._get_domain_store(default_key)
 

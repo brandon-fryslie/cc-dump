@@ -34,7 +34,7 @@ from cc_dump.tui.widget_factory import (
     ConversationView,
     FollowState,
     ScrollAnchor,
-    _hash_strips,
+    _next_strip_version,
 )
 
 
@@ -264,8 +264,8 @@ class TestTurnDataReRender:
         # Should now have strips for the individual tool block
         assert len(td.strips) > 0
 
-    def test_re_render_force_skips_when_strip_hash_unchanged(self):
-        """Forced rerender avoids replacing strips when rendered output is identical."""
+    def test_re_render_force_always_updates_version(self):
+        """Forced rerender always assigns new strip version (no-op detection is upstream)."""
         blocks = [TextContentBlock(content="Hello", indent="")]
         console = Console()
         filters = {}
@@ -280,12 +280,14 @@ class TestTurnDataReRender:
             block_strip_map=block_strip_map,
             _flat_blocks=flat_blocks,
         )
-        td._strip_hash = _hash_strips(strips)
+        td._strip_version = _next_strip_version()
         td.compute_relevant_keys()
+        old_version = td._strip_version
 
         result = td.re_render(filters, console, 80, force=True)
 
-        assert result is False
+        assert result is True
+        assert td._strip_version > old_version
 
     def test_re_render_skips_when_render_key_unchanged(self):
         """Search-active rerender should skip when render key and filters are unchanged."""
