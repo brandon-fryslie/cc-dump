@@ -8,6 +8,7 @@ but the actual behavior can be hot-swapped.
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -166,6 +167,20 @@ def _refresh_stats_snapshot(widgets, app_state) -> None:
         current_turn=_focused_current_turn_usage(app_state, domain_store)
     )
     view_store.set("panel:stats_snapshot", _with_capacity_summary(snapshot))
+
+
+_last_stats_refresh_ns: int = 0
+_STATS_REFRESH_INTERVAL_NS = 1_000_000_000  # 1 second
+
+
+def _refresh_stats_snapshot_throttled(widgets, app_state) -> None:
+    """Throttled variant for streaming hot path — at most once per second."""
+    global _last_stats_refresh_ns
+    now = time.monotonic_ns()
+    if now - _last_stats_refresh_ns < _STATS_REFRESH_INTERVAL_NS:
+        return
+    _last_stats_refresh_ns = now
+    _refresh_stats_snapshot(widgets, app_state)
 
 
 def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool = True) -> None:
@@ -432,7 +447,7 @@ def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_s
             domain_store.append_stream_block(event.request_id, block)
 
         _upsert_current_turn_usage(app_state, event.request_id, event)
-        _refresh_stats_snapshot(widgets, app_state)
+        _refresh_stats_snapshot_throttled(widgets, app_state)
     except Exception as e:
         log_fn("ERROR", f"Error handling response progress: {e}")
         raise
