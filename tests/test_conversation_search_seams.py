@@ -53,6 +53,7 @@ def test_block_expansion_seam_set_toggle_clear():
             strips=[],
         )
     ]
+    conv._index_blocks([block])
     conv._view_overrides.get_block(block.block_id).expandable = True
     conv._last_filters = {"assistant": cc_dump.core.formatting.ALWAYS_VISIBLE}
 
@@ -76,6 +77,7 @@ def test_block_expansion_seam_noop_for_non_expandable():
             strips=[],
         )
     ]
+    conv._index_blocks([block])
 
     assert conv.set_block_expansion(block.block_id, True, rerender=False) is False
     assert conv.toggle_block_expansion(block.block_id, rerender=False) is False
@@ -93,6 +95,7 @@ def test_set_block_expansion_captures_anchor_before_rerender(monkeypatch):
             strips=[],
         )
     ]
+    conv._index_blocks([block])
     conv._view_overrides.get_block(block.block_id).expandable = True
     conv._last_filters = {"assistant": cc_dump.core.formatting.ALWAYS_VISIBLE}
     conv._last_search_ctx = object()

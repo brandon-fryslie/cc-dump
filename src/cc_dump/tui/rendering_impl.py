@@ -2524,7 +2524,7 @@ def _render_turn_budget_summary_expanded(block: TurnBudgetBlock) -> Text | None:
 def _render_response_usage(block: ResponseUsageBlock) -> Text | None:
     """Full-expanded response usage: detailed cache breakdown + cost."""
     tc = get_theme_colors()
-    total_in = block.input_tokens + block.cache_read_tokens
+    total_in = block.input_tokens + block.cache_read_tokens + block.cache_creation_tokens
     t = Text("  ")
     t.append("Usage: ", style="bold")
     t.append(_fmt_tokens(total_in), style=f"bold {tc.info}")
@@ -2570,7 +2570,7 @@ def _render_response_usage(block: ResponseUsageBlock) -> Text | None:
 def _render_response_usage_oneliner(block: ResponseUsageBlock) -> Text | None:
     """One-line response usage for EXISTENCE level."""
     tc = get_theme_colors()
-    total_in = block.input_tokens + block.cache_read_tokens
+    total_in = block.input_tokens + block.cache_read_tokens + block.cache_creation_tokens
     t = Text("  ")
     t.append("Usage: ", style="bold")
     t.append(_fmt_tokens(total_in), style=f"{tc.info}")
@@ -2591,7 +2591,7 @@ def _render_response_usage_oneliner(block: ResponseUsageBlock) -> Text | None:
 def _render_response_usage_summary_expanded(block: ResponseUsageBlock) -> Text | None:
     """Summary-expanded response usage: compact breakdown with cache info."""
     tc = get_theme_colors()
-    total_in = block.input_tokens + block.cache_read_tokens
+    total_in = block.input_tokens + block.cache_read_tokens + block.cache_creation_tokens
     t = Text("  ")
     t.append("Usage: ", style="bold")
     t.append(_fmt_tokens(total_in), style=f"bold {tc.info}")
@@ -2620,7 +2620,7 @@ def _render_response_usage_summary_expanded(block: ResponseUsageBlock) -> Text |
 def _render_response_usage_full_collapsed(block: ResponseUsageBlock) -> Text | None:
     """Full-collapsed response usage: compact one-line."""
     tc = get_theme_colors()
-    total_in = block.input_tokens + block.cache_read_tokens
+    total_in = block.input_tokens + block.cache_read_tokens + block.cache_creation_tokens
     t = Text("  ")
     t.append("usage: ", style="bold dim")
     t.append(_fmt_tokens(total_in), style=f"dim {tc.info}")

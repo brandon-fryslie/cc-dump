@@ -512,6 +512,11 @@ class ConversationView(ScrollView):
                 self._block_index[block_id] = block
             stack.extend(getattr(block, "children", []) or [])
 
+    def _unindex_turn_range(self, turns) -> None:
+        """Remove all blocks from a sequence of TurnData from the block_id index."""
+        for td in turns:
+            self._unindex_blocks(td.blocks)
+
     def _find_block_by_id(self, block_id: int):
         """Locate a block object by stable block_id. O(1) via index."""
         return self._block_index.get(block_id)
@@ -1403,6 +1408,8 @@ class ConversationView(ScrollView):
             self._prune_all_turns()
             return
 
+        # // [LAW:one-source-of-truth] Unindex pruned blocks before removing turns.
+        self._unindex_turn_range(self._turns[:pruned_count])
         del self._turns[:pruned_count]
         self._reindex_turns()
         self._rebase_scroll_anchor_after_prune(pruned_count)
