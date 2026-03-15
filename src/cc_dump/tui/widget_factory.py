@@ -492,6 +492,16 @@ class ConversationView(ScrollView):
             for child in reversed(children):
                 stack.append(child)
 
+    def _unindex_blocks(self, blocks) -> None:
+        """Remove blocks and their descendants from the block_id index."""
+        stack = list(blocks)
+        while stack:
+            block = stack.pop()
+            block_id = getattr(block, "block_id", None)
+            if block_id is not None:
+                self._block_index.pop(block_id, None)
+            stack.extend(getattr(block, "children", []) or [])
+
     def _index_blocks(self, blocks) -> None:
         """Add blocks and their descendants to the block_id index."""
         stack = list(blocks)
@@ -503,16 +513,8 @@ class ConversationView(ScrollView):
             stack.extend(getattr(block, "children", []) or [])
 
     def _find_block_by_id(self, block_id: int):
-        """Locate a block object by stable block_id. O(1) via index, linear fallback."""
-        result = self._block_index.get(block_id)
-        if result is not None:
-            return result
-        # Fallback for blocks added outside normal render path (e.g. tests)
-        for block in self._iter_blocks_with_descendants():
-            if getattr(block, "block_id", None) == block_id:
-                self._block_index[block_id] = block
-                return block
-        return None
+        """Locate a block object by stable block_id. O(1) via index."""
+        return self._block_index.get(block_id)
 
     def _default_block_expanded(self, block) -> bool:
         category = cc_dump.tui.rendering.get_category(block)
@@ -1337,6 +1339,7 @@ class ConversationView(ScrollView):
         if turn_index < 0 or turn_index >= len(self._turns):
             return
         td = self._turns[turn_index]
+        self._unindex_blocks(td.blocks)
         td.blocks = new_blocks
         self._index_blocks(new_blocks)
         td.compute_relevant_keys()
