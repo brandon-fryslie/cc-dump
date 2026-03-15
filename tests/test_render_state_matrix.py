@@ -22,6 +22,7 @@ from cc_dump.core.formatting import (
     NewlineBlock,
     NewSessionBlock,
     ResponseMetadataSection,
+    ResponseUsageBlock,
     SeparatorBlock,
     SkillDefChild,
     StopReasonBlock,
@@ -110,6 +111,7 @@ def test_content_block_renderer_registry_has_four_distinct_visible_states():
         "StreamInfoBlock",
         "StreamToolUseBlock",
         "StopReasonBlock",
+        "ResponseUsageBlock",
     ]
     visible_states = [
         SUMMARY_COLLAPSED,
@@ -347,6 +349,17 @@ def test_auxiliary_content_blocks_respect_state_line_budgets():
         (
             "StopReasonBlock",
             StopReasonBlock(reason="end_turn"),
+            "metadata",
+        ),
+        (
+            "ResponseUsageBlock",
+            ResponseUsageBlock(
+                input_tokens=12000,
+                output_tokens=3500,
+                cache_read_tokens=8000,
+                cache_creation_tokens=4000,
+                model="claude-sonnet-4-5-20250929",
+            ),
             "metadata",
         ),
     ]
@@ -1152,8 +1165,6 @@ def test_turn_budget_summary_expanded_differs_from_collapsed_and_full():
         assistant_text_tokens_est=22000,
         tool_use_tokens_est=18000,
         tool_result_tokens_est=17000,
-        actual_input_tokens=1200,
-        actual_cache_read_tokens=800,
     )
     block = TurnBudgetBlock(
         budget=budget,
@@ -1166,13 +1177,11 @@ def test_turn_budget_summary_expanded_differs_from_collapsed_and_full():
     fe_text, _ = _render_plain(block, "metadata", FULL_EXPANDED)
 
     assert "Context:" in sc_text
-    assert "cache:" not in sc_text
-    assert "cache:" in se_text
+    # Cache info is now in ResponseUsageBlock, not TurnBudget
     assert "top tools:" in se_text
     assert se_text != sc_text
     assert se_text != fe_text
     assert "tools:" in fc_text
-    assert "cache:" not in fc_text
     assert "top tools:" not in fc_text
     assert fc_lines <= 2
 

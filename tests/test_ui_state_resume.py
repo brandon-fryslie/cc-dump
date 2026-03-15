@@ -8,18 +8,12 @@ import cc_dump.app.view_store
 import cc_dump.tui.app
 import cc_dump.tui.event_handlers
 from cc_dump.pipeline.event_types import RequestHeadersEvent
+from cc_dump.core.formatting_impl import ProviderRuntimeState
 from cc_dump.tui.app import CcDumpApp
 
 
 def _make_app():
-    state = {
-        "positions": {},
-        "known_hashes": {},
-        "next_id": 0,
-        "next_color": 0,
-        "request_counter": 0,
-        "current_session": None,
-    }
+    state = ProviderRuntimeState()
     return CcDumpApp(
         event_queue=queue.Queue(),
         state=state,

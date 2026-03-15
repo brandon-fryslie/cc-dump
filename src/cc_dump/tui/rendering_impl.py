@@ -45,6 +45,7 @@ from cc_dump.core.formatting import (
     StreamToolUseBlock,
     TextDeltaBlock,
     StopReasonBlock,
+    ResponseUsageBlock,
     ErrorBlock,
     ProxyErrorBlock,
     NewlineBlock,
@@ -54,6 +55,7 @@ from cc_dump.core.formatting import (
     ALWAYS_VISIBLE,
 )
 
+import cc_dump.core.analysis
 import cc_dump.core.palette
 import cc_dump.core.filter_registry
 import cc_dump.core.special_content
@@ -451,6 +453,7 @@ BLOCK_CATEGORY: dict[str, Category | None] = {
     "StreamInfoBlock": Category.METADATA,
     "StreamToolUseBlock": Category.TOOLS,
     "StopReasonBlock": Category.METADATA,
+    "ResponseUsageBlock": Category.METADATA,
     # Hierarchical container blocks
     "ThinkingBlock": Category.THINKING,
     "ConfigContentBlock": None,  # Inherits from parent (USER)
@@ -2426,27 +2429,6 @@ def _render_turn_budget(block: TurnBudgetBlock) -> Text | None:
             style="dim",
         )
 
-    # Cache info (if actual data is available)
-    if b.actual_input_tokens > 0 or b.actual_cache_read_tokens > 0:
-        t.append("\n    ")
-        t.append("Cache: ", style="bold")
-        t.append(
-            "{} read ({})".format(
-                _fmt_tokens(b.actual_cache_read_tokens),
-                _pct(
-                    b.actual_cache_read_tokens,
-                    b.actual_input_tokens + b.actual_cache_read_tokens,
-                ),
-            ),
-            style=f"dim {tc.info}",
-        )
-        if b.actual_cache_creation_tokens > 0:
-            t.append(
-                " | {} created".format(_fmt_tokens(b.actual_cache_creation_tokens)),
-                style=f"dim {tc.warning}",
-            )
-        t.append(" | {} fresh".format(_fmt_tokens(b.actual_input_tokens)), style="dim")
-
     return t
 
 
@@ -2520,19 +2502,6 @@ def _render_turn_budget_summary_expanded(block: TurnBudgetBlock) -> Text | None:
         style=f"dim {tc.success}",
     )
 
-    if b.actual_input_tokens > 0 or b.actual_cache_read_tokens > 0:
-        total_actual = b.actual_input_tokens + b.actual_cache_read_tokens
-        t.append("\n    ")
-        t.append("cache: ", style="bold dim")
-        t.append(
-            "{} read ({})".format(
-                _fmt_tokens(b.actual_cache_read_tokens),
-                _pct(b.actual_cache_read_tokens, total_actual),
-            ),
-            style=f"dim {tc.info}",
-        )
-        t.append(" | {} fresh".format(_fmt_tokens(b.actual_input_tokens)), style="dim")
-
     if block.tool_result_by_name:
         top_tools = sorted(
             block.tool_result_by_name.items(),
@@ -2546,6 +2515,138 @@ def _render_turn_budget_summary_expanded(block: TurnBudgetBlock) -> Text | None:
             style="dim",
         )
 
+    return t
+
+
+# ─── Response usage renderers ─────────────────────────────────────────────────
+
+
+def _render_response_usage(block: ResponseUsageBlock) -> Text | None:
+    """Full-expanded response usage: detailed cache breakdown + cost."""
+    tc = get_theme_colors()
+    total_in = block.input_tokens + block.cache_read_tokens + block.cache_creation_tokens
+    t = Text("  ")
+    t.append("Usage: ", style="bold")
+    t.append(_fmt_tokens(total_in), style=f"bold {tc.info}")
+    t.append(" in", style="dim")
+    if total_in > 0 and block.cache_read_tokens > 0:
+        t.append(" (", style="dim")
+        t.append(
+            "{} cached".format(_pct(block.cache_read_tokens, total_in)),
+            style=f"{tc.success}",
+        )
+        t.append(")", style="dim")
+    t.append(" → ", style="dim")
+    t.append(_fmt_tokens(block.output_tokens), style=f"bold {tc.warning}")
+    t.append(" out", style="dim")
+
+    # Detailed breakdown
+    t.append("\n    ")
+    t.append("cache read: ", style="dim")
+    t.append(_fmt_tokens(block.cache_read_tokens), style=f"{tc.info}")
+    if block.cache_creation_tokens > 0:
+        t.append(" | created: ", style="dim")
+        t.append(_fmt_tokens(block.cache_creation_tokens), style=f"{tc.warning}")
+    t.append(" | fresh: ", style="dim")
+    t.append(_fmt_tokens(block.input_tokens), style="dim")
+
+    # Cost estimate
+    if block.model:
+        cost = cc_dump.core.analysis.compute_session_cost(
+            block.input_tokens,
+            block.output_tokens,
+            block.cache_read_tokens,
+            block.cache_creation_tokens,
+            block.model,
+        )
+        if cost > 0:
+            t.append("\n    ")
+            t.append("cost: ", style="dim")
+            t.append("${:.4f}".format(cost), style=f"dim {tc.info}")
+
+    return t
+
+
+def _render_response_usage_oneliner(block: ResponseUsageBlock) -> Text | None:
+    """One-line response usage for EXISTENCE level."""
+    tc = get_theme_colors()
+    total_in = block.input_tokens + block.cache_read_tokens + block.cache_creation_tokens
+    t = Text("  ")
+    t.append("Usage: ", style="bold")
+    t.append(_fmt_tokens(total_in), style=f"{tc.info}")
+    t.append(" in", style="dim")
+    if total_in > 0 and block.cache_read_tokens > 0:
+        t.append(" (", style="dim")
+        t.append(
+            "{} cached".format(_pct(block.cache_read_tokens, total_in)),
+            style=f"{tc.success}",
+        )
+        t.append(")", style="dim")
+    t.append(" → ", style="dim")
+    t.append(_fmt_tokens(block.output_tokens), style=f"{tc.warning}")
+    t.append(" out", style="dim")
+    return t
+
+
+def _render_response_usage_summary_expanded(block: ResponseUsageBlock) -> Text | None:
+    """Summary-expanded response usage: compact breakdown with cache info."""
+    tc = get_theme_colors()
+    total_in = block.input_tokens + block.cache_read_tokens + block.cache_creation_tokens
+    t = Text("  ")
+    t.append("Usage: ", style="bold")
+    t.append(_fmt_tokens(total_in), style=f"bold {tc.info}")
+    t.append(" in", style="dim")
+    if total_in > 0 and block.cache_read_tokens > 0:
+        t.append(" (", style="dim")
+        t.append(
+            "{} cached".format(_pct(block.cache_read_tokens, total_in)),
+            style=f"{tc.success}",
+        )
+        t.append(")", style="dim")
+    t.append(" → ", style="dim")
+    t.append(_fmt_tokens(block.output_tokens), style=f"bold {tc.warning}")
+    t.append(" out", style="dim")
+    # Cache breakdown on same line
+    if block.cache_read_tokens > 0 or block.cache_creation_tokens > 0:
+        t.append("\n    ")
+        t.append("cache: ", style="bold dim")
+        t.append("{} read".format(_fmt_tokens(block.cache_read_tokens)), style=f"dim {tc.info}")
+        if block.cache_creation_tokens > 0:
+            t.append(" | {} created".format(_fmt_tokens(block.cache_creation_tokens)), style=f"dim {tc.warning}")
+        t.append(" | {} fresh".format(_fmt_tokens(block.input_tokens)), style="dim")
+    return t
+
+
+def _render_response_usage_full_collapsed(block: ResponseUsageBlock) -> Text | None:
+    """Full-collapsed response usage: compact one-line."""
+    tc = get_theme_colors()
+    total_in = block.input_tokens + block.cache_read_tokens + block.cache_creation_tokens
+    t = Text("  ")
+    t.append("usage: ", style="bold dim")
+    t.append(_fmt_tokens(total_in), style=f"dim {tc.info}")
+    t.append(" in → ", style="dim")
+    t.append(_fmt_tokens(block.output_tokens), style=f"dim {tc.warning}")
+    t.append(" out", style="dim")
+    if total_in > 0 and block.cache_read_tokens > 0:
+        t.append(" (", style="dim")
+        t.append("{} cached".format(_pct(block.cache_read_tokens, total_in)), style=f"dim {tc.success}")
+        t.append(")", style="dim")
+    return t
+
+
+# ─── Block metadata renderer ──────────────────────────────────────────────────
+
+
+def _render_metadata_line(block: FormattedBlock) -> Text:
+    """Render block metadata as a dim info line.
+
+    // [LAW:dataflow-not-control-flow] Always returns Text; empty when no metadata.
+    """
+    if not block.metadata:
+        return Text()
+    parts = ["{}: {}".format(k, v) for k, v in block.metadata.items()]
+    t = Text("    ")
+    t.append(" | ".join(parts), style="dim italic")
     return t
 
 
@@ -2798,7 +2899,8 @@ def _render_message_header(
 
 def _render_message_block(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render MessageBlock full-expanded header."""
-    return _render_message_header(block, include_timestamp=True)
+    # // [LAW:dataflow-not-control-flow] Always compose; empty metadata renders as nothing.
+    return Group(_render_message_header(block, include_timestamp=True), _render_metadata_line(block))
 
 
 def _message_child_counts(children: list[FormattedBlock]) -> Counter[str]:
@@ -2967,7 +3069,14 @@ def _render_system_section_full_collapsed(block: FormattedBlock) -> ConsoleRende
 def _render_system_section_full_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render system section full-expanded with child type composition."""
     children = getattr(block, "children", None) or []
-    return _render_section_with_all_types("SYSTEM", children)
+    t = _render_section_with_all_types("SYSTEM", children)
+    # // [LAW:dataflow-not-control-flow] Always compose; empty metadata is invisible.
+    if isinstance(t, Text):
+        meta_line = _render_metadata_line(block)
+        if meta_line.plain:
+            t.append("\n")
+            t.append_text(meta_line)
+    return t
 
 
 def _render_tool_defs_section(block: FormattedBlock) -> ConsoleRenderable | None:
@@ -3009,18 +3118,16 @@ def _render_tool_defs_section_full_collapsed(block: FormattedBlock) -> ConsoleRe
 
 def _render_tool_defs_section_full_expanded(block: FormattedBlock) -> ConsoleRenderable | None:
     """Render tool defs section full-expanded with top tool names."""
+    # // [LAW:dataflow-not-control-flow] Always compose header + detail + metadata;
+    # empty children/names produce header-only output via empty detail.
     header = _render_tool_defs_section(block)
-    children = getattr(block, "children", None) or []
-    if not children:
-        return header
-
-    names: list[str] = []
-    for child in children:
-        name = getattr(child, "name", "")
-        if isinstance(name, str) and name:
-            names.append(name)
+    names = [
+        name
+        for child in (getattr(block, "children", None) or [])
+        if isinstance((name := getattr(child, "name", "")), str) and name
+    ]
     if not names:
-        return header
+        return Group(header, _render_metadata_line(block))
 
     shown = names[:6]
     hidden = max(len(names) - len(shown), 0)
@@ -3028,7 +3135,7 @@ def _render_tool_defs_section_full_expanded(block: FormattedBlock) -> ConsoleRen
     detail.append(", ".join(shown), style="dim")
     if hidden > 0:
         detail.append(f" (+{hidden} more)", style="dim")
-    return Group(header, detail)
+    return Group(header, detail, _render_metadata_line(block))
 
 
 def _render_tool_def(block: FormattedBlock) -> ConsoleRenderable | None:
@@ -3248,6 +3355,7 @@ BLOCK_RENDERERS: dict[str, Callable[[FormattedBlock], ConsoleRenderable | None]]
     "StreamToolUseBlock": _render_stream_tool_use,
     "TextDeltaBlock": _render_text_delta,
     "StopReasonBlock": _render_stop_reason,
+    "ResponseUsageBlock": _render_response_usage,
     "ErrorBlock": _render_error,
     "ProxyErrorBlock": _render_proxy_error,
     "NewlineBlock": _render_newline,
@@ -3286,6 +3394,10 @@ BLOCK_STATE_RENDERERS: dict[
     ("StopReasonBlock", True, False, False): _render_stop_reason_summary_collapsed,
     ("StopReasonBlock", True, False, True): _render_stop_reason_summary_expanded,
     ("StopReasonBlock", True, True, False): _render_stop_reason_full_collapsed,
+    # ResponseUsageBlock: one-liner at summary-collapsed, breakdown at summary-expanded, compact at full-collapsed
+    ("ResponseUsageBlock", True, False, False): _render_response_usage_oneliner,
+    ("ResponseUsageBlock", True, False, True): _render_response_usage_summary_expanded,
+    ("ResponseUsageBlock", True, True, False): _render_response_usage_full_collapsed,
     ("SeparatorBlock", True, False, False): _render_separator_summary_collapsed,
     ("SeparatorBlock", True, False, True): _render_separator_summary_expanded,
     ("SeparatorBlock", True, True, False): _render_separator_full_collapsed,

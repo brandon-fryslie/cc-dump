@@ -83,8 +83,8 @@ def test_format_request_minimal(fresh_state):
     assert has_header
     assert has_metadata
 
-    # Request counter should increment
-    assert fresh_state["request_counter"] == 1
+    # format_request is pure — counter unchanged (mutation in format_request_for_provider)
+    assert fresh_state.request_counter == 0
 
 
 def test_format_request_with_system(fresh_state):
@@ -656,18 +656,25 @@ def test_block_types_can_be_instantiated():
 # ─── Integration Tests ────────────────────────────────────────────────────────
 
 
-def test_format_request_multiple_calls_increment_counter(fresh_state):
-    """Multiple format_request calls increment request counter."""
+def test_format_request_for_provider_increments_counter(fresh_state):
+    """format_request_for_provider is the single mutation point for request_counter."""
     body = {"model": "claude", "max_tokens": 100, "messages": []}
 
-    format_request(body, fresh_state)
-    assert fresh_state["request_counter"] == 1
+    format_request_for_provider("anthropic", body, fresh_state)
+    assert fresh_state.request_counter == 1
 
-    format_request(body, fresh_state)
-    assert fresh_state["request_counter"] == 2
+    format_request_for_provider("anthropic", body, fresh_state)
+    assert fresh_state.request_counter == 2
 
-    format_request(body, fresh_state)
-    assert fresh_state["request_counter"] == 3
+    format_request_for_provider("anthropic", body, fresh_state)
+    assert fresh_state.request_counter == 3
+
+
+def test_format_request_is_pure(fresh_state):
+    """format_request does not mutate state when request_num is provided."""
+    body = {"model": "claude", "max_tokens": 100, "messages": []}
+    format_request(body, fresh_state, request_num=1)
+    assert fresh_state.request_counter == 0
 
 
 # ─── Tool Detail Tests ────────────────────────────────────────────────────────
@@ -1050,7 +1057,7 @@ class TestToolCorrelation:
         uses1 = _find_blocks(blocks1, ToolUseBlock)
 
         # Reset state but format again
-        fresh_state["request_counter"] = 0
+        fresh_state.request_counter = 0
         blocks2 = format_request(body, fresh_state)
         uses2 = _find_blocks(blocks2, ToolUseBlock)
 
@@ -1225,12 +1232,12 @@ class TestToolDefinitionsBlock:
         assert tool_def_sections[0].total_tokens == 0
 
     def test_tool_descriptions_stored_in_state(self, fresh_state):
-        """state['tool_descriptions'] populated after format_request."""
+        """state.tool_descriptions populated by format_request_for_provider."""
         body = _make_body_with_tools(SAMPLE_TOOLS)
-        format_request(body, fresh_state)
-        assert "tool_descriptions" in fresh_state
-        assert fresh_state["tool_descriptions"]["Read"] == "Read a file from disk"
-        assert fresh_state["tool_descriptions"]["Write"] == "Write content to a file"
+        format_request_for_provider("anthropic", body, fresh_state)
+        assert fresh_state.tool_descriptions
+        assert fresh_state.tool_descriptions["Read"] == "Read a file from disk"
+        assert fresh_state.tool_descriptions["Write"] == "Write content to a file"
 
     def test_tool_def_block_instantiation(self):
         """ToolDefBlock can be instantiated with expected fields."""
@@ -1249,7 +1256,7 @@ class TestToolUseBlockDescription:
     """Tests for ToolUseBlock.description field population."""
 
     def test_tool_use_description_from_state(self, fresh_state):
-        """ToolUseBlock.description populated from tool definitions."""
+        """ToolUseBlock.description populated from tool definitions via format_request_for_provider."""
         body = {
             "model": "claude-3-opus",
             "max_tokens": 4096,
@@ -1268,7 +1275,7 @@ class TestToolUseBlockDescription:
                 },
             ],
         }
-        blocks = format_request(body, fresh_state)
+        blocks = format_request_for_provider("anthropic", body, fresh_state)
         tool_uses = _find_blocks(blocks, ToolUseBlock)
         assert len(tool_uses) == 1
         assert tool_uses[0].description == "Read a file from disk"
@@ -1327,9 +1334,8 @@ class TestToolUseBlockDescription:
 
 
 def _fresh_openai_state():
-    return {
-        "request_counter": 0,
-    }
+    from cc_dump.core.formatting_impl import ProviderRuntimeState
+    return ProviderRuntimeState()
 
 
 class TestFormatOpenAIRequest:
@@ -1458,16 +1464,16 @@ class TestFormatOpenAIRequest:
         assert len(text_blocks) == 1
         assert text_blocks[0].content == "file contents"
 
-    def test_increments_request_counter(self):
-        """Request counter incremented per call."""
+    def test_is_pure_when_request_num_provided(self):
+        """format_openai_request does not mutate state when request_num provided."""
         state = _fresh_openai_state()
         body = {"model": "gpt-4o", "messages": [{"role": "user", "content": "1"}]}
 
-        format_openai_request(body, state)
-        assert state["request_counter"] == 1
+        format_openai_request(body, state, request_num=1)
+        assert state.request_counter == 0
 
-        format_openai_request(body, state)
-        assert state["request_counter"] == 2
+        format_openai_request(body, state, request_num=2)
+        assert state.request_counter == 0
 
     def test_multi_turn_conversation(self):
         """Multiple conversation messages produce separate MessageBlocks."""

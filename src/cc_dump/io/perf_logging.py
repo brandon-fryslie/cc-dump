@@ -30,7 +30,7 @@ def set_enabled(val: bool) -> None:
 # [LAW:no-mode-explosion] One central threshold map; avoid per-callsite knobs.
 SLOW_STAGE_THRESHOLDS_MS: dict[str, float] = {
     "conversation.rerender_affected": 250.0,
-    "conversation.background_rerender_tick": 120.0,
+    "conversation.background_rerender_tick": 200.0,
     "conversation.recalculate_offsets_from": 200.0,
 }
 

@@ -42,6 +42,8 @@ class DomainStore:
 
         # Callbacks — ConversationView registers these
         self.on_turn_added: Callable | None = None
+        self.on_turn_replaced: Callable | None = None
+        self.on_stream_preview_cleanup: Callable | None = None
         self.on_stream_started: Callable | None = None
         self.on_stream_block: Callable | None = None
         self.on_stream_finalized: Callable | None = None
@@ -50,20 +52,35 @@ class DomainStore:
 
     # ─── Completed turns ──────────────────────────────────────────────
 
-    def add_turn(self, blocks: list) -> None:
-        """Add a completed turn (sealed block list)."""
-        index = len(self._completed)
+    def add_turn(self, blocks: list) -> int:
+        """Add a completed turn (sealed block list). Returns the post-retention turn index."""
+        pre_len = len(self._completed)
         self._completed.append(blocks)
         # Index session boundaries for within-tab navigation.
         for block in blocks:
             if type(block).__name__ == "NewSessionBlock":
                 sid = getattr(block, "session_id", "")
                 if sid:
-                    self._session_boundaries.append((sid, index))
+                    self._session_boundaries.append((sid, pre_len))
                 break
         if self.on_turn_added is not None:
-            self.on_turn_added(blocks, index)
+            self.on_turn_added(blocks, pre_len)
         self._enforce_completed_retention()
+        # // [LAW:one-source-of-truth] Return actual index after retention pruning.
+        overflow = pre_len + 1 - len(self._completed)
+        return pre_len - max(0, overflow)
+
+    def replace_turn(self, turn_index: int, new_blocks: list) -> None:
+        """Replace a completed turn's blocks (provisional → final pattern).
+
+        // [LAW:dataflow-not-control-flow] Always fires callback; empty blocks
+        // are valid (renderer handles them).
+        """
+        if turn_index < 0 or turn_index >= len(self._completed):
+            return
+        self._completed[turn_index] = new_blocks
+        if self.on_turn_replaced is not None:
+            self.on_turn_replaced(turn_index, new_blocks)
 
     # ─── Request-scoped streaming ─────────────────────────────────────
 
@@ -119,8 +136,6 @@ class DomainStore:
         blocks = self._stream_turns.get(request_id)
         if blocks is None:
             return []
-
-        was_focused = request_id == self._focused_stream_id
 
         # ── Domain logic: consolidate deltas ──
         consolidated: list = []
@@ -180,7 +195,7 @@ class DomainStore:
 
         _walk_populate(consolidated)
 
-        self._seal_stream(request_id, consolidated, was_focused=was_focused)
+        self._seal_stream(request_id, consolidated)
         return consolidated
 
     def finalize_stream_with_blocks(self, request_id: str, final_blocks: list) -> list:
@@ -193,14 +208,39 @@ class DomainStore:
         if blocks is None:
             return []
 
-        was_focused = request_id == self._focused_stream_id
         sealed = list(final_blocks)
-        self._seal_stream(request_id, sealed, was_focused=was_focused)
+        self._seal_stream(request_id, sealed)
         return sealed
 
-    def _seal_stream(self, request_id: str, sealed_blocks: list, *, was_focused: bool) -> None:
-        """Common stream shutdown path for both local and upstream assembly."""
-        # ── Registry cleanup ──
+    def finalize_stream_replacing_turn(
+        self, request_id: str, turn_index: int, combined_blocks: list,
+    ) -> None:
+        """Finalize stream by replacing existing turn with combined request+response blocks.
+
+        // [LAW:one-source-of-truth] Stream lifecycle and turn content resolved together.
+        """
+        had_stream = request_id in self._stream_turns
+        was_focused = False
+        if had_stream:
+            was_focused = self._cleanup_stream_registries(request_id)
+
+        if 0 <= turn_index < len(self._completed):
+            self._completed[turn_index] = combined_blocks
+
+        # Notify: stream preview cleanup first (detach from turns list),
+        # then turn replacement (re-render at turn_index).
+        if had_stream and self.on_stream_preview_cleanup is not None:
+            self.on_stream_preview_cleanup(request_id, was_focused)
+        if self.on_turn_replaced is not None:
+            self.on_turn_replaced(turn_index, combined_blocks)
+
+    def _cleanup_stream_registries(self, request_id: str) -> bool:
+        """Remove stream from registries and update focus. Returns was_focused.
+
+        // [LAW:locality-or-seam] Registry cleanup is reused by _seal_stream
+        // and finalize_stream_replacing_turn.
+        """
+        was_focused = request_id == self._focused_stream_id
         self._stream_turns.pop(request_id, None)
         self._stream_delta_buffers.pop(request_id, None)
         self._stream_delta_text.pop(request_id, None)
@@ -209,16 +249,16 @@ class DomainStore:
         self._stream_order = [
             rid for rid in self._stream_order if rid != request_id
         ]
-
-        # Add to completed turns
-        self._completed.append(sealed_blocks)
-
-        # Update focus
         if was_focused:
             self._focused_stream_id = (
                 self._stream_order[0] if self._stream_order else None
             )
+        return was_focused
 
+    def _seal_stream(self, request_id: str, sealed_blocks: list) -> None:
+        """Common stream shutdown path for both local and upstream assembly."""
+        was_focused = self._cleanup_stream_registries(request_id)
+        self._completed.append(sealed_blocks)
         if self.on_stream_finalized is not None:
             self.on_stream_finalized(request_id, sealed_blocks, was_focused)
         self._enforce_completed_retention()
@@ -281,6 +321,12 @@ class DomainStore:
             for request_id in self._stream_order
             if request_id in self._stream_turns
         )
+
+    def get_turn_blocks(self, turn_index: int) -> list:
+        """Return block list for a completed turn."""
+        if 0 <= turn_index < len(self._completed):
+            return self._completed[turn_index]
+        return []
 
     def iter_completed_blocks(self) -> list[list]:
         """Return all completed turn block lists."""

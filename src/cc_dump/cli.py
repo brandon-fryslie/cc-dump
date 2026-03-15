@@ -19,6 +19,7 @@ from cc_dump.pipeline.router import EventRouter, QueueSubscriber, DirectSubscrib
 from cc_dump.app.analytics_store import AnalyticsStore
 import cc_dump.io.stderr_tee
 import cc_dump.core.palette
+import cc_dump.core.formatting_impl
 import cc_dump.io.sessions
 import cc_dump.cli_presentation
 from cc_dump.pipeline.event_types import PipelineEvent
@@ -141,14 +142,11 @@ class ProxyRuntime:
     provider_states: dict[str, "ProviderRuntimeState"]
 
 
-ProviderRuntimeState = dict[str, object]
+ProviderRuntimeState = cc_dump.core.formatting_impl.ProviderRuntimeState
 
 
 def _new_provider_state() -> ProviderRuntimeState:
-    return {
-        "request_counter": 0,
-        "current_session": None,
-    }
+    return ProviderRuntimeState()
 
 
 def _active_provider_specs(
