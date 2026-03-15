@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING
 
 import cc_dump.core.analysis
 import cc_dump.core.formatting
@@ -31,8 +30,7 @@ from cc_dump.pipeline.event_types import (
     sse_progress_payload,
 )
 
-if TYPE_CHECKING:
-    from cc_dump.core.formatting_impl import ProviderRuntimeState
+from cc_dump.core.formatting_impl import ProviderRuntimeState
 
 EventHandler = Callable[
     [object, dict[str, object], dict[str, object], dict[str, object], Callable[[str, str], None]],
