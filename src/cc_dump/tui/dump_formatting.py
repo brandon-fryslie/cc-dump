@@ -104,9 +104,9 @@ def _write_stop_reason_block(f: TextIO, block: fmt.StopReasonBlock) -> None:
 
 
 def _write_response_usage_block(f: TextIO, block: fmt.ResponseUsageBlock) -> None:
-    total_in = block.input_tokens + block.cache_read_tokens
+    total_in = block.input_tokens + block.cache_read_tokens + block.cache_creation_tokens
     f.write(f"  Usage: {total_in} in → {block.output_tokens} out")
-    if block.cache_read_tokens > 0:
+    if block.cache_read_tokens > 0 or block.cache_creation_tokens > 0:
         f.write(f" (cache_read: {block.cache_read_tokens}")
         if block.cache_creation_tokens > 0:
             f.write(f", cache_creation: {block.cache_creation_tokens}")

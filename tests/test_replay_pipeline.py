@@ -20,7 +20,7 @@ from cc_dump.core.formatting import (
     StreamToolUseBlock,
     ThinkingBlock,
     format_complete_response,
-    format_request,
+    format_request_for_provider,
 )
 from cc_dump.pipeline.har_replayer import load_har, convert_to_events
 from cc_dump.tui.event_handlers import (
@@ -367,7 +367,7 @@ class TestSessionDetectionViaRequest:
             },
         }
 
-        format_request(body, state)
+        format_request_for_provider("anthropic", body, state)
 
         assert state.current_session == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
@@ -379,7 +379,7 @@ class TestSessionDetectionViaRequest:
             "messages": [{"role": "user", "content": "Hello"}],
         }
 
-        format_request(body, state)
+        format_request_for_provider("anthropic", body, state)
 
         assert state.current_session is None
 

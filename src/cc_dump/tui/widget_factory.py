@@ -1343,6 +1343,9 @@ class ConversationView(ScrollView):
             return
         if turn_index < 0 or turn_index >= len(self._turns):
             return
+        preserve_scroll = not self._is_following
+        if preserve_scroll:
+            self.capture_scroll_anchor()
         td = self._turns[turn_index]
         self._unindex_blocks(td.blocks)
         td.blocks = new_blocks
@@ -1362,6 +1365,8 @@ class ConversationView(ScrollView):
         )
         self._invalidate_cache_for_turns(turn_index, turn_index + 1)
         self._recalculate_offsets_from(turn_index)
+        if preserve_scroll:
+            self._resolve_anchor()
         self.refresh()
 
     def _prune_all_turns(self) -> None:

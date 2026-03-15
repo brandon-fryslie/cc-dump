@@ -114,9 +114,8 @@ class ProviderRuntimeState:
     """Per-provider formatting state.
 
     // [LAW:one-source-of-truth] Canonical container for all mutable state
-    // that formatting functions use. format_request/format_openai_request
-    // increment request_counter as a side-effect — callers must not
-    // manipulate the counter directly.
+    // used by formatting. Mutations happen in format_request_for_provider
+    // (the caller boundary), not inside format_request/format_openai_request.
     """
 
     request_counter: int = 0
@@ -976,26 +975,30 @@ _COMPOUND_TOOL_PARSERS: dict[str, "Callable[[str], list[FormattedBlock]]"] = {
 
 
 
-def format_request(body, state: ProviderRuntimeState, request_headers: dict | None = None, cache_zones: dict | None = None):
+def format_request(body, state: ProviderRuntimeState, request_headers: dict | None = None, cache_zones: dict | None = None, *, request_num: int | None = None):
     """Format a full API request as a list of FormattedBlock.
 
     Produces hierarchical container blocks (MetadataSection, ToolDefsSection,
     SystemSection, MessageBlock). Top-level blocks contain children; the
     rendering pipeline flattens them for display.
 
+    // [LAW:single-enforcer] State mutations happen in format_request_for_provider,
+    // not here. This function is pure when request_num is provided.
+
     Args:
         body: Request body dict
-        state: Provider runtime state
+        state: Provider runtime state (read-only when request_num provided)
         request_headers: Optional HTTP request headers to include in MetadataSection
         cache_zones: Optional mapping from section keys to CacheZone values.
             When provided, sets metadata["cache"] on section container blocks.
             Keys: "tools", "system", "message:{index}".
+        request_num: Request sequence number. When provided, state is not mutated.
 
     Returns:
         List of FormattedBlock objects (hierarchical — containers with children)
     """
-    state.request_counter += 1
-    request_num = state.request_counter
+    if request_num is None:
+        request_num = state.request_counter + 1
 
     blocks: list[FormattedBlock] = []
     blocks.append(NewlineBlock())
@@ -1030,10 +1033,9 @@ def format_request(body, state: ProviderRuntimeState, request_headers: dict | No
                 session_id = parsed["session_id"]
 
     # Track session changes — emit NewSessionBlock when session changes
-    current_session = state.current_session
-    if session_id and session_id != current_session:
+    # // [LAW:single-enforcer] Session state mutation happens in format_request_for_provider.
+    if session_id and session_id != state.current_session:
         blocks.append(NewSessionBlock(session_id=session_id))
-        state.current_session = session_id
 
     # MetadataSection container — groups model params, HTTP headers, budget
     # // [LAW:one-source-of-truth] Single container for all request metadata.
@@ -1048,12 +1050,6 @@ def format_request(body, state: ProviderRuntimeState, request_headers: dict | No
 
     # [LAW:one-source-of-truth] Header injection happens here, not in callers
     header_blocks = format_request_headers(request_headers or {})
-
-    # Store tool descriptions in state for ToolUseBlock enrichment
-    # // [LAW:one-source-of-truth] tool_descriptions populated here, consumed by _format_tool_use_content
-    state.tool_descriptions = {
-        t.get("name", ""): t.get("description", "") for t in tools
-    }
 
     # Context budget breakdown
     budget = compute_turn_budget(body)
@@ -1321,7 +1317,8 @@ def format_complete_response(complete_message):
     result.append(StopReasonBlock(reason=stop_reason))
 
     # [LAW:dataflow-not-control-flow] Always emit usage block; renderer handles zeros.
-    usage = complete_message.get("usage", {})
+    # // [LAW:single-enforcer] Coerce None → {} here; callers never guard.
+    usage = complete_message.get("usage") or {}
     result.append(ResponseUsageBlock(
         input_tokens=usage.get("input_tokens", 0),
         output_tokens=usage.get("output_tokens", 0),
@@ -1374,6 +1371,7 @@ def format_openai_request(
     request_headers=None,
     *,
     provider_label: str = "OpenAI",
+    request_num: int | None = None,
 ) -> list:
     """Format an OpenAI API request as a list of FormattedBlock.
 
@@ -1382,9 +1380,10 @@ def format_openai_request(
     assistant messages, role="tool" for results).
 
     // [LAW:one-source-of-truth] OpenAI request formatting happens here only.
+    // [LAW:single-enforcer] State mutations happen in format_request_for_provider.
     """
-    state.request_counter += 1
-    request_num = state.request_counter
+    if request_num is None:
+        request_num = state.request_counter + 1
 
     blocks: list[FormattedBlock] = []
     blocks.append(NewlineBlock())
@@ -1618,17 +1617,53 @@ _COMPLETE_RESPONSE_FORMATTERS_BY_FAMILY: dict[str, _CompleteResponseFormatter] =
 }
 
 
+def _update_tool_descriptions(state: ProviderRuntimeState, body) -> None:
+    """Extract tool descriptions from request body into state."""
+    tools = body.get("tools", []) if isinstance(body, dict) else []
+    if isinstance(tools, list):
+        state.tool_descriptions = {
+            t.get("name", ""): t.get("description", "") for t in tools
+        }
+
+
+def _update_session_id(state: ProviderRuntimeState, body) -> None:
+    """Extract session_id from request metadata into state."""
+    metadata = body.get("metadata", {}) if isinstance(body, dict) else {}
+    if not isinstance(metadata, dict):
+        return
+    user_id_raw = metadata.get("user_id", "")
+    if not user_id_raw:
+        return
+    parsed = parse_user_id(user_id_raw)
+    if parsed:
+        state.current_session = parsed["session_id"]
+
+
 def format_request_for_provider(provider: str, body, state: ProviderRuntimeState, request_headers=None, cache_zones=None) -> list:
-    """Dispatch request formatting by provider."""
+    """Dispatch request formatting by provider.
+
+    // [LAW:single-enforcer] All ProviderRuntimeState mutations happen here.
+    // Format functions are pure — they read state but do not mutate it.
+    """
+    state.request_counter += 1
+    request_num = state.request_counter
+
+    # tool_descriptions set BEFORE formatting — format functions read it for enrichment.
+    _update_tool_descriptions(state, body)
+
     spec = cc_dump.providers.get_provider_spec(provider)
     if spec.protocol_family == "openai":
-        return format_openai_request(
-            body,
-            state,
-            request_headers=request_headers,
-            provider_label=spec.display_name,
+        blocks = format_openai_request(
+            body, state, request_headers=request_headers,
+            provider_label=spec.display_name, request_num=request_num,
         )
-    return format_request(body, state, request_headers=request_headers, cache_zones=cache_zones)
+    else:
+        blocks = format_request(body, state, request_headers=request_headers, cache_zones=cache_zones, request_num=request_num)
+
+    # current_session set AFTER formatting — format_request reads state.current_session
+    # to decide whether to emit NewSessionBlock (must see the old value).
+    _update_session_id(state, body)
+    return blocks
 
 
 def format_complete_response_for_provider(provider: str, complete_message) -> list:
