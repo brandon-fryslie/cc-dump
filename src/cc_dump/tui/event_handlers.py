@@ -227,7 +227,8 @@ def _get_request_blocks_with_zones(
     No state mutation — overlap-safe for concurrent requests.
     """
     blocks = list(domain_store.get_turn_blocks(provisional["turn_index"]))
-    usage = complete_body.get("usage", {})
+    # // [LAW:single-enforcer] Coerce None → {} at boundary.
+    usage = complete_body.get("usage") or {}
     if not usage:
         return blocks
     cache_zones = cc_dump.core.analysis.compute_cache_zones(
