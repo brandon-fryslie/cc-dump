@@ -22,6 +22,7 @@ from cc_dump.core.formatting import (
     NewlineBlock,
     NewSessionBlock,
     ResponseMetadataSection,
+    ResponseUsageBlock,
     SeparatorBlock,
     SkillDefChild,
     StopReasonBlock,
@@ -110,6 +111,7 @@ def test_content_block_renderer_registry_has_four_distinct_visible_states():
         "StreamInfoBlock",
         "StreamToolUseBlock",
         "StopReasonBlock",
+        "ResponseUsageBlock",
     ]
     visible_states = [
         SUMMARY_COLLAPSED,
@@ -347,6 +349,17 @@ def test_auxiliary_content_blocks_respect_state_line_budgets():
         (
             "StopReasonBlock",
             StopReasonBlock(reason="end_turn"),
+            "metadata",
+        ),
+        (
+            "ResponseUsageBlock",
+            ResponseUsageBlock(
+                input_tokens=12000,
+                output_tokens=3500,
+                cache_read_tokens=8000,
+                cache_creation_tokens=4000,
+                model="claude-sonnet-4-5-20250929",
+            ),
             "metadata",
         ),
     ]

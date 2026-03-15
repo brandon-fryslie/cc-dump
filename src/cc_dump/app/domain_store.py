@@ -53,20 +53,22 @@ class DomainStore:
     # ─── Completed turns ──────────────────────────────────────────────
 
     def add_turn(self, blocks: list) -> int:
-        """Add a completed turn (sealed block list). Returns the turn index."""
-        index = len(self._completed)
+        """Add a completed turn (sealed block list). Returns the post-retention turn index."""
+        pre_len = len(self._completed)
         self._completed.append(blocks)
         # Index session boundaries for within-tab navigation.
         for block in blocks:
             if type(block).__name__ == "NewSessionBlock":
                 sid = getattr(block, "session_id", "")
                 if sid:
-                    self._session_boundaries.append((sid, index))
+                    self._session_boundaries.append((sid, pre_len))
                 break
         if self.on_turn_added is not None:
-            self.on_turn_added(blocks, index)
+            self.on_turn_added(blocks, pre_len)
         self._enforce_completed_retention()
-        return index
+        # // [LAW:one-source-of-truth] Return actual index after retention pruning.
+        overflow = pre_len + 1 - len(self._completed)
+        return pre_len - max(0, overflow)
 
     def replace_turn(self, turn_index: int, new_blocks: list) -> None:
         """Replace a completed turn's blocks (provisional → final pattern).
