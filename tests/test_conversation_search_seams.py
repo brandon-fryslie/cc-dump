@@ -143,6 +143,9 @@ def test_clear_category_overrides_clears_block_expansion_for_category():
 
     conv._view_overrides.get_block(user_block.block_id).expanded = False
     conv._view_overrides.get_block(assistant_block.block_id).expanded = False
+    # Register categories (normally done by _index_blocks)
+    conv._view_overrides.register_block(user_block.block_id, cc_dump.core.formatting.Category.USER)
+    conv._view_overrides.register_block(assistant_block.block_id, cc_dump.core.formatting.Category.ASSISTANT)
 
     conv.clear_category_overrides(cc_dump.core.formatting.Category.USER)
 
@@ -187,8 +190,8 @@ def test_reveal_search_match_sets_temporary_reveal_state(monkeypatch):
         region_index=0,
     )
     assert conv.reveal_search_match(match, rerender=False) is True
-    assert conv._view_overrides.has_search_reveal_block(block.block_id) is True
-    assert conv._view_overrides.has_search_reveal_region(block.block_id, 0) is True
+    assert conv._view_overrides.block_state(block.block_id).vis_override == cc_dump.core.formatting.ALWAYS_VISIBLE
+    assert conv._view_overrides.get_region(block.block_id, 0).expanded is True
     assert calls == [(0, 0)]
 
 
@@ -197,8 +200,8 @@ def test_clear_search_reveal_clears_temporary_state():
     conv._view_overrides.set_search_reveal(block_id=1, region_index=0)
 
     assert conv.clear_search_reveal(rerender=False) is True
-    assert conv._view_overrides.has_search_reveal_block(1) is False
-    assert conv._view_overrides.has_search_reveal_region(1, 0) is False
+    assert conv._view_overrides.block_state(1).vis_override is None
+    assert conv._view_overrides.get_region(1, 0).expanded is None
 
 
 def test_clear_search_reveal_honors_rerender_when_state_is_already_clear(monkeypatch):
