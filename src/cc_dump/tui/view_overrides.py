@@ -10,10 +10,8 @@ Owned by ConversationView. Serializable for hot-reload via to_dict/from_dict.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from collections.abc import Iterable
 
-from cc_dump.core.formatting import Category, FormattedBlock
-from cc_dump.tui.rendering import get_category
+from cc_dump.core.formatting import ALWAYS_VISIBLE, Category, VisState
 
 
 @dataclass
@@ -21,7 +19,8 @@ class BlockViewState:
     """Per-block view state, keyed by block_id."""
 
     expandable: bool = False  # renderer-computed
-    expanded: bool | None = None  # user override; None means category default
+    expanded: bool | None = None  # user click override; None means category default
+    vis_override: VisState | None = None  # programmatic override (search reveal); not serialized
 
 
 @dataclass
@@ -37,14 +36,19 @@ class ViewOverrides:
 
     Auto-creates entries on miss (get_block/get_region). Only entries that are
     actually touched consume memory.
+
+    // [LAW:one-source-of-truth] Category index tracks block_id → category for O(overrides)
+    // clearing instead of O(all blocks) tree walk.
     """
 
     def __init__(self):
         self._blocks: dict[int, BlockViewState] = {}
         self._regions: dict[tuple[int, int], RegionViewState] = {}
-        # // [LAW:one-source-of-truth] Search reveal state is owned here with other mutable view overrides.
-        self._search_reveal_blocks: set[int] = set()
-        self._search_reveal_regions: set[tuple[int, int]] = set()
+        # // [LAW:one-source-of-truth] Category index populated by register_block/unregister_block.
+        self._block_categories: dict[int, Category | None] = {}
+        # // [LAW:one-source-of-truth] Active search reveal tracking — at most one block + region.
+        self._active_reveal_block_id: int | None = None
+        self._active_reveal_region: tuple[int, int] | None = None
 
     def get_block(self, block_id: int) -> BlockViewState:
         """Get or create BlockViewState for a block_id."""
@@ -67,67 +71,113 @@ class ViewOverrides:
             self._regions[key] = state
         return state
 
+    # ─── Block registration (category index) ─────────────────────────────
+
+    def register_block(self, block_id: int, category: Category | None) -> None:
+        """Register a block's category for O(overrides) clearing."""
+        self._block_categories[block_id] = category
+
+    def unregister_block(self, block_id: int) -> None:
+        """Remove a block from the category index."""
+        self._block_categories.pop(block_id, None)
+
+    # ─── Search reveal via vis_override ──────────────────────────────────
+
     def set_search_reveal(
         self,
         *,
         block_id: int,
         region_index: int | None = None,
     ) -> bool:
-        """Set temporary search reveal target state."""
-        next_blocks = {block_id}
-        next_regions = (
-            {(block_id, region_index)} if region_index is not None else set()
-        )
-        changed = (
-            next_blocks != self._search_reveal_blocks
-            or next_regions != self._search_reveal_regions
-        )
-        self._search_reveal_blocks = {block_id}
-        self._search_reveal_regions = (
-            {(block_id, region_index)} if region_index is not None else set()
-        )
-        return changed
+        """Set search reveal on a block (and optionally a region).
+
+        // [LAW:one-source-of-truth] Search reveal is a vis_override on BlockViewState +
+        // expanded override on RegionViewState. No separate reveal sets.
+
+        Clears previous reveal before setting new one. Returns whether state changed.
+        """
+        next_reveal = (block_id, region_index)
+        prev_reveal = (self._active_reveal_block_id, self._active_reveal_region)
+        # Normalize previous region to just region_index for comparison
+        prev_region_index = self._active_reveal_region[1] if self._active_reveal_region else None
+        if (block_id, region_index) == (self._active_reveal_block_id, prev_region_index):
+            return False  # no change
+
+        # Clear previous reveal
+        self._clear_active_reveal()
+
+        # Set new block vis_override
+        block_vs = self.get_block(block_id)
+        block_vs.vis_override = ALWAYS_VISIBLE
+
+        # Set new region expanded override
+        if region_index is not None:
+            region_vs = self.get_region(block_id, region_index)
+            region_vs.expanded = True
+            self._active_reveal_region = (block_id, region_index)
+        else:
+            self._active_reveal_region = None
+
+        self._active_reveal_block_id = block_id
+        return True
 
     def clear_search_reveal(self) -> bool:
-        """Clear temporary search reveal state and return whether it changed."""
-        had_state = bool(self._search_reveal_blocks or self._search_reveal_regions)
-        self._search_reveal_blocks.clear()
-        self._search_reveal_regions.clear()
-        return had_state
+        """Clear active search reveal. Returns whether state changed."""
+        if self._active_reveal_block_id is None:
+            return False
+        self._clear_active_reveal()
+        return True
 
-    def has_search_reveal_block(self, block_id: int) -> bool:
-        return block_id in self._search_reveal_blocks
+    def _clear_active_reveal(self) -> None:
+        """Clear the currently active reveal's overrides."""
+        if self._active_reveal_block_id is not None:
+            block_vs = self._blocks.get(self._active_reveal_block_id)
+            if block_vs is not None:
+                block_vs.vis_override = None
+        if self._active_reveal_region is not None:
+            region_vs = self._regions.get(self._active_reveal_region)
+            if region_vs is not None:
+                region_vs.expanded = None
+        self._active_reveal_block_id = None
+        self._active_reveal_region = None
 
-    def has_search_reveal_region(self, block_id: int, idx: int) -> bool:
-        return (block_id, idx) in self._search_reveal_regions
+    # ─── Category clearing ───────────────────────────────────────────────
 
-    def clear_category(self, blocks: Iterable[FormattedBlock], category: Category) -> None:
-        """Reset region expanded overrides for all blocks matching a category.
+    def clear_category(self, category: Category) -> None:
+        """Reset all overrides for blocks matching a category.
 
-        Recursively walks children.
+        // [LAW:one-source-of-truth] Uses _block_categories index — O(registered blocks in category).
+        Clears both block-level (expanded, vis_override) and region-level (expanded) overrides.
         """
-        def _walk(block_list):
-            for block in block_list:
-                block_cat = get_category(block)
-                if block_cat == category:
-                    block_state = self._blocks.get(block.block_id)
-                    if block_state is not None:
-                        # // [LAW:one-source-of-truth] Category reset clears per-block expansion override here.
-                        block_state.expanded = None
-                    # // [LAW:one-source-of-truth] Region expansion overrides live only in _regions.
-                    for region in block.content_regions:
-                        key = (block.block_id, region.index)
-                        rvs = self._regions.get(key)
-                        if rvs is not None:
-                            rvs.expanded = None
-                _walk(getattr(block, "children", []))
+        # Collect matching block_ids
+        matching_bids = [
+            bid for bid, cat in self._block_categories.items() if cat == category
+        ]
 
-        _walk(list(blocks))
+        for bid in matching_bids:
+            block_vs = self._blocks.get(bid)
+            if block_vs is not None:
+                block_vs.expanded = None
+                block_vs.vis_override = None
+
+            # Clear regions belonging to this block
+            # Iterate all regions and clear those with matching block_id
+            for key, rvs in self._regions.items():
+                if key[0] == bid:
+                    rvs.expanded = None
+
+        # If active reveal was in this category, clear tracking
+        if self._active_reveal_block_id is not None:
+            if self._block_categories.get(self._active_reveal_block_id) == category:
+                self._active_reveal_block_id = None
+                self._active_reveal_region = None
+
+    # ─── Serialization ───────────────────────────────────────────────────
 
     def to_dict(self) -> dict:
         """Serialize for hot-reload state transfer.
 
-        Search navigation runtime state is not serialized.
+        vis_override and _block_categories are transient — not serialized.
         """
         blocks = {}
         for bid, bvs in self._blocks.items():
@@ -136,6 +186,7 @@ class ViewOverrides:
                 entry["expandable"] = True
             if bvs.expanded is not None:
                 entry["expanded"] = bvs.expanded
+            # vis_override is transient — not serialized
             if entry:
                 blocks[bid] = entry
 

@@ -75,8 +75,12 @@ def test_view_overrides_clear_category():
     vo.get_block(user_block.block_id).expanded = False
     vo.get_block(asst_block.block_id).expanded = False
 
+    # Register blocks in category index (normally done by _index_blocks)
+    vo.register_block(user_block.block_id, Category.USER)
+    vo.register_block(asst_block.block_id, Category.ASSISTANT)
+
     # Clear only USER category
-    vo.clear_category([user_block, asst_block], Category.USER)
+    vo.clear_category(Category.USER)
 
     assert vo.get_region(user_block.block_id, 0).expanded is None  # cleared
     assert vo.get_region(asst_block.block_id, 0).expanded is False  # untouched
@@ -207,9 +211,20 @@ def test_search_reveal_state_is_not_serialized():
     data = vo.to_dict()
     restored = ViewOverrides.from_dict(data)
 
-    assert vo.has_search_reveal_block(123) is True
-    assert restored.has_search_reveal_block(123) is False
-    assert restored.has_search_reveal_region(123, 4) is False
+    # vis_override set on original but not serialized
+    assert vo.block_state(123).vis_override == ALWAYS_VISIBLE
+    assert restored.block_state(123) is None  # not restored (only vis_override was set)
+
+
+def test_search_reveal_clears_previous_reveal():
+    """Setting a new search reveal clears the previous one."""
+    vo = ViewOverrides()
+    vo.set_search_reveal(block_id=100)
+    assert vo.block_state(100).vis_override == ALWAYS_VISIBLE
+
+    vo.set_search_reveal(block_id=200)
+    assert vo.block_state(100).vis_override is None  # cleared
+    assert vo.block_state(200).vis_override == ALWAYS_VISIBLE
 
 
 def test_search_reveal_region_forces_region_expanded():
