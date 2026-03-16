@@ -295,10 +295,11 @@ class TestCompileSearchPattern:
 class _FakeTurnData:
     """Minimal turn data for testing find_all_matches."""
 
-    def __init__(self, turn_index, blocks, is_streaming=False):
+    def __init__(self, turn_index, blocks, is_streaming=False, searchable_blocks=None):
         self.turn_index = turn_index
         self.blocks = blocks
         self.is_streaming = is_streaming
+        self.searchable_blocks = searchable_blocks
 
 
 class TestFindAllMatches:
@@ -413,6 +414,25 @@ class TestFindAllMatches:
         assert len(matches) == 1
         assert matches[0].region_index is not None
         assert block.content_regions[matches[0].region_index].kind == "xml_block"
+
+    def test_reuses_prebuilt_searchable_blocks(self, monkeypatch):
+        import cc_dump.tui.search as search_mod
+
+        block = TextContentBlock(content="cached needle")
+        turns = [_FakeTurnData(0, [block], searchable_blocks=((0, block),))]
+        pattern = re.compile("needle")
+        calls = {"count": 0}
+
+        def _unexpected_build(_blocks):
+            calls["count"] += 1
+            return ()
+
+        monkeypatch.setattr(search_mod, "build_searchable_blocks", _unexpected_build)
+
+        matches = find_all_matches(turns, pattern)
+
+        assert len(matches) == 1
+        assert calls["count"] == 0
 
 
 # ─── SearchContext ────────────────────────────────────────────────────────────
