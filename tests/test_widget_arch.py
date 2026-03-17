@@ -1250,6 +1250,23 @@ class TestLazyRerenderInRenderLine:
 
         assert len(conv._line_cache) == 0
 
+    def test_selection_updates_preserve_cached_base_lines(self):
+        """Selection updates refresh the view without dropping persistent base-line cache."""
+        conv = ConversationView()
+        key = ("line", 0)
+        conv._line_cache[key] = Strip.blank(10)
+        conv._cache_keys_by_turn = {0: {key}}
+        conv._line_cache_index_write_count = 17
+        conv.refresh = MagicMock()
+
+        conv.selection_updated(MagicMock())
+        conv.selection_updated(None)
+
+        assert key in conv._line_cache
+        assert conv._cache_keys_by_turn == {0: {key}}
+        assert conv._line_cache_index_write_count == 17
+        assert conv.refresh.call_count == 2
+
 
 class TestRequestScopedStreaming:
     """Request-scoped streaming turns should not interleave."""
