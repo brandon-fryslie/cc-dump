@@ -456,21 +456,23 @@ def _build_replacement_info(info_state: dict):
 
 
 async def _remove_ephemeral_panels(app) -> None:
-    """Drop transient overlays before remounting persisted widgets."""
+    """Drop transient overlays before remounting persisted widgets.
+
+    Store visibility keys are preserved so that store reactions re-create
+    panels after the pause ends — matching the aux-panel pattern.
+    """
     for ephemeral_panel_type in (
         cc_dump.tui.keys_panel.KeysPanel,
         cc_dump.tui.debug_settings_panel.DebugSettingsPanel,
     ):
         await _remove_panels_by_type(app, ephemeral_panel_type)
 
-    removals = (
-        (cc_dump.tui.settings_panel.SettingsPanel, "panel:settings"),
-        (cc_dump.tui.launch_config_panel.LaunchConfigPanel, "panel:launch_config"),
-        (cc_dump.tui.side_channel_panel.SideChannelPanel, "panel:side_channel"),
-    )
-    for removal_panel_type, store_key in removals:
+    for removal_panel_type in (
+        cc_dump.tui.settings_panel.SettingsPanel,
+        cc_dump.tui.launch_config_panel.LaunchConfigPanel,
+        cc_dump.tui.side_channel_panel.SideChannelPanel,
+    ):
         await _remove_panels_by_type(app, removal_panel_type)
-        app._view_store.set(store_key, False)
 
 
 async def _remove_panels_by_type(app, panel_type) -> None:

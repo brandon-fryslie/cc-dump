@@ -1467,22 +1467,41 @@ class CcDumpApp(App):
             info.display = bool(info_visible)
 
     def _sync_sidebar_panels(self, state: tuple[bool, bool, bool]) -> None:
-        """Single enforcer for sidebar visibility + focus."""
+        """Single enforcer for sidebar visibility + focus.
+
+        Creates panels on-demand when the store says visible but no widget
+        exists — this makes sidebar panels survive hot-reload (matching the
+        aux-panel create-on-demand pattern).
+        """
         settings_open, launch_open, side_open = state
+
         def _first_or_none(panel_type):
             try:
                 return self.screen.query(panel_type).first()
             except NoMatches:
                 return None
 
+        # [LAW:dataflow-not-control-flow] Each panel always resolves to a
+        # (widget-or-None, visible) pair; creation is a data-driven side effect.
         settings_panel = _first_or_none(cc_dump.tui.settings_panel.SettingsPanel)
-        launch_panel = _first_or_none(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
-        side_panel = _first_or_none(cc_dump.tui.side_channel_panel.SideChannelPanel)
-
+        if settings_panel is None and settings_open:
+            settings_panel = _settings_launch._ensure_settings_panel(self)
         if settings_panel is not None:
             settings_panel.display = settings_open
+
+        launch_panel = _first_or_none(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+        if launch_panel is None and launch_open:
+            configs = cc_dump.app.launch_config.load_configs()
+            active_name = cc_dump.app.launch_config.load_active_name()
+            launch_panel = _settings_launch._ensure_launch_config_panel(
+                self, configs, active_name
+            )
         if launch_panel is not None:
             launch_panel.display = launch_open
+
+        side_panel = _first_or_none(cc_dump.tui.side_channel_panel.SideChannelPanel)
+        if side_panel is None and side_open:
+            side_panel = _side_channel._ensure_side_channel_panel(self)
         if side_panel is not None:
             side_panel.display = side_open
 

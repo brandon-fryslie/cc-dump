@@ -144,6 +144,7 @@ class SideChannelPanel(StoreWidget):
         padding: 1;
         height: 1fr;
         layout: vertical;
+        overflow-y: auto;
     }
 
     SideChannelPanel #sc-title {
