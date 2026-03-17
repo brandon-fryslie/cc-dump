@@ -1472,7 +1472,6 @@ class ConversationView(ScrollView):
         td._strip_version = _next_strip_version()
         td._last_render_key = render_key
         td._widest_strip = _compute_widest(strips)
-        td.rebuild_block_derivatives()
 
         # Use ALWAYS_VISIBLE default to match filters dict structure
         td._last_filter_snapshot = {
@@ -1664,6 +1663,34 @@ class ConversationView(ScrollView):
         if self._refresh_streaming_delta(request_id, td):
             self._recalculate_offsets()
 
+    def _finalize_turn_data(
+        self,
+        td: TurnData | None,
+        *,
+        final_blocks: list,
+        strips: list,
+        block_strip_map: dict,
+        flat_blocks: list,
+    ) -> TurnData:
+        """Return finalized TurnData with derived projections refreshed when reused."""
+        if td is None:
+            return TurnData(
+                turn_index=-1,
+                blocks=final_blocks,
+                strips=strips,
+                block_strip_map=block_strip_map,
+                _flat_blocks=flat_blocks,
+                is_streaming=False,
+            )
+
+        td.blocks = final_blocks
+        td.strips = strips
+        td.block_strip_map = block_strip_map
+        td._flat_blocks = flat_blocks
+        # [LAW:one-source-of-truth] Rebuild derived turn projections after final blocks replace preview state.
+        td.rebuild_block_derivatives()
+        return td
+
     def _on_stream_finalized(self, request_id: str, final_blocks: list, was_focused: bool) -> None:
         """Domain store callback: a stream was finalized with consolidated blocks."""
         if not self.is_attached:
@@ -1691,12 +1718,13 @@ class ConversationView(ScrollView):
         )
 
         # Create or reuse TurnData for the finalized turn
-        if td is None:
-            td = TurnData(turn_index=-1, blocks=[], strips=[], is_streaming=False)
-        td.blocks = final_blocks
-        td.strips = strips
-        td.block_strip_map = block_strip_map
-        td._flat_blocks = flat_blocks
+        td = self._finalize_turn_data(
+            td,
+            final_blocks=final_blocks,
+            strips=strips,
+            block_strip_map=block_strip_map,
+            flat_blocks=flat_blocks,
+        )
         td._strip_version = _next_strip_version()
         td._widest_strip = _compute_widest(td.strips)
         td.is_streaming = False
@@ -1705,8 +1733,6 @@ class ConversationView(ScrollView):
         td._stream_last_delta_version = -1
         td._stream_last_render_width = 0
 
-        # [LAW:one-source-of-truth] Rebuild derived turn projections after final blocks replace preview state.
-        td.rebuild_block_derivatives()
         td._last_filter_snapshot = {
             k: self._last_filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
         }
