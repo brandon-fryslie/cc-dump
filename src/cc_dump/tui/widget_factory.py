@@ -942,8 +942,8 @@ class ConversationView(ScrollView):
         return adjusted.extract(text), "\n"
 
     def selection_updated(self, selection: Selection | None) -> None:
-        """Invalidate cache when selection changes."""
-        self._clear_line_cache()
+        """Refresh selection overlay without invalidating persistent line cache."""
+        # [LAW:dataflow-not-control-flow] Selection is transient render input; cached base strips remain canonical.
         self.refresh()
 
     def _find_turn_with_offset(self, line_y: int) -> tuple[TurnData, int] | None:
