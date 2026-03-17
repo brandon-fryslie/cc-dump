@@ -355,9 +355,8 @@ class TestConversationViewBinarySearch:
             blocks=[TextContentBlock(content="Hello", indent="")],
             strips=[Strip.blank(80), Strip.blank(80)],  # 2 lines
         )
-        td.line_offset = 0
         conv._turns.append(td)
-        conv._total_lines = 2
+        conv._recalculate_offsets()
 
         # Should find the turn for any line within its range
         turn = conv._find_turn_for_line(0)
@@ -381,7 +380,6 @@ class TestConversationViewBinarySearch:
             blocks=[TextContentBlock(content="A\nB\nC", indent="")],
             strips=[Strip.blank(80), Strip.blank(80), Strip.blank(80)],
         )
-        td0.line_offset = 0
 
         # Turn 1: 2 lines (line 3-4)
         td1 = TurnData(
@@ -389,7 +387,6 @@ class TestConversationViewBinarySearch:
             blocks=[TextContentBlock(content="D\nE", indent="")],
             strips=[Strip.blank(80), Strip.blank(80)],
         )
-        td1.line_offset = 3
 
         # Turn 2: 1 line (line 5)
         td2 = TurnData(
@@ -397,10 +394,9 @@ class TestConversationViewBinarySearch:
             blocks=[TextContentBlock(content="F", indent="")],
             strips=[Strip.blank(80)],
         )
-        td2.line_offset = 5
 
         conv._turns.extend([td0, td1, td2])
-        conv._total_lines = 6
+        conv._recalculate_offsets()
 
         # Test finding each turn
         turn0 = conv._find_turn_for_line(0)
@@ -427,9 +423,8 @@ class TestConversationViewBinarySearch:
             blocks=[TextContentBlock(content="Line 1\nLine 2", indent="")],
             strips=[Strip.blank(80), Strip.blank(80)],
         )
-        td.line_offset = 0
         conv._turns.append(td)
-        conv._total_lines = 2
+        conv._recalculate_offsets()
 
         # Line 0-1 are valid, line 10 is beyond
         turn = conv._find_turn_for_line(10)
@@ -447,7 +442,6 @@ class TestConversationViewBinarySearch:
             blocks=[TextContentBlock(content="A\nB\nC", indent="")],
             strips=[Strip.blank(80), Strip.blank(80), Strip.blank(80)],
         )
-        td0.line_offset = 0
 
         # Turn 1: lines 3-5 (3 lines)
         td1 = TurnData(
@@ -455,10 +449,9 @@ class TestConversationViewBinarySearch:
             blocks=[TextContentBlock(content="D\nE\nF", indent="")],
             strips=[Strip.blank(80), Strip.blank(80), Strip.blank(80)],
         )
-        td1.line_offset = 3
 
         conv._turns.extend([td0, td1])
-        conv._total_lines = 6
+        conv._recalculate_offsets()
 
         # Test first line of each turn
         assert conv._find_turn_for_line(0).turn_index == 0
@@ -530,8 +523,8 @@ class TestScrollPreservation:
         conv._follow_state = FollowState.OFF
 
         # Scroll to turn 1 with some offset
-        turn1 = conv._turns[1]
-        scroll_y = turn1.line_offset + 1  # 1 line into turn 1
+        turn1_offset = conv._offset_tree.prefix_sum(1)
+        scroll_y = turn1_offset + 1  # 1 line into turn 1
 
         with self._patch_scroll(conv, scroll_y=scroll_y):
             conv._scroll_anchor = conv._compute_anchor_from_scroll()
@@ -539,8 +532,9 @@ class TestScrollPreservation:
 
         # scroll_to should be called with turn 1's new offset + clamped offset_within
         turn1_after = conv._turns[1]
+        turn1_after_offset = conv._offset_tree.prefix_sum(1)
         expected_offset = min(1, turn1_after.line_count - 1)
-        expected_y = turn1_after.line_offset + expected_offset
+        expected_y = turn1_after_offset + expected_offset
         conv.scroll_to.assert_called_with(y=expected_y, animate=False)
 
     def test_no_cross_toggle_state(self):
@@ -569,14 +563,12 @@ class TestScrollPreservation:
         conv._follow_state = FollowState.OFF
 
         # Step 1: Scroll to turn 1 (system block area), hide system
-        turn1 = conv._turns[1]
-        with self._patch_scroll(conv, scroll_y=turn1.line_offset):
+        with self._patch_scroll(conv, scroll_y=conv._offset_tree.prefix_sum(1)):
             conv._scroll_anchor = conv._compute_anchor_from_scroll()
             conv.rerender({"system": HIDDEN, "tools": ALWAYS_VISIBLE})
 
         # Step 2: Scroll to turn 2, then toggle tools
-        turn2 = conv._turns[2]
-        with self._patch_scroll(conv, scroll_y=turn2.line_offset):
+        with self._patch_scroll(conv, scroll_y=conv._offset_tree.prefix_sum(2)):
             conv.scroll_to.reset_mock()
             conv._scroll_anchor = conv._compute_anchor_from_scroll()
             conv.rerender({"system": HIDDEN, "tools": HIDDEN})
@@ -586,8 +578,9 @@ class TestScrollPreservation:
         call_y = conv.scroll_to.call_args.kwargs.get("y", conv.scroll_to.call_args[1].get("y"))
         turn2_after = conv._turns[2]
         # Should be at or near turn 2's offset
-        assert call_y >= turn2_after.line_offset
-        assert call_y < turn2_after.line_offset + turn2_after.line_count
+        turn2_after_offset = conv._offset_tree.prefix_sum(2)
+        assert call_y >= turn2_after_offset
+        assert call_y < turn2_after_offset + turn2_after.line_count
 
     def test_follow_mode_skips_anchor(self):
         """In follow mode, scroll_to should not be called by rerender."""
@@ -625,7 +618,7 @@ class TestScrollPreservation:
         original_lines = turn.line_count
         # Scroll deep into the turn
         deep_offset = original_lines - 1
-        scroll_y = turn.line_offset + deep_offset
+        scroll_y = conv._offset_tree.prefix_sum(0) + deep_offset
 
         with self._patch_scroll(conv, scroll_y=scroll_y):
             conv._scroll_anchor = conv._compute_anchor_from_scroll()
@@ -635,11 +628,11 @@ class TestScrollPreservation:
         turn_after = conv._turns[0]
         assert turn_after.line_count < original_lines
         # scroll_to should clamp to turn's last line
-        expected_y = turn_after.line_offset + turn_after.line_count - 1
+        expected_y = conv._offset_tree.prefix_sum(0) + turn_after.line_count - 1
         conv.scroll_to.assert_called_with(y=expected_y, animate=False)
 
-    def test_deferred_rerender_preserves_scroll(self):
-        """Lazy re-render via _deferred_offset_recalc should not shift viewport."""
+    def test_deferred_anchor_resolve_preserves_scroll(self):
+        """Deferred anchor resolve should restore scroll position."""
         console = Console()
         turns_blocks = [
             [TextContentBlock(content="Turn 0\nLine 2", indent="")],
@@ -650,15 +643,15 @@ class TestScrollPreservation:
         conv._follow_state = FollowState.OFF
 
         # Scroll to turn 1
-        turn1 = conv._turns[1]
-        with self._patch_scroll(conv, scroll_y=turn1.line_offset):
+        turn1_offset = conv._offset_tree.prefix_sum(1)
+        with self._patch_scroll(conv, scroll_y=turn1_offset):
             conv._scroll_anchor = conv._compute_anchor_from_scroll()
-            conv._deferred_offset_recalc(0)
+            conv._flush_deferred_anchor_resolve()
 
         # Should restore to turn 1
         conv.scroll_to.assert_called()
         call_y = conv.scroll_to.call_args.kwargs.get("y", conv.scroll_to.call_args[1].get("y"))
-        assert call_y >= conv._turns[1].line_offset
+        assert call_y >= conv._offset_tree.prefix_sum(1)
 
     def test_anchor_turn_shrinks_but_visible(self):
         """When anchor turn shrinks but remains visible, scroll adjusts."""
@@ -683,8 +676,7 @@ class TestScrollPreservation:
         conv._follow_state = FollowState.OFF
 
         # Scroll to turn 1 (system content)
-        turn1 = conv._turns[1]
-        with self._patch_scroll(conv, scroll_y=turn1.line_offset):
+        with self._patch_scroll(conv, scroll_y=conv._offset_tree.prefix_sum(1)):
             conv._scroll_anchor = conv._compute_anchor_from_scroll()
             conv.rerender({"system": HIDDEN})
 
@@ -710,7 +702,7 @@ class TestScrollPreservation:
         conv._resolve_anchor()
 
         conv.scroll_to.assert_called_with(
-            y=conv._turns[1].line_offset,
+            y=conv._offset_tree.prefix_sum(1),
             animate=False,
         )
 
@@ -782,14 +774,14 @@ class TestIncrementalOffsets:
         assert 2 not in conv._cache_keys_by_turn
         assert 3 not in conv._cache_keys_by_turn
 
-    def test_incremental_matches_full_recalc(self):
-        """Incremental from index K produces same offsets as full recalc."""
+    def test_tree_offsets_match_after_strip_change(self):
+        """After modifying a turn's strips and rebuilding, tree offsets are correct."""
         from textual.strip import Strip
 
         conv = ConversationView()
-        # Build 5 turns with known strip counts
+        # Build 5 turns with known strip counts: 2, 4, 6, 8, 10
         for i in range(5):
-            strip_count = (i + 1) * 2  # 2, 4, 6, 8, 10
+            strip_count = (i + 1) * 2
             td = TurnData(
                 turn_index=i,
                 blocks=[],
@@ -798,31 +790,30 @@ class TestIncrementalOffsets:
             )
             conv._turns.append(td)
 
-        # Full recalc to establish baseline
         conv._recalculate_offsets()
-        baseline_offsets = [t.line_offset for t in conv._turns]
+        # Baseline: offsets should be cumulative strip counts
+        assert conv._offset_tree.prefix_sum(0) == 0
+        assert conv._offset_tree.prefix_sum(1) == 2
+        assert conv._offset_tree.prefix_sum(2) == 6
+        assert conv._offset_tree.prefix_sum(3) == 12
+        assert conv._offset_tree.prefix_sum(4) == 20
 
-        # Modify turn 2 (change strip count)
-        conv._turns[2].strips = [Strip.blank(90)] * 3  # was 6 strips, now 3
+        # Modify turn 2 (change strip count from 6 to 3)
+        conv._turns[2].strips = [Strip.blank(90)] * 3
         conv._turns[2]._widest_strip = 90
 
-        # Incremental from index 2
-        conv._recalculate_offsets_from(2)
-        incr_offsets = [t.line_offset for t in conv._turns]
-
-        # Turns 0-1 offsets unchanged
-        assert incr_offsets[0] == baseline_offsets[0]
-        assert incr_offsets[1] == baseline_offsets[1]
-
-        # Full recalc for comparison
+        # Rebuild offsets
         conv._recalculate_offsets()
-        full_offsets = [t.line_offset for t in conv._turns]
 
-        # Incremental and full must match
-        assert incr_offsets == full_offsets
+        # Turns 0-1 offsets unchanged, 2+ shifted
+        assert conv._offset_tree.prefix_sum(0) == 0
+        assert conv._offset_tree.prefix_sum(1) == 2
+        assert conv._offset_tree.prefix_sum(2) == 6
+        assert conv._offset_tree.prefix_sum(3) == 9   # was 12, now 6+3=9
+        assert conv._offset_tree.prefix_sum(4) == 17  # 9+8=17
 
-    def test_recalculate_offsets_from_invalidates_only_changed_turns(self):
-        """Incremental offset recalculation invalidates cache keys for changed range only."""
+    def test_recalculate_offsets_invalidates_all_caches(self):
+        """Full offset recalculation invalidates all cache keys."""
         from textual.strip import Strip
 
         conv = ConversationView()
@@ -845,10 +836,11 @@ class TestIncrementalOffsets:
         }
 
         conv._turns[2].strips = [Strip.blank(80)] * 3
-        conv._recalculate_offsets_from(2)
+        conv._recalculate_offsets()
 
-        assert key0 in conv._line_cache
-        assert key1 in conv._line_cache
+        # Full rebuild invalidates all caches
+        assert key0 not in conv._line_cache
+        assert key1 not in conv._line_cache
         assert key2 not in conv._line_cache
         assert key3 not in conv._line_cache
 
@@ -922,8 +914,8 @@ class TestIncrementalOffsets:
         assert conv._scroll_anchor is not None
         assert conv._scroll_anchor.turn_index == 1
 
-    def test_incremental_from_zero_matches_full(self):
-        """_recalculate_offsets_from(0) is identical to _recalculate_offsets()."""
+    def test_recalculate_offsets_from_delegates_to_full_rebuild(self):
+        """_recalculate_offsets_from() delegates to _recalculate_offsets()."""
         from textual.strip import Strip
 
         conv = ConversationView()
@@ -937,11 +929,11 @@ class TestIncrementalOffsets:
             conv._turns.append(td)
 
         conv._recalculate_offsets_from(0)
-        offsets_from = [t.line_offset for t in conv._turns]
+        offsets_from = [conv._offset_tree.prefix_sum(i) for i in range(3)]
         total_from = conv._total_lines
 
         conv._recalculate_offsets()
-        offsets_full = [t.line_offset for t in conv._turns]
+        offsets_full = [conv._offset_tree.prefix_sum(i) for i in range(3)]
         total_full = conv._total_lines
 
         assert offsets_from == offsets_full
@@ -1084,56 +1076,8 @@ class TestViewportOnlyRerender:
              patch.object(cls, 'size', new_callable=PropertyMock, return_value=MagicMock(width=80)):
             yield
 
-    def test_off_viewport_turns_get_pending_snapshot(self):
-        """Off-viewport turns should get _pending_filter_snapshot set, not re-rendered."""
-        console = Console()
-        filters_initial = {"tools": ALWAYS_VISIBLE}
-        # 200 turns × ~2 lines = ~400 total lines.  With viewport=10 + buffer=20,
-        # only turns covering lines 0..30 are in-range — the rest are off-viewport.
-        conv = self._make_conv_with_turns(console, 200, filters_initial)
-
-        with self._patch_scroll(conv, scroll_y=0, height=10):
-            conv._follow_state = FollowState.OFF
-            conv.rerender({"tools": HIDDEN})
-
-        # Compute viewport range to know which turns were deferred
-        with self._patch_scroll(conv, scroll_y=0, height=10):
-            vp_start, vp_end = conv._viewport_turn_range()
-
-        has_pending = False
-        for idx, td in enumerate(conv._turns):
-            if idx >= vp_end:
-                if td._pending_filter_snapshot is not None:
-                    has_pending = True
-                    assert "tools" in td._pending_filter_snapshot
-                    assert td._pending_filter_snapshot["tools"] == HIDDEN
-
-        assert has_pending, (
-            f"No off-viewport turns got _pending_filter_snapshot "
-            f"(vp_end={vp_end}, total_turns={len(conv._turns)})"
-        )
-
-    def test_background_rerender_processes_deferred_turns(self):
-        """Deferred off-viewport turns are rerendered incrementally in background."""
-        console = Console()
-        filters_initial = {"tools": ALWAYS_VISIBLE}
-        conv = self._make_conv_with_turns(console, 200, filters_initial)
-
-        with self._patch_scroll(conv, scroll_y=0, height=10):
-            conv.call_later = MagicMock()
-            conv._background_rerender_chunk_size = 1000
-            conv._follow_state = FollowState.OFF
-            conv.rerender({"tools": HIDDEN})
-
-            # First scheduled callback is background rerender.
-            assert conv.call_later.called
-            background_cb = conv.call_later.call_args.args[0]
-            background_cb()
-
-        assert all(td._pending_filter_snapshot is None for td in conv._turns if not td.is_streaming)
-
     def test_viewport_turns_get_re_rendered(self):
-        """Viewport turns should be re-rendered, not deferred."""
+        """Viewport turns should be re-rendered immediately with current filter revision."""
         console = Console()
         filters_initial = {"tools": ALWAYS_VISIBLE}
         conv = self._make_conv_with_turns(console, 50, filters_initial)
@@ -1143,46 +1087,12 @@ class TestViewportOnlyRerender:
             conv._follow_state = FollowState.OFF
             conv.rerender({"tools": HIDDEN})
 
-        # Viewport turns should have no pending snapshot
+        # Viewport turns should have current filter revision
         for idx in range(vp_start, min(vp_end, len(conv._turns))):
             td = conv._turns[idx]
-            assert td._pending_filter_snapshot is None, (
-                f"Viewport turn {idx} should not have pending snapshot"
+            assert td._filter_revision == conv._active_filter_revision, (
+                f"Viewport turn {idx} should have current filter revision"
             )
-
-    def test_background_rerender_tick_avoids_full_turn_scan(self):
-        """Background rerender should process pending queue, not iterate all turns each tick."""
-        console = Console()
-        filters_initial = {"tools": ALWAYS_VISIBLE}
-        conv = self._make_conv_with_turns(console, 300, filters_initial)
-
-        class _CountingList(list):
-            def __init__(self, values):
-                super().__init__(values)
-                self.iter_count = 0
-
-            def __iter__(self):
-                for item in super().__iter__():
-                    self.iter_count += 1
-                    yield item
-
-        conv._turns = _CountingList(conv._turns)
-
-        with self._patch_scroll(conv, scroll_y=0, height=10):
-            conv.call_later = MagicMock()
-            conv._background_rerender_chunk_size = 8
-            conv._follow_state = FollowState.OFF
-            conv.rerender({"tools": HIDDEN})
-
-            # First scheduled callback is background rerender.
-            assert conv.call_later.called
-            background_cb = conv.call_later.call_args.args[0]
-
-            # Ignore iteration performed during the initial rerender pass.
-            conv._turns.iter_count = 0
-            background_cb()
-
-        assert conv._turns.iter_count == 0, "background tick should not scan all turns"
 
     def test_filter_rerender_avoids_full_turn_scan(self):
         """Filter rerender should use bounded index ranges, not iterate the entire turn list."""
@@ -1209,47 +1119,9 @@ class TestViewportOnlyRerender:
 
         assert conv._turns.iter_count == 0, "filter rerender should not iterate full turn list"
 
-    def test_filter_rerender_queue_bounded_to_prefetch_window(self):
-        """Deferred queue should stay within viewport +/- prefetch window."""
-        console = Console()
-        filters_initial = {"tools": ALWAYS_VISIBLE}
-        conv = self._make_conv_with_turns(console, 1000, filters_initial)
-
-        with self._patch_scroll(conv, scroll_y=0, height=10):
-            conv._follow_state = FollowState.OFF
-            conv._background_rerender_prefetch_turn_window = 32
-            vp_start, vp_end = conv._viewport_turn_range()
-            prefetch_start = max(0, vp_start - conv._background_rerender_prefetch_turn_window)
-            prefetch_end = min(len(conv._turns), vp_end + conv._background_rerender_prefetch_turn_window)
-            conv.rerender({"tools": HIDDEN})
-
-        pending_indices = list(conv._pending_rerender_indices)
-        assert pending_indices, "expected deferred indices to be queued"
-        assert min(pending_indices) >= prefetch_start
-        assert max(pending_indices) < prefetch_end
-
-    def test_pending_snapshot_cleared_on_re_render(self):
-        """When a turn with _pending_filter_snapshot is re-rendered, pending is cleared."""
-        console = Console()
-        blocks = [
-            TextContentBlock(content="Hello", indent=""),
-            ToolUseBlock(name="test", input_size=10, msg_color_idx=0),
-        ]
-        td = TurnData(
-            turn_index=0,
-            blocks=blocks,
-            strips=[],
-        )
-        td.compute_relevant_keys()
-        td._pending_filter_snapshot = {"tools": HIDDEN}
-
-        # re_render should clear pending
-        td.re_render({"tools": ALWAYS_VISIBLE}, console, 80, force=True)
-        assert td._pending_filter_snapshot is None
-
 
 class TestLazyRerenderInRenderLine:
-    """Test that render_line() lazily re-renders turns with _pending_filter_snapshot."""
+    """Test that render_line() lazily re-renders turns with stale _filter_revision."""
 
     @contextlib.contextmanager
     def _patch_scroll(self, conv, scroll_y=0, height=50):
@@ -1268,8 +1140,8 @@ class TestLazyRerenderInRenderLine:
              patch.object(cls, 'size', new_callable=PropertyMock, return_value=MagicMock(width=80)):
             yield
 
-    def test_lazy_rerender_clears_pending_on_scroll(self):
-        """When a turn with pending snapshot is accessed via render_line, it re-renders."""
+    def test_lazy_rerender_updates_revision_on_scroll(self):
+        """When a turn with stale _filter_revision is accessed via render_line, it re-renders."""
         console = Console()
         blocks = [
             TextContentBlock(content="Hello world", indent=""),
@@ -1295,20 +1167,21 @@ class TestLazyRerenderInRenderLine:
         conv._last_width = 80
         conv._recalculate_offsets()
 
-        # Simulate pending filter (tools toggled off while off-viewport)
-        td._pending_filter_snapshot = {"tools": HIDDEN}
+        # Simulate stale filter revision (filters changed while off-viewport)
+        conv._active_filter_revision = 5
+        td._filter_revision = 0  # stale
 
         with self._patch_scroll(conv, scroll_y=0, height=50):
             # render_line at y=0 should trigger lazy re-render
             conv.render_line(0)
 
-        # Pending should be cleared
-        assert td._pending_filter_snapshot is None
+        # _filter_revision should now match active
+        assert td._filter_revision == conv._active_filter_revision
         # call_later should have been called to schedule offset recalc
         conv.call_later.assert_called_once()
 
-    def test_no_lazy_rerender_without_pending(self):
-        """render_line should not re-render turns without _pending_filter_snapshot."""
+    def test_no_lazy_rerender_when_revision_matches(self):
+        """render_line should not re-render turns with current _filter_revision."""
         console = Console()
         blocks = [TextContentBlock(content="Hello", indent="")]
         filters = {}
@@ -1329,6 +1202,10 @@ class TestLazyRerenderInRenderLine:
         conv._last_filters = {}
         conv._last_width = 80
         conv._recalculate_offsets()
+
+        # Set matching revision — turn is up-to-date
+        conv._active_filter_revision = 3
+        td._filter_revision = 3
 
         original_strips = list(td.strips)
 

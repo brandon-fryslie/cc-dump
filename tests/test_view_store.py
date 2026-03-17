@@ -203,7 +203,6 @@ class TestPanelAndFollowSchema:
         assert cc_dump.app.view_store.SCHEMA["panel:active"] == "session"
 
     def test_panel_booleans_default_false(self):
-        assert cc_dump.app.view_store.SCHEMA["panel:side_channel"] is False
         assert cc_dump.app.view_store.SCHEMA["panel:settings"] is False
         assert cc_dump.app.view_store.SCHEMA["panel:launch_config"] is False
 
@@ -213,7 +212,6 @@ class TestPanelAndFollowSchema:
     def test_store_has_panel_keys(self):
         store = cc_dump.app.view_store.create()
         assert store.get("panel:active") == "session"
-        assert store.get("panel:side_channel") is False
         assert store.get("panel:settings") is False
         assert store.get("panel:launch_config") is False
         assert store.get("nav:follow") == "active"
@@ -309,13 +307,9 @@ class TestReconcileWithNewKeys:
 
         # All keys present with defaults
         assert store.get("panel:active") == "session"
-        assert store.get("panel:side_channel") is False
         assert store.get("nav:follow") == "active"
         assert store.get("filter:active") == "1"
         assert store.get("tmux:available") is False
-        assert store.get("sc:loading") is False
-        assert store.get("sc:active_action") == ""
-        assert store.get("sc:purpose_usage") == {}
 
 
 class TestFooterStateComputed:
@@ -384,33 +378,6 @@ class TestErrorItemsComputed:
         assert len(items) == 2
         assert items[0].summary == "bar.py"
         assert items[1].summary == "TypeError: oops"
-
-
-class TestScPanelStateComputed:
-    def test_defaults(self):
-        store = cc_dump.app.view_store.create()
-        state = store.sc_panel_state.get()
-        assert isinstance(state, dict)
-        assert state["enabled"] is False  # no settings_store wired
-        assert state["loading"] is False
-        assert state["active_action"] == ""
-        assert state["result_text"] == ""
-        assert state["result_source"] == ""
-        assert state["result_elapsed_ms"] == 0
-        assert state["purpose_usage"] == {}
-
-    def test_updates_from_store(self):
-        store = cc_dump.app.view_store.create()
-        store.set("sc:loading", True)
-        store.set("sc:active_action", "qa_submit")
-        store.set("sc:result_text", "answer")
-        store.set("sc:purpose_usage", {"conversation_qa": {"turns": 1}})
-        state = store.sc_panel_state.get()
-        assert state["loading"] is True
-        assert state["active_action"] == "qa_submit"
-        assert state["result_text"] == "answer"
-        assert state["purpose_usage"] == {"conversation_qa": {"turns": 1}}
-
 
 
 class TestErrorReaction:

@@ -42,7 +42,6 @@ import cc_dump.tui.input_modes
 import cc_dump.tui.info_panel
 import cc_dump.tui.custom_footer
 import cc_dump.tui.session_panel
-import cc_dump.tui.workbench_results_view
 # Extracted controller modules (module-object imports — safe for hot-reload)
 from cc_dump.tui import action_handlers as _actions
 import cc_dump.tui.panel_registry
@@ -51,7 +50,6 @@ from cc_dump.tui import dump_export as _dump
 from cc_dump.tui import theme_controller as _theme
 from cc_dump.tui import hot_reload_controller as _hot_reload
 from cc_dump.tui import lifecycle_controller as _lifecycle
-from cc_dump.tui import side_channel_controller as _side_channel
 from cc_dump.tui import settings_launch_controller as _settings_launch
 
 # Additional module-level imports
@@ -61,15 +59,14 @@ import cc_dump.app.launch_config
 import cc_dump.app.tmux_controller
 import cc_dump.tui.settings_panel
 import cc_dump.tui.launch_config_panel
-import cc_dump.tui.side_channel_panel
+import cc_dump.tui.keys_panel
+import cc_dump.tui.debug_settings_panel
 import cc_dump.tui.error_indicator
 import cc_dump.pipeline.har_replayer
 import cc_dump.io.sessions
 import cc_dump.app.memory_stats
 import cc_dump.pipeline.event_types
 import cc_dump.app.view_store
-import cc_dump.ai.conversation_qa
-import cc_dump.ai.side_channel_marker
 import cc_dump.providers
 
 from cc_dump.io.stderr_tee import get_tee as _get_tee
@@ -185,8 +182,6 @@ class CcDumpApp(App):
         recording_path: Optional[str] = None,
         replay_file: Optional[str] = None,
         tmux_controller=None,
-        side_channel_manager=None,
-        data_dispatcher=None,
         settings_store=None,
         view_store=None,
         domain_store=None,
@@ -222,8 +217,6 @@ class CcDumpApp(App):
         self._recording_path = recording_path
         self._replay_file = replay_file
         self._tmux_controller = tmux_controller
-        self._side_channel_manager = side_channel_manager
-        self._data_dispatcher = data_dispatcher
         self._settings_store = settings_store
         self._view_store = view_store
         self._domain_store = domain_store if domain_store is not None else cc_dump.app.domain_store.DomainStore()
@@ -261,9 +254,6 @@ class CcDumpApp(App):
         self._conv_id = "conversation-view"
         self._conv_tabs_id = "conversation-tabs"
         self._conv_tab_main_id = "conversation-tab-main"
-        self._workbench_tab_id = "conversation-tab-workbench"
-        self._workbench_view_id = "workbench-results-view"
-        self._workbench_session_key = "workbench-session"
         self._search_bar_id = "search-bar"
         self._default_session_key = "__default__"
         # // [LAW:one-source-of-truth] Request/session routing ownership lives in app state.
@@ -279,7 +269,6 @@ class CcDumpApp(App):
         }
         self._active_session_key = self._default_session_key
         self._last_primary_session_key = self._default_session_key
-        # [LAW:one-source-of-truth] Side-channel action review state is owned by app boundary.
         # [LAW:one-source-of-truth] Panel IDs derived from registry
         self._panel_ids = dict(cc_dump.tui.panel_registry.PANEL_CSS_IDS)
         self._logs_id = "logs-panel"
@@ -337,23 +326,12 @@ class CcDumpApp(App):
     def _normalize_session_key(self, session_id: str) -> str:
         return session_id if session_id else self._default_session_key
 
-    def _is_side_channel_session_key(self, session_key: str) -> bool:
-        return session_key == self._workbench_session_key or session_key.startswith("side-channel:")
-
     def _context_session_key(self, session_key: str) -> str:
-        """Resolve canonical conversation context for derived session tabs.
+        """Resolve canonical conversation context for session tabs.
 
         // [LAW:one-source-of-truth] Context/session linkage is normalized here.
         """
-        key = self._normalize_session_key(session_key)
-        if key == self._workbench_session_key:
-            return self._normalize_session_key(self._last_primary_session_key)
-        if self._is_side_channel_session_key(key):
-            parts = key.split(":", 2)
-            if len(parts) == 3 and parts[2]:
-                return self._normalize_session_key(parts[2])
-            return self._default_session_key
-        return key
+        return self._normalize_session_key(session_key)
 
     def _active_context_session_key(self) -> str:
         """Return the active conversation context key, even on derived tabs."""
@@ -367,8 +345,7 @@ class CcDumpApp(App):
         for session_key, tab_id in self._session_tab_ids.items():
             if tab_id == active_tab_id:
                 self._active_session_key = session_key
-                if not self._is_side_channel_session_key(session_key):
-                    self._last_primary_session_key = session_key
+                self._last_primary_session_key = session_key
                 break
         return self._active_session_key
 
@@ -393,12 +370,6 @@ class CcDumpApp(App):
             return cc_dump.providers.get_provider_spec(
                 cc_dump.providers.DEFAULT_PROVIDER_KEY
             ).tab_title
-        if session_key == self._workbench_session_key:
-            return "Workbench Session"
-        if self._is_side_channel_session_key(session_key):
-            parts = session_key.split(":", 2)
-            suffix = parts[2] if len(parts) > 2 else session_key
-            return "SC " + suffix[:8]
         # Provider-prefixed session keys: "<provider>:__default__" → provider tab title.
         provider = cc_dump.providers.session_provider(session_key)
         if provider != cc_dump.providers.DEFAULT_PROVIDER_KEY:
@@ -439,9 +410,7 @@ class CcDumpApp(App):
             return
 
         pane = TabPane(self._session_tab_title(key), conv, id=tab_id)
-        # [LAW:single-enforcer] Session-pane insertion order is centralized here:
-        # every dynamic session is inserted before Workbench results so results stay rightmost.
-        tabs.add_pane(pane, before=self._workbench_tab_id)
+        tabs.add_pane(pane)
 
         # // [LAW:dataflow-not-control-flow] Default tab always exists; first real
         # session auto-focuses only when default has no data.
@@ -449,7 +418,6 @@ class CcDumpApp(App):
         if (
             self._active_session_key == self._default_session_key
             and key != self._default_session_key
-            and not self._is_side_channel_session_key(key)
             and default_store.completed_count == 0
             and not default_store.get_active_stream_ids()
         ):
@@ -515,12 +483,7 @@ class CcDumpApp(App):
     def _resolve_default_provider_session_key(self, event) -> str:
         request_id = str(getattr(event, "request_id", "") or "")
         session_key = self._default_session_key
-        if event.kind == cc_dump.pipeline.event_types.PipelineEventKind.REQUEST:
-            body = getattr(event, "body", {})
-            if isinstance(body, dict) and cc_dump.ai.side_channel_marker.extract_marker(body):
-                # [LAW:one-type-per-behavior] Workbench AI traffic is one inspectable lane.
-                session_key = self._workbench_session_key
-        elif request_id:
+        if request_id:
             session_key = self._request_session_keys.get(request_id, session_key)
         self._bind_request_session(request_id, session_key)
         self._ensure_session_surface(session_key)
@@ -608,15 +571,6 @@ class CcDumpApp(App):
         key = session_key if session_key is not None else self._active_session_key_from_tabs()
         conv_id = self._session_conv_ids.get(key, self._conv_id)
         return self._query_safe("#" + conv_id)
-
-    def _get_workbench_results_view(self):
-        return self._query_safe("#" + self._workbench_view_id)
-
-    def _show_workbench_results_tab(self) -> None:
-        tabs = self._get_conv_tabs()
-        if tabs is None:
-            return
-        tabs.active = self._workbench_tab_id
 
     def _get_panel(self, name: str):
         """// [LAW:one-source-of-truth] Generic panel accessor using registry IDs."""
@@ -766,10 +720,6 @@ class CcDumpApp(App):
                 )
                 conv.id = self._conv_id
                 yield conv
-            with TabPane("Workbench", id=self._workbench_tab_id):
-                results = cc_dump.tui.workbench_results_view.create_workbench_results_view()
-                results.id = self._workbench_view_id
-                yield results
 
         logs = cc_dump.tui.widget_factory.create_logs_panel()
         logs.id = self._logs_id
@@ -793,10 +743,6 @@ class CcDumpApp(App):
         )
         launch_panel.display = False
         yield launch_panel
-
-        side_channel_panel = cc_dump.tui.side_channel_panel.create_side_channel_panel()
-        side_channel_panel.display = False
-        yield side_channel_panel
 
         search_bar = cc_dump.tui.search.SearchBar()
         search_bar.id = self._search_bar_id
@@ -1357,40 +1303,6 @@ class CcDumpApp(App):
         self._sync_active_launch_config_state()
         self.notify("Active: {}".format(msg.name))
 
-    # Side channel
-    def action_toggle_side_channel(self):
-        _actions.toggle_side_channel(self)
-
-    def _open_side_channel(self):
-        _side_channel.open_side_channel(self)
-
-    def _close_side_channel(self):
-        _side_channel.close_side_channel(self)
-
-    def action_sc_qa_estimate(self) -> None:
-        _side_channel.action_sc_qa_estimate(self)
-
-    def action_sc_qa_submit(self) -> None:
-        _side_channel.action_sc_qa_submit(self)
-
-    def _on_side_channel_qa_result(self, result, question: str, context_session_key: str) -> None:
-        _side_channel.on_side_channel_qa_result(self, result, question, context_session_key)
-
-    def action_sc_utility_run(self) -> None:
-        _side_channel.action_sc_utility_run(self)
-
-    def _on_side_channel_utility_result(self, result, context_session_key: str) -> None:
-        _side_channel.on_side_channel_utility_result(self, result, context_session_key)
-
-    def action_sc_preview_qa(self) -> None:
-        _side_channel.action_sc_preview_qa(self)
-
-    def action_sc_preview_handoff(self) -> None:
-        _side_channel.action_sc_preview_handoff(self)
-
-    def action_sc_preview_utilities(self) -> None:
-        _side_channel.action_sc_preview_utilities(self)
-
     # Navigation
     def action_toggle_follow(self):
         _actions.toggle_follow(self)
@@ -1466,30 +1378,41 @@ class CcDumpApp(App):
         if info is not None:
             info.display = bool(info_visible)
 
-    def _sync_sidebar_panels(self, state: tuple[bool, bool, bool]) -> None:
-        """Single enforcer for sidebar visibility + focus."""
-        settings_open, launch_open, side_open = state
+    def _sync_sidebar_panels(self, state: tuple[bool, bool]) -> None:
+        """Single enforcer for sidebar visibility + focus.
+
+        Creates panels on-demand when the store says visible but no widget
+        exists — this makes sidebar panels survive hot-reload (matching the
+        aux-panel create-on-demand pattern).
+        """
+        settings_open, launch_open = state
+
         def _first_or_none(panel_type):
             try:
                 return self.screen.query(panel_type).first()
             except NoMatches:
                 return None
 
+        # [LAW:dataflow-not-control-flow] Each panel always resolves to a
+        # (widget-or-None, visible) pair; creation is a data-driven side effect.
         settings_panel = _first_or_none(cc_dump.tui.settings_panel.SettingsPanel)
-        launch_panel = _first_or_none(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
-        side_panel = _first_or_none(cc_dump.tui.side_channel_panel.SideChannelPanel)
-
+        if settings_panel is None and settings_open:
+            settings_panel = _settings_launch._ensure_settings_panel(self)
         if settings_panel is not None:
             settings_panel.display = settings_open
+
+        launch_panel = _first_or_none(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
+        if launch_panel is None and launch_open:
+            configs = cc_dump.app.launch_config.load_configs()
+            active_name = cc_dump.app.launch_config.load_active_name()
+            launch_panel = _settings_launch._ensure_launch_config_panel(
+                self, configs, active_name
+            )
         if launch_panel is not None:
             launch_panel.display = launch_open
-        if side_panel is not None:
-            side_panel.display = side_open
 
         focus_target = None
-        if side_open:
-            focus_target = side_panel
-        elif launch_open:
+        if launch_open:
             focus_target = launch_panel
         elif settings_open:
             focus_target = settings_panel
@@ -1593,11 +1516,8 @@ class CcDumpApp(App):
     def _close_topmost_panel(self) -> bool:
         """Close the topmost open panel. Returns True if a panel was closed.
 
-        Checks store booleans in priority order (side_channel → launch_config → settings).
+        Checks store booleans in priority order (launch_config → settings).
         """
-        if self._view_store.get("panel:side_channel"):
-            self._close_side_channel()
-            return True
         if self._view_store.get("panel:launch_config"):
             self._close_launch_config()
             return True

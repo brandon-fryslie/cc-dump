@@ -312,95 +312,22 @@ class LaunchConfigPanel(VerticalScroll):
         height: 1fr;
         overflow-y: auto;
     }
-    LaunchConfigPanel .panel-title {
-        text-style: bold;
-        margin-bottom: 0;
-    }
     LaunchConfigPanel .section-title {
         text-style: bold;
         margin-top: 1;
-    }
-    LaunchConfigPanel .field-row {
-        height: auto;
-        width: 100%;
-        margin-top: 1;
-    }
-    LaunchConfigPanel .field-label {
-        width: 1fr;
-        text-style: bold;
-        content-align-vertical: middle;
-    }
-    LaunchConfigPanel .field-desc {
-        color: $text-muted;
-        text-style: italic;
-        padding-left: 2;
-        margin-bottom: 0;
     }
     LaunchConfigPanel .chip-row {
         margin-top: 1;
         height: auto;
     }
-    LaunchConfigPanel .panel-footer {
-        margin-top: 1;
-        color: $text-muted;
-    }
     LaunchConfigPanel .action-chip {
         margin-right: 1;
     }
-    LaunchConfigPanel ToggleChip {
-        margin-top: 1;
-    }
     LaunchConfigPanel Input {
         width: 20;
-        height: 1;
-        border: none;
-        padding: 0;
-        background: $panel-lighten-2;
-        color: $text;
-    }
-    LaunchConfigPanel Input:focus {
-        border: none;
-        background: $surface-lighten-3;
-        color: $accent;
     }
     LaunchConfigPanel Select {
         width: 20;
-        height: auto;
-    }
-    LaunchConfigPanel Select > SelectCurrent {
-        height: 1;
-        min-height: 1;
-        border: none !important;
-        padding: 0 1;
-        background: $panel-lighten-2;
-        color: $text;
-        text-style: bold;
-        content-align: center middle;
-    }
-    LaunchConfigPanel Select:focus > SelectCurrent {
-        border: none !important;
-        background: $surface-lighten-3;
-        color: $accent;
-    }
-    LaunchConfigPanel Select.-expanded > SelectCurrent {
-        border: none !important;
-        background: $accent;
-        color: $text;
-    }
-    LaunchConfigPanel Select > SelectOverlay {
-        border: none !important;
-        padding: 0;
-        background: $surface-darken-1;
-        max-height: 8;
-    }
-    LaunchConfigPanel Select > SelectOverlay > .option-list--option {
-        padding: 0 1;
-        content-align: center middle;
-    }
-    LaunchConfigPanel Select > SelectOverlay > .option-list--option-highlighted {
-        background: $accent;
-        color: $text;
-        text-style: bold;
     }
     LaunchConfigPanel #lc-tool-fields {
         height: auto;

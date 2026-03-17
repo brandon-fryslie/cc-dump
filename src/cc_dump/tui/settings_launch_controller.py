@@ -51,7 +51,6 @@ def open_settings(app) -> None:
         {
             "panel:settings": True,
             "panel:launch_config": False,
-            "panel:side_channel": False,
         }
     )
 
@@ -70,7 +69,6 @@ def open_launch_config(app) -> None:
         {
             "panel:settings": False,
             "panel:launch_config": True,
-            "panel:side_channel": False,
         }
     )
 

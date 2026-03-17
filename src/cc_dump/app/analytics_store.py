@@ -30,7 +30,6 @@ from cc_dump.core.analysis import (
     ToolEconomicsRow,
 )
 from cc_dump.core.formatting import parse_user_id
-from cc_dump.ai.side_channel_marker import extract_marker
 from cc_dump.core.token_counter import count_tokens
 
 logger = logging.getLogger(__name__)
@@ -92,7 +91,6 @@ class TurnRecord:
     purpose: str = "primary"
     prompt_version: str = ""
     policy_version: str = ""
-    is_side_channel: bool = False
     provider: str = "anthropic"
     tool_invocations: list[ToolInvocationRecord] = field(default_factory=list)
 
@@ -107,7 +105,6 @@ class _PendingTurn:
     purpose: str
     prompt_version: str
     policy_version: str
-    is_side_channel: bool
     session_id: str
     request_recv_ns: int
     transport_retry_count: int
@@ -165,23 +162,12 @@ class DashboardSummary(TypedDict):
     latest_model_label: str
 
 
-class SideChannelPurposeSummaryRow(TypedDict):
-    turns: int
-    input_tokens: int
-    output_tokens: int
-    cache_read_tokens: int
-    cache_creation_tokens: int
-    prompt_versions: dict[str, int]
-    policy_versions: dict[str, int]
-
-
 class TurnMetricRecord(TypedDict):
     sequence_num: int
     request_id: str
     session_id: str
     provider: str
     purpose: str
-    is_side_channel: bool
     model: str
     stop_reason: str
     input_tokens: int
@@ -444,20 +430,15 @@ class AnalyticsStore:
     def _handle_request(self, event: PipelineEvent) -> None:
         assert isinstance(event, RequestBodyEvent)
         body = event.body if isinstance(event.body, dict) else {}
-        marker = extract_marker(body)
         request_meta = self._request_meta.pop(event.request_id, _RequestMeta())
         request_recv_ns = request_meta.request_recv_ns if request_meta.request_recv_ns > 0 else event.recv_ns
-        purpose = marker.purpose if marker is not None else "primary"
-        prompt_version = marker.prompt_version if marker is not None else ""
-        policy_version = marker.policy_version if marker is not None else ""
         self._pending[event.request_id] = _PendingTurn(
             request_id=event.request_id,
             request_body=body,
             model=str(body.get("model", "") or ""),
-            purpose=purpose,
-            prompt_version=prompt_version,
-            policy_version=policy_version,
-            is_side_channel=marker is not None,
+            purpose="primary",
+            prompt_version="",
+            policy_version="",
             session_id=_extract_session_id(body),
             request_recv_ns=request_recv_ns,
             transport_retry_count=request_meta.transport_retry_count,
@@ -570,7 +551,6 @@ class AnalyticsStore:
             purpose=pending.purpose,
             prompt_version=pending.prompt_version,
             policy_version=pending.policy_version,
-            is_side_channel=pending.is_side_channel,
             provider=pending.provider,
             tool_invocations=tool_records,
         )
@@ -685,7 +665,6 @@ class AnalyticsStore:
                     "session_id": turn.session_id,
                     "provider": turn.provider,
                     "purpose": turn.purpose,
-                    "is_side_channel": turn.is_side_channel,
                     "model": turn.model,
                     "stop_reason": turn.stop_reason,
                     "input_tokens": turn.input_tokens,
@@ -873,39 +852,6 @@ class AnalyticsStore:
             "models": model_rows,
         }
 
-    def get_side_channel_purpose_summary(self) -> dict[str, SideChannelPurposeSummaryRow]:
-        """Aggregate side-channel token usage by purpose."""
-        summary: dict[str, SideChannelPurposeSummaryRow] = {}
-        for turn in self._turns:
-            if not turn.is_side_channel:
-                continue
-            row = summary.get(turn.purpose)
-            if row is None:
-                row = {
-                    "turns": 0,
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "cache_read_tokens": 0,
-                    "cache_creation_tokens": 0,
-                    "prompt_versions": {},
-                    "policy_versions": {},
-                }
-                summary[turn.purpose] = row
-            row["turns"] += 1
-            row["input_tokens"] += turn.input_tokens
-            row["output_tokens"] += turn.output_tokens
-            row["cache_read_tokens"] += turn.cache_read_tokens
-            row["cache_creation_tokens"] += turn.cache_creation_tokens
-            if turn.prompt_version:
-                versions = row["prompt_versions"]
-                versions[turn.prompt_version] = versions.get(turn.prompt_version, 0) + 1
-            if turn.policy_version:
-                policy_versions = row["policy_versions"]
-                policy_versions[turn.policy_version] = (
-                    policy_versions.get(turn.policy_version, 0) + 1
-                )
-        return summary
-
     def get_tool_economics(self, group_by_model: bool = False) -> list[ToolEconomicsRow]:
         """Query per-tool economics with estimated token counts and cache attribution.
 
@@ -1050,7 +996,6 @@ class AnalyticsStore:
             "purpose": turn.purpose,
             "prompt_version": turn.prompt_version,
             "policy_version": turn.policy_version,
-            "is_side_channel": turn.is_side_channel,
             "provider": turn.provider,
             "tool_invocations": [
                 self._serialize_tool_invocation(inv) for inv in turn.tool_invocations
@@ -1065,7 +1010,6 @@ class AnalyticsStore:
             "purpose": pending.purpose,
             "prompt_version": pending.prompt_version,
             "policy_version": pending.policy_version,
-            "is_side_channel": pending.is_side_channel,
             "session_id": pending.session_id,
             "request_recv_ns": pending.request_recv_ns,
             "transport_retry_count": pending.transport_retry_count,
@@ -1137,7 +1081,6 @@ class AnalyticsStore:
             purpose=_coerce_str(t_data.get("purpose", "primary"), default="primary"),
             prompt_version=_coerce_str(t_data.get("prompt_version", "")),
             policy_version=_coerce_str(t_data.get("policy_version", "")),
-            is_side_channel=bool(t_data.get("is_side_channel", False)),
             provider=_coerce_str(t_data.get("provider", "anthropic"), default="anthropic"),
             tool_invocations=self._restore_tool_invocations(
                 t_data.get("tool_invocations", [])
@@ -1179,7 +1122,6 @@ class AnalyticsStore:
             purpose=_coerce_str(p_data.get("purpose", "primary"), default="primary"),
             prompt_version=_coerce_str(p_data.get("prompt_version", "")),
             policy_version=_coerce_str(p_data.get("policy_version", "")),
-            is_side_channel=bool(p_data.get("is_side_channel", False)),
             session_id=_coerce_str(p_data.get("session_id", "")),
             request_recv_ns=_coerce_int(p_data.get("request_recv_ns", 0)),
             transport_retry_count=_coerce_int(p_data.get("transport_retry_count", 0)),

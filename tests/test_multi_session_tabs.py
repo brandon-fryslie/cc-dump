@@ -3,7 +3,7 @@
 import pytest
 
 import cc_dump.providers
-from cc_dump.pipeline.event_types import RequestBodyEvent, ResponseProgressEvent
+
 from tests.harness import run_app, strips_to_text
 
 
@@ -40,20 +40,6 @@ def _make_replay_entry(*, session_id: str, content: str, response_text: str):
     )
 
 
-def _make_side_channel_replay_entry(
-    *, session_id: str, purpose: str, source_provider: str, content: str, response_text: str
-):
-    marker = (
-        "<<CC_DUMP_SIDE_CHANNEL:"
-        f'{{"run_id":"run-{session_id[:4]}","purpose":"{purpose}","source_provider":"{source_provider}"}}'
-        ">>\n"
-    )
-    return _make_replay_entry(
-        session_id=session_id,
-        content=marker + content,
-        response_text=response_text,
-    )
-
 
 async def test_all_sessions_route_to_default_tab():
     """All Anthropic sessions share the default tab's single DomainStore."""
@@ -81,14 +67,13 @@ async def test_all_sessions_route_to_default_tab():
         assert default_ds.completed_count >= 2
 
         # Only one Claude tab exists (the default), not per-session tabs.
-        non_side_channel_tabs = [
+        anthropic_tabs = [
             k for k in app._session_tab_ids
-            if not app._is_side_channel_session_key(k)
-            and cc_dump.providers.session_provider(k)
+            if cc_dump.providers.session_provider(k)
             == cc_dump.providers.DEFAULT_PROVIDER_KEY
         ]
-        assert len(non_side_channel_tabs) == 1
-        assert non_side_channel_tabs[0] == app._default_session_key
+        assert len(anthropic_tabs) == 1
+        assert anthropic_tabs[0] == app._default_session_key
 
         # Both sessions' content visible in the single ConversationView.
         conv = app._get_conv(session_key=app._default_session_key)
@@ -178,165 +163,3 @@ async def test_session_boundary_tracking():
         assert session_b in session_ids
 
 
-async def test_side_channel_replay_routes_to_separate_lane_without_primary_contamination():
-    session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    replay_data = [
-        _make_replay_entry(
-            session_id=session_a,
-            content="primary-request",
-            response_text="primary-response",
-        ),
-        _make_side_channel_replay_entry(
-            session_id=session_a,
-            purpose="handoff_note",
-            source_provider=session_a,
-            content="side-request",
-            response_text="side-response",
-        ),
-    ]
-
-    async with run_app(replay_data=replay_data) as (pilot, app):
-        _ = pilot
-        side_key = app._workbench_session_key
-        primary_ds = app._get_domain_store(session_a)
-        side_ds = app._get_domain_store(side_key)
-
-        # Combined turns: 1 request-response pair per session = 1 turn each.
-        assert primary_ds.completed_count == 1
-        assert side_ds.completed_count == 1
-
-        primary_conv = app._get_conv(session_key=session_a)
-        side_conv = app._get_conv(session_key=side_key)
-        assert primary_conv is not None
-        assert side_conv is not None
-
-        primary_text = "".join(strips_to_text(td.strips) for td in primary_conv._turns)
-        side_text = "".join(strips_to_text(td.strips) for td in side_conv._turns)
-
-        assert "primary-request" in primary_text
-        assert "primary-response" in primary_text
-        assert "side-request" not in primary_text
-        assert "side-response" not in primary_text
-
-        assert "side-request" in side_text
-        assert "side-response" in side_text
-        assert "primary-request" not in side_text
-        assert "primary-response" not in side_text
-
-
-async def test_side_channel_replay_uses_single_workbench_session_tab():
-    session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    replay_data = [
-        _make_replay_entry(
-            session_id=session_a,
-            content="primary-request",
-            response_text="primary-response",
-        ),
-        _make_side_channel_replay_entry(
-            session_id=session_a,
-            purpose="handoff_note",
-            source_provider=session_a,
-            content="side-request-one",
-            response_text="side-response-one",
-        ),
-        _make_side_channel_replay_entry(
-            session_id=session_a,
-            purpose="conversation_qa",
-            source_provider=session_a,
-            content="side-request-two",
-            response_text="side-response-two",
-        ),
-    ]
-    async with run_app(replay_data=replay_data) as (pilot, app):
-        _ = pilot
-        workbench_key = app._workbench_session_key
-        matching_keys = [
-            key for key in app._session_tab_ids.keys() if key == workbench_key
-        ]
-        assert matching_keys == [workbench_key]
-        tab_id = app._session_tab_ids[workbench_key]
-        tab = app._get_conv_tabs().get_tab(tab_id)
-        assert tab is not None
-        assert str(tab.label) == "Workbench Session"
-
-
-async def test_side_channel_stream_progress_routes_to_side_lane_without_primary_leakage():
-    session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    user_id = f"user_deadbeef_account_{_ACCOUNT_ID}_session_{session_a}"
-    side_request_id = "req-side-progress"
-    main_request_id = "req-main-progress"
-    side_marker = (
-        "<<CC_DUMP_SIDE_CHANNEL:"
-        f'{{"run_id":"run-{session_a[:4]}","purpose":"handoff_note","source_provider":"{session_a}"}}'
-        ">>\n"
-    )
-
-    async with run_app() as (pilot, app):
-        app._event_queue.put(
-            RequestBodyEvent(
-                body={
-                    "model": "claude-haiku-4-5",
-                    "metadata": {"user_id": user_id},
-                    "messages": [{"role": "user", "content": "primary-stream-request"}],
-                },
-                request_id=main_request_id,
-                seq=1,
-            )
-        )
-        app._event_queue.put(
-            ResponseProgressEvent(
-                request_id=main_request_id,
-                seq=2,
-                delta_text="primary stream chunk",
-            )
-        )
-
-        app._event_queue.put(
-            RequestBodyEvent(
-                body={
-                    "model": "claude-haiku-4-5",
-                    "metadata": {"user_id": user_id},
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": side_marker + "side-stream-request",
-                        }
-                    ],
-                },
-                request_id=side_request_id,
-                seq=3,
-            )
-        )
-        app._event_queue.put(
-            ResponseProgressEvent(
-                request_id=side_request_id,
-                seq=4,
-                delta_text="side stream chunk",
-            )
-        )
-        await pilot.pause()
-
-        side_key = app._workbench_session_key
-        primary_ds = app._get_domain_store(session_a)
-        side_ds = app._get_domain_store(side_key)
-
-        primary_blocks = primary_ds.get_stream_blocks(main_request_id)
-        side_blocks = side_ds.get_stream_blocks(side_request_id)
-        assert primary_blocks
-        assert side_blocks
-
-        primary_text = "".join(
-            getattr(block, "content", "")
-            for block in primary_blocks
-            if isinstance(getattr(block, "content", None), str)
-        )
-        side_text = "".join(
-            getattr(block, "content", "")
-            for block in side_blocks
-            if isinstance(getattr(block, "content", None), str)
-        )
-
-        assert "primary stream chunk" in primary_text
-        assert "side stream chunk" not in primary_text
-        assert "side stream chunk" in side_text
-        assert "primary stream chunk" not in side_text
