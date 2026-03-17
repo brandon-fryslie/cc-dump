@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from snarfx import Observable, reaction
 from snarfx import textual as stx
 from rich.text import Text
+from textual.containers import VerticalScroll
+from textual.app import ComposeResult
 from textual.widgets import Static
 
 # Use module-level imports for hot-reload
@@ -20,7 +22,7 @@ class KeysPanelState:
     text: Text
 
 
-class KeysPanel(Static):
+class KeysPanel(VerticalScroll):
     """Side panel showing keyboard shortcuts."""
 
     DEFAULT_CSS = """
@@ -32,12 +34,11 @@ class KeysPanel(Static):
         border-left: solid $accent;
         padding: 1;
         height: 1fr;
-        overflow-y: auto;
     }
     """
 
     def __init__(self):
-        super().__init__("")
+        super().__init__()
         self._state: Observable[KeysPanelState] = Observable(
             KeysPanelState(text=cc_dump.tui.panel_renderers.render_keys_panel())
         )
@@ -47,6 +48,9 @@ class KeysPanel(Static):
             self._apply_state,
             fire_immediately=False,
         )
+
+    def compose(self) -> ComposeResult:
+        yield Static("", id="keys-content")
 
     def on_mount(self) -> None:
         self._visibility_reaction = stx.reaction(
@@ -65,7 +69,8 @@ class KeysPanel(Static):
         self.display = bool(visible)
 
     def _apply_state(self, state: KeysPanelState) -> None:
-        self.update(state.text)
+        if self.is_attached:
+            self.query_one("#keys-content", Static).update(state.text)
 
     def _refresh_display(self):
         self._state.set(

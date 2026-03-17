@@ -37,23 +37,6 @@ class DebugSettingsPanel(VerticalScroll):
         padding: 0 1;
         height: 1fr;
     }
-    DebugSettingsPanel .panel-title {
-        text-style: bold;
-        margin-bottom: 0;
-    }
-    DebugSettingsPanel .field-desc {
-        color: $text-muted;
-        text-style: italic;
-        padding-left: 2;
-        margin-bottom: 0;
-    }
-    DebugSettingsPanel .panel-footer {
-        margin-top: 1;
-        color: $text-muted;
-    }
-    DebugSettingsPanel ToggleChip {
-        margin-top: 1;
-    }
     DebugSettingsPanel Select {
         width: 1fr;
         margin-top: 1;

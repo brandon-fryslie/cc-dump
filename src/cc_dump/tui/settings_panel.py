@@ -97,41 +97,8 @@ class SettingsPanel(VerticalScroll):
         padding: 0 1;
         height: 1fr;
     }
-    SettingsPanel .panel-title {
-        text-style: bold;
-        margin-bottom: 0;
-    }
-    SettingsPanel .field-row {
-        height: auto;
-        width: 100%;
-        margin-top: 1;
-    }
-    SettingsPanel .field-label {
-        width: 1fr;
-        text-style: bold;
-        content-align-vertical: middle;
-    }
-    SettingsPanel .field-desc {
-        color: $text-muted;
-        text-style: italic;
-        padding-left: 2;
-        margin-bottom: 0;
-    }
-    SettingsPanel .panel-footer {
-        margin-top: 1;
-        color: $text-muted;
-    }
-    SettingsPanel ToggleChip {
-        margin-top: 1;
-    }
     SettingsPanel Input {
         width: 1fr;
-        height: 1;
-        border: none;
-        padding: 0;
-    }
-    SettingsPanel Input:focus {
-        border: none;
     }
     SettingsPanel Select {
         width: 1fr;
