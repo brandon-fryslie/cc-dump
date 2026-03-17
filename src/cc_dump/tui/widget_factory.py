@@ -1028,24 +1028,16 @@ class ConversationView(ScrollView):
         console = self.app.console
         render_key = self._turn_render_key(width)
 
-        old_widest = turn._widest_strip
-        filters = dict(self._last_filters)
-        turn.re_render(
-            filters,
-            console,
-            width,
-            block_cache=self._block_strip_cache,
+        geometry_changed = self._rerender_turn_delta(
+            turn,
+            filters=dict(self._last_filters),
+            console=console,
+            width=width,
             search_ctx=self._last_search_ctx,
-            overrides=self._view_overrides,
             render_key=render_key,
-            runtime=self._render_runtime,
+            target_revision=self._active_filter_revision,
         )
-        turn._filter_revision = self._active_filter_revision
-
-        # O(log n) tree update — no deferred recalc needed.
-        self._sync_turn_in_tree(turn)
-        self._width_tracker.replace(old_widest, turn._widest_strip)
-        self._update_virtual_size()
+        self._update_virtual_size_if_needed(geometry_changed)
 
         # Schedule deferred anchor resolve (coalesced across multiple lazy rerenders).
         self._schedule_deferred_anchor_resolve()
@@ -1134,20 +1126,35 @@ class ConversationView(ScrollView):
 
         // [LAW:single-enforcer] Range invalidation for line cache happens only here.
         """
-        if start_idx <= 0:
+        plan = self._cache_invalidation_plan(start_idx, end_idx)
+        if plan is None:
+            return
+
+        clear_all, turn_range = plan
+        if clear_all:
             self._clear_line_cache()
             return
 
-        upper = len(self._turns) if end_idx is None else min(end_idx, len(self._turns))
-        if upper <= start_idx:
-            return
-
-        for turn_idx in range(start_idx, upper):
+        for turn_idx in turn_range:
             keys = self._cache_keys_by_turn.pop(turn_idx, None)
             if not keys:
                 continue
             for key in keys:
                 self._line_cache.discard(key)
+
+    def _cache_invalidation_plan(
+        self,
+        start_idx: int,
+        end_idx: int | None,
+    ) -> tuple[bool, range] | None:
+        """Compute the precise line-cache invalidation plan for a turn range."""
+        lower = max(0, start_idx)
+        upper = len(self._turns) if end_idx is None else min(end_idx, len(self._turns))
+        if upper <= lower:
+            return None
+        if lower == 0 and upper >= len(self._turns):
+            return (True, range(0))
+        return (False, range(lower, upper))
 
     def _recalculate_offsets(self):
         """Full rebuild of offset tree and width tracker. O(n)."""
@@ -1716,19 +1723,82 @@ class ConversationView(ScrollView):
     ) -> tuple[bool, bool]:
         if td.is_streaming:
             return (False, False)
+        geometry_changed = self._rerender_turn_delta(
+            td,
+            filters=filters,
+            console=console,
+            width=width,
+            force=force,
+            render_key=render_key,
+            target_revision=target_revision,
+        )
+        return (True, geometry_changed)
+
+    def _apply_turn_rerender_effects(
+        self,
+        td: TurnData,
+        *,
+        changed: bool,
+        old_line_count: int,
+        old_widest: int,
+    ) -> bool:
+        """Apply cache + geometry side effects for a completed turn rerender.
+
+        // [LAW:single-enforcer] Turn rerender side effects are centralized here.
+        """
+        if not changed:
+            return False
+
+        self._invalidate_cache_for_turns(td.turn_index, td.turn_index + 1)
+        line_count_changed = td.line_count != old_line_count
+        widest_changed = td._widest_strip != old_widest
+
+        # [LAW:dataflow-not-control-flow] Geometry deltas decide sync inputs while
+        # rerender side effects still flow through one fixed pipeline.
+        if line_count_changed:
+            self._sync_turn_in_tree(td)
+        if widest_changed:
+            self._width_tracker.replace(old_widest, td._widest_strip)
+        return line_count_changed or widest_changed
+
+    def _rerender_turn_delta(
+        self,
+        td: TurnData,
+        *,
+        filters: dict,
+        console,
+        width: int,
+        render_key: tuple[int, int, int, int],
+        search_ctx=None,
+        force: bool = False,
+        target_revision: int | None = None,
+    ) -> bool:
+        """Re-render one turn and report whether its geometry changed."""
+        old_line_count = td.line_count
+        old_widest = td._widest_strip
         changed = td.re_render(
             filters,
             console,
             width,
             force=force,
             block_cache=self._block_strip_cache,
-            search_ctx=None,
+            search_ctx=search_ctx,
             overrides=self._view_overrides,
             render_key=render_key,
             runtime=self._render_runtime,
         )
-        td._filter_revision = target_revision
-        return (True, changed)
+        if target_revision is not None:
+            td._filter_revision = target_revision
+        return self._apply_turn_rerender_effects(
+            td,
+            changed=changed,
+            old_line_count=old_line_count,
+            old_widest=old_widest,
+        )
+
+    def _update_virtual_size_if_needed(self, geometry_changed: bool) -> None:
+        if geometry_changed:
+            self._update_virtual_size()
 
     def _rerender_affected_bounded(
         self,
@@ -1752,11 +1822,10 @@ class ConversationView(ScrollView):
             logger=logger,
             total_items=len(self._turns),
         ) as cx:
-            any_changed = False
+            any_geometry_changed = False
             for idx in range(vp_start, min(vp_end, len(self._turns))):
                 td = self._turns[idx]
-                old_widest = td._widest_strip
-                is_viewport_turn, changed = self._rerender_viewport_turn(
+                is_viewport_turn, geometry_changed = self._rerender_viewport_turn(
                     td,
                     filters=filters,
                     console=console,
@@ -1768,13 +1837,9 @@ class ConversationView(ScrollView):
                 if not is_viewport_turn:
                     continue
                 cx.touch()
-                if changed:
-                    any_changed = True
-                    # O(log n) tree update per changed turn.
-                    self._sync_turn_in_tree(td)
-                    self._width_tracker.replace(old_widest, td._widest_strip)
+                any_geometry_changed = any_geometry_changed or geometry_changed
 
-            if any_changed:
+            if any_geometry_changed:
                 self._update_virtual_size()
 
     def _rerender_affected_full_scan(
@@ -1797,30 +1862,24 @@ class ConversationView(ScrollView):
             total_items=len(self._turns),
         ) as cx:
             cx.extra["search_active"] = True
-            any_changed = False
+            any_geometry_changed = False
             for idx in range(vp_start, min(vp_end, len(self._turns))):
                 td = self._turns[idx]
                 if td.is_streaming:
                     continue
                 cx.touch()
-                old_widest = td._widest_strip
-                if td.re_render(
-                    filters,
-                    console,
-                    width,
+                any_geometry_changed = self._rerender_turn_delta(
+                    td,
+                    filters=filters,
+                    console=console,
+                    width=width,
                     force=force,
-                    block_cache=self._block_strip_cache,
                     search_ctx=search_ctx,
-                    overrides=self._view_overrides,
                     render_key=render_key,
-                    runtime=self._render_runtime,
-                ):
-                    any_changed = True
-                    self._sync_turn_in_tree(td)
-                    self._width_tracker.replace(old_widest, td._widest_strip)
-                td._filter_revision = target_revision
+                    target_revision=target_revision,
+                ) or any_geometry_changed
 
-            if any_changed:
+            if any_geometry_changed:
                 self._update_virtual_size()
 
     def ensure_turn_rendered(self, turn_index: int):
@@ -1832,20 +1891,18 @@ class ConversationView(ScrollView):
         if turn_index >= len(self._turns):
             return
         td = self._turns[turn_index]
-        old_widest = td._widest_strip
         width = self._content_width if self._size_known else self._last_width
-        render_key = self._turn_render_key(width)
-        td.re_render(
-            self._last_filters, self.app.console, width,
-            force=True, block_cache=self._block_strip_cache,
+        geometry_changed = self._rerender_turn_delta(
+            td,
+            filters=self._last_filters,
+            console=self.app.console,
+            width=width,
             search_ctx=self._last_search_ctx,
-            overrides=self._view_overrides,
-            render_key=render_key,
-            runtime=self._render_runtime,
+            force=True,
+            render_key=self._turn_render_key(width),
+            target_revision=self._active_filter_revision,
         )
-        self._sync_turn_in_tree(td)
-        self._width_tracker.replace(old_widest, td._widest_strip)
-        self._update_virtual_size()
+        self._update_virtual_size_if_needed(geometry_changed)
 
     @property
     def _content_width(self) -> int:
