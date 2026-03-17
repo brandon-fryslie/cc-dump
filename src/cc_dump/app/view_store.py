@@ -1,6 +1,6 @@
-"""View store — category visibility + panel/follow + footer/error/side-channel state. RELOADABLE.
+"""View store — category visibility + panel/follow + footer/error state. RELOADABLE.
 
-// [LAW:one-source-of-truth] Schema derived from CATEGORY_CONFIG + panel/follow + footer/error/sc keys.
+// [LAW:one-source-of-truth] Schema derived from CATEGORY_CONFIG + panel/follow + footer/error keys.
 // [LAW:single-enforcer] Single autorun triggers re-render on any visibility change.
 // [LAW:one-way-deps] No widget imports; widgets subscribe directly to canonical store keys/computeds.
 """
@@ -24,7 +24,6 @@ for _key, _name, _desc, _default in CATEGORY_CONFIG:
 
 # Panel and follow state — survives hot-reload via reconcile
 SCHEMA["panel:active"] = "session"
-SCHEMA["panel:side_channel"] = False
 SCHEMA["panel:settings"] = False
 SCHEMA["panel:launch_config"] = False
 SCHEMA["panel:logs"] = False
@@ -43,22 +42,6 @@ SCHEMA["tmux:available"] = False            # bool — mirrored from tmux contro
 SCHEMA["launch:active_name"] = ""           # str — was load_active_name() file I/O each call
 SCHEMA["launch:active_tool"] = "claude"     # str — active launcher key for footer chip label
 SCHEMA["theme:generation"] = 0              # int — bumped on theme change to invalidate footer
-
-# Side-channel panel state (previously app._side_channel_* attributes)
-SCHEMA["sc:loading"] = False
-SCHEMA["sc:active_action"] = ""
-SCHEMA["sc:result_text"] = ""
-SCHEMA["sc:result_source"] = ""
-SCHEMA["sc:result_elapsed_ms"] = 0
-SCHEMA["sc:purpose_usage"] = {}
-SCHEMA["settings:side_channel_enabled"] = False
-
-# Workbench results projection state (canonical source for results tab rendering)
-SCHEMA["workbench:text"] = ""
-SCHEMA["workbench:source"] = ""
-SCHEMA["workbench:elapsed_ms"] = 0
-SCHEMA["workbench:action"] = ""
-SCHEMA["workbench:context_session_id"] = ""
 
 # Search identity state — survives hot-reload via reconcile
 # // [LAW:one-source-of-truth] String, not SearchPhase enum — stable across reloads.
@@ -116,7 +99,6 @@ def create():
         return (
             bool(store.get("panel:settings")),
             bool(store.get("panel:launch_config")),
-            bool(store.get("panel:side_channel")),
         )
 
     store.sidebar_panel_state = sidebar_panel_state
@@ -149,35 +131,6 @@ def create():
         return items
 
     store.error_items = error_items
-
-    # // [LAW:single-enforcer] sc_panel_state Computed combines side-channel fields.
-    # Returns plain dict — bridge converts to SideChannelPanelState.
-    @computed
-    def sc_panel_state():
-        return {
-            "enabled": bool(store.get("settings:side_channel_enabled")),
-            "loading": store.get("sc:loading"),
-            "active_action": store.get("sc:active_action"),
-            "result_text": store.get("sc:result_text"),
-            "result_source": store.get("sc:result_source"),
-            "result_elapsed_ms": store.get("sc:result_elapsed_ms"),
-            "purpose_usage": store.get("sc:purpose_usage"),
-        }
-
-    store.sc_panel_state = sc_panel_state
-
-    @computed
-    def workbench_state():
-        # [LAW:one-source-of-truth] Workbench result rendering is derived from canonical store keys.
-        return {
-            "text": str(store.get("workbench:text")),
-            "source": str(store.get("workbench:source")),
-            "elapsed_ms": coerce_int(store.get("workbench:elapsed_ms"), 0),
-            "action": str(store.get("workbench:action")),
-            "context_session_id": str(store.get("workbench:context_session_id")),
-        }
-
-    store.workbench_state = workbench_state
 
     @computed
     def search_ui_state():

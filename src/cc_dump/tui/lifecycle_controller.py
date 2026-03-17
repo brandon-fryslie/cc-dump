@@ -81,7 +81,6 @@ def _seed_panel_state(app) -> None:
         (
             bool(app._view_store.get("panel:settings")),
             bool(app._view_store.get("panel:launch_config")),
-            bool(app._view_store.get("panel:side_channel")),
         )
     )
     info = app._get_info()

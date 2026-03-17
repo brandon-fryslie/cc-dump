@@ -141,33 +141,6 @@ async def test_on_mount_seeds_footer_state():
         assert footer is not None
 
 
-async def test_ai_workbench_panel_opens_and_qa_action_dispatches():
-    """Workbench panel should open and dispatch scoped QA action."""
-    import cc_dump.tui.side_channel_panel
-
-    async with run_app() as (pilot, app):
-        app.action_toggle_side_channel()
-        await pilot.pause()
-        assert app._view_store.get("panel:side_channel") is True
-        assert app.screen.query(cc_dump.tui.side_channel_panel.SideChannelPanel)
-
-        app.action_sc_preview_qa()
-        await pilot.pause()
-        assert app._view_store.get("sc:loading") is False
-        assert app._view_store.get("sc:active_action") == ""
-        assert app._view_store.get("sc:result_source") == "fallback"
-        assert "scoped Q&A blocked" in app._view_store.get("sc:result_text")
-        assert "error:" in app._view_store.get("sc:result_text")
-        tabs = app._get_conv_tabs()
-        assert tabs is not None
-        assert tabs.active == app._workbench_tab_id
-        workbench_results = app._get_workbench_results_view()
-        assert workbench_results is not None
-        state = workbench_results.get_state()
-        assert state["context_session_id"] == "__default__"
-        assert "context=__default__" in str(state["meta"])
-
-
 async def test_command_palette_includes_launch_presets():
     """System commands include one launch command per configured preset."""
     import cc_dump.app.launcher_registry
@@ -387,30 +360,20 @@ async def test_settings_toggle_reopens_hidden_panel():
 
 
 async def test_sidebars_are_exclusive_and_reused():
-    """Opening one sidebar closes the others while reusing mounted widgets."""
+    """Opening one sidebar closes the other while reusing mounted widgets."""
     import cc_dump.tui.settings_panel
     import cc_dump.tui.launch_config_panel
-    import cc_dump.tui.side_channel_panel
 
     async with run_app() as (pilot, app):
         settings = app.screen.query_one(cc_dump.tui.settings_panel.SettingsPanel)
         launch = app.screen.query_one(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
-        side = app.screen.query_one(cc_dump.tui.side_channel_panel.SideChannelPanel)
 
         app.action_toggle_settings()
         await pilot.pause()
         assert settings.display
         assert not launch.display
-        assert not side.display
 
         app.action_toggle_launch_config()
         await pilot.pause()
         assert not settings.display
         assert launch.display
-        assert not side.display
-
-        app.action_toggle_side_channel()
-        await pilot.pause()
-        assert not settings.display
-        assert not launch.display
-        assert side.display

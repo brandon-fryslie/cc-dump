@@ -37,7 +37,7 @@ from cc_dump.tui.follow_mode import (
     FollowModeStore,
     FollowTransition,
 )
-from cc_dump.io.perf_logging import monitor_complexity, monitor_slow_path
+from cc_dump.io.perf_logging import monitor_complexity
 from cc_dump.tui.prefix_sum_tree import FenwickTree, MaxTracker
 
 logger = logging.getLogger(__name__)

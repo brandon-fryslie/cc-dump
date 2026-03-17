@@ -20,7 +20,6 @@ from cc_dump.pipeline.event_types import (
     RequestBodyEvent,
     ResponseHeadersEvent,
 )
-from cc_dump.ai.side_channel_marker import extract_marker
 import cc_dump.providers
 
 logger = logging.getLogger(__name__)
@@ -307,22 +306,7 @@ class HARRecordingSubscriber:
                 },
             }
             # HAR allows custom fields using underscore prefix.
-            cc_dump_meta: dict[str, object] = {"provider": pending.provider}
-            marker = extract_marker(pending.request_body or {})
-            if marker is not None:
-                entry["comment"] = (
-                    f"cc-dump side-channel run={marker.run_id} purpose={marker.purpose} "
-                    f"prompt_version={marker.prompt_version} policy_version={marker.policy_version}"
-                )
-                cc_dump_meta.update({
-                    "category": "side_channel",
-                    "run_id": marker.run_id,
-                    "purpose": marker.purpose,
-                    "prompt_version": marker.prompt_version,
-                    "policy_version": marker.policy_version,
-                    "source_provider": marker.source_provider,
-                })
-            entry["_cc_dump"] = cc_dump_meta
+            entry["_cc_dump"] = {"provider": pending.provider}
 
             # Serialize entry (compact JSON, no indent)
             entry_json = json.dumps(entry, ensure_ascii=False)

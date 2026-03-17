@@ -340,12 +340,6 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
             session_hint=state.current_session or "",
         )
 
-        # Capture recent messages for side-channel summarization
-        raw_messages = body.get("messages", [])
-        recent = app_state.get("recent_messages", [])
-        recent.extend(raw_messages)
-        app_state["recent_messages"] = recent[-50:]  # rolling window
-
         # [LAW:one-source-of-truth] Header injection moved into format_request
         pending_headers_all = app_state.get("pending_request_headers", {})
         if not isinstance(pending_headers_all, dict):

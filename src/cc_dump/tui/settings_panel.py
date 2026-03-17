@@ -52,13 +52,6 @@ class SettingsPanelViewState:
 # // [LAW:one-source-of-truth] Defaults from settings_store.SCHEMA.
 
 SETTINGS_FIELDS: list[FieldDef] = [
-    FieldDef(
-        key="side_channel_enabled",
-        label="AI Summaries",
-        description="Enable AI-powered summaries via claude -p",
-        kind="bool",
-        default=cc_dump.app.settings_store.SCHEMA["side_channel_enabled"],
-    ),
 ]
 
 
