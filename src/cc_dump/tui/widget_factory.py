@@ -28,6 +28,7 @@ import cc_dump.core.analysis
 import cc_dump.tui.rendering
 import cc_dump.tui.panel_renderers
 import cc_dump.tui.error_indicator
+import cc_dump.tui.search
 import cc_dump.tui.view_overrides
 import cc_dump.app.error_models
 import cc_dump.app.domain_store
@@ -94,6 +95,10 @@ class TurnData:
     _strip_version: int = 0  # monotonic version for change detection
     _last_render_key: tuple | None = None  # width/search/theme/override revision tuple
     _filter_revision: int = 0  # last filter revision this turn was validated against
+    searchable_blocks: tuple[tuple[int, object], ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        self.rebuild_block_derivatives()
 
 
     @property
@@ -117,6 +122,16 @@ class TurnData:
                     _walk([child])
         _walk(self.blocks)
         self.relevant_filter_keys = keys
+
+    def compute_searchable_blocks(self) -> None:
+        """Compute derived search traversal data from canonical blocks."""
+        self.searchable_blocks = cc_dump.tui.search.build_searchable_blocks(self.blocks)
+
+    def rebuild_block_derivatives(self) -> None:
+        """Refresh all block-derived projections owned by this turn."""
+        # [LAW:one-source-of-truth] Search/filter projections are derived from canonical `blocks`.
+        self.compute_relevant_keys()
+        self.compute_searchable_blocks()
 
     def re_render(
         self,
@@ -1194,7 +1209,7 @@ class ConversationView(ScrollView):
         self._unindex_blocks(td.blocks)
         td.blocks = new_blocks
         self._index_blocks(new_blocks)
-        td.compute_relevant_keys()
+        td.rebuild_block_derivatives()
         width = self._content_width if self._size_known else self._last_width
         td.re_render(
             self._last_filters,
@@ -1295,7 +1310,6 @@ class ConversationView(ScrollView):
         td._strip_version = _next_strip_version()
         td._last_render_key = render_key
         td._widest_strip = _compute_widest(strips)
-        td.compute_relevant_keys()
 
         # Use ALWAYS_VISIBLE default to match filters dict structure
         td._last_filter_snapshot = {
@@ -1491,6 +1505,34 @@ class ConversationView(ScrollView):
         if self._refresh_streaming_delta(request_id, td):
             self._recalculate_offsets()
 
+    def _finalize_turn_data(
+        self,
+        td: TurnData | None,
+        *,
+        final_blocks: list,
+        strips: list,
+        block_strip_map: dict,
+        flat_blocks: list,
+    ) -> TurnData:
+        """Return finalized TurnData with derived projections refreshed when reused."""
+        if td is None:
+            return TurnData(
+                turn_index=-1,
+                blocks=final_blocks,
+                strips=strips,
+                block_strip_map=block_strip_map,
+                _flat_blocks=flat_blocks,
+                is_streaming=False,
+            )
+
+        td.blocks = final_blocks
+        td.strips = strips
+        td.block_strip_map = block_strip_map
+        td._flat_blocks = flat_blocks
+        # [LAW:one-source-of-truth] Rebuild derived turn projections after final blocks replace preview state.
+        td.rebuild_block_derivatives()
+        return td
+
     def _on_stream_finalized(self, request_id: str, final_blocks: list, was_focused: bool) -> None:
         """Domain store callback: a stream was finalized with consolidated blocks."""
         if not self.is_attached:
@@ -1518,12 +1560,13 @@ class ConversationView(ScrollView):
         )
 
         # Create or reuse TurnData for the finalized turn
-        if td is None:
-            td = TurnData(turn_index=-1, blocks=[], strips=[], is_streaming=False)
-        td.blocks = final_blocks
-        td.strips = strips
-        td.block_strip_map = block_strip_map
-        td._flat_blocks = flat_blocks
+        td = self._finalize_turn_data(
+            td,
+            final_blocks=final_blocks,
+            strips=strips,
+            block_strip_map=block_strip_map,
+            flat_blocks=flat_blocks,
+        )
         td._strip_version = _next_strip_version()
         td._widest_strip = _compute_widest(td.strips)
         td.is_streaming = False
@@ -1532,8 +1575,6 @@ class ConversationView(ScrollView):
         td._stream_last_delta_version = -1
         td._stream_last_render_width = 0
 
-        # Compute relevant filter keys
-        td.compute_relevant_keys()
         td._last_filter_snapshot = {
             k: self._last_filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
         }

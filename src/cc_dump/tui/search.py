@@ -371,6 +371,23 @@ def _collect_descendants(block, hier_idx: int) -> list[tuple[int, object]]:
     return items
 
 
+def build_searchable_blocks(blocks: Sequence[object]) -> tuple[tuple[int, object], ...]:
+    """Build the per-turn searchable block projection in search iteration order."""
+    searchable: list[tuple[int, object]] = []
+    for block_idx in range(len(blocks) - 1, -1, -1):
+        searchable.extend(_collect_descendants(blocks[block_idx], block_idx))
+    return tuple(searchable)
+
+
+def _turn_searchable_blocks(turn: object) -> tuple[tuple[int, object], ...]:
+    """Return cached searchable blocks for a turn, building them only as fallback."""
+    searchable = getattr(turn, "searchable_blocks", None)
+    if searchable is not None:
+        return searchable
+    # [LAW:one-source-of-truth] Fallback derives from canonical `blocks` only.
+    return build_searchable_blocks(getattr(turn, "blocks", ()))
+
+
 def _match_region_index(
     block: object,
     text_offset: int,
@@ -420,33 +437,30 @@ def find_all_matches(
         if td.is_streaming:
             continue
         owner = id(td)
+        searchable = _turn_searchable_blocks(td)
 
-        for block_idx in range(len(td.blocks) - 1, -1, -1):
-            top_block = td.blocks[block_idx]
-            searchable = _collect_descendants(top_block, block_idx)
+        for hier_idx, block in searchable:
+            text = get_searchable_text_cached(block, text_cache, owner=owner)
+            if not text:
+                continue
 
-            for hier_idx, block in searchable:
-                text = get_searchable_text_cached(block, text_cache, owner=owner)
-                if not text:
-                    continue
-
-                block_matches = list(pattern.finditer(text))
-                for m in reversed(block_matches):
-                    region_index = _match_region_index(
-                        block,
-                        m.start(),
-                        segmentation_cache=segmentation_cache,
+            block_matches = list(pattern.finditer(text))
+            for m in reversed(block_matches):
+                region_index = _match_region_index(
+                    block,
+                    m.start(),
+                    segmentation_cache=segmentation_cache,
+                )
+                matches.append(
+                    SearchMatch(
+                        turn_index=turn_idx,
+                        block_index=hier_idx,
+                        text_offset=m.start(),
+                        text_length=m.end() - m.start(),
+                        block=block,
+                        region_index=region_index,
                     )
-                    matches.append(
-                        SearchMatch(
-                            turn_index=turn_idx,
-                            block_index=hier_idx,
-                            text_offset=m.start(),
-                            text_length=m.end() - m.start(),
-                            block=block,
-                            region_index=region_index,
-                        )
-                    )
+                )
 
     return matches
 
