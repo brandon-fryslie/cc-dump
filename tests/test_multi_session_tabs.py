@@ -3,7 +3,7 @@
 import pytest
 
 import cc_dump.providers
-from cc_dump.pipeline.event_types import RequestBodyEvent, ResponseProgressEvent
+
 from tests.harness import run_app, strips_to_text
 
 
