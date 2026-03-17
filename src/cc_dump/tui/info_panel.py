@@ -28,6 +28,7 @@ class InfoPanel(Static):
         dock: bottom;
         padding: 0 1;
         border: solid $accent;
+        overflow-y: auto;
     }
     """
 

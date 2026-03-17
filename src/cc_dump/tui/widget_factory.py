@@ -7,7 +7,6 @@ instances from the updated class definitions and swap them in.
 import datetime
 import logging
 from contextlib import contextmanager
-from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from snarfx import Observable, reaction
@@ -38,7 +37,8 @@ from cc_dump.tui.follow_mode import (
     FollowModeStore,
     FollowTransition,
 )
-from cc_dump.io.perf_logging import monitor_slow_path
+from cc_dump.io.perf_logging import monitor_complexity
+from cc_dump.tui.prefix_sum_tree import FenwickTree, MaxTracker
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,6 @@ class TurnData:
     )  # block_index → first strip line
     _flat_blocks: list = field(default_factory=list)  # flattened block list for click resolution
     relevant_filter_keys: set = field(default_factory=set)
-    line_offset: int = 0  # start line in virtual space
     _last_filter_snapshot: dict = field(default_factory=dict)
     # Streaming fields
     is_streaming: bool = False
@@ -94,9 +93,6 @@ class TurnData:
     _stream_last_render_width: int = 0  # width used for last preview render
     _strip_version: int = 0  # monotonic version for change detection
     _last_render_key: tuple | None = None  # width/search/theme/override revision tuple
-    _pending_filter_snapshot: dict | None = (
-        None  # deferred filters for lazy off-viewport re-render
-    )
     _filter_revision: int = 0  # last filter revision this turn was validated against
 
 
@@ -148,13 +144,11 @@ class TurnData:
         snapshot_changed = snapshot != self._last_filter_snapshot
         render_key_changed = render_key is not None and render_key != self._last_render_key
         if not force and not snapshot_changed and not render_key_changed:
-            self._pending_filter_snapshot = None
             return False
 
         self._last_filter_snapshot = snapshot
         if render_key is not None:
             self._last_render_key = render_key
-        self._pending_filter_snapshot = None  # clear deferred state
         strips, block_strip_map, flat_blocks = cc_dump.tui.rendering.render_turn_to_strips(
             self.blocks,
             filters,
@@ -278,18 +272,12 @@ class ConversationView(ScrollView):
         self._attached_stream_id: str | None = None
         self._pending_stream_delta_request_ids: set[str] = set()
         self._stream_delta_flush_scheduled: bool = False
-        self._background_rerender_scheduled: bool = False
-        self._background_rerender_chunk_size: int = 8
-        self._background_rerender_prefetch_turn_window: int = 128
-        # // [LAW:dataflow-not-control-flow] Deferred turn work is an explicit data queue.
-        self._background_rerender_generation: int = 0
-        self._pending_rerender_indices: deque[int] = deque()
         self._active_filter_revision: int = 0
-        self._deferred_offset_recalc_scheduled: bool = False
-        self._deferred_offset_recalc_start_idx: int | None = None
-        self._widest_strip_max: int = 0
-        self._offset_recalc_incremental_count: int = 0
-        self._offset_recalc_full_width_interval: int = 128
+        # // [LAW:one-source-of-truth] FenwickTree IS the line-offset source of truth.
+        self._offset_tree = FenwickTree()
+        # // [LAW:one-source-of-truth] MaxTracker IS the widest-strip source of truth.
+        self._width_tracker = MaxTracker()
+        self._deferred_anchor_resolve_scheduled: bool = False
         # // [LAW:one-source-of-truth] Block ID → block object index for O(1) lookup.
         self._block_index: dict[int, object] = {}
 
@@ -411,7 +399,6 @@ class ConversationView(ScrollView):
         self._stream_preview_turns = {}
         self._attached_stream_id = None
         self._pending_stream_delta_request_ids = set()
-        self._reset_background_rerender_state()
         self._clear_line_cache()
 
         for blocks in self._domain_store.iter_completed_blocks():
@@ -500,16 +487,20 @@ class ConversationView(ScrollView):
             block_id = getattr(block, "block_id", None)
             if block_id is not None:
                 self._block_index.pop(block_id, None)
+                self._view_overrides.unregister_block(block_id)
             stack.extend(getattr(block, "children", []) or [])
 
     def _index_blocks(self, blocks) -> None:
-        """Add blocks and their descendants to the block_id index."""
+        """Add blocks and their descendants to the block_id index + category registry."""
         stack = list(blocks)
         while stack:
             block = stack.pop()
             block_id = getattr(block, "block_id", None)
             if block_id is not None:
                 self._block_index[block_id] = block
+                # // [LAW:one-source-of-truth] Category registration for O(overrides) clearing.
+                category = cc_dump.tui.rendering.get_category(block)
+                self._view_overrides.register_block(block_id, category)
             stack.extend(getattr(block, "children", []) or [])
 
     def _unindex_turn_range(self, turns) -> None:
@@ -597,9 +588,12 @@ class ConversationView(ScrollView):
         *,
         rerender: bool = False,
     ) -> None:
-        """Clear per-category block + region expansion overrides."""
-        top_level_blocks = [block for td in self._turns for block in td.blocks]
-        self._view_overrides.clear_category(top_level_blocks, category)
+        """Clear per-category block + region expansion overrides.
+
+        // [LAW:one-source-of-truth] Delegates to ViewOverrides.clear_category() which uses
+        // its internal category index — O(overrides in category), not O(all blocks).
+        """
+        self._view_overrides.clear_category(category)
         self.mark_overrides_changed()
         self._rerender_after_block_override_change(rerender=rerender)
 
@@ -709,11 +703,7 @@ class ConversationView(ScrollView):
             return None
 
     def _should_lazy_refresh_turn(self, turn: TurnData) -> bool:
-        needs_filter_refresh = (
-            not turn.is_streaming
-            and turn._filter_revision != self._active_filter_revision
-        )
-        return turn._pending_filter_snapshot is not None or needs_filter_refresh
+        return not turn.is_streaming and turn._filter_revision != self._active_filter_revision
 
     def _line_cache_key(
         self,
@@ -722,20 +712,21 @@ class ConversationView(ScrollView):
         local_y: int,
         scroll_x: int,
         width: int,
-    ) -> tuple[int, int, int, int, int, int]:
+    ) -> tuple[int, int, int, int]:
+        # // [LAW:one-source-of-truth] Cache key depends only on content-affecting
+        # values.  Offsets (from FenwickTree) and widest-line (from MaxTracker)
+        # are positional — they don't change the rendered strip at (turn, local_y).
         return (
             turn.turn_index,
-            turn.line_offset,
             local_y,
             scroll_x,
             width,
-            self._widest_line,
         )
 
     def _cached_line_strip(
         self,
         *,
-        cache_key: tuple[int, int, int, int, int, int],
+        cache_key: tuple[int, int, int, int],
         selection: Selection | None,
     ) -> Strip | None:
         if selection is not None or cache_key not in self._line_cache:
@@ -809,13 +800,14 @@ class ConversationView(ScrollView):
         if actual_y >= self._total_lines:
             return self._blank_line(width)
 
-        turn = self._find_turn_for_line(actual_y)
-        if turn is None:
+        result = self._find_turn_with_offset(actual_y)
+        if result is None:
             return self._blank_line(width)
+        turn, turn_offset = result
         if self._should_lazy_refresh_turn(turn):
             self._lazy_rerender_turn(turn)
 
-        local_y = actual_y - turn.line_offset
+        local_y = actual_y - turn_offset
         cache_key = self._line_cache_key(
             turn=turn,
             local_y=local_y,
@@ -954,22 +946,27 @@ class ConversationView(ScrollView):
         self._clear_line_cache()
         self.refresh()
 
-    def _find_turn_for_line(self, line_y: int) -> TurnData | None:
-        """Binary search for turn containing virtual line y."""
-        turns = self._turns
-        if not turns:
+    def _find_turn_with_offset(self, line_y: int) -> tuple[TurnData, int] | None:
+        """Find the turn containing virtual line y. O(log n) via Fenwick tree.
+
+        Returns (TurnData, turn_offset) or None.
+        // [LAW:single-enforcer] All line→turn lookups go through the tree.
+        """
+        result = self._offset_tree.find(line_y)
+        if result is None:
             return None
-        lo, hi = 0, len(turns) - 1
-        while lo <= hi:
-            mid = (lo + hi) // 2
-            turn = turns[mid]
-            if line_y < turn.line_offset:
-                hi = mid - 1
-            elif line_y >= turn.line_offset + turn.line_count:
-                lo = mid + 1
-            else:
-                return turn
-        return None
+        idx, offset = result
+        if idx >= len(self._turns):
+            return None
+        return (self._turns[idx], offset)
+
+    def _find_turn_for_line(self, line_y: int) -> TurnData | None:
+        """Find turn containing virtual line y. O(log n).
+
+        Convenience wrapper that discards the offset.
+        """
+        result = self._find_turn_with_offset(line_y)
+        return result[0] if result is not None else None
 
     def _viewport_turn_range(self, buffer_lines: int = 200) -> tuple[int, int]:
         """Return (start_idx, end_idx) of turns visible in viewport + buffer.
@@ -1006,99 +1003,20 @@ class ConversationView(ScrollView):
         return (start_idx, end_idx)
 
     def _lazy_rerender_turn(self, turn: TurnData):
-        """Lazily re-render a turn that was deferred during a filter toggle.
+        """Lazily re-render a stale turn when it scrolls into the viewport.
 
-        Called from render_line() when a turn with _pending_filter_snapshot
-        scrolls into view. Re-renders the turn with the pending filters,
-        then schedules offset recalculation for after the current render pass.
+        Called from render_line() when a turn with mismatched _filter_revision
+        scrolls into view.  Updates the tree O(log n) immediately — no deferred
+        recalc needed.
         """
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
         render_key = self._turn_render_key(width)
 
-        # Apply the pending filters
+        old_widest = turn._widest_strip
         filters = dict(self._last_filters)
         turn.re_render(
             filters,
-            console,
-            width,
-            block_cache=self._block_strip_cache,
-            search_ctx=self._last_search_ctx,  # Pass stored search context
-            overrides=self._view_overrides,
-            render_key=render_key,
-            runtime=self._render_runtime,
-        )
-        turn._filter_revision = self._active_filter_revision
-        # re_render clears _pending_filter_snapshot
-
-        # Coalesce deferred offset recalcs across multiple lazy-rerendered turns.
-        # // [LAW:dataflow-not-control-flow] Pending min index drives a fixed flush path.
-        self._schedule_deferred_offset_recalc(turn.turn_index)
-
-    def _schedule_deferred_offset_recalc(self, from_turn_index: int) -> None:
-        """Queue one deferred offset recalc using the earliest changed turn index."""
-        current = self._deferred_offset_recalc_start_idx
-        if current is None or from_turn_index < current:
-            self._deferred_offset_recalc_start_idx = from_turn_index
-        if self._deferred_offset_recalc_scheduled:
-            return
-        self._deferred_offset_recalc_scheduled = True
-        self.call_later(self._flush_deferred_offset_recalc)
-
-    def _flush_deferred_offset_recalc(self) -> None:
-        """Apply deferred offset recalculation and optional anchor restoration."""
-        self._deferred_offset_recalc_scheduled = False
-        start_idx = self._deferred_offset_recalc_start_idx
-        self._deferred_offset_recalc_start_idx = None
-        if start_idx is None:
-            return
-        self._recalculate_offsets_from(start_idx)
-        if not self._is_following:
-            self._resolve_anchor()
-        self.refresh()
-
-    def _deferred_offset_recalc(self, from_turn_index: int):
-        """Recalculate offsets after a lazy re-render, then refresh display.
-
-        Resolves stored turn-level anchor to prevent viewport drift
-        when off-viewport turns lazily re-render and shift line offsets.
-        """
-        self._deferred_offset_recalc_start_idx = from_turn_index
-        self._flush_deferred_offset_recalc()
-
-    def _reset_background_rerender_state(self) -> None:
-        """Cancel queued background rerender work and invalidate scheduled callbacks."""
-        # // [LAW:single-enforcer] Generation token is the sole cancellation mechanism.
-        self._background_rerender_generation += 1
-        self._background_rerender_scheduled = False
-        self._pending_rerender_indices.clear()
-
-    def _schedule_background_rerender(self) -> None:
-        """Schedule incremental off-viewport rerender work."""
-        if self._background_rerender_scheduled:
-            return
-        generation = self._background_rerender_generation
-        self._background_rerender_scheduled = True
-        self.call_later(lambda: self._background_rerender(generation))
-
-    def _background_rerender_generation_for(self, generation: int | None) -> int:
-        return self._background_rerender_generation if generation is None else generation
-
-    def _process_background_rerender_turn(
-        self,
-        idx: int,
-        *,
-        width: int,
-        console,
-        render_key: tuple[int, int, int, int],
-    ) -> int | None:
-        if idx < 0 or idx >= len(self._turns):
-            return None
-        td = self._turns[idx]
-        if td.is_streaming or td._pending_filter_snapshot is None:
-            return None
-        changed = td.re_render(
-            self._last_filters,
             console,
             width,
             block_cache=self._block_strip_cache,
@@ -1107,80 +1025,29 @@ class ConversationView(ScrollView):
             render_key=render_key,
             runtime=self._render_runtime,
         )
-        td._filter_revision = self._active_filter_revision
-        return idx if changed else -1
+        turn._filter_revision = self._active_filter_revision
 
-    def _process_background_rerender_chunk(
-        self,
-        *,
-        width: int,
-        console,
-        render_key: tuple[int, int, int, int],
-    ) -> tuple[int | None, int]:
-        first_changed: int | None = None
-        processed = 0
-        while processed < self._background_rerender_chunk_size and self._pending_rerender_indices:
-            idx = self._pending_rerender_indices.popleft()
-            result = self._process_background_rerender_turn(
-                idx,
-                width=width,
-                console=console,
-                render_key=render_key,
-            )
-            if result is None:
-                continue
-            processed += 1
-            if result >= 0 and (first_changed is None or result < first_changed):
-                first_changed = result
-        return (first_changed, processed)
+        # O(log n) tree update — no deferred recalc needed.
+        self._sync_turn_in_tree(turn)
+        self._width_tracker.replace(old_widest, turn._widest_strip)
+        self._update_virtual_size()
 
-    def _apply_background_rerender_changes(self, first_changed: int | None) -> None:
-        if first_changed is None:
+        # Schedule deferred anchor resolve (coalesced across multiple lazy rerenders).
+        self._schedule_deferred_anchor_resolve()
+
+    def _schedule_deferred_anchor_resolve(self) -> None:
+        """Schedule one deferred anchor resolve + refresh after lazy rerenders."""
+        if self._deferred_anchor_resolve_scheduled:
             return
-        self._recalculate_offsets_from(first_changed)
+        self._deferred_anchor_resolve_scheduled = True
+        self.call_later(self._flush_deferred_anchor_resolve)
+
+    def _flush_deferred_anchor_resolve(self) -> None:
+        """Apply deferred anchor restoration after lazy rerenders."""
+        self._deferred_anchor_resolve_scheduled = False
         if not self._is_following:
             self._resolve_anchor()
         self.refresh()
-
-    def _background_rerender(self, generation: int | None = None) -> None:
-        """Incrementally rerender deferred turns in background.
-
-        Processes a bounded number of turns per tick to keep UI responsive.
-        """
-        active_generation = self._background_rerender_generation_for(generation)
-        if active_generation != self._background_rerender_generation:
-            return
-        self._background_rerender_scheduled = False
-        width = self._content_width if self._size_known else self._last_width
-        console = self.app.console
-        render_key = self._turn_render_key(width)
-        pending_before = len(self._pending_rerender_indices)
-        first_changed: int | None = None
-        processed = 0
-        pending_after = pending_before
-
-        with monitor_slow_path(
-            "conversation.background_rerender_tick",
-            logger=logger,
-            context=lambda: {
-                "turn_count": len(self._turns),
-                "chunk_size": self._background_rerender_chunk_size,
-                "pending_before": pending_before,
-                "pending_after": pending_after,
-                "processed": processed,
-                "first_changed": first_changed,
-            },
-        ):
-            first_changed, processed = self._process_background_rerender_chunk(
-                width=width,
-                console=console,
-                render_key=render_key,
-            )
-            self._apply_background_rerender_changes(first_changed)
-
-            pending_after = len(self._pending_rerender_indices)
-            if pending_after > 0:
-                self._schedule_background_rerender()
 
     # ─── Unified render invalidation ─────────────────────────────────────────
 
@@ -1268,62 +1135,39 @@ class ConversationView(ScrollView):
                 self._line_cache.discard(key)
 
     def _recalculate_offsets(self):
-        """Rebuild line offsets and virtual size."""
-        self._recalculate_offsets_from(0)
+        """Full rebuild of offset tree and width tracker. O(n)."""
+        values = [td.line_count for td in self._turns]
+        self._offset_tree.rebuild(values)
+        self._width_tracker.rebuild([td._widest_strip for td in self._turns])
+        self._update_virtual_size()
+        self._invalidate_cache_for_turns(0, len(self._turns))
 
     def _recalculate_offsets_from(self, start_idx: int):
-        """Rebuild line offsets and virtual size from start_idx onwards.
+        """Sync offset tree for turns from start_idx onwards. O(k log n).
 
-        For start_idx > 0, reuses offset from previous turn.
-        Uses incremental widest-line tracking to avoid full-list scans per tick.
+        // [LAW:one-source-of-truth] FenwickTree stores line counts; offsets are derived.
+        Rebuilds the full tree and width tracker for correctness — callers that
+        need this are structural mutations (replace, ensure_rendered) where a
+        full rebuild is acceptable.
         """
-        turns = self._turns
-        start_idx_input = start_idx
-        with monitor_slow_path(
-            "conversation.recalculate_offsets_from",
-            logger=logger,
-            context=lambda: {
-                "start_idx_input": start_idx_input,
-                "start_idx_effective": start_idx,
-                "turn_count": len(turns),
-            },
-        ):
-            if start_idx > 0 and start_idx < len(turns):
-                prev = turns[start_idx - 1]
-                offset = prev.line_offset + prev.line_count
-            else:
-                offset = 0
-                start_idx = 0
+        self._recalculate_offsets()
 
-            suffix_widest = 0
-            for i in range(start_idx, len(turns)):
-                turns[i].line_offset = offset
-                offset += turns[i].line_count
-                turn_widest = turns[i]._widest_strip
-                if turn_widest > suffix_widest:
-                    suffix_widest = turn_widest
+    def _sync_turn_in_tree(self, td: TurnData) -> None:
+        """Sync one turn's line count and width in the tree. O(log n).
 
-            # // [LAW:dataflow-not-control-flow] Width strategy derives from start_idx + counter values.
-            if start_idx == 0:
-                # Already scanned all turns above when recomputing offsets from zero.
-                widest = suffix_widest
-                self._offset_recalc_incremental_count = 0
-            elif self._offset_recalc_incremental_count >= self._offset_recalc_full_width_interval:
-                widest = 0
-                for i in range(len(turns)):
-                    turn_widest = turns[i]._widest_strip
-                    if turn_widest > widest:
-                        widest = turn_widest
-                self._offset_recalc_incremental_count = 0
-            else:
-                widest = max(self._widest_strip_max, suffix_widest)
-                self._offset_recalc_incremental_count += 1
-            self._widest_strip_max = widest
+        // [LAW:single-enforcer] All per-turn offset mutations go through here.
+        """
+        idx = td.turn_index
+        old_count = self._offset_tree.get(idx)
+        new_count = td.line_count
+        if old_count != new_count:
+            self._offset_tree.set(idx, new_count)
 
-            self._total_lines = offset
-            self._widest_line = max(widest, self._last_width)
-            self.virtual_size = Size(self._widest_line, self._total_lines)
-            self._invalidate_cache_for_turns(start_idx, len(turns))
+    def _update_virtual_size(self) -> None:
+        """Recompute virtual_size from tree + width tracker. O(log n)."""
+        self._total_lines = self._offset_tree.total()
+        self._widest_line = max(self._width_tracker.max, self._last_width)
+        self.virtual_size = Size(self._widest_line, self._total_lines)
 
     def _on_turn_added(self, blocks: list, index: int) -> None:
         """Domain store callback: a completed turn was added."""
@@ -1364,7 +1208,8 @@ class ConversationView(ScrollView):
             runtime=self._render_runtime,
         )
         self._invalidate_cache_for_turns(turn_index, turn_index + 1)
-        self._recalculate_offsets_from(turn_index)
+        self._sync_turn_in_tree(td)
+        self._update_virtual_size()
         if preserve_scroll:
             self._resolve_anchor()
         self.refresh()
@@ -1373,7 +1218,6 @@ class ConversationView(ScrollView):
         self._turns.clear()
         self._block_index.clear()
         self._scroll_anchor = None
-        self._reset_background_rerender_state()
         self._recalculate_offsets()
         if self.is_attached:
             self.refresh()
@@ -1390,10 +1234,6 @@ class ConversationView(ScrollView):
             turn_index=max(0, anchor.turn_index - pruned_count),
             line_in_turn=anchor.line_in_turn,
         )
-
-    def _clear_pending_filter_snapshots(self) -> None:
-        for td in self._turns:
-            td._pending_filter_snapshot = None
 
     def _refresh_after_turn_prune(self) -> None:
         self._clear_line_cache()
@@ -1418,8 +1258,6 @@ class ConversationView(ScrollView):
         del self._turns[:pruned_count]
         self._reindex_turns()
         self._rebase_scroll_anchor_after_prune(pruned_count)
-        self._reset_background_rerender_state()
-        self._clear_pending_filter_snapshots()
         self._refresh_after_turn_prune()
 
     def _render_new_turn(self, blocks: list, filters: dict | None = None) -> None:
@@ -1480,16 +1318,20 @@ class ConversationView(ScrollView):
             self._attached_stream_id and self._turns and self._turns[-1].is_streaming
         )
         if had_preview_attached:
-            self._turns.pop()
+            popped = self._turns.pop()
+            self._offset_tree.rebuild([t.line_count for t in self._turns])
+            self._width_tracker.remove(popped._widest_strip)
             self._attached_stream_id = None
 
         td.turn_index = len(self._turns)
         self._turns.append(td)
+        self._offset_tree.append(td.line_count)
+        self._width_tracker.add(td._widest_strip)
 
         if had_preview_attached:
             self._attach_stream_preview()
 
-        self._recalculate_offsets_from(td.turn_index)
+        self._update_virtual_size()
 
     def _attach_focused_stream_preview(self) -> None:
         """Ensure focused active stream preview is attached as the last turn."""
@@ -1792,9 +1634,8 @@ class ConversationView(ScrollView):
         # [LAW:dataflow-not-control-flow] Revision value tracks whether a turn has been validated.
         self._active_filter_revision += 1
         target_revision = self._active_filter_revision
-        self._reset_background_rerender_state()
-        self._deferred_offset_recalc_scheduled = False
-        self._deferred_offset_recalc_start_idx = None
+
+        self._deferred_anchor_resolve_scheduled = False
 
         render_key = self._turn_render_key(width)
 
@@ -1845,46 +1686,8 @@ class ConversationView(ScrollView):
             render_key=render_key,
             runtime=self._render_runtime,
         )
-        td._pending_filter_snapshot = None
         td._filter_revision = target_revision
         return (True, changed)
-
-    def _prefetch_indices(
-        self,
-        *,
-        prefetch_start: int,
-        prefetch_end: int,
-        vp_start: int,
-        vp_end: int,
-    ) -> list[int]:
-        # [LAW:dataflow-not-control-flow] Index list computes inclusion once, then runs fixed staging.
-        return [idx for idx in range(prefetch_start, prefetch_end) if idx < vp_start or idx >= vp_end]
-
-    def _stage_prefetch_turn(
-        self,
-        td: TurnData,
-        *,
-        idx: int,
-        filters: dict,
-        force: bool,
-        target_revision: int,
-        render_key: tuple[int, int, int, int],
-    ) -> tuple[bool, bool]:
-        if td.is_streaming:
-            return (False, False)
-        snapshot = {
-            k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE)
-            for k in td.relevant_filter_keys
-        }
-        needs_render_key = render_key != td._last_render_key
-        if force or snapshot != td._last_filter_snapshot or needs_render_key:
-            td._pending_filter_snapshot = snapshot
-            # // [LAW:dataflow-not-control-flow] Queue index value drives background work.
-            self._pending_rerender_indices.append(idx)
-            return (True, True)
-        td._pending_filter_snapshot = None
-        td._filter_revision = target_revision
-        return (True, False)
 
     def _rerender_affected_bounded(
         self,
@@ -1896,38 +1699,24 @@ class ConversationView(ScrollView):
         target_revision: int,
         render_key: tuple[int, int, int, int],
     ) -> None:
-        """Re-render viewport turns immediately; prefetch a bounded off-viewport window.
+        """Re-render viewport turns immediately; off-viewport turns lazily re-render on scroll.
 
-        // [LAW:dataflow-not-control-flow] Fixed operations; window bounds drive affected indices.
+        Tree updates are O(log n) per changed turn — no trailing O(n) walk.
+        // [LAW:dataflow-not-control-flow] Fixed operations; viewport bounds drive affected indices.
         """
         vp_start, vp_end = self._viewport_turn_range()
-        prefetch_start = max(0, vp_start - self._background_rerender_prefetch_turn_window)
-        prefetch_end = min(len(self._turns), vp_end + self._background_rerender_prefetch_turn_window)
 
-        first_changed = None
-        has_deferred = False
-        deferred_count = 0
-        viewport_count = 0
-
-        with monitor_slow_path(
+        with monitor_complexity(
             "conversation.rerender_affected",
             logger=logger,
-            context=lambda: {
-                "turn_count": len(self._turns),
-                "vp_start": vp_start,
-                "vp_end": vp_end,
-                "prefetch_start": prefetch_start,
-                "prefetch_end": prefetch_end,
-                "viewport_count": viewport_count,
-                "deferred_count": deferred_count,
-                "force": force,
-                "search_active": False,
-                "first_changed": first_changed,
-            },
-        ):
+            total_items=len(self._turns),
+        ) as cx:
+            any_changed = False
             for idx in range(vp_start, min(vp_end, len(self._turns))):
+                td = self._turns[idx]
+                old_widest = td._widest_strip
                 is_viewport_turn, changed = self._rerender_viewport_turn(
-                    self._turns[idx],
+                    td,
                     filters=filters,
                     console=console,
                     width=width,
@@ -1937,34 +1726,15 @@ class ConversationView(ScrollView):
                 )
                 if not is_viewport_turn:
                     continue
-                viewport_count += 1
-                if changed and first_changed is None:
-                    first_changed = idx
+                cx.touch()
+                if changed:
+                    any_changed = True
+                    # O(log n) tree update per changed turn.
+                    self._sync_turn_in_tree(td)
+                    self._width_tracker.replace(old_widest, td._widest_strip)
 
-            for idx in self._prefetch_indices(
-                prefetch_start=prefetch_start,
-                prefetch_end=prefetch_end,
-                vp_start=vp_start,
-                vp_end=vp_end,
-            ):
-                considered, deferred = self._stage_prefetch_turn(
-                    self._turns[idx],
-                    idx=idx,
-                    filters=filters,
-                    force=force,
-                    target_revision=target_revision,
-                    render_key=render_key,
-                )
-                if not considered:
-                    continue
-                if deferred:
-                    has_deferred = True
-                    deferred_count += 1
-
-            if first_changed is not None:
-                self._recalculate_offsets_from(first_changed)
-            if has_deferred:
-                self._schedule_background_rerender()
+            if any_changed:
+                self._update_virtual_size()
 
     def _rerender_affected_full_scan(
         self,
@@ -1977,76 +1747,51 @@ class ConversationView(ScrollView):
         target_revision: int,
         render_key: tuple[int, int, int, int],
     ) -> None:
-        """Full-scan rerender path used for search highlight propagation."""
+        """Viewport-only rerender path with search context propagation."""
         vp_start, vp_end = self._viewport_turn_range()
-        first_changed = None
-        has_deferred = False
-        deferred_count = 0
-        viewport_count = 0
 
-        with monitor_slow_path(
+        with monitor_complexity(
             "conversation.rerender_affected",
             logger=logger,
-            context=lambda: {
-                "turn_count": len(self._turns),
-                "vp_start": vp_start,
-                "vp_end": vp_end,
-                "viewport_count": viewport_count,
-                "deferred_count": deferred_count,
-                "force": force,
-                "search_active": True,
-                "first_changed": first_changed,
-            },
-        ):
-            for idx, td in enumerate(self._turns):
+            total_items=len(self._turns),
+        ) as cx:
+            cx.extra["search_active"] = True
+            any_changed = False
+            for idx in range(vp_start, min(vp_end, len(self._turns))):
+                td = self._turns[idx]
                 if td.is_streaming:
                     continue
-                if vp_start <= idx < vp_end:
-                    viewport_count += 1
-                    if td.re_render(
-                        filters,
-                        console,
-                        width,
-                        force=force,
-                        block_cache=self._block_strip_cache,
-                        search_ctx=search_ctx,
-                        overrides=self._view_overrides,
-                        render_key=render_key,
-                        runtime=self._render_runtime,
-                    ):
-                        if first_changed is None:
-                            first_changed = idx
-                    td._pending_filter_snapshot = None
-                    td._filter_revision = target_revision
-                else:
-                    snapshot = {
-                        k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE)
-                        for k in td.relevant_filter_keys
-                    }
-                    needs_render_key = render_key != td._last_render_key
-                    if force or snapshot != td._last_filter_snapshot or needs_render_key:
-                        td._pending_filter_snapshot = snapshot
-                        self._pending_rerender_indices.append(idx)
-                        has_deferred = True
-                        deferred_count += 1
-                    else:
-                        td._pending_filter_snapshot = None
-                        td._filter_revision = target_revision
+                cx.touch()
+                old_widest = td._widest_strip
+                if td.re_render(
+                    filters,
+                    console,
+                    width,
+                    force=force,
+                    block_cache=self._block_strip_cache,
+                    search_ctx=search_ctx,
+                    overrides=self._view_overrides,
+                    render_key=render_key,
+                    runtime=self._render_runtime,
+                ):
+                    any_changed = True
+                    self._sync_turn_in_tree(td)
+                    self._width_tracker.replace(old_widest, td._widest_strip)
+                td._filter_revision = target_revision
 
-            if first_changed is not None:
-                self._recalculate_offsets_from(first_changed)
-            if has_deferred:
-                self._schedule_background_rerender()
+            if any_changed:
+                self._update_virtual_size()
 
     def ensure_turn_rendered(self, turn_index: int):
-        """Force-render a specific turn, then recalculate offsets.
+        """Force-render a specific turn, then sync its offset in the tree.
 
         Used before scroll_to_block() to ensure the target turn has accurate
-        block_strip_map and line_offset after deferred renders.
+        block_strip_map after deferred renders.
         """
         if turn_index >= len(self._turns):
             return
         td = self._turns[turn_index]
+        old_widest = td._widest_strip
         width = self._content_width if self._size_known else self._last_width
         render_key = self._turn_render_key(width)
         td.re_render(
@@ -2057,7 +1802,9 @@ class ConversationView(ScrollView):
             render_key=render_key,
             runtime=self._render_runtime,
         )
-        self._recalculate_offsets_from(turn_index)
+        self._sync_turn_in_tree(td)
+        self._width_tracker.replace(old_widest, td._widest_strip)
+        self._update_virtual_size()
 
     @property
     def _content_width(self) -> int:
@@ -2085,9 +1832,8 @@ class ConversationView(ScrollView):
         self._update_render_revisions(self._last_search_ctx)
         self._active_filter_revision += 1
         target_revision = self._active_filter_revision
-        self._reset_background_rerender_state()
-        self._deferred_offset_recalc_scheduled = False
-        self._deferred_offset_recalc_start_idx = None
+
+        self._deferred_anchor_resolve_scheduled = False
         render_key = self._turn_render_key(width)
 
         self._rerender_affected_bounded(
@@ -2160,11 +1906,12 @@ class ConversationView(ScrollView):
             return
         td = self._turns[turn_index]
         strip_offset = td.strip_offset_for_block(block_index)
+        turn_offset = self._offset_tree.prefix_sum(turn_index)
         if strip_offset is None:
             # Block filtered out — scroll to turn start instead
-            target_y = td.line_offset
+            target_y = turn_offset
         else:
-            target_y = td.line_offset + strip_offset
+            target_y = turn_offset + strip_offset
 
         # Center in viewport
         viewport_height = self.scrollable_content_region.height
@@ -2181,7 +1928,7 @@ class ConversationView(ScrollView):
         Uses block_strip_map to determine which block owns the line.
         Returns None if no block maps to this line.
         """
-        local_y = content_y - turn.line_offset
+        local_y = content_y - self._offset_tree.prefix_sum(turn.turn_index)
         best_block_idx = None
         best_strip_start = -1
         for block_idx, strip_start in turn.block_strip_map.items():
@@ -2221,7 +1968,7 @@ class ConversationView(ScrollView):
         if turn is None:
             return None
 
-        line_in_turn = scroll_y - turn.line_offset
+        line_in_turn = scroll_y - self._offset_tree.prefix_sum(turn.turn_index)
         return ScrollAnchor(turn_index=turn.turn_index, line_in_turn=max(0, line_in_turn))
 
     def _scroll_programmatically_to(self, *, y: int) -> None:
@@ -2295,7 +2042,7 @@ class ConversationView(ScrollView):
             if resolved_turn_index == anchor.turn_index
             else 0
         )
-        target_y = turn.line_offset + line_in_turn
+        target_y = self._offset_tree.prefix_sum(resolved_turn_index) + line_in_turn
         self._scroll_programmatically_to(y=target_y)
 
     def text_select_all(self) -> None:
@@ -2331,7 +2078,7 @@ class ConversationView(ScrollView):
             return
 
         # Global line coordinates for this block
-        start_y = turn.line_offset + block_start_in_turn
+        start_y = self._offset_tree.prefix_sum(turn.turn_index) + block_start_in_turn
         end_y = start_y + strip_count - 1
 
         start = Offset(0, start_y)
