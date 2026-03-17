@@ -148,9 +148,9 @@ class ViewOverrides:
         Clears both block-level (expanded, vis_override) and region-level (expanded) overrides.
         """
         # Collect matching block_ids
-        matching_bids = [
+        matching_bids = {
             bid for bid, cat in self._block_categories.items() if cat == category
-        ]
+        }
 
         for bid in matching_bids:
             block_vs = self._blocks.get(bid)
@@ -158,11 +158,10 @@ class ViewOverrides:
                 block_vs.expanded = None
                 block_vs.vis_override = None
 
-            # Clear regions belonging to this block
-            # Iterate all regions and clear those with matching block_id
-            for key, rvs in self._regions.items():
-                if key[0] == bid:
-                    rvs.expanded = None
+        # Single pass over regions — O(total regions), not O(matching * total)
+        for (bid, _idx), rvs in self._regions.items():
+            if bid in matching_bids:
+                rvs.expanded = None
 
         # If active reveal was in this category, clear tracking
         if self._active_reveal_block_id is not None:

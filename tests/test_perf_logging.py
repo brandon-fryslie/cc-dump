@@ -1,7 +1,6 @@
 """Tests for slow-path perf logging utilities."""
 
 import logging
-import time
 
 from cc_dump.io.perf_logging import ComplexityTracker, monitor_complexity, monitor_slow_path
 
