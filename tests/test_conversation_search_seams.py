@@ -15,6 +15,19 @@ def test_get_search_turns_snapshot_returns_immutable_snapshot():
     assert snapshot.turns == (marker,)
 
 
+def test_turn_data_rebuild_block_derivatives_refreshes_searchable_blocks():
+    initial = cc_dump.core.formatting.TextContentBlock(content="alpha")
+    td = TurnData(turn_index=0, blocks=[initial], strips=[])
+
+    assert td.searchable_blocks == ((0, initial),)
+
+    replacement = cc_dump.core.formatting.TextContentBlock(content="beta")
+    td.blocks = [replacement]
+    td.rebuild_block_derivatives()
+
+    assert td.searchable_blocks == ((0, replacement),)
+
+
 def test_capture_scroll_anchor_sets_anchor_from_compute(monkeypatch):
     conv = ConversationView()
     anchor = ScrollAnchor(turn_index=3, line_in_turn=2)
