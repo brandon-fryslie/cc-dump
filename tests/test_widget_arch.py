@@ -774,6 +774,34 @@ class TestIncrementalOffsets:
         assert 2 not in conv._cache_keys_by_turn
         assert 3 not in conv._cache_keys_by_turn
 
+    def test_invalidate_cache_for_turn_zero_can_stay_precise(self):
+        """Leading-turn invalidation can target a slice without clearing unrelated keys."""
+        from textual.strip import Strip
+
+        conv = ConversationView()
+        conv._turns = [TurnData(turn_index=i, blocks=[], strips=[]) for i in range(3)]
+
+        key0 = ("k", 0)
+        key1 = ("k", 1)
+        key2 = ("k", 2)
+        conv._line_cache[key0] = Strip.blank(10)
+        conv._line_cache[key1] = Strip.blank(10)
+        conv._line_cache[key2] = Strip.blank(10)
+        conv._cache_keys_by_turn = {
+            0: {key0},
+            1: {key1},
+            2: {key2},
+        }
+
+        conv._invalidate_cache_for_turns(0, 1)
+
+        assert key0 not in conv._line_cache
+        assert key1 in conv._line_cache
+        assert key2 in conv._line_cache
+        assert 0 not in conv._cache_keys_by_turn
+        assert 1 in conv._cache_keys_by_turn
+        assert 2 in conv._cache_keys_by_turn
+
     def test_tree_offsets_match_after_strip_change(self):
         """After modifying a turn's strips and rebuilding, tree offsets are correct."""
         from textual.strip import Strip
@@ -1119,6 +1147,57 @@ class TestViewportOnlyRerender:
 
         assert conv._turns.iter_count == 0, "filter rerender should not iterate full turn list"
 
+    def test_search_rerender_invalidates_only_viewport_caches_without_geometry_sync(self):
+        """Search rerender refreshes touched turns without tree/width work when geometry is stable."""
+        from cc_dump.tui.search import SearchContext, SearchMode, compile_search_pattern
+
+        console = Console()
+        filters_initial = {"tools": ALWAYS_VISIBLE}
+        conv = self._make_conv_with_turns(console, 6, filters_initial)
+
+        with self._patch_scroll(conv, scroll_y=0, height=10), \
+             patch.object(conv, "_viewport_turn_range", return_value=(0, 2)):
+            conv._follow_state = FollowState.OFF
+            conv.rerender(filters_initial, force=True)
+
+        key0 = ("line", 0)
+        key1 = ("line", 1)
+        key2 = ("line", 2)
+        conv._line_cache[key0] = Strip.blank(10)
+        conv._line_cache[key1] = Strip.blank(10)
+        conv._line_cache[key2] = Strip.blank(10)
+        conv._cache_keys_by_turn = {
+            0: {key0},
+            1: {key1},
+            2: {key2},
+        }
+
+        pattern = compile_search_pattern("turn", SearchMode.CASE_INSENSITIVE)
+        assert pattern is not None
+        search_ctx = SearchContext(
+            pattern=pattern,
+            pattern_str="turn",
+            current_match=None,
+            all_matches=[],
+        )
+
+        with self._patch_scroll(conv, scroll_y=0, height=10), \
+             patch.object(conv, "_viewport_turn_range", return_value=(0, 2)), \
+             patch.object(conv, "_sync_turn_in_tree") as sync_mock, \
+             patch.object(conv, "_update_virtual_size") as update_mock, \
+             patch.object(type(conv._width_tracker), "replace", autospec=True) as replace_mock:
+            conv.rerender(filters_initial, search_ctx=search_ctx)
+
+        assert sync_mock.call_count == 0
+        assert replace_mock.call_count == 0
+        assert update_mock.call_count == 0
+        assert key0 not in conv._line_cache
+        assert key1 not in conv._line_cache
+        assert key2 in conv._line_cache
+        assert conv._turns[0]._filter_revision == conv._active_filter_revision
+        assert conv._turns[1]._filter_revision == conv._active_filter_revision
+        assert conv._turns[2]._filter_revision != conv._active_filter_revision
+
 
 class TestLazyRerenderInRenderLine:
     """Test that render_line() lazily re-renders turns with stale _filter_revision."""
@@ -1266,6 +1345,61 @@ class TestLazyRerenderInRenderLine:
         assert conv._cache_keys_by_turn == {0: {key}}
         assert conv._line_cache_index_write_count == 17
         assert conv.refresh.call_count == 2
+
+    def test_lazy_search_rerender_skips_geometry_sync_and_invalidates_turn_cache(self):
+        """Search-driven lazy rerender clears the stale turn cache without touching geometry trackers."""
+        from cc_dump.tui.search import SearchContext, SearchMode, compile_search_pattern
+
+        console = Console()
+        blocks = [TextContentBlock(content="Hello world", indent="")]
+        filters = {}
+        strips, block_strip_map, _ = render_turn_to_strips(blocks, filters, console, width=79)
+        td = TurnData(
+            turn_index=0,
+            blocks=blocks,
+            strips=strips,
+            block_strip_map=block_strip_map,
+            _widest_strip=max((s.cell_length for s in strips), default=0),
+        )
+        td.compute_relevant_keys()
+        td._last_filter_snapshot = {}
+
+        pattern = compile_search_pattern("hello", SearchMode.CASE_INSENSITIVE)
+        assert pattern is not None
+        search_ctx = SearchContext(
+            pattern=pattern,
+            pattern_str="hello",
+            current_match=None,
+            all_matches=[],
+        )
+
+        conv = ConversationView()
+        conv._turns.append(td)
+        conv._last_filters = {}
+        conv._last_search_ctx = search_ctx
+        conv._last_width = 79
+        conv._recalculate_offsets()
+
+        stale_key = ("stale", 0)
+        conv._line_cache[stale_key] = Strip.blank(10)
+        conv._cache_keys_by_turn = {0: {stale_key}}
+
+        conv._active_filter_revision = 5
+        td._filter_revision = 0
+
+        with self._patch_scroll(conv, scroll_y=0, height=50), \
+             patch.object(conv, "_sync_turn_in_tree") as sync_mock, \
+             patch.object(conv, "_update_virtual_size") as update_mock, \
+             patch.object(type(conv._width_tracker), "replace", autospec=True) as replace_mock:
+            conv.render_line(0)
+
+        assert sync_mock.call_count == 0
+        assert replace_mock.call_count == 0
+        assert update_mock.call_count == 0
+        assert stale_key not in conv._line_cache
+        assert stale_key not in conv._cache_keys_by_turn.get(0, set())
+        assert td._filter_revision == conv._active_filter_revision
+        conv.call_later.assert_called_once()
 
 
 class TestRequestScopedStreaming:
