@@ -168,14 +168,6 @@ def toggle_launch_config(app) -> None:
         app._open_launch_config()
 
 
-def toggle_side_channel(app) -> None:
-    """Toggle the side-channel AI panel via state booleans."""
-    if app._view_store.get("panel:side_channel"):
-        app._close_side_channel()
-    else:
-        app._open_side_channel()
-
-
 # ─── Filterset actions ─────────────────────────────────────────────────
 
 

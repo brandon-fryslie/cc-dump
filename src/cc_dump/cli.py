@@ -29,10 +29,7 @@ import cc_dump.io.settings
 import cc_dump.app.tmux_controller
 import cc_dump.app.settings_store
 import cc_dump.app.launch_config
-import cc_dump.ai.side_channel
-import cc_dump.ai.data_dispatcher
 import cc_dump.pipeline.sentinel
-import cc_dump.ai.side_channel_marker
 from cc_dump.pipeline.proxy import RequestPipeline
 import cc_dump.app.view_store
 import cc_dump.app.hot_reload
@@ -262,30 +259,13 @@ def _build_proxy_runtime(
     )
 
 
-def _configure_side_channel_runtime(
-    *,
-    settings_store,
-    analytics_store: AnalyticsStore,
-    base_url: str,
-) -> tuple[cc_dump.ai.side_channel.SideChannelManager, cc_dump.ai.data_dispatcher.DataDispatcher]:
-    side_channel_mgr = cc_dump.ai.side_channel.SideChannelManager()
-    side_channel_mgr.enabled = bool(settings_store.get("side_channel_enabled"))
-    side_channel_mgr.set_base_url(base_url)
-    side_channel_mgr.set_usage_provider(
-        lambda purpose: dict(analytics_store.get_side_channel_purpose_summary().get(purpose, {}))
-    )
-    return side_channel_mgr, cc_dump.ai.data_dispatcher.DataDispatcher(side_channel_mgr)
-
-
 def _base_store_context(
     *,
-    side_channel_manager,
     tmux_controller,
     settings_store,
     view_store,
 ) -> dict[str, object]:
     return {
-        "side_channel_manager": side_channel_manager,
         "tmux_controller": tmux_controller,
         "settings_store": settings_store,
         "view_store": view_store,
@@ -698,17 +678,8 @@ def main():
     tmux_ctrl, active_launcher_label, tmux_state_cls = _build_tmux_controller(provider_endpoints)
     print(f"   Tmux: {_tmux_status_message(tmux_ctrl, tmux_state_cls, active_launcher_label)}")
 
-    side_channel_mgr, data_dispatcher = _configure_side_channel_runtime(
-        settings_store=settings_store,
-        analytics_store=analytics_store,
-        base_url=default_binding.endpoint.proxy_url,
-    )
-
-    # Request pipeline — transforms + interceptors run before forwarding
+    # Request pipeline — interceptors run before forwarding
     pipeline = RequestPipeline(
-        transforms=[
-            lambda body, url: (cc_dump.ai.side_channel_marker.strip_marker_from_body(body), url),
-        ],
         interceptors=[cc_dump.pipeline.sentinel.make_interceptor(tmux_ctrl)],
     )
     # // [LAW:single-enforcer] One shared request pipeline is applied at every provider handler boundary.
@@ -725,7 +696,6 @@ def main():
 
     # Wire settings store reactions (after all consumers are created)
     store_context = _base_store_context(
-        side_channel_manager=side_channel_mgr,
         tmux_controller=tmux_ctrl,
         settings_store=settings_store,
         view_store=view_store,
@@ -752,8 +722,6 @@ def main():
         recording_path=primary_record_path,
         replay_file=args.replay,
         tmux_controller=tmux_ctrl,
-        side_channel_manager=side_channel_mgr,
-        data_dispatcher=data_dispatcher,
         settings_store=settings_store,
         view_store=view_store,
         domain_store=domain_store,

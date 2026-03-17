@@ -96,8 +96,6 @@ class ViewOverrides:
 
         Clears previous reveal before setting new one. Returns whether state changed.
         """
-        next_reveal = (block_id, region_index)
-        prev_reveal = (self._active_reveal_block_id, self._active_reveal_region)
         # Normalize previous region to just region_index for comparison
         prev_region_index = self._active_reveal_region[1] if self._active_reveal_region else None
         if (block_id, region_index) == (self._active_reveal_block_id, prev_region_index):

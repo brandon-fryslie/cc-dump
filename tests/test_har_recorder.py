@@ -715,42 +715,6 @@ def test_har_subscriber_no_file_no_events(tmp_path):
     assert subscriber._events_received == {}
 
 
-def test_har_subscriber_side_channel_metadata_annotation(tmp_path):
-    """Side-channel markers annotate HAR entry with category metadata."""
-    har_path = tmp_path / "test.har"
-    subscriber = HARRecordingSubscriber(str(har_path))
-    marker = (
-        '<<CC_DUMP_SIDE_CHANNEL:{"run_id":"run-1","purpose":"handoff_note",'
-        '"source_provider":"sess-1","prompt_version":"v1","policy_version":"redaction-v1"}>>\n'
-    )
-
-    subscriber.on_event(RequestHeadersEvent(headers={"content-type": "application/json"}))
-    subscriber.on_event(
-        RequestBodyEvent(
-            body={
-                "model": "claude-3-opus-20240229",
-                "messages": [{"role": "user", "content": marker + "Summarize"}],
-            }
-        )
-    )
-    subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={}))
-    subscriber.on_event(ResponseCompleteEvent(body=_complete_msg(msg_id="msg_sc", text="ok")))
-    subscriber.close()
-
-    with open(har_path, "r") as f:
-        har = json.load(f)
-    entry = har["log"]["entries"][0]
-    assert "cc-dump side-channel run=run-1 purpose=handoff_note" in entry["comment"]
-    assert "prompt_version=v1" in entry["comment"]
-    assert "policy_version=redaction-v1" in entry["comment"]
-    assert entry["_cc_dump"]["category"] == "side_channel"
-    assert entry["_cc_dump"]["run_id"] == "run-1"
-    assert entry["_cc_dump"]["purpose"] == "handoff_note"
-    assert entry["_cc_dump"]["prompt_version"] == "v1"
-    assert entry["_cc_dump"]["policy_version"] == "redaction-v1"
-    assert entry["_cc_dump"]["source_provider"] == "sess-1"
-
-
 def test_har_subscriber_provider_filter(tmp_path):
     """Provider-filtered recorder ignores events for other providers."""
     har_path = tmp_path / "openai.har"

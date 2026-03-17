@@ -16,14 +16,9 @@ import cc_dump.tui.rendering
 import cc_dump.tui.search
 import cc_dump.tui.widget_factory
 import cc_dump.tui.info_panel
-import cc_dump.tui.keys_panel
-import cc_dump.tui.debug_settings_panel
-import cc_dump.tui.settings_panel
 import cc_dump.tui.custom_footer
 import cc_dump.app.settings_store
 import cc_dump.app.view_store
-import cc_dump.tui.launch_config_panel
-import cc_dump.tui.side_channel_panel
 import cc_dump.tui.search_controller
 import cc_dump.tui.theme_controller
 import cc_dump.tui.protocols
@@ -460,23 +455,22 @@ async def _remove_ephemeral_panels(app) -> None:
 
     Store visibility keys are preserved so that store reactions re-create
     panels after the pause ends — matching the aux-panel pattern.
+
+    // [LAW:single-enforcer] Uses CSS type selector strings, not class references,
+    // because importlib.reload() replaces class objects — isinstance(old_widget, new_class)
+    // is False after reload, so class-based query() silently finds nothing.
     """
-    for ephemeral_panel_type in (
-        cc_dump.tui.keys_panel.KeysPanel,
-        cc_dump.tui.debug_settings_panel.DebugSettingsPanel,
+    for panel_type_name in (
+        "KeysPanel",
+        "DebugSettingsPanel",
+        "SettingsPanel",
+        "LaunchConfigPanel",
     ):
-        await _remove_panels_by_type(app, ephemeral_panel_type)
-
-    for removal_panel_type in (
-        cc_dump.tui.settings_panel.SettingsPanel,
-        cc_dump.tui.launch_config_panel.LaunchConfigPanel,
-        cc_dump.tui.side_channel_panel.SideChannelPanel,
-    ):
-        await _remove_panels_by_type(app, removal_panel_type)
+        await _remove_panels_by_name(app, panel_type_name)
 
 
-async def _remove_panels_by_type(app, panel_type) -> None:
-    for panel in app.screen.query(panel_type):
+async def _remove_panels_by_name(app, panel_type_name: str) -> None:
+    for panel in app.screen.query(panel_type_name):
         await panel.remove()
 
 

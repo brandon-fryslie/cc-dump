@@ -53,8 +53,6 @@ _RELOAD_ORDER = [
     "cc_dump.tui.keys_panel",  # depends on: panel_renderers
     "cc_dump.tui.settings_panel",  # depends on: palette
     "cc_dump.tui.debug_settings_panel",  # depends on: palette, chip, perf_logging
-    "cc_dump.tui.side_channel_panel",  # depends on: palette
-    "cc_dump.tui.side_channel_controller",  # depends on: side_channel_panel
     "cc_dump.tui.launch_config_panel",  # depends on: palette, settings_panel
     "cc_dump.tui.settings_launch_controller",  # depends on: launch_config_panel, settings_panel
     "cc_dump.tui.session_panel",  # depends on: panel_renderers
@@ -75,8 +73,6 @@ _EXCLUDED_FILES = {
     "pipeline/response_assembler.py",  # stable boundary, imported by proxy.py
     "app/tmux_controller.py",  # stable boundary, holds live pane refs
     "io/stderr_tee.py",  # stable boundary, holds live sys.stderr ref
-    "ai/side_channel.py",  # stable boundary, holds live subprocess refs
-    "ai/data_dispatcher.py",  # stable boundary, holds ref to side_channel
     "__init__.py",  # module init
     "__main__.py",  # entry point
 }
@@ -92,7 +88,7 @@ _EXCLUDED_MODULES = {
 _STALENESS_WATCHLIST = {
     # from _EXCLUDED_FILES
     "pipeline/proxy.py", "pipeline/forward_proxy_tls.py", "cli.py", "pipeline/event_types.py", "pipeline/response_assembler.py",
-    "app/tmux_controller.py", "io/stderr_tee.py", "ai/side_channel.py", "ai/data_dispatcher.py",
+    "app/tmux_controller.py", "io/stderr_tee.py",
     # from _EXCLUDED_MODULES
     "tui/app.py", "tui/hot_reload_controller.py",
 }

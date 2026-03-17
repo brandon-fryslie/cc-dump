@@ -110,9 +110,6 @@ MODE_KEYMAP: dict[InputMode, dict[str, str]] = {
         # Logs panel
         "ctrl+l": "toggle_logs",
 
-        # Side channel (AI panel)
-        "X": "toggle_side_channel",
-
         # Theme
         "[": "prev_theme",
         "left_square_bracket": "prev_theme",
@@ -226,7 +223,6 @@ KEY_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("L", "Tail logs (tmux)"),
         ("S", "Settings"),
         ("D", "Debug"),
-        ("X", "AI Workbench"),
         ("^C ^C", "Quit"),
     ]),
 ]
