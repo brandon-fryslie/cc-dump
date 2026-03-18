@@ -1753,9 +1753,12 @@ class ConversationView(ScrollView):
             total_items=len(self._turns),
         ) as cx:
             any_changed = False
-            for idx in range(vp_start, min(vp_end, len(self._turns))):
+            any_geometry_changed = False
+            actual_end = min(vp_end, len(self._turns))
+            for idx in range(vp_start, actual_end):
                 td = self._turns[idx]
                 old_widest = td._widest_strip
+                old_line_count = td.line_count
                 is_viewport_turn, changed = self._rerender_viewport_turn(
                     td,
                     filters=filters,
@@ -1770,11 +1773,17 @@ class ConversationView(ScrollView):
                 cx.touch()
                 if changed:
                     any_changed = True
-                    # O(log n) tree update per changed turn.
-                    self._sync_turn_in_tree(td)
-                    self._width_tracker.replace(old_widest, td._widest_strip)
+                    # // [LAW:dataflow-not-control-flow] Geometry sync runs unconditionally;
+                    # values decide whether work is needed.
+                    if td.line_count != old_line_count or td._widest_strip != old_widest:
+                        self._sync_turn_in_tree(td)
+                        self._width_tracker.replace(old_widest, td._widest_strip)
+                        any_geometry_changed = True
 
             if any_changed:
+                self._invalidate_cache_for_turns(vp_start, actual_end)
+                self.refresh()
+            if any_geometry_changed:
                 self._update_virtual_size()
 
     def _rerender_affected_full_scan(
@@ -1798,12 +1807,15 @@ class ConversationView(ScrollView):
         ) as cx:
             cx.extra["search_active"] = True
             any_changed = False
-            for idx in range(vp_start, min(vp_end, len(self._turns))):
+            any_geometry_changed = False
+            actual_end = min(vp_end, len(self._turns))
+            for idx in range(vp_start, actual_end):
                 td = self._turns[idx]
                 if td.is_streaming:
                     continue
                 cx.touch()
                 old_widest = td._widest_strip
+                old_line_count = td.line_count
                 if td.re_render(
                     filters,
                     console,
@@ -1816,11 +1828,18 @@ class ConversationView(ScrollView):
                     runtime=self._render_runtime,
                 ):
                     any_changed = True
-                    self._sync_turn_in_tree(td)
-                    self._width_tracker.replace(old_widest, td._widest_strip)
+                    # // [LAW:dataflow-not-control-flow] Geometry sync runs unconditionally;
+                    # values decide whether work is needed.
+                    if td.line_count != old_line_count or td._widest_strip != old_widest:
+                        self._sync_turn_in_tree(td)
+                        self._width_tracker.replace(old_widest, td._widest_strip)
+                        any_geometry_changed = True
                 td._filter_revision = target_revision
 
             if any_changed:
+                self._invalidate_cache_for_turns(vp_start, actual_end)
+                self.refresh()
+            if any_geometry_changed:
                 self._update_virtual_size()
 
     def ensure_turn_rendered(self, turn_index: int):
