@@ -1132,13 +1132,18 @@ class ConversationView(ScrollView):
     def _invalidate_cache_for_turns(self, start_idx: int, end_idx: int | None = None) -> None:
         """Drop line-cache entries for turns in [start_idx, end_idx).
 
+        When end_idx is None the range is unbounded — full cache clear.
+        When end_idx is provided the invalidation is strictly bounded to
+        [start_idx, end_idx), even when start_idx is 0, so viewport-only
+        callers do not incidentally wipe the entire cache.
+
         // [LAW:single-enforcer] Range invalidation for line cache happens only here.
         """
-        if start_idx <= 0:
+        if end_idx is None:
             self._clear_line_cache()
             return
 
-        upper = len(self._turns) if end_idx is None else min(end_idx, len(self._turns))
+        upper = min(end_idx, len(self._turns))
         if upper <= start_idx:
             return
 
@@ -1753,9 +1758,12 @@ class ConversationView(ScrollView):
             total_items=len(self._turns),
         ) as cx:
             any_changed = False
-            for idx in range(vp_start, min(vp_end, len(self._turns))):
+            any_geometry_changed = False
+            actual_end = min(vp_end, len(self._turns))
+            for idx in range(vp_start, actual_end):
                 td = self._turns[idx]
                 old_widest = td._widest_strip
+                old_line_count = td.line_count
                 is_viewport_turn, changed = self._rerender_viewport_turn(
                     td,
                     filters=filters,
@@ -1770,11 +1778,17 @@ class ConversationView(ScrollView):
                 cx.touch()
                 if changed:
                     any_changed = True
-                    # O(log n) tree update per changed turn.
-                    self._sync_turn_in_tree(td)
-                    self._width_tracker.replace(old_widest, td._widest_strip)
+                    # // [LAW:dataflow-not-control-flow] Geometry sync runs unconditionally;
+                    # values decide whether work is needed.
+                    if td.line_count != old_line_count or td._widest_strip != old_widest:
+                        self._sync_turn_in_tree(td)
+                        self._width_tracker.replace(old_widest, td._widest_strip)
+                        any_geometry_changed = True
 
             if any_changed:
+                self._invalidate_cache_for_turns(vp_start, actual_end)
+                self.refresh()
+            if any_geometry_changed:
                 self._update_virtual_size()
 
     def _rerender_affected_full_scan(
@@ -1798,12 +1812,15 @@ class ConversationView(ScrollView):
         ) as cx:
             cx.extra["search_active"] = True
             any_changed = False
-            for idx in range(vp_start, min(vp_end, len(self._turns))):
+            any_geometry_changed = False
+            actual_end = min(vp_end, len(self._turns))
+            for idx in range(vp_start, actual_end):
                 td = self._turns[idx]
                 if td.is_streaming:
                     continue
                 cx.touch()
                 old_widest = td._widest_strip
+                old_line_count = td.line_count
                 if td.re_render(
                     filters,
                     console,
@@ -1816,11 +1833,18 @@ class ConversationView(ScrollView):
                     runtime=self._render_runtime,
                 ):
                     any_changed = True
-                    self._sync_turn_in_tree(td)
-                    self._width_tracker.replace(old_widest, td._widest_strip)
+                    # // [LAW:dataflow-not-control-flow] Geometry sync runs unconditionally;
+                    # values decide whether work is needed.
+                    if td.line_count != old_line_count or td._widest_strip != old_widest:
+                        self._sync_turn_in_tree(td)
+                        self._width_tracker.replace(old_widest, td._widest_strip)
+                        any_geometry_changed = True
                 td._filter_revision = target_revision
 
             if any_changed:
+                self._invalidate_cache_for_turns(vp_start, actual_end)
+                self.refresh()
+            if any_geometry_changed:
                 self._update_virtual_size()
 
     def ensure_turn_rendered(self, turn_index: int):
