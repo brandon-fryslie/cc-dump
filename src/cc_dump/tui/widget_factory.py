@@ -1132,13 +1132,18 @@ class ConversationView(ScrollView):
     def _invalidate_cache_for_turns(self, start_idx: int, end_idx: int | None = None) -> None:
         """Drop line-cache entries for turns in [start_idx, end_idx).
 
+        When end_idx is None the range is unbounded — full cache clear.
+        When end_idx is provided the invalidation is strictly bounded to
+        [start_idx, end_idx), even when start_idx is 0, so viewport-only
+        callers do not incidentally wipe the entire cache.
+
         // [LAW:single-enforcer] Range invalidation for line cache happens only here.
         """
-        if start_idx <= 0:
+        if end_idx is None:
             self._clear_line_cache()
             return
 
-        upper = len(self._turns) if end_idx is None else min(end_idx, len(self._turns))
+        upper = min(end_idx, len(self._turns))
         if upper <= start_idx:
             return
 
