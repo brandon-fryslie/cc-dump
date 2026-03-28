@@ -18,47 +18,21 @@ This "why" framing must appear in every spec file's Overview section and should 
 
 ## Spec File Structure
 
-Write to `./spec/` with this organization:
-
-| File | Covers |
-|------|--------|
-| `spec/INDEX.md` | Table of contents with one-line summary per file. Status tracker showing which files are draft/reviewed. |
-| `spec/proxy.md` | HTTP proxy behavior: what gets intercepted, how requests/responses are handled, port assignment, TLS, provider routing |
-| `spec/events.md` | Event types, their fields, ordering guarantees, the event lifecycle of a single API call |
-| `spec/formatting.md` | The FormattedBlock IR: every block type, its fields, when it's produced, what data it carries. The system prompt tracking/diffing behavior. Tool correlation. |
-| `spec/visibility.md` | The 3-level visibility system: categories, levels, expansion states, defaults, keyboard cycling, click behavior, how blocks map to categories |
-| `spec/rendering.md` | What each block looks like at each visibility level (collapsed/expanded). Truncation limits. The dispatch model (without specifying implementation). Visual indicators (arrows, color bars, icons). |
-| `spec/navigation.md` | All keyboard shortcuts, vim-style navigation, panel cycling, follow mode, search. Mouse interactions (click, double-click, shift-click, right-click). |
-| `spec/recording.md` | HAR recording format, what's captured, replay behavior, session storage paths, CLI flags for recording/replay, known divergences between live and replay |
-| `spec/analytics.md` | What aggregate data is tracked (tokens, tools, costs), what panels display it, panel modes, how data flows from events to aggregates |
-| `spec/sessions.md` | Session identity, multi-session model (if applicable), tmux integration, launch configs, the `run` subcommand |
-| `spec/cli.md` | Complete CLI interface: all flags, subcommands, environment variables, exit codes, startup sequence |
-| `spec/hot-reload.md` | Hot-reload behavior from the user's perspective: what triggers it, what survives, what doesn't, the stable/reloadable boundary as a contract |
-| `spec/themes.md` | Color system, theme variables, palette generation, semantic colors, how colors are assigned to content types |
-| `spec/panels.md` | Side panel system: what panels exist, what each shows, panel modes, how to cycle them |
-| `spec/search.md` | Search functionality: how to invoke, what's searchable, highlight behavior, navigation between matches |
-| `spec/filters.md` | Filter system beyond visibility: content filters, how filter state interacts with rendering |
-| `spec/export.md` | Dump/export functionality: what formats, what's included, how to trigger |
-| `spec/errors.md` | Error display, error indicator behavior, how proxy/API errors surface in the UI |
+Write to `./spec/` with this organization
 
 ## Execution Model: Parallel Agents
 
-You orchestrate three phases using parallel subagents. Do not write spec files yourself — delegate to agents and aggregate their work.
+You orchestrate all phases using parallel subagents.
 
 ### Phase 1: Assessment (you, the orchestrator)
 
-1. Read `spec/INDEX.md` (if it exists) to see what's been written and its status
-2. For each existing spec file, quickly scan what's there and what's incomplete
-3. Decide what work to assign this iteration. You have two modes:
-   - **Breadth pass:** Many spec files need to be created or are empty. Assign each to a different agent.
-   - **Depth pass:** Existing specs need deepening or correction. Assign focused areas.
+1. Use parallel subagents to deeply study the codebase and determine what needs to be assessed
 
 ### Phase 2: Spec Writing (up to 250 parallel subagents)
 
 Launch subagents in parallel. Each agent:
-- Is assigned **one spec file** (or one major section of a large spec file)
 - Is a **general-purpose expert in software architecture and UX** — not a code-reading robot
-- Must **read the actual source code** for their assigned area. No speculation. Every claim must be traceable to code read this session. If you cannot confirm a behavior from source, leave it out — omission is always better than a guess.
+- Must **read the actual source code**. No speculation. Every claim must be traceable to code read this session. If you cannot confirm a behavior from source, leave it out — omission is always better than a guess.
 - Must understand and articulate the **"why"** before documenting the "what"
 - Writes (or updates) their assigned spec file following the Writing Standards below
 
@@ -89,25 +63,6 @@ EXISTING SPEC (if updating): <current content or "new file">
 <include Writing Standards section>
 <include "What Belongs in Spec vs. Not" section>
 ```
-
-**Assignment strategy:**
-- For `events.md`: read `pipeline/event_types.py`, `pipeline/proxy.py`, `pipeline/router.py`
-- For `formatting.md`: read `core/formatting.py`, `core/formatting_impl.py`, `core/special_content.py`
-- For `visibility.md`: read `tui/category_config.py`, `tui/view_overrides.py`, `tui/action_config.py`, `tui/action_handlers.py`
-- For `rendering.md`: read `tui/rendering.py`, `tui/rendering_impl.py`
-- For `navigation.md`: read `tui/app.py` (bindings), `tui/input_modes.py`, `tui/location_navigation.py`, `tui/follow_mode.py`
-- For `cli.md`: read `cli.py`, `__main__.py`, `cli_presentation.py`, `app/launch_config.py`
-- For `recording.md`: read `pipeline/har_recorder.py`, `pipeline/har_replayer.py`, `io/sessions.py`
-- For `analytics.md`: read `app/analytics_store.py`, `core/analysis.py`, `core/token_counter.py`, `tui/panel_renderers.py`
-- For `sessions.md`: read `io/sessions.py`, `app/domain_store.py`, `app/tmux_controller.py`, `app/launch_config.py`
-- For `hot-reload.md`: read `app/hot_reload.py`, `tui/hot_reload_controller.py`
-- For `themes.md`: read `core/palette.py`, `tui/theme_controller.py`, docs/THEME_*.md
-- For `panels.md`: read `tui/panel_registry.py`, `tui/panel_renderers.py`, `tui/session_panel.py`, `tui/info_panel.py`
-- For `search.md`: read `tui/search.py`, `tui/search_controller.py`
-- For `filters.md`: read `core/filter_registry.py`, `tui/category_config.py`
-- For `export.md`: read `tui/dump_export.py`, `tui/dump_formatting.py`
-- For `errors.md`: read `app/error_models.py`, `tui/error_indicator.py`
-- For `proxy.md`: read `pipeline/proxy.py`, `pipeline/proxy_flow.py`, `pipeline/forward_proxy_tls.py`, `providers.py`
 
 ### Phase 3: Review (up to 10 parallel review agents)
 
@@ -151,7 +106,7 @@ After spec-writing agents complete, launch review agents. Each reviewer:
 4. For missing "why": add motivation framing to Overview sections and relevant subsections
 5. For cross-reference inconsistencies: reconcile and update all affected files
 6. Update `spec/INDEX.md` with current status of all files
-7. Summarize what was done this iteration and what remains for the next
+7. Summarize what was done this iteration
 
 ## Writing Standards
 
@@ -174,8 +129,6 @@ After spec-writing agents complete, launch review agents. Each reviewer:
 **Spec file template:**
 ```markdown
 # <Title>
-
-> Last verified against: <commit hash or "not yet">
 
 ## Overview
 One paragraph: what user problem this area solves and why it exists.
@@ -202,31 +155,9 @@ Include mermaid diagrams where relevent.
 
 The line: if changing the implementation (but not the behavior) would require updating the spec, the spec is too implementation-specific.
 
-## Priority Order for New Specs
-
-If starting fresh, build in this order (each builds on the previous):
-1. `events.md` — the foundation; everything flows from events
-2. `formatting.md` — the IR that events produce
-3. `visibility.md` — how blocks are shown/hidden
-4. `rendering.md` — what blocks look like
-5. `navigation.md` — how users interact
-6. `cli.md` — how the app is started
-7. `recording.md` — persistence layer
-8. Everything else in any order
-
-On the first iteration, launch agents for items 1–7 in parallel (they can be written concurrently since they cover independent code areas; cross-references will be reconciled during review). Launch remaining spec agents for items 8+ in the same batch if capacity allows.
-
 ## Existing Documentation to Cross-Reference
 
-These files contain architectural and product information. Use them as context, but verify claims against code — docs can be stale:
-- `CLAUDE.md` — developer guide, architecture overview
-- `docs/PROJECT_SPEC.md` — goals and design decisions
-- `docs/PRODUCT_DECISIONS.md` — features that are staying
-- `docs/ARCHITECTURE.md` — system design
-- `docs/QUICK_REFERENCE.md` — keyboard shortcuts and visibility system
-- `docs/THEME_COLOR_SYSTEM.md`, `docs/THEME_VARIABLE_REFERENCE.md` — color system
-- `docs/HOT_RELOAD_ARCHITECTURE.md` — hot-reload contracts
-- `docs/multi-session-architecture.md` — session model (may be proposal, not implemented)
+Note: existing documentation is often out of date and must NOT be relied on as ground-truth authority. 
 
 ## Convergence Signals
 

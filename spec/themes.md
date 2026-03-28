@@ -1,8 +1,5 @@
 # Themes and Color System
 
-> Status: draft
-> Last verified against: not yet
-
 ## Overview
 
 cc-dump displays a high volume of heterogeneous content: user messages, assistant responses, tool calls, system prompts, metadata, thinking blocks. Without a principled color system, this content collapses into visual noise. The theme system exists so that every piece of content has a distinguishable, semantically meaningful color assignment regardless of which terminal theme the user prefers, and so that colors remain accessible (readable contrast) across the full range of dark, light, and ANSI terminal environments.
@@ -23,13 +20,13 @@ Colors in the system serve four distinct roles:
    - System messages: `accent`
    - Info: `primary`
 
-3. **Filter indicator colors** -- per-category hues for gutter bars and footer chips (tools, system, user, assistant, metadata, thinking). These are *generated* from theme colors, not hardcoded, and placed in the hue space where the theme is least busy.
+3. **Filter indicator colors** -- per-category hues for gutter bars and footer chips (tools, system, metadata, user, assistant, thinking). These are *generated* from theme colors, not hardcoded, and placed in the hue space where the theme is least busy.
 
-4. **Palette colors** -- a golden-angle-spaced set of ~38 hues used for tag styling and message differentiation. These provide variety for content that needs many distinct colors (e.g., distinguishing multiple tool calls or conversation messages by index).
+4. **Palette colors** -- a golden-angle-spaced set of 38 hues used for tag styling and message differentiation. These provide variety for content that needs many distinct colors (e.g., distinguishing multiple tool calls or conversation messages by index).
 
 ### ThemeColors
 
-A frozen data object that captures every color the rendering pipeline needs, derived from a single Textual theme. Fields:
+A frozen dataclass (`@dataclass(frozen=True)`) that captures every color the rendering pipeline needs, derived from a single Textual theme. Defined in `rendering_impl.py`. Fields:
 
 | Field | Type | Source |
 |-------|------|--------|
@@ -50,39 +47,38 @@ A frozen data object that captures every color the rendering pipeline needs, der
 | `code_theme` | string | `"github-dark"` (dark) or `"friendly"` (light) |
 | `search_all_bg` | hex string | `surface` |
 | `search_current_style` | Rich style string | bold, inverted fg on accent |
-| `follow_active_style` | Rich style string | bold, bg on fg (inverted) |
-| `follow_engaged_style` | Rich style string | bold, fg on bg |
+| `follow_active_style` | Rich style string | bold, background on foreground (inverted) |
+| `follow_engaged_style` | Rich style string | bold, foreground on background |
 | `search_prompt_style` | Rich style string | bold primary |
 | `search_active_style` | Rich style string | bold success |
 | `search_error_style` | Rich style string | bold error |
 | `search_keys_style` | Rich style string | bold warning |
 | `markdown_theme_dict` | dict | Rich Theme entries for markdown rendering |
 | `filter_colors` | dict | name to (gutter_fg, chip_bg, chip_fg) hex triples |
-| `action_colors` | list | pool of theme semantic hex colors for non-filter UI items |
+| `action_colors` | list | pool of 6 theme semantic hex colors: accent, warning, success, error, primary, secondary |
 
-### Render Runtime
+### RenderRuntime
 
-Theme-derived state that changes when the user switches themes. Includes:
+A mutable dataclass holding theme-derived state that changes when the user switches themes. Defined in `rendering_impl.py`. Fields:
 
-- **role_styles**: `{"user": "bold <primary>", "assistant": "bold <secondary>", "system": "bold <accent>"}`
-- **tag_styles**: list of 12 (fg, bg) hex pairs from the palette, mode-adjusted
-- **msg_colors**: list of 6 foreground hex colors from the palette, mode-adjusted
-- **filter_indicators**: dict mapping filter name to (symbol, fg_color) used for gutter rendering
+- **theme_colors**: `ThemeColors | None` -- the current frozen theme snapshot
+- **role_styles**: `dict[str, str]` -- `{"user": "bold <primary>", "assistant": "bold <secondary>", "system": "bold <accent>"}`
+- **tag_styles**: `list[tuple[str, str]]` -- 12 (fg, bg) hex pairs from the palette, mode-adjusted
+- **msg_colors**: `list[str]` -- 6 foreground hex colors from the palette, mode-adjusted
+- **filter_indicators**: `dict[str, tuple[str, str]]` -- mapping filter name to (symbol, fg_color) used for gutter rendering, where fg_color is the chip_bg value (element [1] of filter_colors)
 
 ## Theme Switching
 
-The user cycles themes with `[` (previous) and `]` (next). The 18 available themes are sorted alphabetically and wrap cyclically. The selected theme name is persisted to settings.
+The user cycles themes with `[` (previous) and `]` (next). The `cycle_theme()` function in `theme_controller.py` sorts available theme names alphabetically and wraps cyclically. The selected theme name is persisted to the settings store.
 
-When a theme changes, the following happens in order:
+When a theme changes (via Textual's `watch_theme` reactive watcher in `app.py`), the following happens in order:
 
-1. `ThemeColors` is rebuilt from the new Textual theme
-2. Role styles, tag styles, message colors, and filter indicators are recomputed
-3. The markdown Rich theme is popped and re-pushed on the console
-4. All block strip caches and line caches are invalidated
-5. All turns are re-rendered with `force=True` (because gutter colors changed even though filter state did not)
-6. The footer is re-rendered with new chip colors
-7. A theme generation counter is incremented (triggers reactive UI updates)
-8. A notification toast shows the new theme name
+1. `set_theme()` in `rendering_impl.py` rebuilds `ThemeColors` via `build_theme_colors()` and configures all runtime fields (role_styles, tag_styles, msg_colors, filter_indicators)
+2. `apply_markdown_theme()` in `theme_controller.py` pops the old Rich theme and pushes a new one from `ThemeColors.markdown_theme_dict`
+3. A theme generation counter in the view store is incremented (`theme:generation`), triggering reactive UI updates
+4. The conversation view's block strip cache and line cache are cleared
+5. The conversation is re-rendered with `force=True` (because gutter colors changed even though filter state did not)
+6. A notification toast shows the new theme name (from `cycle_theme()`)
 
 ### Available Themes (18)
 
@@ -100,18 +96,18 @@ Filter indicators (colored gutter bars and footer chips) must be visually distin
 
 ### Algorithm
 
-The generation is a pure function: six theme hex colors in, a dictionary of (gutter_fg, chip_bg, chip_fg) triples out.
+The generation is a pure function in `palette.py:generate_filter_colors()`: six theme hex colors in, a dictionary of (gutter_fg, chip_bg, chip_fg) triples out.
 
 **Step 1: Extract theme hues.** Parse primary, secondary, and accent to HSL. Discard near-achromatic colors (saturation < 0.05).
 
-**Step 2: Find the largest hue gap.** Treat the color wheel as circular, find the widest angular gap between theme hues. Place the indicator seed hue at the center of this gap. This ensures indicator hues occupy the least-used region of the color wheel. Example: a purple/pink/cyan theme (Dracula) gets indicators in the orange/yellow/green range.
+**Step 2: Find the largest hue gap.** Treat the color wheel as circular, find the widest angular gap between theme hues. Place the indicator seed hue at the center of this gap. This ensures indicator hues occupy the least-used region of the color wheel. Example: a purple/pink/cyan theme (Dracula) gets indicators in the orange/yellow/green range. If no chromatic colors exist, the seed defaults to 30 degrees (warm orange). If only one chromatic color exists, the seed is placed 180 degrees opposite.
 
-**Step 3: Generate hues via golden-angle spacing.** From the seed, generate N hues at 137.508-degree increments. The golden angle maximizes perceptual distance between consecutively indexed colors.
+**Step 3: Generate hues via golden-angle spacing.** From the seed, generate N hues (where N = number of filter categories, currently 6) at 137.508-degree increments. The golden angle maximizes perceptual distance between consecutively indexed colors.
 
-**Step 4: Derive lightness from theme luminance range.** Extract HSL lightness from background, surface, and foreground. Compute:
-- Gutter foreground: midpoint of bg-to-fg range, at least 0.20 L-distance from background
-- Chip background: surface +/- 0.20 (pushed toward foreground)
-- Chip foreground: chip_bg +/- 0.45 (toward foreground), floored at L >= 0.80 (dark themes) or <= 0.20 (light themes)
+**Step 4: Derive lightness from theme luminance range.** Extract HSL lightness from background, surface, and foreground. Dark mode is detected as `bg_L < fg_L`. Compute:
+- Gutter foreground: midpoint of bg-to-fg range (`lerp(bg_L, fg_L, 0.50)`), at least 0.20 L-distance from background, clamped to [0.05, 0.95]
+- Chip background: surface +/- 0.20 (pushed toward foreground), clamped to [0.05, 0.95]
+- Chip foreground: chip_bg +/- 0.45 (toward foreground), floored at L >= 0.80 (dark themes) or <= 0.20 (light themes), clamped to [0.05, 0.95]
 
 **Step 5: Derive saturation from theme.** Saturations decrease from gutter (most vivid) to chip bg (muted) to chip fg (near-neutral):
 - Gutter fg: `primary_S * 0.90`, clamped to [0.45, 0.85]
@@ -129,7 +125,7 @@ This multi-phase approach is necessary because HSL lightness is a poor predictor
 
 ### Category Index Assignment
 
-Each filter category has a fixed indicator index:
+Each filter category has a fixed indicator index, defined in `filter_registry.py` via `FilterSpec.indicator_index`:
 
 | Category | Indicator Index |
 |----------|----------------|
@@ -140,21 +136,21 @@ Each filter category has a fixed indicator index:
 | assistant | 4 |
 | thinking | 5 |
 
-The six main categories use consecutive indices 0-5. This matters because the golden angle's minimum-separation guarantee only holds for consecutive indices. Non-consecutive indices can produce hue clusters (e.g., index 0 at 0 degrees and index 8 at 20.1 degrees would be nearly indistinguishable).
+The six categories use consecutive indices 0-5. This matters because the golden angle's minimum-separation guarantee only holds for consecutive indices. Non-consecutive indices can produce hue clusters (e.g., index 0 at 0 degrees and index 8 at 20.1 degrees would be nearly indistinguishable).
 
 ### Where Colors Appear
 
 | Component | Color Used | Tuple Index |
 |-----------|-----------|-------------|
-| Gutter bars (left edge of content lines) | gutter_fg | [0] |
 | Footer chip background | chip_bg | [1] |
 | Footer chip foreground (text) | chip_fg | [2] |
+| Gutter bars (left edge of content lines) | chip_bg | [1] |
 
-Gutter bars use the `chip_bg` color (element [1]) for their foreground styling. The `gutter_fg` value (element [0]) is generated by the algorithm but is unused for gutter rendering.
+Gutter bars use the `chip_bg` color (element [1]) for their foreground styling, via `_build_filter_indicators()` in `rendering_impl.py`. The `gutter_fg` value (element [0]) is generated by the algorithm but is not consumed by the gutter rendering path.
 
 ## Palette
 
-A secondary color source independent of theme-relative filter colors. Provides ~38 maximally-distinct hues for tag styling and message differentiation.
+A secondary color source independent of theme-relative filter colors. Provides 38 maximally-distinct hues for tag styling and message differentiation. Defined as the `Palette` class in `palette.py`.
 
 ### Construction
 
@@ -164,7 +160,8 @@ A secondary color source independent of theme-relative filter colors. Provides ~
 - Two lightness levels per hue:
   - Foreground: S=0.75, L=0.70 (text on dark backgrounds)
   - Dark background: S=0.60, L=0.25 (background highlights)
-- Mode-aware variants adjust for light themes: fg L=0.40, bg S=0.45/L=0.88 (note: L=0.35 applies to tag foreground via `fg_on_bg_for_mode`, not to msg_color)
+- Mode-aware variants for light themes: fg S=0.75/L=0.35, bg S=0.45/L=0.88 (via `fg_on_bg_for_mode`)
+- Mode-aware message colors: dark L=0.70, light L=0.40 (via `msg_color_for_mode`)
 
 ### Semantic Named Colors
 
@@ -175,7 +172,7 @@ The palette provides named colors by mapping to specific hue indices:
 - `assistant` -- palette index 1
 - `system` -- palette index 2
 
-Palette indices 3-10 are unreserved (not tightly packed after the role indices).
+Only role indices (0-2) are reserved. Positions 3-10 are unreserved (no longer consumed by filter indicators, which use a separate theme-relative system).
 
 **Semantic colors** (mapped to closest unreserved hue matching target):
 - `error` -- target hue 0 degrees (red)
@@ -189,11 +186,11 @@ Each semantic role has both foreground and dark-background variants (e.g., `pale
 
 ### Tag Colors
 
-12 palette positions (indices 0-11) are used for tag styling. Each provides a (fg, bg) pair adjusted for the current theme's dark/light mode.
+12 palette positions (indices 0-11, constant `TAG_COLOR_COUNT`) are used for tag styling. Each provides a (fg, bg) pair adjusted for the current theme's dark/light mode via `fg_on_bg_for_mode()`.
 
 ### Message Colors
 
-6 palette positions starting at index 12 (after roles, filters, accent) provide foreground colors for message differentiation.
+6 palette positions starting at index 12 (after the tag color range) provide foreground colors for message differentiation via `msg_color_for_mode()`.
 
 ## ANSI Theme Handling
 
@@ -203,18 +200,23 @@ Textual's `textual-ansi` theme uses terminal ANSI color names (`ansi_blue`, `ans
 - ANSI color names crash Rich's style parser if used directly
 - The `dark` flag is unreliable for ANSI themes
 
-**Normalization**: Every theme color passes through a normalizer that:
+**Normalization**: Every theme color passes through `_normalize_color()` in `rendering_impl.py` that:
 1. Converts `ansi_default` and `None` to a fallback hex value
 2. Passes `#RRGGBB` strings through unchanged
-3. Converts named ANSI colors (e.g., `ansi_blue`) to their hex equivalents via Textual's Color parser
+3. Converts named ANSI colors (e.g., `ansi_blue`) to their hex equivalents via Textual's `Color.parse().rgb`
 
-**Dark mode detection for ANSI**: When background, foreground, and surface are all `ansi_default`, the system assumes dark mode. This avoids pastel indicator colors (appropriate for light themes) appearing on what is almost certainly a dark terminal.
+**Dark mode fallback values** used when normalization applies:
+- foreground: `#e0e0e0` (dark) / `#1e1e1e` (light)
+- background: `#1e1e1e` (dark) / `#e0e0e0` (light)
+- surface: `#2b2b2b` (dark) / `#d0d0d0` (light)
 
-**Markdown theme**: ANSI themes skip the Rich markdown theme push entirely, since the color names are incompatible with Rich's style parser.
+**Dark mode detection for ANSI**: When background, foreground, and surface are all `ansi_default` (detected by `_is_ansi_default()`), the system assumes dark mode (`assume_dark = dark or all(...)`) . This avoids pastel indicator colors (appropriate for light themes) appearing on what is almost certainly a dark terminal.
+
+**Markdown theme**: ANSI themes skip the Rich markdown theme push entirely (in `apply_markdown_theme()`), since the color names are incompatible with Rich's style parser. If a markdown theme was previously pushed, it is popped.
 
 ## Markdown Theme
 
-When a non-ANSI theme is active, a Rich `Theme` is pushed onto the app console to style markdown content. Styles are derived from the current theme's colors:
+When a non-ANSI theme is active, `apply_markdown_theme()` in `theme_controller.py` pushes a Rich `Theme` onto the app console to style markdown content. Styles are derived from `ThemeColors.markdown_theme_dict`, built in `build_theme_colors()`:
 
 | Markdown Element | Style |
 |-----------------|-------|
@@ -240,7 +242,7 @@ The markdown theme is popped and re-pushed on every theme change.
 
 ## Action Colors
 
-A pool of 6 theme semantic colors used for non-filter UI items (panels, toggles, etc.): accent, warning, success, error, primary, secondary. These are naturally distinct from filter indicator colors because the filter hues are placed in the gaps *between* these theme colors.
+A pool of 6 theme semantic colors used for non-filter UI items (panels, toggles, etc.): accent, warning, success, error, primary, secondary (in that order). These are naturally distinct from filter indicator colors because the filter hues are placed in the gaps *between* these theme colors.
 
 ## Textual Theme Variables
 
@@ -257,7 +259,7 @@ cc-dump uses these variables via Textual's theme object, not directly as CSS tok
 
 ## Cross-References
 
-- **Filter categories** that receive indicator colors are defined in the filter registry (see `spec/filters.md`)
+- **Filter categories** that receive indicator colors are defined in `filter_registry.py` (see `spec/filters.md`)
 - **Gutter bars** that consume filter indicator colors are part of the rendering pipeline (see `spec/rendering.md`)
 - **Footer chips** that display filter colors are documented in the navigation spec (see `spec/navigation.md`)
 - **Theme cycling keybindings** (`[` and `]`) are documented in the navigation spec (see `spec/navigation.md`)

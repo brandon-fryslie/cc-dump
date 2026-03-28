@@ -1,6 +1,6 @@
 # Formatting: The FormattedBlock IR
 
-**Status:** draft
+**Status:** draft-2
 
 ## Overview
 
@@ -22,6 +22,15 @@ The formatting layer has two main entry points, corresponding to the two halves 
 - **`format_response_event()` / `format_complete_response_for_provider()`** -- Parses streaming SSE events or complete response messages into blocks. Simpler, because responses have less structure.
 
 Both entry points return `list[FormattedBlock]`.
+
+### Module Structure
+
+The public API surface is `cc_dump.core.formatting`, a thin facade that delegates entirely to `cc_dump.core.formatting_impl` via `__getattr__`. All types, functions, and state live in `formatting_impl`. Supporting modules:
+
+- **`segmentation.py`** -- Text segmentation parser (markdown, fences, XML)
+- **`special_content.py`** -- Navigation marker classification
+- **`coerce.py`** -- Scalar/map coercion helpers (`coerce_int`, `coerce_optional_int`, `coerce_str_object_dict`)
+- **`analysis.py`** -- `TurnBudget`, `compute_turn_budget`, `estimate_tokens`, `tool_result_breakdown`, `correlate_tools`
 
 ---
 
@@ -62,7 +71,9 @@ A block's category determines which visibility filter controls it. The `category
 
 ### Content Regions
 
-Blocks with large text content (system prompts, user messages) are segmented into independently expandable/collapsible regions. System prompts can be 50+ screens long with dozens of XML sections; without per-region collapse, users must expand all or nothing. Each `ContentRegion` represents one structural segment:
+Large text blocks (system prompts, user messages, hook outputs) can contain dozens of XML sections, code fences, and markdown regions. Without per-region collapse, users must expand all or nothing -- a serious problem when a single system prompt fills 50+ screens. Content regions solve this by identifying independently expandable/collapsible structural segments within a block.
+
+Each `ContentRegion` represents one segment identified by the segmentation parser:
 
 ```
 ContentRegion
@@ -71,13 +82,17 @@ ContentRegion
     tags: list[str]     # Semantic labels for navigation (e.g., XML tag name, language). Default: [].
 ```
 
-Regions are populated eagerly by `populate_content_regions()` after block construction. The function runs the segmentation parser (`segmentation.segment()`) on the block's `content` field and creates one `ContentRegion` per `SubBlock`. Tags are derived from:
+Regions are populated eagerly by `populate_content_regions()` after block construction. The function runs the segmentation parser (`segmentation.segment()`) on the block's `content` field and creates one `ContentRegion` per `SubBlock`. Tags are derived from two sources, merged with deduplication:
 
-- **XML blocks:** The tag name (e.g., `"system-reminder"`, `"env"`)
-- **Code fences:** The info string / language (e.g., `"python"`, `"bash"`)
-- **Content-derived patterns:** Text matching for `claude.md`, skill considerations, or tool use lists
+1. **Structural metadata:**
+   - XML blocks: the tag name (e.g., `"system-reminder"`, `"env"`)
+   - Code fences: the info string / language (e.g., `"python"`, `"bash"`)
+2. **Content-derived patterns** (scanned via `_derived_region_tags()`):
+   - `claude.md` (case-insensitive word boundary match)
+   - Skill consideration patterns (e.g., "following skills are available")
+   - Tool use list patterns (e.g., "following tools are available")
 
-Tags from structural metadata and content-derived patterns are merged, preserving order and deduplicating.
+`populate_content_regions()` is idempotent -- it returns immediately if `content_regions` is already populated. It is called only in the Anthropic request path (`format_request`), not in the OpenAI request path.
 
 ---
 
@@ -92,7 +107,7 @@ An explicit blank line separator between messages.
 |-------|------|---------|-------|
 | *(base only)* | | | No additional fields |
 
-**Produced by:** `format_request()` between messages and at the end of the block list.
+**Produced by:** `format_request()` and `format_openai_request()` between messages and at the end of the block list, and as the first block in the list.
 
 #### `SeparatorBlock`
 A visual separator line.
@@ -101,7 +116,7 @@ A visual separator line.
 |-------|------|---------|-------|
 | `style` | `str` | `"heavy"` | `"heavy"` for request boundaries, `"thin"` between sections |
 
-**Produced by:** `format_request()` around headers and between tool defs / system / messages sections.
+**Produced by:** `format_request()` and `format_openai_request()` around headers and between tool defs / system / messages sections.
 
 ### Header Blocks
 
@@ -115,7 +130,7 @@ Section header identifying a request or response.
 | `timestamp` | `str` | `""` | Formatted as `"%-I:%M:%S %p"` (e.g., `"2:15:03 PM"`) |
 | `header_type` | `str` | `"request"` | `"request"` or `"response"` |
 
-**Produced by:** `format_request()` at the top of each request; `format_response_headers()` for responses.
+**Produced by:** `format_request()` at the top of each request. For responses, `format_response_headers()` produces a `ResponseMetadataSection` whose children include a `HeaderBlock` (with `header_type="response"`) -- `HeaderBlock` is not a direct top-level output of that function. For OpenAI providers, the label includes the provider name: `"REQUEST #3 (OpenRouter)"`.
 
 #### `NewSessionBlock`
 Indicates a new Claude Code session started (session ID changed between requests).
@@ -124,7 +139,7 @@ Indicates a new Claude Code session started (session ID changed between requests
 |-------|------|---------|-------|
 | `session_id` | `str` | `""` | The new session UUID |
 
-**Produced by:** `format_request()` when the session ID extracted from `metadata.user_id` differs from `state.current_session`. Emitted *before* the state is updated (the state mutation happens in `format_request_for_provider()` *after* formatting completes).
+**Produced by:** `format_request()` when the session ID extracted from `metadata.user_id` differs from `state.current_session`. Emitted *before* the state is updated (the state mutation happens in `format_request_for_provider()` *after* formatting completes). Only produced in the Anthropic path -- OpenAI requests do not carry `metadata.user_id`.
 
 ### Metadata Blocks
 
@@ -137,12 +152,12 @@ Key-value metadata from the request body.
 | `max_tokens` | `str` | `""` | Max tokens setting, as string |
 | `stream` | `bool` | `False` | Whether request uses streaming |
 | `tool_count` | `int` | `0` | Number of tools defined |
-| `user_hash` | `str` | `""` | User hash from `metadata.user_id` |
-| `account_id` | `str` | `""` | Account UUID from `metadata.user_id` |
+| `user_hash` | `str` | `""` | User hash from `metadata.user_id` (Anthropic only) |
+| `account_id` | `str` | `""` | Account UUID from `metadata.user_id` (Anthropic only) |
 
-**Produced by:** `format_request()`, always. One per request, inside `MetadataSection`.
+**Produced by:** `format_request()` and `format_openai_request()`, always. One per request, inside `MetadataSection`. The OpenAI path does not populate `user_hash` or `account_id` (these remain empty strings).
 
-The `metadata.user_id` field is parsed using the pattern `user_<hash>_account_<uuid>_session_<uuid>`.
+The `metadata.user_id` field is parsed using the pattern `user_<hash>_account_<uuid>_session_<uuid>` via `parse_user_id()`.
 
 #### `HttpHeadersBlock`
 HTTP request or response headers.
@@ -163,7 +178,7 @@ Per-turn token budget breakdown showing estimated context window usage.
 | `budget` | `TurnBudget` | `TurnBudget()` | See TurnBudget fields below |
 | `tool_result_by_name` | `dict` | `{}` | `{tool_name: estimated_tokens}` for tool results |
 
-The `TurnBudget` dataclass carries:
+The `TurnBudget` dataclass (from `analysis.py`) carries:
 
 ```
 TurnBudget
@@ -180,7 +195,9 @@ TurnBudget
     actual_output_tokens: int       # Actual output tokens (from API)
 ```
 
-**Produced by:** `format_request()`, always. One per request, inside `MetadataSection`. The `tool_result_by_name` breakdown is computed by correlating tool results with their tool names (see Tool Correlation below).
+`TurnBudget` also has a `cache_hit_ratio` property: `actual_cache_read_tokens / (actual_input_tokens + actual_cache_read_tokens)`.
+
+**Produced by:** `format_request()` and `format_openai_request()`, always. One per request, inside `MetadataSection`. The `tool_result_by_name` breakdown is computed by `tool_result_breakdown()`, which correlates tool results with their tool names (see Tool Correlation below).
 
 ### Container Blocks (Hierarchical)
 
@@ -196,15 +213,15 @@ Groups request metadata: `MetadataBlock` + `HttpHeadersBlock` + `TurnBudgetBlock
 **Category:** `METADATA`
 
 #### `SystemSection`
-Groups the system prompt content from `body.system`.
+Groups the system prompt content from `body.system` (Anthropic) or `role="system"` messages (OpenAI).
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `children` | `list[FormattedBlock]` | `[]` | `TextContentBlock` instances, one per system block |
 
-**Category:** `SYSTEM`. The `metadata` dict may contain `{"cache": "cached"|"cache write"|"fresh"}` when cache zone analysis is available.
+**Category:** `SYSTEM`. The `metadata` dict may contain `{"cache": "cached"|"cache write"|"fresh"}` when cache zone analysis is available (Anthropic path only).
 
-**Produced by:** `format_request()`, always (even when system is empty -- renderer handles empty children).
+**Produced by:** `format_request()`, always (even when system is empty -- renderer handles empty children). In the OpenAI path, system messages are extracted from the messages array and placed here; they are skipped during the conversation message loop.
 
 #### `ToolDefsSection`
 Groups tool definitions from `body.tools`.
@@ -215,9 +232,9 @@ Groups tool definitions from `body.tools`.
 | `total_tokens` | `int` | `0` | Estimated total tokens for all tool definitions |
 | `children` | `list[FormattedBlock]` | `[]` | `ToolDefBlock` instances |
 
-**Category:** `TOOLS`. May carry cache zone in `metadata`.
+**Category:** `TOOLS`. May carry cache zone in `metadata` (Anthropic path only).
 
-**Produced by:** `format_request()`, always.
+**Produced by:** `format_request()` and `format_openai_request()`, always.
 
 #### `ToolDefBlock`
 Individual tool definition (child of `ToolDefsSection`).
@@ -226,15 +243,15 @@ Individual tool definition (child of `ToolDefsSection`).
 |-------|------|---------|-------|
 | `name` | `str` | `""` | Tool name (e.g., `"Read"`, `"Bash"`, `"Skill"`) |
 | `description` | `str` | `""` | Tool description text |
-| `input_schema` | `dict` | `{}` | JSON Schema for tool input |
+| `input_schema` | `dict` | `{}` | JSON Schema for tool input (Anthropic: `input_schema`, OpenAI: `parameters`) |
 | `token_estimate` | `int` | `0` | Estimated tokens for this tool definition |
 | `children` | `list[FormattedBlock]` | `[]` | For compound tools: `SkillDefChild` or `AgentDefChild` |
 
 **Category:** `TOOLS`
 
-**Compound tool parsing:** Two tools receive special treatment:
+**Compound tool parsing:** Two tools receive special treatment in the Anthropic path (the OpenAI path does not parse compound tools):
 
-- **`Skill`** -- Description is parsed for `- name: description` lines, producing `SkillDefChild` blocks. Plugin source is extracted from the `namespace:name` format.
+- **`Skill`** -- Description is parsed for `- name: description` lines via `_parse_named_definition_children()`, producing `SkillDefChild` blocks. Plugin source is extracted from the `namespace:name` format (e.g., `"ms-office-suite:pdf"` yields `plugin_source="ms-office-suite"`).
 - **`Task`** -- Description is parsed similarly, producing `AgentDefChild` blocks. `(Tools: ...)` suffixes are extracted into `available_tools`.
 
 #### `SkillDefChild`
@@ -243,8 +260,8 @@ Individual skill within the Skill tool definition.
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `name` | `str` | `""` | Skill name (e.g., `"commit"`, `"ms-office-suite:pdf"`) |
-| `description` | `str` | `""` | Skill description |
-| `plugin_source` | `str` | `""` | Plugin namespace (e.g., `"ms-office-suite"`) |
+| `description` | `str` | `""` | Skill description (surrounding quotes stripped) |
+| `plugin_source` | `str` | `""` | Plugin namespace (e.g., `"ms-office-suite"`), empty if no colon in name |
 
 **Category:** `TOOLS`
 
@@ -254,8 +271,8 @@ Individual agent type within the Task tool definition.
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `name` | `str` | `""` | Agent name |
-| `description` | `str` | `""` | Agent description |
-| `available_tools` | `str` | `""` | Comma-separated tool list (e.g., `"All tools"`) |
+| `description` | `str` | `""` | Agent description (quotes stripped, `(Tools: ...)` suffix removed) |
+| `available_tools` | `str` | `""` | Tool list text (e.g., `"All tools"`), extracted from `(Tools: ...)` suffix |
 
 **Category:** `TOOLS`
 
@@ -264,14 +281,14 @@ Container for one entry in the `messages[]` array.
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `role` | `str` | `""` | `"user"` or `"assistant"` |
+| `role` | `str` | `""` | `"user"`, `"assistant"`, or `"tool"` (OpenAI) |
 | `msg_index` | `int` | `0` | Index in the messages array |
 | `timestamp` | `str` | `""` | Formatted timestamp |
 | `children` | `list[FormattedBlock]` | `[]` | Content blocks (text, tool use, tool result, etc.) |
 
-**Category:** Set from role: `USER`, `ASSISTANT`, or `SYSTEM`. May carry cache zone in `metadata`.
+**Category:** Set from role: `USER`, `ASSISTANT`, `TOOLS` (OpenAI tool role), or `SYSTEM`. May carry cache zone in `metadata` (Anthropic path).
 
-**Produced by:** `format_request()`, one per message. Also produced by `format_complete_response()` wrapping response content.
+**Produced by:** `format_request()` and `format_openai_request()`, one per message. Also produced by `format_complete_response()` and `format_openai_complete_response()` wrapping response content.
 
 #### `ResponseMetadataSection`
 Container for response HTTP headers and model info.
@@ -292,37 +309,40 @@ Plain text content from a message.
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `content` | `str` | `""` | The text |
-| `indent` | `str` | `"    "` | Indentation prefix for rendering |
+| `indent` | `str` | `"    "` | Indentation prefix for rendering (4 spaces) |
 
 **Category:** Inherited from parent message role (`USER`, `ASSISTANT`, `SYSTEM`).
 
-**Produced by:** `format_request()` for message text content, system prompt sections. User-role text undergoes decomposition (see User Text Decomposition below).
+**Produced by:** `format_request()` for message text content, system prompt sections. User-role text undergoes decomposition (see User Text Decomposition below). When a message's `content` field is a bare string (rather than a list of content blocks), the string is wrapped directly in a `TextContentBlock` without decomposition. When content blocks are strings (rather than dicts), they are truncated to 200 characters.
 
 #### `ConfigContentBlock`
 Injected configuration content detected within a user message (CLAUDE.md files, plugin content, agent instructions).
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `content` | `str` | `""` | The configuration text |
-| `source` | `str` | `""` | Origin identifier (e.g., `"project CLAUDE.md"`, tag name) |
+| `content` | `str` | `""` | The configuration text (for XML blocks: the full `<tag>...</tag>` text; for regex matches: the text between matched headers) |
+| `source` | `str` | `""` | Origin identifier: XML tag name for XML-detected blocks (e.g., `"context-specific"`), or file path for regex-detected blocks (e.g., `"/project/CLAUDE.md"`) |
 | `indent` | `str` | `"    "` | Indentation prefix |
 
 **Category:** Inherited from parent role.
 
-**Produced by:** User text decomposition when XML tags or `"Contents of ... CLAUDE.md"` patterns are detected.
+**Produced by:** User text decomposition. Two detection paths:
+
+1. **XML path:** Non-hook XML tags detected by segmentation. The `source` is set to the XML tag name, and `content` is the full XML text including tags.
+2. **Regex path:** `"Contents of ... CLAUDE.md"` or `"Contents of ... AGENTS.md"` patterns detected by `_CONFIG_SOURCE_RE`. The `source` is the file path, and `content` is the text following the matched header up to the next header or end of text.
 
 #### `HookOutputBlock`
 Hook output injected into user messages.
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `content` | `str` | `""` | The inner content of the hook tag |
+| `content` | `str` | `""` | The inner content of the hook tag (text between open and close tags, *not* including the tags) |
 | `hook_name` | `str` | `""` | `"system-reminder"` or `"user-prompt-submit-hook"` |
 | `indent` | `str` | `"    "` | Indentation prefix |
 
 **Category:** Inherited from parent role.
 
-**Produced by:** User text decomposition when `<system-reminder>` or `<user-prompt-submit-hook>` XML tags are found.
+**Produced by:** User text decomposition when `<system-reminder>` or `<user-prompt-submit-hook>` XML tags are found. These two tag names are listed in `_HOOK_XML_TAGS`.
 
 #### `ThinkingBlock`
 Extended thinking content from the API response.
@@ -334,14 +354,14 @@ Extended thinking content from the API response.
 
 **Category:** `THINKING`
 
-**Produced by:** Content block formatting when `type == "thinking"`.
+**Produced by:** Content block formatting when `type == "thinking"`. The thinking text is extracted from the `thinking` key (not `text`).
 
 #### `ImageBlock`
 An image content block.
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `media_type` | `str` | `""` | MIME type (e.g., `"image/png"`) |
+| `media_type` | `str` | `""` | MIME type from `source.media_type` (e.g., `"image/png"`) |
 
 **Category:** Inherited from parent role.
 
@@ -360,25 +380,27 @@ A `tool_use` content block from a message.
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `name` | `str` | `""` | Tool name (e.g., `"Read"`, `"Bash"`) |
-| `input_size` | `int` | `0` | Line count of string input values |
+| `input_size` | `int` | `0` | Sum of `(line_count)` across all string-valued inputs, minimum 1 |
 | `msg_color_idx` | `int` | `0` | Color index for correlation (mod 6 cycle) |
 | `detail` | `str` | `""` | Tool-specific enrichment (file path, command preview) |
 | `tool_use_id` | `str` | `""` | ID for correlating with tool results |
 | `tool_input` | `dict` | `{}` | Raw input dict |
-| `description` | `str` | `""` | Tool description from definitions (populated via state) |
+| `description` | `str` | `""` | Tool description from definitions (populated via `state.tool_descriptions`) |
 
-**Produced by:** `_format_tool_use_content()` for Anthropic format, inline in `format_openai_request()` for OpenAI format.
+**Produced by:** `_format_tool_use_content()` for Anthropic format. In OpenAI format, `ToolUseBlock` is created inline within `format_openai_request()` and `format_openai_complete_response()`, but without correlation (`tool_id_map` is not maintained) and without `detail` or `description` enrichment.
 
-**Tool detail extraction** uses a dispatch table keyed by tool name:
+**Tool detail extraction** provides at-a-glance identification of what a tool call does. "Read /src/main.ts" is immediately useful; "Read" alone requires expanding the block to understand the call. The dispatch table `_TOOL_DETAIL_EXTRACTORS` is keyed by tool name:
 
 | Tool | Detail Extracted |
 |------|-----------------|
-| `Read`, `Write`, `Edit` | File path (front-ellipsed to 40 chars) |
-| `Grep`, `Glob` | Search pattern (truncated to 60 chars) |
-| `Bash` | First line of command (truncated to 60 chars) |
-| `Skill` | Skill name |
-| `mcp__plugin_repomix-mcp_repomix__file_system_read_file` | File path (`file_path`) |
+| `Read`, `Write`, `Edit` | File path from `file_path` input (front-ellipsed to 40 chars) |
+| `Grep`, `Glob` | Pattern from `pattern` input (truncated to 60 chars) |
+| `Bash` | First line of `command` input (if longer than 60 chars, truncated to first 57 chars + `...` suffix, producing a 60-char result) |
+| `Skill` | Skill name from `skill` input |
+| `mcp__plugin_repomix-mcp_repomix__file_system_read_file` | File path from `file_path` input (front-ellipsed to 40 chars) |
 | Other | Empty string |
+
+**Front-ellipsing:** `_front_ellipse_path()` truncates from the front: `/a/b/c/d/file.ts` becomes `...c/d/file.ts` when exceeding `max_len`. Front-ellipsing is used for file paths because the filename at the end is more informative than the root directory at the start -- users need to see *which file*, not *which filesystem root*.
 
 #### `ToolResultBlock`
 A `tool_result` content block from a message.
@@ -387,14 +409,14 @@ A `tool_result` content block from a message.
 |-------|------|---------|-------|
 | `size` | `int` | `0` | Line count of result text |
 | `is_error` | `bool` | `False` | Whether the tool reported an error |
-| `msg_color_idx` | `int` | `0` | Color index (from correlated ToolUseBlock) |
+| `msg_color_idx` | `int` | `0` | Color index (from correlated ToolUseBlock, or message index fallback) |
 | `tool_use_id` | `str` | `""` | ID for correlation |
-| `tool_name` | `str` | `""` | Tool name (from correlated ToolUseBlock) |
+| `tool_name` | `str` | `""` | Tool name (from correlated ToolUseBlock; empty if not correlated) |
 | `detail` | `str` | `""` | Copied from correlated ToolUseBlock |
 | `content` | `str` | `""` | Actual result text |
 | `tool_input` | `dict` | `{}` | From correlated ToolUseBlock |
 
-**Produced by:** `_format_tool_result_content()`. Content is extracted from the API's `content` field, which may be a string or a list of `{type: "text", text: "..."}` parts.
+**Produced by:** `_format_tool_result_content()` (Anthropic format only). Content is extracted from the API's `content` field, which may be a string, a list of `{type: "text", text: "..."}` parts (text parts are concatenated), or any other JSON-serializable value (serialized with `json.dumps()`). The OpenAI format does not produce `ToolResultBlock` -- tool results appear as `role="tool"` messages containing `TextContentBlock`.
 
 #### `ToolUseSummaryBlock`
 Summary of consecutive tool use/result pairs, produced by the rendering layer's `collapse_tool_runs()` pre-pass (not by formatting).
@@ -419,11 +441,13 @@ Model information from `message_start` or complete response.
 | `model` | `str` | `""` | Model name |
 
 #### `StreamToolUseBlock`
-Tool use start during streaming.
+Tool use start during streaming, or tool use in complete responses.
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `name` | `str` | `""` | Tool name |
+
+**Note:** Also used in `format_complete_response()` for tool_use content blocks (not just streaming). Carries only the tool name, not the full detail/input of `ToolUseBlock`.
 
 #### `TextDeltaBlock`
 A text delta from streaming response.
@@ -433,9 +457,9 @@ A text delta from streaming response.
 | `content` | `str` | `""` | The delta text |
 | `show_during_streaming` | `bool` | `True` | Overrides base default |
 
-**Category:** Set dynamically at construction time via the `category` field (typically `ASSISTANT`). The static `BLOCK_CATEGORY` mapping has no entry for `TextDeltaBlock` (maps to `None`), so the category must be set on the block instance.
+**Category:** Set dynamically at construction time to `Category.ASSISTANT`. The static `BLOCK_CATEGORY` mapping has no entry for `TextDeltaBlock`, so the category must be set on the block instance.
 
-**Produced by:** `format_response_event()` for `TextDeltaEvent` SSE events. Multiple deltas accumulate during streaming, then are consolidated into a single `TextContentBlock` at finalization.
+**Produced by:** `format_response_event()` for `TextDeltaEvent` SSE events. Only produced when the delta text is non-empty. Multiple deltas accumulate during streaming, then are consolidated into a single `TextContentBlock` at finalization (handled by the widget layer, not the formatting layer).
 
 #### `StopReasonBlock`
 Stop reason from `message_delta`.
@@ -444,6 +468,8 @@ Stop reason from `message_delta`.
 |-------|------|---------|-------|
 | `reason` | `str` | `""` | e.g., `"end_turn"`, `"tool_use"`, `"max_tokens"` |
 
+**Produced by:** `format_response_event()` for `MessageDeltaEvent` (only when `stop_reason != StopReason.NONE`). Also produced by `format_complete_response()` unconditionally (may be empty string). In OpenAI format, `format_openai_complete_response()` maps `finish_reason` from `choices[].finish_reason`.
+
 #### `ResponseUsageBlock`
 Actual token usage from the API response.
 
@@ -451,11 +477,11 @@ Actual token usage from the API response.
 |-------|------|---------|-------|
 | `input_tokens` | `int` | `0` | Fresh input tokens |
 | `output_tokens` | `int` | `0` | Output tokens generated |
-| `cache_read_tokens` | `int` | `0` | Input tokens served from cache |
-| `cache_creation_tokens` | `int` | `0` | Input tokens written to cache |
+| `cache_read_tokens` | `int` | `0` | Input tokens served from cache (from `cache_read_input_tokens`) |
+| `cache_creation_tokens` | `int` | `0` | Input tokens written to cache (from `cache_creation_input_tokens`) |
 | `model` | `str` | `""` | Model name |
 
-**Produced by:** `format_complete_response()`, always (renderer handles zeros).
+**Produced by:** `format_complete_response()`, always (renderer handles zeros). Not produced by `format_openai_complete_response()` -- OpenAI usage format differs and is not currently mapped.
 
 ### Error Blocks
 
@@ -493,20 +519,18 @@ ProviderRuntimeState
 
 The ordering matters:
 1. `request_counter` is incremented
-2. `tool_descriptions` is extracted from the request body (before formatting, so ToolUseBlock can read it)
+2. `tool_descriptions` is extracted from the request body via `_update_tool_descriptions()` (before formatting, so ToolUseBlock can read it)
 3. `format_request()` or `format_openai_request()` runs (reads state, does not mutate)
-4. `current_session` is updated (after formatting, so NewSessionBlock emission sees the old value)
+4. `current_session` is updated via `_update_session_id()` (after formatting, so NewSessionBlock emission sees the old value)
 
 ### 2. Provider Dispatch
 
-The provider string determines which formatter runs:
+The provider string determines which formatter runs. Provider specs are looked up via `cc_dump.providers.get_provider_spec(provider)`, which returns a spec with a `protocol_family` field (`"anthropic"` or `"openai"`) and a `display_name` field.
 
-| Provider Family | Request Formatter | Response Formatter |
-|----------------|-------------------|-------------------|
+| Protocol Family | Request Formatter | Response Formatter |
+|-----------------|-------------------|-------------------|
 | `anthropic` | `format_request()` | `format_complete_response()` |
 | `openai` | `format_openai_request()` | `format_openai_complete_response()` |
-
-Provider specs are looked up via `cc_dump.providers.get_provider_spec(provider)`.
 
 ### 3. Block Emission Order (Anthropic)
 
@@ -524,6 +548,8 @@ MetadataSection
     TurnBudgetBlock
 ToolDefsSection
     ToolDefBlock * N
+        SkillDefChild * N               # Skill tool only
+        AgentDefChild * N               # Task tool only
 SeparatorBlock(thin)
 SystemSection
     TextContentBlock * N
@@ -534,23 +560,28 @@ SeparatorBlock(thin)
         TextContentBlock | ConfigContentBlock | HookOutputBlock | ...
         ToolUseBlock * N
         ToolResultBlock * N
+        ThinkingBlock * N
+        ImageBlock * N
+        UnknownTypeBlock * N
 NewlineBlock
 ```
 
-### 4. Post-Processing
+### 4. Post-Processing (Anthropic Only)
 
 After all blocks are created, `format_request()` walks the entire tree and:
 - Calls `populate_content_regions()` on every block (idempotent)
 - Stamps `session_id` on every block (including children)
 
+The OpenAI request path does **not** perform this post-processing step. Content regions are not populated, and `session_id` is not stamped on blocks.
+
 ### 5. Cache Zone Annotation
 
 When `cache_zones` is provided (from `analysis.compute_cache_zones()`), the `metadata["cache"]` field is set on container blocks:
-- `ToolDefsSection` gets `cache_zones["tools"]`
-- `SystemSection` gets `cache_zones["system"]`
-- `MessageBlock` at index `i` gets `cache_zones["message:{i}"]`
+- `ToolDefsSection` gets `cache_zones["tools"].value`
+- `SystemSection` gets `cache_zones["system"].value`
+- `MessageBlock` at index `i` gets `cache_zones["message:{i}"].value`
 
-Cache zone values are `"cached"`, `"cache write"`, or `"fresh"` (from the `CacheZone` enum).
+Cache zone values are `"cached"`, `"cache write"`, or `"fresh"` (from the `CacheZone` enum). Cache zones are only passed to the Anthropic request formatter.
 
 ---
 
@@ -562,11 +593,13 @@ User messages undergo special parsing to identify injected configuration and hoo
 
 `_format_user_text_content()` runs the segmentation parser on the raw text, then classifies each segment:
 
-1. **XML blocks with hook tags** (`<system-reminder>`, `<user-prompt-submit-hook>`) become `HookOutputBlock` with the inner content extracted.
+1. **XML blocks with hook tags** (`<system-reminder>`, `<user-prompt-submit-hook>`) become `HookOutputBlock` with the inner content extracted (text between the open and close tags).
 
-2. **XML blocks with other tags** become `ConfigContentBlock` with the tag name as `source`.
+2. **XML blocks with other tags** become `ConfigContentBlock` with the tag name as `source` and the full XML text (including tags) as `content`.
 
-3. **Non-XML segments** are passed to `_append_text_or_config_segments()`, which scans for `"Contents of ... CLAUDE.md"` or `"Contents of ... AGENTS.md"` patterns. Matched regions become `ConfigContentBlock`; unmatched text becomes `TextContentBlock`.
+3. **Non-XML segments** (MD, CODE_FENCE, MD_FENCE) are passed to `_append_text_or_config_segments()`, which scans for `"Contents of ... CLAUDE.md"` or `"Contents of ... AGENTS.md"` patterns using `_CONFIG_SOURCE_RE`. Matched regions become `ConfigContentBlock` (source = file path, content = text following the header up to the next header); unmatched text becomes `TextContentBlock`.
+
+4. **Empty result fallback:** If segmentation produces no blocks at all, the entire text is wrapped in a single `TextContentBlock`.
 
 ### Example
 
@@ -581,9 +614,11 @@ Here is my actual question.
 
 The decomposition produces:
 ```
-HookOutputBlock(hook_name="system-reminder", content="Contents of /home/user/.claude/CLAUDE.md:\nAlways use TypeScript.\n")
-TextContentBlock(content="Here is my actual question.")
+HookOutputBlock(hook_name="system-reminder", content="\nContents of /home/user/.claude/CLAUDE.md:\nAlways use TypeScript.\n")
+TextContentBlock(content="Here is my actual question.\n")
 ```
+
+Note: The `HookOutputBlock.content` is the inner text between `<system-reminder>` and `</system-reminder>`, including leading/trailing whitespace. The outer tags are stripped.
 
 For non-XML structured text like:
 ```
@@ -603,13 +638,15 @@ ConfigContentBlock(source="/home/user/.claude/CLAUDE.md", content="Prefer functi
 
 ## System Prompt Handling
 
-### Current Behavior
+System prompts from `body.system` are converted to plain `TextContentBlock` instances inside a `SystemSection` container by `_make_system_prompt_children()`. The system field may be:
 
-System prompts from `body.system` are converted to plain `TextContentBlock` instances inside a `SystemSection` container. The system field may be a string or a list of `{text: "...", type: "text"}` blocks. Each non-empty text block becomes one `TextContentBlock` with `category=SYSTEM`.
+- A string -- produces one `TextContentBlock` (if non-empty)
+- A list of dicts `{text: "...", type: "text"}` -- each non-empty `text` value produces one `TextContentBlock`
+- A list of other values -- each is coerced to string
 
-### Historical Note: Content Tracking
+All system `TextContentBlock` instances get `category=Category.SYSTEM` and `indent="    "`.
 
-The ARCHITECTURE.md describes a content-hashing system where system prompt sections are tracked across requests with SHA256 hashes, color-coded tags (`[sp-1]`, `[sp-2]`), and unified diffs for changed content. This feature was implemented via `TrackedContentBlock` but has been removed from the current codebase. System prompts are now rendered as plain text without cross-request tracking or diffing. [UNVERIFIED: whether content tracking is planned for re-implementation or has been permanently removed]
+**Content tracking is not implemented.** The ARCHITECTURE.md describes a content-hashing system where system prompt sections would be tracked across requests with SHA256 hashes, color-coded tags (`[sp-1]`, `[sp-2]`), and unified diffs for changed content. This feature does not exist in the codebase. There is no `TrackedContentBlock`, no hash computation on system prompt text, and no diff generation. The `_make_system_prompt_children()` function explicitly states "no cross-request tracking" in its docstring. System prompts are rendered as plain text without any cross-request comparison.
 
 ---
 
@@ -630,11 +667,15 @@ tool_id_map: dict[str, tuple[str, int, str, dict]]
 
 **Recording phase:** When a `tool_use` content block is formatted, its `tool_use_id` is recorded in the map along with its name, assigned color index, detail string, and raw input.
 
-**Lookup phase:** When a `tool_result` content block is formatted, its `tool_use_id` is looked up in the map. If found, the result block inherits the tool's name, color index, detail string, and input dict. If not found (orphaned result), the block falls back to using the message-level color index.
+**Lookup phase:** When a `tool_result` content block is formatted, its `tool_use_id` is looked up in the map. If found, the result block inherits the tool's name, color index, detail string, and input dict. If not found (orphaned result), the block gets: `tool_name=""`, `detail=""`, `tool_input={}`, and `msg_color_idx` falls back to `msg_index % MSG_COLOR_CYCLE`.
 
 ### Color Assignment
 
-Tool colors use a 6-color cycle (`MSG_COLOR_CYCLE = 6`). Each `tool_use` block gets the next color in sequence (modulo 6). The corresponding `tool_result` block gets the same color index, creating visual pairing.
+Tool colors use a 6-color cycle (`MSG_COLOR_CYCLE = 6`). Each `tool_use` block gets the next color in sequence (modulo 6). The corresponding `tool_result` block gets the same color index, creating visual pairing. The color counter persists across messages within a single request (not reset between messages).
+
+### Correlation Scope
+
+Tool correlation only operates in the Anthropic request formatter. The OpenAI request formatter does not maintain a `tool_id_map` and does not produce `ToolResultBlock` at all -- OpenAI tool results appear as `role="tool"` messages containing plain `TextContentBlock`.
 
 ### Mechanism (Analysis Layer)
 
@@ -657,11 +698,11 @@ ToolInvocation
 
 ### Why It Exists
 
-System prompts and user messages contain a mix of markdown text, fenced code blocks, and XML tags. Treating the entire text as one opaque blob makes it impossible to collapse XML sections independently or apply syntax highlighting to code fences. Segmentation identifies the structural regions so the rendering layer can handle each appropriately.
+System prompts and user messages contain a mix of markdown text, fenced code blocks, and XML tags. Treating the entire text as one opaque blob makes it impossible to collapse XML sections independently or apply syntax highlighting to code fences. Segmentation identifies the structural regions so the rendering layer can handle each appropriately, and so the formatting layer can decompose user text into hook/config/text blocks.
 
 ### The Segmentation Algorithm
 
-`segmentation.segment()` performs a single linear scan with document-order precedence. At each position, whichever structure (XML open or fence open) starts earliest wins, and its span is opaque (content inside is not re-scanned).
+`segmentation.segment()` performs a single linear scan with document-order precedence. At each position, whichever structure (XML open or fence open) starts earliest wins, and its span is opaque (content inside is not re-scanned). At the same position, XML is preferred over fences.
 
 The result is a `SegmentResult`:
 
@@ -695,18 +736,20 @@ SubBlock
 FenceMeta
     marker_char: str     # "`" or "~"
     marker_len: int      # 3 or more
-    info: str | None     # None for md_fence, first token for code_fence
+    info: str | None     # None for md_fence, first whitespace-delimited token for code_fence
     inner_span: Span     # Content between opening and closing fence lines
 ```
+
+Fence closing rules: same marker character, length >= opening length, on its own line (optional leading/trailing whitespace).
 
 ### XmlBlockMeta
 
 ```
 XmlBlockMeta
     tag_name: str
-    start_tag_span: Span
-    end_tag_span: Span
-    inner_span: Span
+    start_tag_span: Span   # From start of tag to after '>'
+    end_tag_span: Span     # From start of '</tag>' to after '>'
+    inner_span: Span       # Content between open tag's '>' and close tag's '</'
 ```
 
 ### XML Parsing Forms
@@ -717,20 +760,30 @@ Three forms of XML blocks are recognized:
 - **Form B:** `<tag>\ncontent\n</tag>` (tags on their own lines)
 - **Form C:** `<tag>content</tag>` (single line)
 
-Comments (`<!--`), processing instructions (`<?`), CDATA (`<!`), closing tags (`</`), and self-closing tags (`/>`) are excluded.
+For multi-line closing (Forms A & B), the parser first tries a strict match (closing tag on its own line), then falls back to a loose match (closing tag anywhere).
+
+Comments (`<!--`), processing instructions (`<?`), CDATA (`<!`), closing tags (`</`), and self-closing tags (`/>`) are excluded. Tag names follow the pattern `[A-Za-z_][\w:.\-]*` and may include attributes.
 
 ### Error Handling
 
 Unclosed fences and unclosed XML tags produce `ParseError` entries but do not halt parsing:
-- Unclosed fences extend to end of text
-- Unclosed XML tags are skipped (the open tag line is advanced past)
+
+```
+ParseError
+    kind: ParseErrorKind   # UNCLOSED_FENCE or UNCLOSED_XML
+    span: Span             # Location of the unclosed structure
+    details: str           # Human-readable description
+```
+
+- Unclosed fences: the fence extends to end of text (the entire remaining content is claimed)
+- Unclosed XML tags: the open tag line is skipped (parsing advances past the line)
 
 ### Tag Visibility Rewriting
 
 Two utility functions handle XML tag visibility in markdown rendering:
 
-- `wrap_tags_in_backticks(text)` -- Wraps bare `<tag>` occurrences in backticks so they render visibly in Rich's Markdown widget (otherwise they'd be treated as HTML and hidden).
-- `wrap_tags_outside_fences(text)` -- Same, but skips content inside fenced code regions (fences are handled natively by the markdown renderer).
+- `wrap_tags_in_backticks(text)` -- Wraps bare `<tag>` occurrences in backticks so they render visibly in Rich's Markdown widget (otherwise they'd be treated as HTML and hidden). Tags already inside backticks are left alone.
+- `wrap_tags_outside_fences(text)` -- Same, but skips content inside fenced code regions (fences are handled natively by the markdown renderer). Used for xml_block inner content which may contain code fences.
 
 ---
 
@@ -752,15 +805,17 @@ Users need to navigate quickly to interesting parts of the conversation: where i
 
 ### Classification Dispatch
 
-`markers_for_block(block)` dispatches to classifiers by block class name:
+`markers_for_block(block)` dispatches to classifiers by block class name via `_CLASSIFIERS`:
 
 | Block Type | Classifier |
 |-----------|-----------|
-| `ConfigContentBlock` | Checks source for "claude.md" |
+| `ConfigContentBlock` | Checks `source` for "claude.md" (case-insensitive) |
 | `HookOutputBlock` | Always `hook`; content scanned for skill/tool patterns |
-| `TextContentBlock` | User-category blocks scanned for claude.md/skill/tool patterns |
-| `ToolUseBlock` | Name == "Skill" yields `skill_send` |
-| `ToolDefsSection` | tool_count > 0 yields `tool_use_list` |
+| `TextContentBlock` | Only user-category blocks: content scanned for claude.md, skill, and tool patterns |
+| `ToolUseBlock` | `name == "Skill"` yields `skill_send` |
+| `ToolDefsSection` | `tool_count > 0` yields `tool_use_list` |
+
+All other block types return no markers.
 
 ### Display vs. Navigation Markers
 
@@ -768,15 +823,17 @@ Users need to navigate quickly to interesting parts of the conversation: where i
 
 ### Location Collection
 
-`collect_special_locations(turns, marker_key)` walks all completed turns (skipping streaming turns), traverses block trees in pre-order, and collects `SpecialLocation` entries:
+`collect_special_locations(turns, marker_key)` walks all completed turns (skipping streaming turns via `is_streaming` check), traverses block trees in pre-order including children, and collects `SpecialLocation` entries:
 
 ```
 SpecialLocation
     marker: SpecialMarker   # key + label
-    turn_index: int
-    block_index: int
-    block: object            # Reference to the actual block
+    turn_index: int         # Index in the turns list
+    block_index: int        # Hierarchical block index (top-level block index, preserved for children)
+    block: object           # Reference to the actual block
 ```
+
+When `marker_key="all"` (default), all markers are collected. When a specific key is passed, only locations with that marker key are returned.
 
 ---
 
@@ -784,7 +841,7 @@ SpecialLocation
 
 ### Streaming Responses
 
-During streaming, `format_response_event()` dispatches on SSE event type:
+During streaming, `format_response_event()` dispatches on SSE event type via `_RESPONSE_EVENT_FORMATTERS`:
 
 | Event Type | Blocks Produced |
 |-----------|----------------|
@@ -797,27 +854,48 @@ During streaming, `format_response_event()` dispatches on SSE event type:
 | `MessageDeltaEvent` | `StopReasonBlock(reason=...)` if stop_reason != NONE |
 | `MessageStopEvent` | *(none)* |
 
+Unrecognized event types produce no blocks (the default lambda returns `[]`).
+
 `TextDeltaBlock` is the only block with `show_during_streaming=True` by default. Multiple deltas accumulate during streaming and are consolidated into a single `TextContentBlock` at finalization (handled by the widget layer, not the formatting layer).
 
-### Complete Responses
+### Complete Responses (Anthropic)
 
 `format_complete_response()` handles non-streaming (or replay) responses. It produces:
 
 ```
 StreamInfoBlock(model=...)
 MessageBlock(role="assistant")
-    TextContentBlock * N
-    StreamToolUseBlock * N
-    ThinkingBlock * N
-StopReasonBlock(reason=...)
-ResponseUsageBlock(input_tokens=..., output_tokens=..., cache_read_tokens=..., cache_creation_tokens=...)
+    TextContentBlock * N        # from content[].type=="text"
+    StreamToolUseBlock * N      # from content[].type=="tool_use" (name only)
+    ThinkingBlock * N           # from content[].type=="thinking"
+StopReasonBlock(reason=...)     # always produced (may be empty)
+ResponseUsageBlock(...)         # always produced (renderer handles zeros)
 ```
 
-The `MessageBlock` container mirrors the request-side message structure.
+The `MessageBlock` container wraps content children for structural consistency with request-side formatting. Content block dispatch uses `_COMPLETE_RESPONSE_FACTORIES`:
+- `text` -> `TextContentBlock` (category ASSISTANT, only if non-empty)
+- `tool_use` -> `StreamToolUseBlock` (name only)
+- `thinking` -> `ThinkingBlock` (category THINKING, only if non-empty)
 
-### OpenAI Responses
+Usage fields are read from the response's `usage` object. `None` usage is coerced to `{}`. The cache fields use Anthropic's naming: `cache_read_input_tokens` and `cache_creation_input_tokens`.
 
-`format_openai_complete_response()` follows the same pattern but parses from `choices[0].message` format. It does not produce `ResponseUsageBlock` (OpenAI usage format differs). [UNVERIFIED: whether OpenAI usage is handled elsewhere or simply not tracked]
+### Complete Responses (OpenAI)
+
+`format_openai_complete_response()` follows the same structural pattern but parses from `choices[].message` format:
+
+```
+StreamInfoBlock(model=...)
+MessageBlock(role="assistant")
+    TextContentBlock * N        # from message.content
+    ToolUseBlock * N            # from message.tool_calls[].function
+StopReasonBlock(reason=...)     # from choices[].finish_reason
+```
+
+Differences from Anthropic:
+- Tool uses produce `ToolUseBlock` (not `StreamToolUseBlock`), with `tool_input` parsed from JSON `arguments`
+- No `ResponseUsageBlock` is produced
+- No `ThinkingBlock` support
+- `finish_reason` is taken from the first choice that has one
 
 ---
 
@@ -850,10 +928,19 @@ The formatting layer handles both Anthropic and OpenAI API formats. Key differen
 |--------|-----------|--------|
 | System prompt | `body.system` (separate field) | `messages` with `role="system"` |
 | Tool definitions | `body.tools[].{name, description, input_schema}` | `body.tools[].function.{name, description, parameters}` |
-| Tool use | `content[].{type: "tool_use", id, name, input}` | `message.tool_calls[].{id, function: {name, arguments}}` |
-| Tool result | `content[].{type: "tool_result", tool_use_id, content}` | `{role: "tool", tool_call_id, content}` |
-| Tool input | Parsed dict | JSON string in `arguments`, parsed at formatting time |
+| Compound tools | Skill/Task parsed into children | Not parsed (no compound tool support) |
+| Tool use (request) | `content[].{type: "tool_use", id, name, input}` | `message.tool_calls[].{id, function: {name, arguments}}` |
+| Tool result (request) | `content[].{type: "tool_result", tool_use_id, content}` -> `ToolResultBlock` | `{role: "tool", tool_call_id, content}` -> `TextContentBlock` in `MessageBlock` |
+| Tool correlation | `tool_id_map` links use/result within request | No correlation |
+| Tool detail enrichment | File paths, commands, patterns extracted | Not extracted |
+| Tool descriptions | Populated from `state.tool_descriptions` | Not populated |
+| User text decomposition | Hook/config/text splitting | Not performed (plain `TextContentBlock`) |
 | Header label | `"REQUEST #N"` | `"REQUEST #N (ProviderName)"` |
+| Session tracking | `NewSessionBlock` + session_id stamping | Neither |
+| Content regions | Populated on all blocks | Not populated |
+| Cache zones | `metadata["cache"]` on containers | Not supported |
 | Response content | `content[].{type, text/thinking/tool_use}` | `choices[].message.{content, tool_calls}` |
+| Response usage | `ResponseUsageBlock` produced | Not produced |
+| Tool use (response) | `StreamToolUseBlock` (name only) | `ToolUseBlock` (with parsed input) |
 
-Despite these differences, both paths produce the same IR block types. The OpenAI formatter does not currently support tool correlation within messages (no `tool_id_map`), and does not produce `ResponseUsageBlock`. [UNVERIFIED: whether these are intentional omissions or planned additions]
+Despite these differences, both paths produce the same IR block types. The OpenAI path is intentionally simpler -- it provides basic structural formatting without the enrichment features of the Anthropic path.
