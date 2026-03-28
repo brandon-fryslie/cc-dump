@@ -1,8 +1,5 @@
 # Filters
 
-> Status: draft
-> Last verified against: not yet
-
 ## Overview
 
 Claude Code API traffic is dense. A single conversation turn can contain system prompts, tool definitions, user messages, assistant responses, tool use/result pairs, thinking blocks, token budgets, HTTP headers, and request metadata. Showing everything at full detail all the time would make the TUI unusable — the signal drowns in noise.
@@ -34,7 +31,7 @@ These three booleans produce 8 combinations, but only 5 are meaningful states in
 | Name | Value | Meaning |
 |------|-------|---------|
 | `HIDDEN` | `(False, False, False)` | Invisible |
-| `ALWAYS_VISIBLE` | `(True, True, True)` | Full, expanded — used for uncategorized blocks |
+| `ALWAYS_VISIBLE` | `(True, True, True)` | Full, expanded — used for uncategorized blocks and search reveal |
 
 **Source:** `src/cc_dump/core/formatting_impl.py`
 
@@ -73,21 +70,23 @@ FilterSpec(key: str, name: str, description: str, default: VisState, indicator_i
 
 The `FILTER_SPECS` tuple is the single source of truth. All other shapes are derived:
 
-- `CATEGORY_CONFIG` — `list[tuple[str, str, str, VisState]]` for backward compatibility (a list, not a tuple of tuples)
+- `CATEGORY_CONFIG` — `list[tuple[str, str, str, VisState]]` for backward compatibility
 - `CATEGORY_ITEMS` — `(key, name)` pairs in key order for the footer row
-- `FILTER_INDICATOR_INDEX` — name → indicator position mapping
+- `FILTER_INDICATOR_INDEX` — name to indicator position mapping
 - `FILTER_INDICATOR_NAMES` — names in indicator-index order
 
 **Default visibility states:**
 
-| Category | Default VisState | Meaning |
-|----------|-----------------|---------|
-| user | `(True, True, True)` | Full expanded |
-| assistant | `(True, True, True)` | Full expanded |
-| tools | `(True, False, False)` | Summary collapsed |
-| system | `(True, False, False)` | Summary collapsed |
-| metadata | `(False, False, False)` | Hidden |
-| thinking | `(True, False, False)` | Summary collapsed |
+| Category | Key | Default VisState | Meaning | Indicator Index |
+|----------|-----|-----------------|---------|-----------------|
+| user | `1` | `(True, True, True)` | Full expanded | 3 |
+| assistant | `2` | `(True, True, True)` | Full expanded | 4 |
+| tools | `3` | `(True, False, False)` | Summary collapsed | 0 |
+| system | `4` | `(True, False, False)` | Summary collapsed | 1 |
+| metadata | `5` | `(False, False, False)` | Hidden | 2 |
+| thinking | `6` | `(True, False, False)` | Summary collapsed | 5 |
+
+**Indicator order** (sorted by indicator_index): tools(0), system(1), metadata(2), user(3), assistant(4), thinking(5).
 
 **Source:** `src/cc_dump/core/filter_registry.py`
 
@@ -99,15 +98,17 @@ Filter state lives in the view store (`src/cc_dump/app/view_store.py`), a `HotRe
 - `full:{name}` — boolean, maps to `VisState.full`
 - `exp:{name}` — boolean, maps to `VisState.expanded`
 
-This gives 18 observable keys for 6 categories (6 × 3).
+This gives 18 observable keys for 6 categories (6 x 3).
 
-The `active_filters` computed assembles these 18 observables into a single `dict[str, VisState]` keyed by category name. Any change to any of the 18 keys triggers recomputation. A single autorun watches `active_filters` and triggers a full re-render of the conversation view.
+The `active_filters` computed assembles these 18 observables into a single `dict[str, VisState]` keyed by category name. Any change to any of the 18 keys triggers recomputation. A single autorun watches `active_filters` and triggers a full re-render of the conversation view (via `app._rerender_if_mounted()`).
 
 The store key `filter:active` tracks which filterset preset is currently applied (as a slot string like `"1"`) or `None` if the user has manually adjusted individual categories since applying a preset. The startup default is `"1"` (the Conversation preset).
 
+**Source:** `src/cc_dump/app/view_store.py`
+
 ## Filtersets (Presets)
 
-Filtersets are named configurations that set all 6 categories at once. They are accessed via function keys (F1–F9, mapped to slots `"1"`–`"9"`, skipping `"3"`).
+Filtersets are named configurations that set all 6 categories at once. They correspond to slots `"1"`-`"9"` (skipping `"3"`). F1-F9 keys appear as labels in the help panel but are **not bound** in `MODE_KEYMAP` — the only keyboard access to filtersets is via `=`/`-` cycling.
 
 | Slot | Name | user | assistant | tools | system | metadata | thinking |
 |------|------|------|-----------|-------|--------|----------|----------|
@@ -120,9 +121,9 @@ Filtersets are named configurations that set all 6 categories at once. They are 
 | F8 | Assistant | Hidden | Full Exp | Hidden | Hidden | Hidden | Hidden |
 | F9 | Minimal | Sum Col | Sum Col | Sum Col | Hidden | Hidden | Hidden |
 
-Applying a filterset batch-sets all 18 store keys in one transaction and records the active slot in `filter:active`. The slot label appears in a footer notification.
+Applying a filterset (`apply_filterset()`) batch-sets all 18 store keys via `store.update()` and records the active slot in `filter:active`. The slot label (e.g., `"F1 Conversation"`) appears as a notification via `app.notify()`.
 
-Cycling between filtersets uses `=` (`next_filterset`) and `-` (`prev_filterset`) to move forward/backward through the slot list.
+Cycling between filtersets uses `=` (`next_filterset`) and `-` (`prev_filterset`) to move forward/backward through `FILTERSET_SLOTS`. The cycle order is: `["1", "2", "4", "5", "6", "7", "8", "9"]`.
 
 **Source:** `src/cc_dump/io/settings.py` (DEFAULT_FILTERSETS), `src/cc_dump/tui/action_config.py` (FILTERSET_SLOTS, FILTERSET_NAMES), `src/cc_dump/tui/action_handlers.py` (apply_filterset, next_filterset, prev_filterset)
 
@@ -132,12 +133,32 @@ Cycling between filtersets uses `=` (`next_filterset`) and `-` (`prev_filterset`
 
 Each category can be manipulated independently via keyboard:
 
-| Action | Effect | Implementation |
-|--------|--------|----------------|
-| Number key (`1`–`6`) | Toggle `visible` | `toggle_vis` — flips `vis:{name}` |
-| Shift+number | Toggle `full` (forces `visible=True`) | `toggle_detail` — sets `vis:{name}=True`, flips `full:{name}` |
-| Letter key (`q`/`w`/`e`/`r`/`t`/`y`) | Toggle `expanded` (forces `visible=True`) | `toggle_analytics` — sets `vis:{name}=True`, flips `exp:{name}` |
-| Click on footer chip | Cycle through 5 visibility states | `cycle_vis` — advances through VIS_CYCLE |
+| Action | Keys | Effect | Implementation |
+|--------|------|--------|----------------|
+| Toggle visible | Number key (`1`-`6`) | Flips `vis:{name}` | `toggle_vis` via `VIS_TOGGLE_SPECS["vis"]` |
+| Toggle detail | Shift+number (`!@#$%^`) or Shift+letter (`Q W E R T Y`) | Forces `vis:{name}=True`, flips `full:{name}` | `toggle_detail` via `VIS_TOGGLE_SPECS["detail"]` |
+| Toggle expanded | Letter key (`q w e r t y`) | Forces `vis:{name}=True`, flips `exp:{name}` | `toggle_analytics` via `VIS_TOGGLE_SPECS["analytics"]` |
+| Cycle visibility | Click on footer chip | Advances through 5-state VIS_CYCLE | `cycle_vis` |
+
+**Category-to-key mapping:**
+
+| Category | Number | Shift+Number | Shift+Letter | Letter |
+|----------|--------|-------------|-------------|--------|
+| user | `1` | `!` | `Q` | `q` |
+| assistant | `2` | `@` | `W` | `w` |
+| tools | `3` | `#` | `E` | `e` |
+| system | `4` | `$` | `R` | `r` |
+| metadata | `5` | `%` | `T` | `t` |
+| thinking | `6` | `^` | `Y` | `y` |
+
+**VIS_TOGGLE_SPECS** defines the toggle behavior as data:
+- `"vis"`: toggle `vis:` prefix only
+- `"detail"`: force `vis:` to True, toggle `full:` prefix
+- `"analytics"`: force `vis:` to True, toggle `exp:` prefix
+
+All toggle operations also clear `filter:active` (departing from preset) and clear per-block overrides for the affected category.
+
+**Source:** `src/cc_dump/tui/input_modes.py` (key bindings), `src/cc_dump/tui/action_config.py` (VIS_TOGGLE_SPECS), `src/cc_dump/tui/action_handlers.py` (`_toggle_vis_dicts`, `toggle_vis`, `toggle_detail`, `toggle_analytics`)
 
 ### Visibility Cycle
 
@@ -149,13 +170,17 @@ Each category can be manipulated independently via keyboard:
 4. **Full Collapsed** — `(True, True, False)` — truncated to 5 lines
 5. **Full Expanded** — `(True, True, True)` — unlimited lines
 
-After state 5, it wraps back to state 1. Any manual toggle or cycle clears the `filter:active` slot (the user has departed from the preset).
+After state 5, it wraps back to state 1. If the current state is not found in the cycle list (e.g., an invalid combination), the next state defaults to state 1 (index 0).
+
+Any manual toggle or cycle clears the `filter:active` slot (the user has departed from the preset) and clears per-block overrides for the affected category.
+
+**Source:** `src/cc_dump/tui/action_config.py` (VIS_CYCLE), `src/cc_dump/tui/action_handlers.py` (`cycle_vis`)
 
 ### Override Clearing
 
-When a category's visibility state changes (via toggle or cycle), all per-block expansion overrides for that category are cleared. This prevents stale click-to-expand state from conflicting with the new category-level setting.
+When a category's visibility state changes (via toggle or cycle), all per-block expansion overrides for that category are cleared via `clear_overrides()`, which calls `conv.clear_category_overrides(Category(category_name))`. This prevents stale click-to-expand state from conflicting with the new category-level setting.
 
-**Source:** `src/cc_dump/tui/action_config.py` (VIS_CYCLE, VIS_TOGGLE_SPECS), `src/cc_dump/tui/action_handlers.py`
+**Source:** `src/cc_dump/tui/action_handlers.py` (`clear_overrides`)
 
 ## Per-Block View Overrides
 
@@ -188,7 +213,7 @@ Search reveal is transient: it is not serialized during hot-reload, and it is cl
 
 ### Category Index
 
-`ViewOverrides` maintains a `_block_categories` dict mapping `block_id → Category` for efficient category-scoped clearing. When a category's visibility changes, `clear_category()` resets all block and region overrides for matching blocks in O(registered blocks in category) rather than walking the entire block tree.
+`ViewOverrides` maintains a `_block_categories` dict mapping `block_id -> Category` for efficient category-scoped clearing. When a category's visibility changes, `clear_category()` resets all block and region overrides for matching blocks in O(registered blocks in category) rather than walking the entire block tree.
 
 **Source:** `src/cc_dump/tui/view_overrides.py`
 
@@ -221,19 +246,19 @@ The resolved `VisState` is then used to:
 
 3. **Determine expandability** — After rendering, the pipeline checks whether the block would look different if expanded (either different renderer or enough lines to exceed the collapsed limit). This sets `BlockViewState.expandable`, which gates click-to-expand interaction.
 
-4. **Recurse into children** — Child block visibility is resolved independently. A visible parent with hidden children renders the parent's own content but skips the children.
+4. **Recurse into children** — Child block visibility is resolved independently, but child recursion only occurs when the parent is at FE state. At non-FE states, children are not processed at all. At FE, a visible parent with hidden children renders the parent's own content but skips the children.
 
 ### Render Flow
 
 ```
 render_turn_to_strips(blocks, filters, ...)
-  └─ for each block: _render_block_tree(block, ctx)
-       ├─ _resolve_visibility(block, ctx.filters, ctx.overrides) → VisState
-       ├─ TRUNCATION_LIMITS[vis] → max_lines (0 = skip entirely)
-       ├─ RENDERERS[(type, vis)] → renderer function → strips
-       ├─ truncate to max_lines if needed
-       ├─ compute expandability
-       └─ recurse into children
+  +-- for each block: _render_block_tree(block, ctx)
+       |-- _resolve_visibility(block, ctx.filters, ctx.overrides) -> VisState
+       |-- TRUNCATION_LIMITS[vis] -> max_lines (0 = skip entirely)
+       |-- RENDERERS[(type_name, visible, full, expanded)] -> renderer function -> strips
+       |-- truncate to max_lines if needed
+       |-- compute expandability
+       +-- recurse into children
 ```
 
 The `filters` dict is passed through a `_RenderContext` and is read-only during rendering. All mutations to filter state happen in the view store; rendering is a pure projection of that state.
@@ -261,7 +286,7 @@ The `TurnData.re_render()` method snapshots the relevant filter keys for each tu
 
 4. **Category changes clear block overrides.** Toggling or cycling a category resets all per-block expansion overrides for that category. This prevents stale per-block state from producing confusing visual results after a category-level change.
 
-5. **Filtersets are atomic.** Applying a filterset sets all 18 keys in one transaction, producing a single autorun fire and one re-render. There is no intermediate state where some categories reflect the new preset and others don't.
+5. **Filtersets are atomic.** Applying a filterset sets all 18 keys via `store.update()`, producing a single autorun fire and one re-render. There is no intermediate state where some categories reflect the new preset and others don't.
 
 6. **Search reveal overrides filter state, not store state.** Search reveal uses `vis_override` on the block's view state, not by mutating the category filter keys. This means the category filters are unmodified and the reveal is automatically scoped to one block at a time.
 

@@ -1,8 +1,5 @@
 # Errors
 
-> Status: draft
-> Last verified against: not yet
-
 ## Overview
 
 A transparent proxy sits in a fragile position: upstream APIs return HTTP errors, network connections fail, and the TUI itself can encounter rendering exceptions during hot-reload cycles. If cc-dump swallowed these failures or crashed, users would lose visibility into exactly the moments that matter most -- when something goes wrong in the Claude Code session they're monitoring.
@@ -37,7 +34,7 @@ Both are added as single-block turns via `domain_store.add_turn([block])`.
 
 ### Visibility
 
-Error blocks have **no category assignment** (`BLOCK_CATEGORY` maps them to `None`). This means they are always visible regardless of visibility level settings -- they cannot be hidden by toggling category visibility. They render at whatever the current level and expansion state dictates.
+Error blocks have **no category assignment** (`BLOCK_CATEGORY` maps them to `None`). The rendering pipeline treats `None`-category blocks as `ALWAYS_VISIBLE` -- they are always visible regardless of visibility level settings and cannot be hidden by toggling category visibility. They render at whatever the current level and expansion state dictates.
 
 ### Rendering
 
@@ -94,65 +91,77 @@ The error indicator is a small overlay that appears in the upper-right corner of
 - `icon` (str) -- emoji displayed in the indicator
 - `summary` (str) -- short description of the error
 
+**`IndicatorState`** (mutable object in `tui/error_indicator.py`):
+- `items: list[ErrorItem]` -- current error items to display
+- `expanded: bool` -- whether the indicator is showing detail lines
+
 ### Error Item Sources
 
 | Source | ID Pattern | Icon | Summary |
 |---|---|---|---|
-| Stale modules (hot-reload couldn't update a stable boundary module) | `"stale"` | cross mark | Module filename (last path component) |
-| Unhandled exceptions (caught by `on_error` override) | `"exc-<object_id>"` | collision | `"<ExceptionType>: <message>"` |
-| Render-line exceptions (caught in `render_line`) | `"render:<ExceptionType>"` | warning | `"<ExceptionType>: <message>"` |
+| Stale modules (stable boundary file changed on disk but cannot be hot-reloaded) | `"stale"` | cross mark (U+274C) | Module relative path (e.g., `pipeline/proxy.py`) |
+| Unhandled exceptions (caught by `App._handle_exception`) | `"exc-<object_id>"` where object_id is `id(error)` | collision (U+1F4A5) | `"<ExceptionType>: <message>"` |
+| Render-line exceptions (caught in `ConversationView.render_line`) | `"render:<ExceptionType>"` | warning (U+26A0 U+FE0F) | `"<ExceptionType>: <message>"` |
 
 ### State Management
 
-Error items flow through reactive state:
+Error items flow through two paths depending on their source:
 
-1. **Stale files** are tracked in `view_store.stale_files` (an `ObservableList`), updated by the hot-reload controller when it detects modules that couldn't be reloaded.
-2. **Exception items** are tracked in `view_store.exception_items` (an `ObservableList`), appended by `App.on_error()`.
-3. A **computed** (`view_store.error_items`) combines both lists: stale files are converted to `ErrorItem` instances, then exception items are appended.
-4. A **reaction** on `error_items` calls `App._sync_error_items()`, which projects the canonical items to the active `ConversationView`'s indicator state.
-5. Render-line exceptions add items directly to the `ConversationView`'s local indicator state (bypassing the view store) since they originate within the widget itself.
+**Path 1: Stale files and unhandled exceptions (via view store)**
 
-`IndicatorState` is a mutable object on each `ConversationView` with two fields:
-- `items: list[ErrorItem]` -- current error items to display
-- `expanded: bool` -- whether the indicator is showing detail lines
+1. **Stale files** are tracked in `view_store.stale_files` (an `ObservableList`), updated by `_update_staleness()` in `hot_reload_controller.py`. On every file change event, it calls `get_stale_excluded()` which compares current file hashes against startup hashes.
+2. **Unhandled exception items** are tracked in `view_store.exception_items` (an `ObservableList`), appended by `App._handle_exception()`.
+3. A **computed** (`view_store.error_items`) combines both: stale filenames are converted to `ErrorItem` instances (all sharing ID `"stale"`), then exception items are appended.
+4. A **reaction** on `error_items` calls `App._sync_error_items()`, which projects the items to the active `ConversationView` via `conv.update_error_items()`.
+
+**Path 2: Render-line exceptions (direct to widget)**
+
+Render-line exceptions add items directly to the `ConversationView`'s local `_indicator_state` Observable (bypassing the view store), since they originate within the widget's `render_line()` method. The `_report_render_line_exception` method checks for duplicate IDs before appending.
+
+**Reactive projection within ConversationView:**
+
+The widget holds an `Observable[tuple[list, bool]]` called `_indicator_state` (items list + expanded flag). A `reaction` on this observable calls `_apply_indicator_state`, which copies the items and expanded flag to the `IndicatorState` rendering object, clears the line cache, and triggers a `refresh()`.
 
 ### Visual Behavior
 
-**Collapsed state** (default): A single cell showing a cross mark emoji on a white background, positioned at the upper-right corner of the viewport. Width: 4 cells plus 1 cell padding.
+**Collapsed state** (default): A 4-cell strip showing a cross mark emoji (" \u274c ") on a white background, positioned at the upper-right corner of the viewport. Width: 4 cells (`_COLLAPSED_WIDTH`) plus 1 cell padding (`_PADDING`), totaling 5 cells.
 
 **Expanded state**: A header line plus one detail line per error item, all right-aligned in the viewport.
 - Header: `" <icon> restart needed "` in bold black-on-white
 - Detail lines: `"    <summary> "` in normal black-on-white
 - Width: max of header width and all detail line widths, plus 1 cell padding
 
-**Expansion trigger**: Mouse hover. When `on_mouse_move` detects the cursor is within the indicator's hit region, the indicator expands. When the cursor leaves, it collapses. There is no keyboard shortcut to expand the indicator. Note: the mouse handling for error indicator expansion lives in `ConversationView` (`widget_factory.py`), not in `error_indicator.py` itself.
+**Expansion trigger**: Mouse hover. When `on_mouse_move` detects the cursor is within the indicator's hit region (via `hit_test_event`), the indicator expands. When the cursor leaves, it collapses. There is no keyboard shortcut to expand the indicator. The mouse handling for error indicator expansion lives in `ConversationView.on_mouse_move` (`widget_factory.py`), not in `error_indicator.py` itself.
 
 ### Compositing
 
-The indicator is composited onto the conversation viewport during `render_line()`. For each viewport line within the indicator's height:
-1. The conversation content strip is cropped to `viewport_width - indicator_width`
-2. The indicator strip for that line is appended
-3. The combined strip is returned
+The indicator is composited onto the conversation viewport during `render_line()` via `_overlay_line()`, which delegates to `error_indicator.composite_overlay()`. For each viewport line within the indicator's height:
+1. The conversation content strip is cropped to `viewport_width - indicator_width` using `strip.crop_extend()`
+2. The indicator strip segments for that line are appended to the cropped content segments
+3. A combined `Strip` of the full viewport width is returned
 
-Lines below the indicator's height pass through unmodified. When no error items exist, compositing is a no-op (height is 0).
+Lines below the indicator's height pass through unmodified. When no error items exist, `indicator.height()` returns 0 and compositing is a no-op.
 
 ### Hit Testing
 
 `hit_test_event()` determines whether a mouse coordinate falls within the indicator region:
+- Returns `False` immediately if height is 0 (no items)
 - Vertically: within `[0, indicator_height)`
 - Horizontally: within `[viewport_width - indicator_width, viewport_width)`
 
-This is used by `on_mouse_move` to toggle expansion.
+The caller (`ConversationView.on_mouse_move`) translates the mouse event to content-relative coordinates via `event.get_content_offset(self)` before calling the hit test.
 
 ### Clearing Errors
 
-- **Stale file errors** can only clear if the file content is reverted to its startup content (matching the startup hash). A successful hot-reload of reloadable modules does NOT clear staleness for stable boundary files, since those files are never reloaded.
-- **Exception errors** persist for the lifetime of the session. There is no manual dismiss mechanism. [UNVERIFIED: whether exception items are ever cleared, e.g., on successful hot-reload]
-- **Render-line errors** are deduplicated by exception type name (`"render:<TypeName>"`). Once an error of a given type is added, subsequent errors of the same type are silently dropped.
+- **Stale file errors** clear when the file content reverts to match its startup hash. `get_stale_excluded()` compares current hashes against `_excluded_hashes` captured at startup. If a file is edited back to its original content, it drops out of the stale list on the next file-change event. A successful hot-reload of reloadable modules does NOT clear staleness for stable boundary files, since those files are never reloaded.
+- **Exception errors** are never cleared during a session. The `exception_items` ObservableList is only ever appended to (in `App._handle_exception`). There is no code path that removes items from it or calls `clear()` on it. They persist until the process exits.
+- **Render-line errors** are deduplicated by exception type name (`"render:<TypeName>"`). `_report_render_line_exception` checks `if not any(item.id == err_key for item in items)` before appending. Once an error of a given type is added, subsequent errors of the same type are silently dropped. Like exception errors, render-line errors are never cleared during a session.
 
 ### Resilience Design
 
-The app overrides `on_error` to catch unhandled exceptions without crashing. The comment in the code states: "DON'T call super() - keep running, hot reload will fix it." This reflects cc-dump's development model where hot-reload is the primary recovery mechanism -- the error indicator tells the user something broke, and a code fix + automatic reload is the expected resolution path.
+The app overrides `_handle_exception` (Textual's `App._handle_exception`) to catch unhandled exceptions without crashing. The comment in the code states: "DON'T call super() - keep running, hot reload will fix it." This reflects cc-dump's development model where hot-reload is the primary recovery mechanism -- the error indicator tells the user something broke, and a code fix + automatic reload is the expected resolution path.
+
+Exception details are also logged: the full Python traceback is written to the Logs panel line by line, and buffered in `_error_log` for post-exit dump.
 
 ## Relationship Between the Two Error Systems
 

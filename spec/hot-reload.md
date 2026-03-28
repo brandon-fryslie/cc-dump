@@ -1,8 +1,5 @@
 # Hot-Reload
 
-> Status: draft
-> Last verified against: not yet
-
 ## Overview
 
 cc-dump is a development tool for observing Claude Code API traffic. Developers using it are simultaneously developing *it* -- tweaking formatting rules, adjusting color palettes, refining rendering logic, and adding new panel views. Without hot-reload, every change to these pure-logic modules would require restarting the proxy, reconnecting Claude Code, and losing the accumulated conversation history that makes the change visible. Hot-reload eliminates that cycle: save a file, see the result in under three seconds, with all conversation data intact.
@@ -13,7 +10,7 @@ From the user's perspective, hot-reload means: edit any formatting, rendering, o
 
 The system uses OS-native file watching (via `watchfiles`) on the cc-dump package source directory. Any write to a `.py` file in the watched tree is detected.
 
-**Reloadable file changes** are debounced: the system waits for a 2-second quiet period after the last change before executing the reload. This prevents partial reloads during multi-file saves or editor "save all" operations.
+**Reloadable file changes** are debounced: the system waits for a 2-second quiet period after the last change before executing the reload. This prevents partial reloads during multi-file saves or editor "save all" operations. The debounce constant is `_DEBOUNCE_S = 2.0` in `hot_reload_controller.py`.
 
 **Any single reloadable file change triggers a full reload of all reloadable modules.** There is no partial reload -- every reload reloads the entire reloadable set in dependency order. This is a deliberate simplicity choice: the reload is fast enough that eliminating partial-reload edge cases is worth the cost of reloading unchanged modules.
 
@@ -79,6 +76,8 @@ The authoritative list is `_EXCLUDED_FILES` and `_EXCLUDED_MODULES` in `hot_relo
 | `app/tmux_controller.py` | Holds live tmux pane references |
 | `io/stderr_tee.py` | Holds live `sys.stderr` reference |
 | `cli.py` | Entry point, already executed |
+| `__init__.py` | Module init |
+| `__main__.py` | Entry point |
 | `hot_reload.py` | The reloader itself |
 | `tui/app.py` | The live Textual App instance |
 | `tui/hot_reload_controller.py` | Mutates app widget tree during reload |
@@ -87,9 +86,15 @@ The authoritative list is `_EXCLUDED_FILES` and `_EXCLUDED_MODULES` in `hot_relo
 
 After each reload, the system performs a single alias-refresh pass across all loaded `cc_dump.*` modules. This catches cases where a reloadable module used `from` imports of another reloadable module -- the old function/class references are replaced with their post-reload equivalents by matching on object identity. This is a safety net; the primary defense is the import convention.
 
+The alias refresh is selective: only exports whose `__module__` attribute matches their source module are tracked. Primitives (str, int, bool, tuple, etc.) are excluded from alias refresh because Python interns/caches these values, which would cause false identity matches across unrelated modules.
+
 ### Staleness Detection for Stable Modules
 
-When a stable boundary file is edited, the system cannot reload it, but it can tell the developer. At startup, content hashes (SHA-256) are recorded for all files on a staleness watchlist. This watchlist includes essentially all excluded files and modules minus boilerplate -- it is not a small curated subset but rather a comprehensive list of stable boundary files that could diverge from the running code. On every file change event (no debounce -- immediate), current hashes are compared against the startup hashes. Any divergence is reported to the `ViewStore` as a list of stale file names, which surfaces in the TUI's error indicator.
+When a stable boundary file is edited, the system cannot reload it, but it can tell the developer. At startup, content hashes (SHA-256) are recorded for all files on a staleness watchlist (`_STALENESS_WATCHLIST`). This watchlist includes all excluded files and modules minus boilerplate (`__init__.py`, `__main__.py`) and `hot_reload.py` itself (editing the reloader while running is nonsensical -- no TUI indicator is shown) -- it covers `proxy.py`, `forward_proxy_tls.py`, `cli.py`, `event_types.py`, `response_assembler.py`, `tmux_controller.py`, `stderr_tee.py`, `app.py`, and `hot_reload_controller.py`.
+
+On every file change event (no debounce -- immediate, via a separate `EventStream` subscriber), current hashes are compared against the startup hashes. Any divergence is reported to the `ViewStore` as a list of stale relative paths (e.g., `pipeline/proxy.py`), which surfaces in the TUI's error indicator.
+
+`_iter_excluded_files` matches entries by both filename (`path.name`) and relative path (`rel_str`). So an entry like `"cli.py"` matches any file named `cli.py` in the watched tree, while `"pipeline/proxy.py"` only matches the specific path.
 
 This gives the developer clear feedback: "You edited `proxy.py` -- restart to pick up that change."
 
@@ -100,39 +105,42 @@ All widgets that participate in hot-reload must implement two methods:
 - **`get_state() -> dict`**: Extract the widget's preservable state as a plain dictionary. Called on the old widget instance before it is removed from the DOM.
 - **`restore_state(state: dict) -> None`**: Apply state from a previous instance. Called on the new widget instance after creation but before mounting. Must handle missing keys gracefully with defaults.
 
+Protocol compliance is validated at runtime by `validate_widget_protocol()` in `protocols.py`. This function checks structural typing: it verifies that the widget has callable `get_state` and `restore_state` methods. If validation fails, a `TypeError` is raised with a message identifying the failing widget and the missing/non-callable methods.
+
 The swap sequence for each widget is:
 
 1. `get_state()` on old instance (captures state)
 2. Factory function creates new instance from reloaded class
-3. Protocol validation confirms new instance has required methods
+3. `validate_widget_protocol()` confirms new instance has required methods
 4. `restore_state(state)` on new instance (transfers state)
 5. Old instance is removed from DOM
 6. New instance is mounted in the same position with the same CSS ID
 
-The system uses a create-before-remove pattern: all new widgets are fully created and state-restored before any old widgets are touched. If creation fails, old widgets remain in the DOM and the app continues working.
+The system uses a create-before-remove pattern: all new widgets are fully created and state-restored before any old widgets are touched. If creation or validation fails, the `TypeError` propagates and the entire replacement is aborted, leaving old widgets in the DOM.
 
-During the swap, all SnarfX reactions are paused to prevent reactions from querying widgets during the gap between removal and mounting.
+During the swap, all SnarfX reactions are paused via `stx.pause(app)` to prevent reactions from querying widgets during the gap between removal and mounting.
 
 ## Reload Sequence (End-to-End)
 
 When a developer saves a reloadable file, the following happens:
 
-1. **File change detected** by `watchfiles` async iterator
+1. **File change detected** by `watchfiles` async iterator in `start_file_watcher()`
 2. **Event emitted** to an `EventStream`
-3. **Two parallel paths diverge:**
-   - Path A (immediate): staleness state updated for all watched files
-   - Path B (debounced): if the changed file is reloadable, a 2-second debounce timer starts
+3. **Two parallel subscriber paths diverge:**
+   - Path A (immediate): staleness state updated for all watched files via `_update_staleness()`
+   - Path B (debounced): if the changed file passes `_has_reloadable_changes()`, a 2-second debounce timer starts
 4. **Debounce fires** after 2 seconds of quiet
-5. **Reload scheduled asynchronously** via `call_later` on the Textual event loop
-6. **All reloadable modules reloaded** via `importlib.reload()` in dependency order
+5. **Reload scheduled** via `app.call_later(_do_hot_reload, app)` on the Textual event loop
+6. **All reloadable modules reloaded** via `importlib.reload()` in dependency order (`check_and_get_reloaded()`)
 7. **Alias refresh pass** updates stale `from` import bindings across all `cc_dump.*` modules
-8. **Search state reset** (debounce timer stopped, phase set to INACTIVE)
-9. **Theme rebuilt** from reloaded palette/rendering modules
-10. **Reactive stores reconciled** (schema + reactions updated to match reloaded definitions)
-11. **All widgets replaced** via the hot-swap protocol (capture state, create new, restore state, remove old, mount new)
-12. **Conversations re-rendered** with new rendering code against surviving block data
-13. **Search re-executed** if a query was active before reload
-14. **Notification shown** ("N modules updated")
+8. **Search state reset** (debounce timer stopped, phase set to INACTIVE, search bar hidden)
+9. **Theme rebuilt** from reloaded palette/rendering modules (`set_theme()` + `apply_markdown_theme()`)
+10. **Reactive stores reconciled** (settings store and view store schemas + reactions updated to match reloaded definitions via `store.reconcile()`)
+11. **All widgets replaced** via the hot-swap protocol: capture state → create new → validate protocol → restore state → remove ephemeral overlays → remove old → mount new
+12. **Conversations re-rendered** with new rendering code against surviving block data (`conv.rerender(filters)`)
+13. **Domain store re-bound** (`app._domain_store` set to active session store)
+14. **Notification shown** ("[hot-reload] N modules updated")
+15. **Search re-executed** if a query was active before reload
 
 If any step fails, the error is logged and surfaced as a notification. The system continues with partial results rather than aborting entirely -- a syntax error in one module does not prevent other modules from reloading.
 
@@ -140,6 +148,7 @@ If any step fails, the error is logged and surfaced as a notification. The syste
 
 - **Rapid successive saves:** The 2-second debounce collapses them into a single reload.
 - **Syntax error in a reloadable module:** That module's reload fails with a logged exception. Other modules continue reloading. The app continues with the last good version of the failed module. Saving a fix triggers another reload cycle.
-- **New module added but not in `_RELOAD_ORDER`:** Changes to the file are detected by the watcher but `is_reloadable()` returns `False` for such files, so the debounce filter does not fire and no reload is triggered. The file is effectively ignored by the hot-reload system.
+- **New module added but not in `_RELOAD_ORDER`:** Changes to the file are detected by the watcher but `is_reloadable()` returns `False` (it checks against the set of relative paths derived from `_RELOAD_ORDER`), so the debounce filter does not fire and no reload is triggered. The file is effectively ignored by the hot-reload system.
 - **Module removed from disk:** `importlib.reload()` will fail for that module. The error is caught and logged; other modules continue.
-- **Widget protocol violation:** If a new widget instance does not implement `get_state`/`restore_state`, a `TypeError` is raised during the mount phase. The error is caught and reported via notification. [UNVERIFIED: whether old widgets remain mounted in this case or are already removed.]
+- **Widget protocol violation:** If a new widget instance does not implement `get_state`/`restore_state`, `validate_widget_protocol()` raises `TypeError`. This propagates through `_validate_and_restore_widget_state()` and aborts the replacement via the exception handler in `_do_hot_reload()`. Old widgets remain in the DOM and the app continues working because the exception is caught at the top level and surfaced as a notification.
+- **Ephemeral panel removal after reload:** Ephemeral panels (KeysPanel, DebugSettingsPanel, SettingsPanel, LaunchConfigPanel) are removed by CSS type selector string, not by class reference. This is necessary because `importlib.reload()` replaces class objects, making `isinstance(old_widget, new_class)` return `False`.
