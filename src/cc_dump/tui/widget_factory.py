@@ -19,6 +19,7 @@ from textual.strip import Strip
 from textual.cache import LRUCache
 from textual.geometry import Size, Offset
 from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
 
 # Use module-level imports for hot-reload
@@ -140,19 +141,20 @@ class TurnData:
         width: int,
         force: bool = False,
         block_cache=None,
-        search_ctx=None,
         overrides=None,
         render_key: tuple | None = None,
         runtime: "RenderRuntime | None" = None,
     ) -> bool:
         """Re-render if a relevant filter changed. Returns True if strips changed.
 
+        Produces clean strips (no search decoration). Search highlighting is
+        applied as a post-render overlay at render_line() time.
+
         Args:
             force: Force re-render even if filter snapshot hasn't changed.
             block_cache: Optional LRUCache for caching rendered strips per block.
-            search_ctx: Optional SearchContext for highlighting matches.
             overrides: Optional ViewOverrides for per-block view state.
-            render_key: Optional revision tuple for width/search/theme/overrides.
+            render_key: Optional revision tuple for width/theme/overrides.
         """
         # Create snapshot using ALWAYS_VISIBLE default to match filters dict structure
         snapshot = {k: filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE) for k in self.relevant_filter_keys}
@@ -170,7 +172,6 @@ class TurnData:
             console,
             width,
             block_cache=block_cache,
-            search_ctx=search_ctx,
             turn_index=self.turn_index,
             overrides=overrides,
             runtime=runtime,
@@ -248,11 +249,9 @@ class ConversationView(ScrollView):
         self._line_cache_index_prune_interval: int = 256
         self._last_filters: dict = {}
         self._last_width: int = 78
-        self._last_search_ctx = None  # Store search context for lazy rerenders
-        self._search_revision: int = 0
+        self._last_search_ctx = None  # Store search context for render_line overlay
         self._theme_revision: int = 0
         self._overrides_revision: int = 0
-        self._last_search_signature: tuple | None = None
         self._last_theme_generation: int = self._read_theme_generation()
         # [LAW:one-source-of-truth] Canonical follow state lives in FollowModeStore Observable.
         self._follow_store = FollowModeStore(self._initial_follow_state())
@@ -313,44 +312,15 @@ class ConversationView(ScrollView):
             # [LAW:dataflow-not-control-flow] exception: guard malformed persisted state.
             return FollowState.ACTIVE
 
-    @staticmethod
-    def _search_match_signature(match) -> tuple | None:
-        if match is None:
-            return None
-        return (
-            match.turn_index,
-            match.block_index,
-            match.text_offset,
-            match.text_length,
-            id(match.block) if match.block is not None else None,
-        )
-
-    def _search_signature(self, search_ctx) -> tuple | None:
-        if search_ctx is None:
-            return None
-        return (
-            search_ctx.pattern.pattern,
-            search_ctx.pattern.flags,
-            len(search_ctx.all_matches),
-            id(search_ctx.all_matches),
-            self._search_match_signature(search_ctx.current_match),
-        )
-
-    def _update_render_revisions(self, search_ctx) -> None:
+    def _update_render_revisions(self) -> None:
         theme_generation = self._read_theme_generation()
         if theme_generation != self._last_theme_generation:
             self._last_theme_generation = theme_generation
             self._theme_revision += 1
 
-        search_signature = self._search_signature(search_ctx)
-        if search_signature != self._last_search_signature:
-            self._last_search_signature = search_signature
-            self._search_revision += 1
-
-    def _turn_render_key(self, width: int) -> tuple[int, int, int, int]:
+    def _turn_render_key(self, width: int) -> tuple[int, int, int]:
         return (
             width,
-            self._search_revision,
             self._theme_revision,
             self._overrides_revision,
         )
@@ -539,7 +509,7 @@ class ConversationView(ScrollView):
             return
         if not self._is_following:
             self.capture_scroll_anchor()
-        self.rerender(self._last_filters, search_ctx=self._last_search_ctx)
+        self.rerender(self._last_filters)
 
     def is_block_expandable(self, block_id: int) -> bool:
         """Return whether a block is currently expandable per renderer metadata."""
@@ -657,8 +627,73 @@ class ConversationView(ScrollView):
             block=block if block is not None else None,
         )
         scroll_key = resolve_scroll_key(turn, location)
-        self.scroll_to_block(turn_index, scroll_key)
+        # Find the exact strip line containing the match within the block.
+        match_line = self._find_match_line_in_block(turn, scroll_key)
+        self._scroll_to_line(turn_index, turn, scroll_key, match_line)
         return True
+
+    def _find_match_line_in_block(self, turn: TurnData, scroll_key: int) -> int:
+        """Find the first strip line within a block that matches the search pattern.
+
+        Returns offset from block start (0 = first line of block).
+        Falls back to 0 if no pattern or no match found.
+        """
+        search_ctx = self._last_search_ctx
+        if search_ctx is None:
+            return 0
+        block_start = turn.block_strip_map.get(scroll_key)
+        if block_start is None:
+            return 0
+        block_count = self._block_strip_count(turn, scroll_key)
+        # Walk strips from block start, return first line with a pattern match.
+        for i in range(block_count):
+            strip_idx = block_start + i
+            if strip_idx >= len(turn.strips):
+                break
+            plain = "".join(seg.text for seg in turn.strips[strip_idx]._segments)
+            if plain and search_ctx.pattern.search(plain):
+                logger.warning(
+                    "[SEARCH-NAV] match_line: found at line %d/%d in block (scroll_key=%d)",
+                    i, block_count, scroll_key,
+                )
+                return i
+        logger.warning(
+            "[SEARCH-NAV] match_line: NO match in %d strips (scroll_key=%d, pattern=%r, block_start=%d)",
+            block_count, scroll_key, search_ctx.pattern_str, block_start,
+        )
+        return 0
+
+    def _scroll_to_line(
+        self, turn_index: int, turn: TurnData, scroll_key: int, line_in_block: int,
+    ) -> None:
+        """Scroll to a specific line within a block, centered in viewport."""
+        if not self.is_attached:
+            return
+        strip_offset = turn.strip_offset_for_block(scroll_key)
+        turn_offset = self._offset_tree.prefix_sum(turn_index)
+        if strip_offset is None:
+            target_y = turn_offset
+        else:
+            target_y = turn_offset + strip_offset + line_in_block
+        viewport_height = self.scrollable_content_region.height
+        centered_y = max(0, target_y - viewport_height // 2)
+        block_count = self._block_strip_count(turn, scroll_key)
+        logger.warning(
+            "[SEARCH-NAV] scroll: turn=%d scroll_key=%d strip_offset=%s "
+            "line_in_block=%d block_lines=%d turn_offset=%d "
+            "target_y=%d centered_y=%d viewport_h=%d total_lines=%d "
+            "scroll_y_before=%.0f",
+            turn_index, scroll_key, strip_offset,
+            line_in_block, block_count, turn_offset,
+            target_y, centered_y, viewport_height, self._total_lines,
+            self.scroll_y,
+        )
+        self._dispatch_follow_event(FollowEvent.DEACTIVATE, at_bottom=False)
+        with self._programmatic_scroll():
+            self.scroll_to(y=centered_y, animate=False)
+        # Capture anchor at new position so deferred anchor resolves
+        # (from lazy turn rerenders) don't snap back to the old position.
+        self.capture_scroll_anchor()
 
     def reveal_search_match(
         self,
@@ -667,28 +702,80 @@ class ConversationView(ScrollView):
         search_ctx: object = None,
         rerender: bool = True,
     ) -> bool:
-        """Reveal and navigate to a specific search match via view-state seams."""
+        """Reveal and navigate to a specific search match via view-state seams.
+
+        Visibility overrides are a content-level concern (may change strip geometry
+        when a collapsed block is revealed). Search decoration is applied at
+        render_line() time via the strip overlay.
+        """
         block_id = self._search_match_block_id(match)
         if block_id is None:
+            logger.warning("[SEARCH-NAV] block_id is None for match: turn=%s block_idx=%s",
+                           getattr(match, "turn_index", "?"), getattr(match, "block_index", "?"))
             return False
         region_index = getattr(match, "region_index", None)
+        block = getattr(match, "block", None)
+        block_type = type(block).__name__ if block else "None"
+        total_matches = len(search_ctx.all_matches) if search_ctx and hasattr(search_ctx, "all_matches") else "?"
+        match_idx = "?"
+        if search_ctx and hasattr(search_ctx, "all_matches"):
+            for i, m in enumerate(search_ctx.all_matches):
+                if m is match:
+                    match_idx = i
+                    break
+        logger.warning(
+            "[SEARCH-NAV] reveal: match %s/%s turn=%d block_idx=%d block_id=%d "
+            "block_type=%s region=%s text_offset=%s",
+            match_idx, total_matches,
+            getattr(match, "turn_index", -1),
+            getattr(match, "block_index", -1),
+            block_id, block_type, region_index,
+            getattr(match, "text_offset", "?"),
+        )
         changed = self._view_overrides.set_search_reveal(
             block_id=block_id,
             region_index=region_index if isinstance(region_index, int) else None,
         )
         if changed:
             self.mark_overrides_changed()
-        self._rerender_search_projection(search_ctx=search_ctx, rerender=rerender)
+        self._rerender_search_projection(
+            search_ctx=search_ctx, rerender=rerender, skip_anchor=True,
+        )
         return self._scroll_to_search_match(match)
 
-    def _rerender_search_projection(self, *, search_ctx: object = None, rerender: bool) -> None:
-        """Apply search projection rerender when requested."""
+    def _rerender_search_projection(
+        self, *, search_ctx: object = None, rerender: bool, skip_anchor: bool = False,
+    ) -> None:
+        """Re-render for visibility override changes and update search context.
+
+        Visibility overrides may have changed (collapsed block revealed).
+        Search decoration is handled by the render_line overlay.
+
+        Args:
+            skip_anchor: When True, skip _post_render anchor resolve. Used when
+                the caller will set scroll position explicitly (e.g. reveal_search_match).
+        """
         if not rerender or not self.is_attached:
             return
-        self.rerender(
-            self._last_filters,
-            search_ctx=self._last_search_ctx if search_ctx is None else search_ctx,
-        )
+        if search_ctx is not None:
+            self._last_search_ctx = search_ctx
+        if skip_anchor:
+            # Re-render strips directly, skipping anchor resolve — caller will scroll.
+            self._update_render_revisions()
+            self._active_filter_revision += 1
+            width = self._content_width if self._size_known else self._last_width
+            render_key = self._turn_render_key(width)
+            self._rerender_affected_bounded(
+                filters=self._last_filters,
+                force=False,
+                width=width,
+                console=self.app.console,
+                target_revision=self._active_filter_revision,
+                render_key=render_key,
+            )
+        else:
+            self.rerender(self._last_filters)
+            self.refresh()
 
     def clear_search_reveal(
         self,
@@ -700,6 +787,9 @@ class ConversationView(ScrollView):
         changed = self._view_overrides.clear_search_reveal()
         if changed:
             self.mark_overrides_changed()
+        # Clear search overlay context when search reveal is cleared (no explicit ctx passed).
+        if search_ctx is None:
+            self._last_search_ctx = None
         # [LAW:dataflow-not-control-flow] Render intent is honored independent of change detection.
         self._rerender_search_projection(search_ctx=search_ctx, rerender=rerender)
         return changed
@@ -744,7 +834,11 @@ class ConversationView(ScrollView):
         cache_key: tuple[int, int, int, int],
         selection: Selection | None,
     ) -> Strip | None:
-        if selection is not None or cache_key not in self._line_cache:
+        # [LAW:dataflow-not-control-flow] Transient decorations bypass cache reads
+        # so the overlay in _styled_line_strip always runs.
+        if selection is not None or self._last_search_ctx is not None:
+            return None
+        if cache_key not in self._line_cache:
             return None
         return self._line_cache[cache_key].apply_style(self.rich_style)
 
@@ -769,7 +863,19 @@ class ConversationView(ScrollView):
         selection: Selection | None,
         actual_y: int,
         scroll_x: int,
+        turn: TurnData | None = None,
+        local_y: int = 0,
     ) -> Strip:
+        # // [LAW:dataflow-not-control-flow] Both overlays always run; None/empty = no-op.
+        if turn is not None and self._last_search_ctx is not None:
+            old_segments = len(strip._segments)
+            strip = self._apply_search_to_strip(strip, turn, local_y)
+            new_segments = len(strip._segments)
+            if new_segments != old_segments:
+                logger.warning(
+                    "[SEARCH-OVERLAY] applied: y=%d local_y=%d segs %d→%d",
+                    actual_y, local_y, old_segments, new_segments,
+                )
         if selection is not None:
             span = selection.get_span(actual_y)
             if span is not None:
@@ -785,8 +891,9 @@ class ConversationView(ScrollView):
         strip: Strip,
         selection: Selection | None,
     ) -> None:
-        # [LAW:dataflow-not-control-flow] Selection disables cache writes to avoid persisting transient highlighting.
-        if selection is not None:
+        # [LAW:dataflow-not-control-flow] Transient decorations (selection, search) disable
+        # cache writes to avoid persisting overlay styling.
+        if selection is not None or self._last_search_ctx is not None:
             return
         self._line_cache[cache_key] = strip
         if turn_idx not in self._cache_keys_by_turn:
@@ -847,6 +954,8 @@ class ConversationView(ScrollView):
             selection=selection,
             actual_y=actual_y,
             scroll_x=scroll_x,
+            turn=turn,
+            local_y=local_y,
         )
         self._record_line_cache_key(
             turn_idx=turn.turn_index,
@@ -928,6 +1037,89 @@ class ConversationView(ScrollView):
             result_segments.extend(parts[2])
 
         return Strip(result_segments, cell_length)
+
+    def _block_for_strip_line(self, turn: TurnData, local_y: int) -> object | None:
+        """Resolve which block owns a given strip line within a turn.
+
+        Uses block_strip_map (flat_block_index → first strip offset) and _flat_blocks.
+        // [LAW:one-source-of-truth] Block ownership derived from block_strip_map.
+        """
+        owner_idx = None
+        for idx, offset in turn.block_strip_map.items():
+            if offset <= local_y:
+                if owner_idx is None or offset > turn.block_strip_map.get(owner_idx, -1):
+                    owner_idx = idx
+            # // [LAW:dataflow-not-control-flow] Always scan all entries; values decide.
+        if owner_idx is None or owner_idx >= len(turn._flat_blocks):
+            return None
+        return turn._flat_blocks[owner_idx]
+
+    def _apply_search_to_strip(
+        self, strip: Strip, turn: TurnData, local_y: int
+    ) -> Strip:
+        """Apply search highlights as a post-render strip overlay.
+
+        Re-runs the search regex on strip plain text and applies bgcolor styles
+        via Segment.divide(). All matches get dim bgcolor; current match gets
+        bright highlight.
+
+        // [LAW:single-enforcer] Search decoration applied at one boundary (render_line).
+        // [LAW:dataflow-not-control-flow] Overlay always runs; empty matches = no-op.
+        """
+        search_ctx = self._last_search_ctx
+        if search_ctx is None:
+            return strip
+
+        plain = "".join(seg.text for seg in strip._segments)
+        if not plain:
+            return strip
+
+        # Find all match spans in this line's plain text
+        try:
+            spans = [(m.start(), m.end()) for m in search_ctx.pattern.finditer(plain)]
+        except Exception:
+            return strip
+        if not spans:
+            return strip
+
+        tc = cc_dump.tui.rendering.get_theme_colors(runtime=self._render_runtime)
+        dim_style = Style(bgcolor=tc.search_all_bg)
+        bright_style = Style.parse(tc.search_current_style)
+
+        # Determine if this line is in the current-match block
+        current = search_ctx.current_match
+        block = self._block_for_strip_line(turn, local_y)
+        is_current_block = (
+            current is not None
+            and block is not None
+            and current.block is block
+        )
+
+        segments = list(strip._segments)
+        cell_length = strip.cell_length
+
+        # Apply highlights in reverse order so earlier offsets remain stable
+        for start, end in reversed(spans):
+            if start >= cell_length or end <= 0:
+                continue
+            end = min(end, cell_length)
+            style = bright_style if is_current_block else dim_style
+            cuts = [start, end, cell_length]
+            parts = list(Segment.divide(segments, cuts))
+            new_segments: list[Segment] = []
+            if len(parts) > 0:
+                new_segments.extend(parts[0])
+            if len(parts) > 1:
+                for seg in parts[1]:
+                    text, seg_style, control = seg
+                    new_segments.append(
+                        Segment(text, seg_style + style if seg_style else style, control)
+                    )
+            if len(parts) > 2:
+                new_segments.extend(parts[2])
+            segments = new_segments
+
+        return Strip(segments, cell_length)
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
         """Extract plain text from the selection range, stripping gutters."""
@@ -1035,7 +1227,6 @@ class ConversationView(ScrollView):
             console,
             width,
             block_cache=self._block_strip_cache,
-            search_ctx=self._last_search_ctx,
             overrides=self._view_overrides,
             render_key=render_key,
             runtime=self._render_runtime,
@@ -1075,7 +1266,6 @@ class ConversationView(ScrollView):
         "stream_finalized":  "_render_stream_finalized",
         "focus_changed":     "_render_focus_changed",
         "filters_changed":   "_rerender_affected",
-        "search":            "_rerender_affected",
         "resize":            "_render_resize",
         "restore":           "_render_restore",
     }
@@ -1098,7 +1288,7 @@ class ConversationView(ScrollView):
         "new_turn", "stream_delta", "stream_finalized", "focus_changed",
     })
     _ANCHOR_REASONS = frozenset({
-        "filters_changed", "search",
+        "filters_changed",
     })
 
     def _post_render(self, reason: str) -> None:
@@ -1222,7 +1412,6 @@ class ConversationView(ScrollView):
             width,
             force=True,
             block_cache=self._block_strip_cache,
-            search_ctx=self._last_search_ctx,
             overrides=self._view_overrides,
             render_key=self._turn_render_key(width),
             runtime=self._render_runtime,
@@ -1294,13 +1483,12 @@ class ConversationView(ScrollView):
             filters = self._last_filters
         width = self._content_width if self._size_known else self._last_width
         console = self.app.console
-        self._update_render_revisions(self._last_search_ctx)
+        self._update_render_revisions()
         turn_index = len(self._turns)
         render_key = self._turn_render_key(width)
 
         strips, block_strip_map, flat_blocks = cc_dump.tui.rendering.render_turn_to_strips(
             blocks, filters, console, width, block_cache=self._block_strip_cache,
-            search_ctx=self._last_search_ctx,
             turn_index=turn_index,
             overrides=self._view_overrides,
             runtime=self._render_runtime,
@@ -1646,29 +1834,33 @@ class ConversationView(ScrollView):
     def rerender(self, filters: dict, search_ctx=None, force: bool = False):
         """Re-render affected turns in place. Preserves scroll position.
 
+        Search decoration is NOT applied here — it's a post-render overlay at
+        render_line() time.  The search_ctx parameter is retained only to update
+        _last_search_ctx (used by the overlay).
+
         // [LAW:single-enforcer] Delegates to _invalidate for actual rendering.
 
         Args:
             filters: Current filter state (category name -> Level)
-            search_ctx: Optional SearchContext for highlighting matches
+            search_ctx: Optional — updates _last_search_ctx for overlay use.
             force: Force re-render even if filter snapshot hasn't changed
                    (e.g. theme change rebuilds gutter colors).
         """
         self._last_filters = filters
-        self._last_search_ctx = search_ctx  # Store for lazy rerenders
-        self._update_render_revisions(search_ctx)
+        if search_ctx is not None:
+            self._last_search_ctx = search_ctx
+        self._update_render_revisions()
 
         if self._pending_restore is not None:
             self._invalidate("restore", filters=filters)
             return
 
-        reason = "search" if search_ctx is not None else "filters_changed"
-        self._invalidate(reason, filters=filters, search_ctx=search_ctx, force=force)
+        self._invalidate("filters_changed", filters=filters, force=force)
 
-    def _rerender_affected(self, filters: dict | None = None, search_ctx=None, force: bool = False) -> None:
+    def _rerender_affected(self, filters: dict | None = None, force: bool = False) -> None:
         """Re-render affected turns in place using viewport-only strategy.
 
-        // [LAW:single-enforcer] Called via _invalidate("filters_changed") or _invalidate("search").
+        // [LAW:single-enforcer] Called via _invalidate("filters_changed").
         Post-render (anchor resolve) handled by _post_render.
         """
         if filters is None:
@@ -1684,20 +1876,6 @@ class ConversationView(ScrollView):
         self._deferred_anchor_resolve_scheduled = False
 
         render_key = self._turn_render_key(width)
-
-        # Search highlighting still uses full-scan queueing to preserve existing behavior.
-        is_search = search_ctx is not None
-        if is_search:
-            self._rerender_affected_full_scan(
-                filters=filters,
-                search_ctx=search_ctx,
-                force=True,
-                width=width,
-                console=console,
-                target_revision=target_revision,
-                render_key=render_key,
-            )
-            return
 
         self._rerender_affected_bounded(
             filters=filters,
@@ -1727,7 +1905,6 @@ class ConversationView(ScrollView):
             width,
             force=force,
             block_cache=self._block_strip_cache,
-            search_ctx=None,
             overrides=self._view_overrides,
             render_key=render_key,
             runtime=self._render_runtime,
@@ -1791,62 +1968,6 @@ class ConversationView(ScrollView):
             if any_geometry_changed:
                 self._update_virtual_size()
 
-    def _rerender_affected_full_scan(
-        self,
-        *,
-        filters: dict,
-        search_ctx,
-        force: bool,
-        width: int,
-        console,
-        target_revision: int,
-        render_key: tuple[int, int, int, int],
-    ) -> None:
-        """Viewport-only rerender path with search context propagation."""
-        vp_start, vp_end = self._viewport_turn_range()
-
-        with monitor_complexity(
-            "conversation.rerender_affected",
-            logger=logger,
-            total_items=len(self._turns),
-        ) as cx:
-            cx.extra["search_active"] = True
-            any_changed = False
-            any_geometry_changed = False
-            actual_end = min(vp_end, len(self._turns))
-            for idx in range(vp_start, actual_end):
-                td = self._turns[idx]
-                if td.is_streaming:
-                    continue
-                cx.touch()
-                old_widest = td._widest_strip
-                old_line_count = td.line_count
-                if td.re_render(
-                    filters,
-                    console,
-                    width,
-                    force=force,
-                    block_cache=self._block_strip_cache,
-                    search_ctx=search_ctx,
-                    overrides=self._view_overrides,
-                    render_key=render_key,
-                    runtime=self._render_runtime,
-                ):
-                    any_changed = True
-                    # // [LAW:dataflow-not-control-flow] Geometry sync runs unconditionally;
-                    # values decide whether work is needed.
-                    if td.line_count != old_line_count or td._widest_strip != old_widest:
-                        self._sync_turn_in_tree(td)
-                        self._width_tracker.replace(old_widest, td._widest_strip)
-                        any_geometry_changed = True
-                td._filter_revision = target_revision
-
-            if any_changed:
-                self._invalidate_cache_for_turns(vp_start, actual_end)
-                self.refresh()
-            if any_geometry_changed:
-                self._update_virtual_size()
-
     def ensure_turn_rendered(self, turn_index: int):
         """Force-render a specific turn, then sync its offset in the tree.
 
@@ -1862,7 +1983,6 @@ class ConversationView(ScrollView):
         td.re_render(
             self._last_filters, self.app.console, width,
             force=True, block_cache=self._block_strip_cache,
-            search_ctx=self._last_search_ctx,
             overrides=self._view_overrides,
             render_key=render_key,
             runtime=self._render_runtime,
@@ -1894,7 +2014,7 @@ class ConversationView(ScrollView):
         """
         width = self._last_width
         console = self.app.console
-        self._update_render_revisions(self._last_search_ctx)
+        self._update_render_revisions()
         self._active_filter_revision += 1
         target_revision = self._active_filter_revision
 
