@@ -128,12 +128,12 @@ def test_set_block_expansion_captures_anchor_before_rerender(monkeypatch):
     monkeypatch.setattr(
         conv,
         "rerender",
-        lambda filters, search_ctx=None: calls.append(("rerender", filters, search_ctx)),
+        lambda filters, **kwargs: calls.append(("rerender", filters)),
     )
 
     assert conv.set_block_expansion(block.block_id, True, rerender=True) is True
     assert calls[0] == "capture"
-    assert calls[1] == ("rerender", conv._last_filters, conv._last_search_ctx)
+    assert calls[1] == ("rerender", conv._last_filters)
 
 
 def test_clear_category_overrides_clears_block_expansion_for_category():
@@ -194,7 +194,10 @@ def test_reveal_search_match_sets_temporary_reveal_state(monkeypatch):
     ]
     calls: list[tuple[int, int]] = []
     monkeypatch.setattr(conv, "ensure_turn_rendered", lambda _idx: None)
-    monkeypatch.setattr(conv, "scroll_to_block", lambda turn_index, block_index: calls.append((turn_index, block_index)))
+    monkeypatch.setattr(
+        conv, "_scroll_to_line",
+        lambda turn_index, turn, scroll_key, line_in_block: calls.append((turn_index, scroll_key)),
+    )
 
     match = SimpleNamespace(
         turn_index=0,
@@ -219,7 +222,7 @@ def test_clear_search_reveal_clears_temporary_state():
 
 def test_clear_search_reveal_honors_rerender_when_state_is_already_clear(monkeypatch):
     conv = ConversationView()
-    calls: list[tuple[object, object]] = []
+    calls: list[object] = []
     marker = object()
     conv._last_search_ctx = marker
     monkeypatch.setattr(
@@ -230,10 +233,12 @@ def test_clear_search_reveal_honors_rerender_when_state_is_already_clear(monkeyp
     monkeypatch.setattr(
         conv,
         "rerender",
-        lambda filters, search_ctx=None: calls.append((filters, search_ctx)),
+        lambda filters, **kwargs: calls.append(("rerender", filters)),
     )
+    monkeypatch.setattr(conv, "refresh", lambda: calls.append("refresh"))
 
     changed = conv.clear_search_reveal(search_ctx=None, rerender=True)
 
     assert changed is False
-    assert calls == [(conv._last_filters, marker)]
+    # Should still rerender (for override changes) and refresh (for overlay)
+    assert ("rerender", conv._last_filters) in calls

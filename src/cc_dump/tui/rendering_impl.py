@@ -3636,7 +3636,6 @@ class _RenderContext:
     width: int
     block_cache: object
     is_streaming: bool
-    search_ctx: object
     turn_index: int
     show_right: bool
     filters: dict
@@ -3722,7 +3721,7 @@ def _is_coalesced_continuation(
 
 
 def _collapse_children(
-    children: list[FormattedBlock], tools_on: bool,
+    children: list[FormattedBlock], tools_on: bool, overrides: object | None = None,
 ) -> list[FormattedBlock]:
     """Return new list with consecutive ToolUse/ToolResult runs collapsed.
 
@@ -3730,12 +3729,25 @@ def _collapse_children(
     Returns blocks directly (no index tuples) since indices are managed
     by the tree walker.
 
+    Blocks with a vis_override in ViewOverrides are exempt from collapsing
+    (e.g. search reveal forces them visible at full detail).
+
     // [LAW:dataflow-not-control-flow] tools_on is a value; both paths always run.
     """
     if tools_on:
         return list(children)
 
     _tool_types = {"ToolUseBlock", "ToolResultBlock"}
+
+    def _has_override(block: FormattedBlock) -> bool:
+        if overrides is None:
+            return False
+        block_state = getattr(overrides, "block_state", None)
+        if not callable(block_state):
+            return False
+        vs = block_state(block.block_id)
+        return vs is not None and vs.vis_override is not None
+
     result: list[FormattedBlock] = []
     pending: list[FormattedBlock] = []
 
@@ -3758,7 +3770,12 @@ def _collapse_children(
 
     for block in children:
         if type(block).__name__ in _tool_types:
-            pending.append(block)
+            if _has_override(block):
+                # Block has vis_override — exempt from collapse, flush pending first.
+                flush()
+                result.append(block)
+            else:
+                pending.append(block)
         else:
             flush()
             result.append(block)
@@ -3767,24 +3784,11 @@ def _collapse_children(
     return result
 
 
-def _search_state_for_block(
-    block: FormattedBlock, ctx: _RenderContext
-) -> tuple[bool, str | None]:
-    if ctx.search_ctx is None:
-        return False, None
-    block_matches = ctx.search_ctx.matches_in_block(
-        ctx.turn_index, 0, block=block
-    )
-    has_matches = bool(block_matches)
-    return has_matches, ctx.search_ctx.pattern_str if has_matches else None
-
-
 def _render_region_block_strips(
     block: FormattedBlock,
     block_type: str,
     ctx: _RenderContext,
     vis: VisState,
-    search_hash: str | None,
 ) -> list[Strip]:
     region_renderer = _REGION_PART_RENDERERS.get(block_type, _render_region_parts)
     region_parts = region_renderer(block, overrides=ctx.overrides)
@@ -3804,7 +3808,6 @@ def _render_region_block_strips(
         block.block_id,
         ctx.render_width,
         vis,
-        search_hash,
         region_cache_state,
     )
     cache = _block_cache(ctx)
@@ -3831,14 +3834,10 @@ def _render_region_block_strips(
 def _resolve_renderable(
     block: FormattedBlock,
     renderer: Callable[[FormattedBlock], ConsoleRenderable] | None,
-    block_has_matches: bool,
 ) -> ConsoleRenderable | None:
     if renderer is None:
         return None
-    renderable = renderer(block)
-    if block_has_matches and isinstance(renderable, Markdown):
-        return Text(block.content)
-    return renderable
+    return renderer(block)
 
 
 def _render_standard_block_strips(
@@ -3846,13 +3845,11 @@ def _render_standard_block_strips(
     renderable: ConsoleRenderable,
     ctx: _RenderContext,
     vis: VisState,
-    search_hash: str | None,
 ) -> list[Strip]:
     cache_key = (
         block.block_id,
         ctx.render_width,
         vis,
-        search_hash,
     )
     cache = _block_cache(ctx)
     if cache is not None and cache_key in cache:
@@ -3951,7 +3948,7 @@ def _recurse_visible_children(
     if not children or not (vis.visible and vis.full and vis.expanded):
         return
     tools_filter = ctx.filters.get("tools", ALWAYS_VISIBLE)
-    collapsed = _collapse_children(children, tools_filter.full)
+    collapsed = _collapse_children(children, tools_filter.full, overrides=ctx.overrides)
     for child in collapsed:
         _render_block_tree(child, ctx)
 
@@ -3986,7 +3983,6 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
     block_type = type(block).__name__
     children = getattr(block, "children", None) or []
     has_regions = bool(block.content_regions)
-    block_has_matches, search_hash = _search_state_for_block(block, ctx)
     indicator_name = _category_indicator_name(block)
 
     state_key = (block_type, vis.visible, vis.full, vis.expanded)
@@ -3994,18 +3990,14 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
     state_override = state_key in BLOCK_STATE_RENDERERS
     use_region_rendering = has_regions and not state_override
 
-    renderable = _resolve_renderable(block, renderer, block_has_matches)
+    renderable = _resolve_renderable(block, renderer)
     if not use_region_rendering and renderable is None:
         return
-    if block_has_matches and isinstance(renderable, Text):
-        _apply_search_highlights(
-            renderable, ctx.search_ctx, ctx.turn_index, 0, block=block
-        )
 
     block_strips = (
-        _render_region_block_strips(block, block_type, ctx, vis, search_hash)
+        _render_region_block_strips(block, block_type, ctx, vis)
         if use_region_rendering
-        else _render_standard_block_strips(block, cast(ConsoleRenderable, renderable), ctx, vis, search_hash)
+        else _render_standard_block_strips(block, cast(ConsoleRenderable, renderable), ctx, vis)
     )
 
     is_expandable = _compute_expandable(block_type, vis, children, block_strips)
@@ -4121,7 +4113,6 @@ def render_turn_to_strips(
     wrap: bool = True,
     block_cache=None,
     is_streaming: bool = False,
-    search_ctx=None,
     turn_index: int = -1,
     overrides=None,
     runtime: RenderRuntime | None = None,
@@ -4130,6 +4121,9 @@ def render_turn_to_strips(
 
     Recursively walks the block tree. Each block's own content is rendered,
     then children are rendered (when the container is expanded and visible).
+
+    Search highlighting is NOT applied here — it's a post-render strip overlay
+    applied at render_line() time in ConversationView.
 
     # [LAW:single-enforcer] All visibility logic happens here (via _render_block_tree).
 
@@ -4141,8 +4135,7 @@ def render_turn_to_strips(
         wrap: Enable word wrapping
         block_cache: Optional LRUCache for caching rendered strips per block
         is_streaming: If True, skip truncation (show all content during stream)
-        search_ctx: Optional SearchContext for highlighting matches
-        turn_index: Turn index for search match correlation
+        turn_index: Turn index for block registration
         overrides: Optional ViewOverrides for reading/writing per-block view state
 
     Returns:
@@ -4174,7 +4167,6 @@ def render_turn_to_strips(
             width=width,
             block_cache=block_cache,
             is_streaming=is_streaming,
-            search_ctx=search_ctx,
             turn_index=turn_index,
             show_right=show_right,
             filters=filters,
@@ -4186,59 +4178,6 @@ def render_turn_to_strips(
 
         return ctx.all_strips, ctx.block_strip_map, ctx.flat_blocks
 
-
-def _apply_search_highlights(
-    text: Text, search_ctx, turn_index: int, block_index: int, block: object = None
-) -> None:
-    """Apply search highlights to a Text object.
-
-    All matches get a dim background highlight.
-    The current navigated-to match gets a bright highlight override.
-
-    Uses identity matching (block is current.block) when block is provided,
-    falling back to index comparison for backwards compatibility.
-    """
-
-    tc = get_theme_colors()
-
-    # Dim highlight on ALL matches in this block
-    try:
-        text.highlight_regex(
-            search_ctx.pattern,
-            Style(bgcolor=tc.search_all_bg),
-        )
-    except Exception:
-        return  # Regex may fail on rendered text, silently skip
-
-    # Bright highlight on the CURRENT match (if it's in this block)
-    # // [LAW:dataflow-not-control-flow] identity_match is a value
-    current = search_ctx.current_match
-    is_current_block = (
-        current is not None
-        and current.turn_index == turn_index
-        and (
-            (block is not None and current.block is block)
-            or (block is None and current.block_index == block_index)
-        )
-    )
-    if is_current_block:
-        # Find the specific occurrence via pattern.finditer on plain text
-        plain = text.plain
-        try:
-            for i, m in enumerate(search_ctx.pattern.finditer(plain)):
-                # Find which occurrence in this block matches current_match's offset
-                # We use the text_offset from SearchMatch which was computed on
-                # the searchable text, not the rendered text. Since these may differ
-                # (rendered text has indicators, indentation), we highlight the first
-                # occurrence that overlaps.
-                text.stylize(
-                    Style.parse(tc.search_current_style),
-                    m.start(),
-                    m.end(),
-                )
-                break  # Highlight first match occurrence (most visible)
-        except Exception:
-            pass  # Silently handle regex errors on rendered text
 
 
 def combine_rendered_texts(texts: list[Text]) -> Text:
