@@ -1,10 +1,20 @@
 # CREATE-SPEC: Iterative Specification Generator for cc-dump
 
-You are building a detailed functional specification for cc-dump in `./spec/*.md` files. This prompt is designed to be run iteratively — each invocation should make the spec more complete and more accurate by reading the actual codebase and reconciling what the spec says with what the code does.
+You are the **orchestrator** for building a detailed functional specification of cc-dump in `./spec/*.md` files. You do not write spec files yourself — you coordinate a fleet of parallel subagents who read code and write specs, then a fleet of review agents who verify accuracy, and finally you apply corrections. This prompt is designed to be run iteratively — each invocation should make the spec more complete and more accurate.
 
 ## Your Mission
 
-Produce specification files that a developer could use to rewrite cc-dump from scratch without access to the current source code. The spec describes **what the software does** (behavior, contracts, data shapes, user-facing interactions), not how it's implemented internally. Implementation details belong in architecture docs, not here.
+Produce specification files that a developer could use to rewrite cc-dump from scratch without access to the current source code. The spec describes **what the software does** and critically **why it does it** — the user problem each feature solves, the design trade-off each behavior represents. Implementation details belong in architecture docs, not here.
+
+## The "Why" Lens
+
+Every feature exists because someone needed something. The spec must capture that motivation. Before documenting *what* a feature does, each agent must understand and articulate *why* it exists:
+
+- **Why does the visibility system have 3 levels instead of just show/hide?** Because API traffic is overwhelming — users need progressive disclosure to start with a clean view and drill into detail on demand.
+- **Why does system prompt tracking use content hashing and diffs?** Because system prompts are the most interesting and least observable part of Claude Code's behavior, and they change subtly between requests.
+- **Why is there a two-stage pipeline (formatting → rendering)?** Because separating "what data exists" from "how it looks" enables hot-reload of either layer independently, testing without a TUI, and potential non-TUI consumers.
+
+This "why" framing must appear in every spec file's Overview section and should inform how features are grouped and described. Don't just list capabilities — explain the user workflows and problems they serve. A reader should finish each spec file understanding not just the feature surface but the design intent behind it.
 
 ## Spec File Structure
 
@@ -12,7 +22,7 @@ Write to `./spec/` with this organization:
 
 | File | Covers |
 |------|--------|
-| `spec/INDEX.md` | Table of contents with one-line summary per file. Status tracker showing which files are draft/reviewed/verified. |
+| `spec/INDEX.md` | Table of contents with one-line summary per file. Status tracker showing which files are draft/reviewed. |
 | `spec/proxy.md` | HTTP proxy behavior: what gets intercepted, how requests/responses are handled, port assignment, TLS, provider routing |
 | `spec/events.md` | Event types, their fields, ordering guarantees, the event lifecycle of a single API call |
 | `spec/formatting.md` | The FormattedBlock IR: every block type, its fields, when it's produced, what data it carries. The system prompt tracking/diffing behavior. Tool correlation. |
@@ -31,138 +41,127 @@ Write to `./spec/` with this organization:
 | `spec/export.md` | Dump/export functionality: what formats, what's included, how to trigger |
 | `spec/errors.md` | Error display, error indicator behavior, how proxy/API errors surface in the UI |
 
-You do NOT need to create all files in one pass. Prioritize depth over breadth.
+## Execution Model: Parallel Agents
 
-## Execution Model: Massive Parallelism
+You orchestrate three phases using parallel subagents. Do not write spec files yourself — delegate to agents and aggregate their work.
 
-This prompt is designed for execution with heavy parallelism. You are the **orchestrator**. You do not write specs yourself — you coordinate subagents that do.
+### Phase 1: Assessment (you, the orchestrator)
 
-### Parallelism Budget
-- **Spec writing:** Up to **250 parallel subagents** for reading code and writing spec files
-- **Review:** Up to **10 parallel review agents** for cross-checking specs against code and each other
-- **You (orchestrator):** Coordinate, aggregate, and apply fixes
-
-### How to Use Parallelism
-
-**Writing phase:** Each spec file is independent. Launch one subagent per spec file (or per major section of a large spec file). Each subagent reads the relevant source files, writes its spec, and returns. Subagents do NOT need to coordinate with each other during writing — cross-file consistency is resolved in the review phase.
-
-**Subagent assignment pattern:** When launching a writing subagent, give it:
-1. The spec file it owns (e.g., `spec/events.md`)
-2. The source files it should read (e.g., `src/cc_dump/pipeline/event_types.py`, `src/cc_dump/pipeline/proxy.py`)
-3. Any existing spec content to update (if this is a subsequent iteration)
-4. The writing standards and file format from this prompt
-5. Explicit instruction: "Write the spec file. Read code first. Do not speculate."
-
-**Review phase:** After all writing subagents complete, launch up to 10 review agents in parallel. Each reviewer gets a different review lens (see Phase 5 below). Reviewers return findings as structured lists. You then aggregate findings, deduplicate, rank by value, and apply the best corrections directly to the spec files.
-
-## Iterative Convergence Protocol
-
-Each time you run, follow this cycle:
-
-### Phase 1: Assess Current State
 1. Read `spec/INDEX.md` (if it exists) to see what's been written and its status
-2. Skim existing spec files to note gaps, staleness, and `[UNVERIFIED]` tags
-3. Determine the work plan: which files need creation, which need deepening, which need correction
+2. For each existing spec file, quickly scan what's there and what's incomplete
+3. Decide what work to assign this iteration. You have two modes:
+   - **Breadth pass:** Many spec files need to be created or are empty. Assign each to a different agent.
+   - **Depth pass:** Existing specs need deepening or correction. Assign focused areas.
 
-### Phase 2: Read Code + Write Specs (Parallel — up to 250 subagents)
+### Phase 2: Spec Writing (up to 250 parallel subagents)
 
-Launch subagents in parallel. Each subagent:
+Launch subagents in parallel. Each agent:
+- Is assigned **one spec file** (or one major section of a large spec file)
+- Is a **general-purpose expert in software architecture and UX** — not a code-reading robot
+- Must **read the actual source code** for their assigned area. No speculation. Every claim must be traceable to code read this session. If you cannot confirm a behavior from source, leave it out — omission is always better than a guess.
+- Must understand and articulate the **"why"** before documenting the "what"
+- Writes (or updates) their assigned spec file following the Writing Standards below
 
-4. Reads the actual source files for its assigned area. **Does not speculate.** Every claim in the spec must be traceable to code the subagent read.
-5. Pays special attention to:
-   - Data types and their fields (these are contractual)
-   - Default values and initial state
-   - Edge cases and boundary conditions
-   - What happens when things go wrong (errors, empty states, missing data)
-   - Ordering and sequencing guarantees
-6. Writes or updates its spec file using this structure:
-   ```markdown
-   # <Title>
-
-   > Status: draft | reviewed | verified
-   > Last verified against: <commit hash or "not yet">
-
-   ## Overview
-   One paragraph: what this area does from the user's perspective.
-
-   ## <Sections>
-   Detailed specification organized by concept.
-   ```
-7. Uses tables for enumerated things (block types, key bindings, CLI flags)
-8. Uses examples for complex interactions (show input → output)
-9. Marks anything uncertain with `[UNVERIFIED]` — a signal for the next iteration
-
-**Subagent source file assignments** (adjust based on what exists — use Glob/Grep to discover):
-
-| Spec file | Primary source files to read |
-|-----------|------------------------------|
-| `events.md` | `pipeline/event_types.py`, `pipeline/proxy.py`, `pipeline/proxy_flow.py`, `pipeline/router.py` |
-| `formatting.md` | `core/formatting.py`, `core/formatting_impl.py`, `core/analysis.py`, `core/special_content.py`, `core/segmentation.py` |
-| `visibility.md` | `tui/category_config.py`, `tui/view_overrides.py`, `tui/action_config.py`, `tui/action_handlers.py`, `app/view_store.py` |
-| `rendering.md` | `tui/rendering.py`, `tui/rendering_impl.py`, `tui/widget_factory.py` |
-| `navigation.md` | `tui/app.py`, `tui/action_handlers.py`, `tui/action_config.py`, `tui/input_modes.py`, `tui/location_navigation.py` |
-| `cli.md` | `cli.py`, `cli_presentation.py`, `__main__.py`, `app/launch_config.py` |
-| `recording.md` | `pipeline/har_recorder.py`, `pipeline/har_replayer.py`, `io/sessions.py` |
-| `analytics.md` | `app/analytics_store.py`, `tui/panel_renderers.py`, `core/token_counter.py` |
-| `sessions.md` | `io/sessions.py`, `app/domain_store.py`, `tui/session_panel.py`, `app/tmux_controller.py`, `tui/stream_registry.py` |
-| `hot-reload.md` | `app/hot_reload.py`, `tui/hot_reload_controller.py`, `docs/HOT_RELOAD_ARCHITECTURE.md` |
-| `themes.md` | `core/palette.py`, `tui/theme_controller.py`, `docs/THEME_COLOR_SYSTEM.md`, `docs/THEME_VARIABLE_REFERENCE.md` |
-| `panels.md` | `tui/panel_registry.py`, `tui/panel_renderers.py`, `tui/info_panel.py`, `tui/keys_panel.py`, `tui/session_panel.py`, `tui/settings_panel.py`, `tui/debug_settings_panel.py`, `tui/launch_config_panel.py` |
-| `search.md` | `tui/search.py`, `tui/search_controller.py` |
-| `filters.md` | `core/filter_registry.py`, `tui/category_config.py`, `tui/view_overrides.py` |
-| `export.md` | `tui/dump_export.py`, `tui/dump_formatting.py` |
-| `errors.md` | `app/error_models.py`, `tui/error_indicator.py` |
-| `proxy.md` | `pipeline/proxy.py`, `pipeline/proxy_flow.py`, `pipeline/forward_proxy_tls.py`, `pipeline/response_assembler.py`, `providers.py` |
-
-### Phase 3: Update Index
-10. After all writing subagents return, update `spec/INDEX.md` with the current state of all files
-
-### Phase 4: Parallel Review (up to 10 review agents)
-
-Launch review agents in parallel. Each gets ALL spec files but a **different review lens**:
-
-| Reviewer # | Lens | What it checks |
-|------------|------|----------------|
-| 1 | **Completeness** | Are there behaviors in the code not captured in any spec? Spot-check 5-10 source files against their spec coverage. |
-| 2 | **Cross-reference consistency** | Do block types in `formatting.md` match those in `rendering.md` and `visibility.md`? Do key bindings in `navigation.md` match those in `cli.md`? |
-| 3 | **Precision** | Find vague language ("various", "some", "etc.") and flag where concrete values should replace it. Find missing field types, missing defaults. |
-| 4 | **Behavior vs. implementation** | Flag any spec text that describes HOW something is implemented rather than WHAT it does. Apply the test: "would changing the implementation require updating this text?" |
-| 5 | **Edge cases** | For each spec, identify 3-5 edge cases not yet documented (empty states, error paths, boundary values, concurrent operations). |
-| 6 | **Examples** | Are there enough concrete examples? Flag sections that describe complex state transitions or visual output without showing an example. |
-| 7 | **Implementability** | Could someone implement each spec area from the spec alone? Flag sections where critical information is missing. |
-| 8 | **Accuracy spot-check** | Pick 10-15 specific claims across specs. Read the relevant source code. Verify or refute each claim. |
-| 9 | **UNVERIFIED resolution** | Find all `[UNVERIFIED]` tags. For each, read the relevant code and determine the correct answer. Return resolved values. |
-| 10 | **Coherence** | Read all specs end-to-end as a narrative. Flag logical gaps, ordering problems, or areas where a reader would be confused. |
-
-Each reviewer returns a structured list:
+**Agent prompt template** (customize the assignment per agent):
 ```
-## Findings from Reviewer N: <Lens Name>
+You are a software architect writing a functional specification for one area of cc-dump,
+a transparent HTTP proxy TUI for monitoring Claude Code API traffic.
 
-### Critical (must fix)
-- [file:section] Finding description. Suggested fix: ...
+YOUR ASSIGNMENT: Write/update `spec/<file>.md` covering: <brief scope description>
 
-### Important (should fix)
-- [file:section] Finding description. Suggested fix: ...
+CONTEXT: cc-dump exists because Claude Code is opaque — users can't see the system prompts,
+tool definitions, token usage, or caching behavior behind their conversations. cc-dump makes
+all of this visible through a real-time TUI with progressive disclosure, recording/replay,
+and analytics.
 
-### Minor (nice to have)
-- [file:section] Finding description. Suggested fix: ...
+APPROACH:
+1. First, understand WHY this feature area exists. What user problem does it solve?
+   What would be painful or impossible without it?
+2. Read the relevant source files to understand the actual behavior.
+3. Write the spec describing behavior and contracts, framed by the user need it serves.
+4. Every claim must be traceable to code you read. If you cannot confirm something
+   from the source, DO NOT include it. Omission is better than speculation.
+
+SOURCE FILES TO READ: <list of relevant source files>
+EXISTING DOCS TO CROSS-REFERENCE: <list of relevant docs>
+EXISTING SPEC (if updating): <current content or "new file">
+
+<include Writing Standards section>
+<include "What Belongs in Spec vs. Not" section>
 ```
 
-### Phase 5: Aggregate + Apply
+**Assignment strategy:**
+- For `events.md`: read `pipeline/event_types.py`, `pipeline/proxy.py`, `pipeline/router.py`
+- For `formatting.md`: read `core/formatting.py`, `core/formatting_impl.py`, `core/special_content.py`
+- For `visibility.md`: read `tui/category_config.py`, `tui/view_overrides.py`, `tui/action_config.py`, `tui/action_handlers.py`
+- For `rendering.md`: read `tui/rendering.py`, `tui/rendering_impl.py`
+- For `navigation.md`: read `tui/app.py` (bindings), `tui/input_modes.py`, `tui/location_navigation.py`, `tui/follow_mode.py`
+- For `cli.md`: read `cli.py`, `__main__.py`, `cli_presentation.py`, `app/launch_config.py`
+- For `recording.md`: read `pipeline/har_recorder.py`, `pipeline/har_replayer.py`, `io/sessions.py`
+- For `analytics.md`: read `app/analytics_store.py`, `core/analysis.py`, `core/token_counter.py`, `tui/panel_renderers.py`
+- For `sessions.md`: read `io/sessions.py`, `app/domain_store.py`, `app/tmux_controller.py`, `app/launch_config.py`
+- For `hot-reload.md`: read `app/hot_reload.py`, `tui/hot_reload_controller.py`
+- For `themes.md`: read `core/palette.py`, `tui/theme_controller.py`, docs/THEME_*.md
+- For `panels.md`: read `tui/panel_registry.py`, `tui/panel_renderers.py`, `tui/session_panel.py`, `tui/info_panel.py`
+- For `search.md`: read `tui/search.py`, `tui/search_controller.py`
+- For `filters.md`: read `core/filter_registry.py`, `tui/category_config.py`
+- For `export.md`: read `tui/dump_export.py`, `tui/dump_formatting.py`
+- For `errors.md`: read `app/error_models.py`, `tui/error_indicator.py`
+- For `proxy.md`: read `pipeline/proxy.py`, `pipeline/proxy_flow.py`, `pipeline/forward_proxy_tls.py`, `providers.py`
 
-After all reviewers return:
+### Phase 3: Review (up to 10 parallel review agents)
 
-11. Collect all findings. Deduplicate (multiple reviewers may flag the same issue).
-12. Rank by category: apply all Critical fixes, then Important fixes. Minor fixes apply if they're quick and clearly correct.
-13. For conflicting suggestions, prefer the one backed by a code citation.
-14. Apply fixes directly to the spec files. Do NOT defer fixes to the next iteration — the whole point of parallel review is to converge within this iteration.
-15. Update `spec/INDEX.md` status for files that received review fixes (draft → reviewed).
+After spec-writing agents complete, launch review agents. Each reviewer:
+- Is assigned **a batch of spec files** to review (distribute evenly)
+- Reads the spec files AND the corresponding source code
+- Produces a **structured review** with these categories:
+
+```
+## Review: spec/<file>.md
+
+### Accuracy Issues (must fix)
+- Line/section: <what's wrong> → <what code actually shows>
+
+### Missing "Why" (should fix)
+- <feature described without motivation> → <the user problem it solves>
+
+### Missing Behavior (should fix)
+- <behavior found in code but not in spec>
+
+### Overclaims (should fix)
+- <spec claims something the code doesn't actually do>
+
+### Nitpicks (optional)
+- <style, clarity, organization suggestions>
+```
+
+**Reviewer focus areas:**
+- Does each spec file's Overview explain *why* this area exists, not just what it does?
+- Are data types and their fields accurate against the actual code?
+- Are defaults, initial states, and state transitions precisely described?
+- Do cross-references between spec files agree? (e.g., block types in `formatting.md` match those in `rendering.md`)
+- Are there behaviors in the code that the spec misses entirely?
+- Is there anything in the spec file that doesn't actually appear in the code?  Anything hallucinated must be cleaned up!
+
+### Phase 4: Aggregation and Correction (you, the orchestrator)
+
+1. Collect all review results
+2. Triage: group by severity (accuracy issues > missing behavior > missing "why" > nitpicks)
+3. For accuracy issues and missing behavior: apply corrections directly to spec files
+4. For missing "why": add motivation framing to Overview sections and relevant subsections
+5. For cross-reference inconsistencies: reconcile and update all affected files
+6. Update `spec/INDEX.md` with current status of all files
+7. Summarize what was done this iteration and what remains for the next
 
 ## Writing Standards
+
+**Lead with the "why."** Every spec file Overview must answer: "What user problem does this solve? What would be painful without it?" Every major section should connect features to the workflows they enable.
 
 **Be precise about data.** Don't say "includes metadata" — say "includes `model` (string, e.g. 'claude-sonnet-4-20250514'), `max_tokens` (int), `stop_reason` (string | null), `stream` (bool)."
 
 **Specify defaults.** Don't say "categories have visibility levels" — say "Default levels at startup: user=FULL, assistant=FULL, tools=SUMMARY, system=SUMMARY, budget=EXISTENCE, metadata=EXISTENCE, headers=EXISTENCE."
+
+**Be exhaustive.** Don't say "The Debug menu has functionality XYZ, and similarly, the Settings panel, etc." — define each feature independently and completely.
 
 **Describe state transitions.** Don't say "pressing a key toggles visibility" — say "Pressing `3` cycles tools visibility: EXISTENCE→SUMMARY→FULL→EXISTENCE. Pressing `#` (Shift+3) toggles between SUMMARY↔FULL without passing through EXISTENCE."
 
@@ -170,12 +169,31 @@ After all reviewers return:
 
 **Document edge cases.** What happens with empty tool results? What if a system prompt section is removed between requests? What if the proxy can't connect to the target?
 
+**Gaps.** If edge cases are undefined, document that as well.  Document any gaps in functionality or behavior that would be useful to understand.
+
+**Spec file template:**
+```markdown
+# <Title>
+
+> Last verified against: <commit hash or "not yet">
+
+## Overview
+One paragraph: what user problem this area solves and why it exists.
+One paragraph: what this area does from the user's perspective.
+
+## <Sections>
+Detailed specification organized by concept.
+Each major section should connect to user workflows where relevant.
+Include mermaid diagrams where relevent.
+```
+
 ## What Belongs in Spec vs. Not
 
 **IN spec (behavior/contract):**
 - "Pressing `g` scrolls to the first line and disables follow mode"
 - "ToolUseBlock carries: name (str), input_size (int), tool_use_id (str), detail (str)"
 - "At SUMMARY level, consecutive tool use/result pairs are collapsed into a single summary line showing tool counts"
+- "System prompt tracking exists because prompts change subtly between requests and these changes are invisible in Claude Code's UI"
 
 **NOT in spec (implementation):**
 - "render_line() uses binary search over turn offsets"
@@ -184,28 +202,19 @@ After all reviewers return:
 
 The line: if changing the implementation (but not the behavior) would require updating the spec, the spec is too implementation-specific.
 
-## Priority and Dependency Order
+## Priority Order for New Specs
 
-With parallel subagents, all spec files can be written simultaneously on the first pass. However, **review agents** should understand the conceptual dependency order so they can trace cross-references in the right direction:
+If starting fresh, build in this order (each builds on the previous):
+1. `events.md` — the foundation; everything flows from events
+2. `formatting.md` — the IR that events produce
+3. `visibility.md` — how blocks are shown/hidden
+4. `rendering.md` — what blocks look like
+5. `navigation.md` — how users interact
+6. `cli.md` — how the app is started
+7. `recording.md` — persistence layer
+8. Everything else in any order
 
-```
-events.md          ← foundation: all other specs reference event types
-  ↓
-formatting.md      ← defines the IR that rendering/visibility specs reference
-  ↓
-visibility.md      ← defines the level/category model that rendering uses
-  ↓
-rendering.md       ← depends on block types (formatting) + levels (visibility)
-  ↓
-navigation.md      ← depends on visibility (key bindings cycle levels)
-  ↓
-cli.md             ← depends on sessions, recording (CLI flags reference them)
-recording.md       ← depends on events (what's captured)
-  ↓
-everything else    ← independent, reference the above as needed
-```
-
-On **subsequent iterations**, if time is limited, prioritize deepening specs higher in this graph — errors there cascade into downstream specs.
+On the first iteration, launch agents for items 1–7 in parallel (they can be written concurrently since they cover independent code areas; cross-references will be reconciled during review). Launch remaining spec agents for items 8+ in the same batch if capacity allows.
 
 ## Existing Documentation to Cross-Reference
 
@@ -222,12 +231,11 @@ These files contain architectural and product information. Use them as context, 
 ## Convergence Signals
 
 You're converging when:
-- All `[UNVERIFIED]` tags from prior iterations have been resolved
-- All spec files have status "reviewed" or "verified"
 - Cross-references between spec files are consistent (e.g., block types listed in `formatting.md` match those referenced in `rendering.md`)
-- You can read through the spec end-to-end and it tells a coherent story
+- Review agents find only nitpicks, no accuracy issues or missing behavior
+- Every spec file's Overview clearly explains *why* the feature exists, not just what it does
+- You can read through the spec end-to-end and it tells a coherent story of a tool built for a specific purpose
 
 You're NOT converging when:
-- You're adding new `[UNVERIFIED]` tags faster than resolving old ones
 - Spec files contradict each other
-- You find behavior in code that isn't captured anywhere in the spec
+- Spec files read like reference manuals instead of design documents — they list features without explaining the problems those features solve
