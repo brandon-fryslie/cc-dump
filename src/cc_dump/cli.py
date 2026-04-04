@@ -408,7 +408,22 @@ def _build_cli_parser(
             default=False,
             help=f"Disable the {spec.display_name} proxy server",
         )
+    # Convenience alias: --upstream copilot sets target + upstream_format on the default provider
+    parser.add_argument(
+        "--upstream",
+        type=str,
+        default=None,
+        choices=list(_UPSTREAM_PRESETS.keys()),
+        help="Convenience preset for upstream target + format (e.g., --upstream copilot)",
+    )
     return parser
+
+
+# // [LAW:one-source-of-truth] Upstream presets live here, not scattered across argparse.
+_UPSTREAM_PRESETS: dict[str, tuple[str, str]] = {
+    # name → (target_url, upstream_format)
+    "copilot": ("https://api.individual.githubcopilot.com", "openai-responses"),
+}
 
 
 def _handle_recording_admin_commands(args: argparse.Namespace) -> bool:
@@ -602,6 +617,15 @@ def main():
     default_provider_spec = cc_dump.providers.get_provider_spec(default_provider_key)
     parser = _build_cli_parser(default_provider_spec)
     args = parser.parse_args(_argv)
+
+    # Apply upstream preset — overrides target + upstream_format on default provider
+    if args.upstream is not None:
+        preset_target, preset_format = _UPSTREAM_PRESETS[args.upstream]
+        args.target = preset_target
+        from dataclasses import replace
+        default_provider_spec = replace(default_provider_spec, upstream_format=preset_format)
+        cc_dump.providers.update_provider_spec(default_provider_spec)
+
     auto_launch_config = _resolve_auto_launch_config_name(auto_launch_config)
 
     # Install stderr tee before anything else writes to stderr
