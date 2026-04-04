@@ -35,6 +35,7 @@ from cc_dump.pipeline.response_assembler import (
     ResponseAssembler,
 )
 import cc_dump.pipeline.proxy_flow
+import cc_dump.pipeline.copilot_translate
 import cc_dump.providers
 
 if TYPE_CHECKING:
@@ -455,6 +456,14 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         # is forwarded to the client but produces no pipeline events.
         emitted_request = body is not None
 
+        # Request translation keyed by upstream_format
+        # // [LAW:dataflow-not-control-flow] upstream_format → request translator.
+        upstream_fmt = cc_dump.providers.get_provider_spec(self.provider).upstream_format
+        request_translator = self._REQUEST_TRANSLATORS.get(upstream_fmt)
+        if body is not None and request_translator is not None:
+            body, url = request_translator(body, url)
+            body_bytes = json.dumps(body).encode()
+
         # Pipeline processing — transforms modify body/url, interceptors short-circuit
         if body is not None and self.request_pipeline is not None:
             body, url, intercept_response = self.request_pipeline.process(body, url)
@@ -463,11 +472,15 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 return
             body_bytes = json.dumps(body).encode()  # re-serialize for upstream
 
-        # Forward
-        headers = cc_dump.pipeline.proxy_flow.build_upstream_headers(
-            self.headers,
-            content_length=len(body_bytes),
+        # Forward — header building dispatches by upstream_format
+        # // [LAW:dataflow-not-control-flow] upstream_format → header builder.
+        header_builder = self._HEADER_BUILDERS.get(
+            upstream_fmt,
+            lambda self_, body_bytes_: cc_dump.pipeline.proxy_flow.build_upstream_headers(
+                self_.headers, content_length=len(body_bytes_),
+            ),
         )
+        headers = header_builder(self, body_bytes)
 
         req = urllib.request.Request(
             url, data=body_bytes or None, headers=headers, method=self.command
@@ -641,10 +654,52 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         "openai": OpenAiChatResponseAssembler,
     }
 
+    # [LAW:dataflow-not-control-flow] upstream_format → request body+URL translator.
+    # Runs before the shared RequestPipeline. Absent key = identity (no translation).
+    @staticmethod
+    def _openai_responses_translate_request(body: dict, url: str) -> tuple[dict, str]:
+        translated = cc_dump.pipeline.copilot_translate.anthropic_to_copilot_request(body)
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        upstream_url = cc_dump.pipeline.copilot_translate.copilot_upstream_url(
+            f"{parsed.scheme}://{parsed.netloc}"
+        )
+        return translated, upstream_url
+
+    _REQUEST_TRANSLATORS: dict[str, object] = {
+        "openai-responses": _openai_responses_translate_request.__func__,
+    }
+
+    # [LAW:dataflow-not-control-flow] upstream_format → header builder.
+    # Absent key uses proxy_flow.build_upstream_headers (pass-through).
+    @staticmethod
+    def _openai_responses_headers(handler, body_bytes: bytes) -> dict[str, str]:
+        token = cc_dump.pipeline.copilot_translate.read_copilot_token()
+        return cc_dump.pipeline.copilot_translate.copilot_upstream_headers(
+            {}, token, len(body_bytes),
+        )
+
+    _HEADER_BUILDERS: dict[str, object] = {
+        "openai-responses": _openai_responses_headers.__func__,
+    }
+
+    # [LAW:dataflow-not-control-flow] upstream_format → streaming strategy.
+    # Absent key uses the default _stream_response path.
+    _STREAM_HANDLERS: dict[str, str] = {
+        "openai-responses": "_stream_translated_response",
+    }
+
     def _stream_response(self, resp, request_id: str = "", *, emit_events: bool = True):
         if not emit_events:
             # Forward SSE bytes to client only — no pipeline events.
             _fan_out_sse(resp, [ClientSink(self.wfile)])
+            return
+
+        # // [LAW:dataflow-not-control-flow] upstream_format → stream handler dispatch.
+        upstream_fmt = cc_dump.providers.get_provider_spec(self.provider).upstream_format
+        handler_name = self._STREAM_HANDLERS.get(upstream_fmt)
+        if handler_name is not None:
+            getattr(self, handler_name)(resp, request_id)
             return
 
         family = cc_dump.providers.get_provider_spec(self.provider).protocol_family
@@ -680,6 +735,78 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         """Check if this request path should be parsed as JSON."""
         prefixes = cc_dump.providers.get_provider_spec(self.provider).api_paths
         return any(request_path.startswith(p) for p in prefixes)
+
+    def _stream_translated_response(self, resp, request_id: str = ""):
+        """Stream Copilot (OpenAI Responses API) SSE, translating to Anthropic format.
+
+        Reads Copilot SSE events from upstream, translates each to Anthropic SSE events,
+        writes Anthropic-format bytes to client, and feeds Anthropic events to the
+        TUI pipeline (EventQueueSink + ResponseAssembler).
+
+        // [LAW:dataflow-not-control-flow] Same sink pipeline as _stream_response —
+        // the translation happens before events enter the sinks.
+        // [LAW:single-enforcer] Copilot→Anthropic SSE translation is here only.
+        """
+        parser = cc_dump.pipeline.copilot_translate.CopilotSSEParser()
+        state = cc_dump.pipeline.copilot_translate.TranslationState()
+        assembler = ResponseAssembler()
+        event_sink = EventQueueSink(self.event_queue, request_id=request_id, provider=self.provider)
+
+        try:
+            for raw_line in resp:
+                parsed_events = parser.feed(raw_line)
+                for copilot_event_type, copilot_data in parsed_events:
+                    anthropic_events = cc_dump.pipeline.copilot_translate.copilot_sse_to_anthropic_events(
+                        copilot_event_type, copilot_data, state,
+                    )
+                    for anth_event in anthropic_events:
+                        # Write Anthropic SSE bytes to client
+                        anth_bytes = cc_dump.pipeline.copilot_translate.anthropic_sse_line(anth_event)
+                        try:
+                            self.wfile.write(anth_bytes)
+                            self.wfile.flush()
+                        except Exception as exc:
+                            logger.warning("Client write failure: %s", exc)
+
+                        # Feed to TUI pipeline sinks
+                        anth_type = anth_event.get("type", "")
+                        try:
+                            event_sink.on_event(anth_type, anth_event)
+                        except Exception as exc:
+                            logger.warning("EventQueueSink failure: %s", exc)
+                        try:
+                            assembler.on_event(anth_type, anth_event)
+                        except Exception as exc:
+                            logger.warning("ResponseAssembler failure: %s", exc)
+        finally:
+            try:
+                event_sink.on_done()
+            except Exception:
+                pass
+            try:
+                assembler.on_done()
+            except Exception:
+                pass
+
+        seq = event_sink.seq
+        if assembler.result is not None:
+            seq += 1
+            self.event_queue.put(ResponseCompleteEvent(
+                body=assembler.result,
+                **event_envelope(
+                    request_id=request_id,
+                    seq=seq,
+                    provider=self.provider,
+                ),
+            ))
+        seq += 1
+        self.event_queue.put(ResponseDoneEvent(
+            **event_envelope(
+                request_id=request_id,
+                seq=seq,
+                provider=self.provider,
+            ),
+        ))
 
     def do_CONNECT(self):
         """Handle HTTPS CONNECT tunneling with forward-proxy TLS interception."""
