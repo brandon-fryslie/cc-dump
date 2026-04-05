@@ -83,6 +83,30 @@ class TestDetectRunSubcommand:
         assert flags == []
         assert extra == ["-a", "-b", "--flag", "val"]
 
+    def test_flags_before_run(self):
+        name, flags, extra = _detect_run_subcommand(
+            ["--upstream", "copilot", "run", "claude"]
+        )
+        assert name == "claude"
+        assert flags == ["--upstream", "copilot"]
+        assert extra == []
+
+    def test_flags_before_and_after_run(self):
+        name, flags, extra = _detect_run_subcommand(
+            ["--upstream", "copilot", "run", "claude", "--port", "5000"]
+        )
+        assert name == "claude"
+        assert flags == ["--upstream", "copilot", "--port", "5000"]
+        assert extra == []
+
+    def test_flags_before_run_with_extra_args(self):
+        name, flags, extra = _detect_run_subcommand(
+            ["--upstream", "copilot", "run", "claude", "--", "--dangerously-bypass-permissions"]
+        )
+        assert name == "claude"
+        assert flags == ["--upstream", "copilot"]
+        assert extra == ["--dangerously-bypass-permissions"]
+
 
 class TestResolveAutoLaunchConfigName:
     def test_none_passthrough(self):
