@@ -482,10 +482,10 @@ Streaming text delta accumulated during SSE processing.
 |-------|--------|
 | SC | `  stop: end_turn` — compact reason |
 | SE | SC content + `    assistant completed turn` (dim italic hint from `_STOP_REASON_HINTS`) |
-| FC | Same as SC |
+| FC | `  stop` — dim label only (no reason value, more compact than SC) |
 | FE | `  stop: end_turn` — full default renderer (with leading newline) |
 
-Stop reason hints: `end_turn` = "assistant completed turn", `max_tokens` = "generation hit token limit", `stop_sequence` = "matched configured stop sequence", `tool_use` = "assistant requested tool execution".
+Stop reason hints: `end_turn` = "assistant completed turn", `max_tokens` = "generation hit token limit", `stop_sequence` = "matched configured stop sequence", `tool_use` = "assistant requested tool execution", `""` (empty) = "stream still in progress or reason unavailable".
 
 ### NewlineBlock (Category: None — always visible)
 

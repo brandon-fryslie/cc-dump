@@ -46,7 +46,7 @@ A frozen dataclass (`@dataclass(frozen=True)`) that captures every color the ren
 | `info` | hex string | alias for `primary` |
 | `code_theme` | string | `"github-dark"` (dark) or `"friendly"` (light) |
 | `search_all_bg` | hex string | `surface` |
-| `search_current_style` | Rich style string | bold, inverted fg on accent |
+| `search_current_style` | Rich style string | bold, black (dark) or white (light) text on accent |
 | `follow_active_style` | Rich style string | bold, background on foreground (inverted) |
 | `follow_engaged_style` | Rich style string | bold, foreground on background |
 | `search_prompt_style` | Rich style string | bold primary |
@@ -67,13 +67,28 @@ A mutable dataclass holding theme-derived state that changes when the user switc
 - **msg_colors**: `list[str]` -- 6 foreground hex colors from the palette, mode-adjusted
 - **filter_indicators**: `dict[str, tuple[str, str]]` -- mapping filter name to (symbol, fg_color) used for gutter rendering, where fg_color is the chip_bg value (element [1] of filter_colors)
 
+## Runtime Resolution
+
+Rendering functions need access to theme-derived state but do not always have a direct reference to the app. The `RenderRuntime` is resolved through a layered lookup:
+
+1. **Context variable override** (`_active_runtime_override`): temporarily bound via the `use_render_runtime()` context manager for nested rendering calls that need a specific runtime.
+2. **Owner lookup** (`get_runtime_from_owner()`): checks `owner._render_runtime`, then `owner.app._render_runtime`. The app stores its runtime as `_render_runtime`.
+3. **Module default** (`_default_render_runtime`): a module-level singleton used when no override or owner is available.
+
+Public accessor functions (`get_theme_colors()`, `get_role_styles()`, `get_tag_styles()`, `get_msg_colors()`, `get_filter_indicators()`) accept an optional `runtime` parameter. When provided, they use it via `use_render_runtime()`. When omitted, they fall back to the active runtime (context override or module default). All return snapshot copies (dicts/lists), not references to mutable internal state.
+
 ## Theme Switching
 
 The user cycles themes with `[` (previous) and `]` (next). The `cycle_theme()` function in `theme_controller.py` sorts available theme names alphabetically and wraps cyclically. The selected theme name is persisted to the settings store.
 
 When a theme changes (via Textual's `watch_theme` reactive watcher in `app.py`), the following happens in order:
 
-1. `set_theme()` in `rendering_impl.py` rebuilds `ThemeColors` via `build_theme_colors()` and configures all runtime fields (role_styles, tag_styles, msg_colors, filter_indicators)
+1. `set_theme()` in `rendering_impl.py` delegates to `_configure_runtime_theme()`, which:
+   - Calls `build_theme_colors()` to create a frozen `ThemeColors` snapshot
+   - Sets `role_styles` from ThemeColors role aliases (`"bold <user>"`, `"bold <assistant>"`, `"bold <system>"`)
+   - Generates `tag_styles` as 12 mode-adjusted (fg, bg) pairs from the global `PALETTE` singleton
+   - Generates `msg_colors` as 6 mode-adjusted foreground hex strings from `PALETTE`
+   - Builds `filter_indicators` from `ThemeColors.filter_colors` via `_build_filter_indicators()`
 2. `apply_markdown_theme()` in `theme_controller.py` pops the old Rich theme and pushes a new one from `ThemeColors.markdown_theme_dict`
 3. A theme generation counter in the view store is incremented (`theme:generation`), triggering reactive UI updates
 4. The conversation view's block strip cache and line cache are cleared
@@ -152,6 +167,10 @@ Gutter bars use the `chip_bg` color (element [1]) for their foreground styling, 
 
 A secondary color source independent of theme-relative filter colors. Provides 38 maximally-distinct hues for tag styling and message differentiation. Defined as the `Palette` class in `palette.py`.
 
+### Initialization
+
+The palette is a module-level singleton (`PALETTE`) in `palette.py`, initialized at import time from the environment. `init_palette()` can reinitialize it (e.g., after environment changes). The global singleton is consumed by `_configure_runtime_theme()` when rebuilding tag styles and message colors on theme change.
+
 ### Construction
 
 - Seed hue: 190 degrees (cyan) by default, configurable via `CC_DUMP_SEED_HUE` environment variable
@@ -205,10 +224,20 @@ Textual's `textual-ansi` theme uses terminal ANSI color names (`ansi_blue`, `ans
 2. Passes `#RRGGBB` strings through unchanged
 3. Converts named ANSI colors (e.g., `ansi_blue`) to their hex equivalents via Textual's `Color.parse().rgb`
 
-**Dark mode fallback values** used when normalization applies:
-- foreground: `#e0e0e0` (dark) / `#1e1e1e` (light)
-- background: `#1e1e1e` (dark) / `#e0e0e0` (light)
-- surface: `#2b2b2b` (dark) / `#d0d0d0` (light)
+**Fallback values** used when normalization applies:
+
+Mode-dependent (dark/light):
+- foreground: `#e0e0e0` / `#1e1e1e`
+- background: `#1e1e1e` / `#e0e0e0`
+- surface: `#2b2b2b` / `#d0d0d0`
+
+Mode-independent (same regardless of dark/light):
+- primary: `#0178D4`
+- secondary: falls back to resolved primary
+- accent: falls back to resolved primary
+- warning: `#ffa62b`
+- error: `#ba3c5b`
+- success: `#4EBF71`
 
 **Dark mode detection for ANSI**: When background, foreground, and surface are all `ansi_default` (detected by `_is_ansi_default()`), the system assumes dark mode (`assume_dark = dark or all(...)`) . This avoids pastel indicator colors (appropriate for light themes) appearing on what is almost certainly a dark terminal.
 

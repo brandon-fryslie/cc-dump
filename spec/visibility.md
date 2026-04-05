@@ -127,9 +127,13 @@ count (or `None` for unlimited). All 8 VisState combinations are present in the 
 | `(True, True, True)` — full expanded | `None` (unlimited) |
 
 When a block's rendered output exceeds its truncation limit, the block is marked
-**expandable**. Expandable blocks show a visual indicator (arrow) and respond to
-click interactions. Blocks that fit within their limit are not expandable and show
-no arrow.
+**expandable**. Expandable blocks show a visual indicator (gutter arrow). Blocks
+that fit within their limit are not expandable and show no arrow.
+
+> **Note:** Click-to-expand is not implemented. The `on_click` handler on
+> `ConversationView` only stores click position for double-click text selection.
+> Per-block expansion overrides are set programmatically (by search reveal and
+> location navigation), not by user clicks.
 
 ## Default Configuration
 
@@ -224,6 +228,9 @@ for analytics/expansion detail.
 
 **Behavior:** Forces `visible=True`, then toggles the `expanded` flag.
 
+A backward-compatible alias `toggle_expand` exists in `action_handlers.py` and
+delegates directly to `toggle_analytics`.
+
 **State transitions for `toggle_analytics`:**
 - Toggle spec: `[("vis", True), ("exp", None)]` — force visible, toggle expanded.
 - Example: tools at `(True, False, False)` -> press `e` -> `(True, False, True)` (summary expanded)
@@ -277,49 +284,58 @@ visibility change, since the state no longer matches a named preset.
 **Ordering:** Overrides are cleared *before* the transaction that updates store keys.
 This ensures the autorun that fires on the transaction sees clean block state.
 
-## Per-Block Expansion (Click Behavior)
+## Per-Block Expansion
 
-Within a given category visibility state, individual blocks can be expanded or collapsed
-by clicking. This is a **local adjustment** — it does not change the category state.
+Within a given category visibility state, individual blocks can have their expansion
+state overridden. This is a **local adjustment** — it does not change the category state.
 
 ### Expandability
 
 A block is **expandable** when its rendered output exceeds the truncation limit for
 its current VisState. The rendering system sets the `expandable` flag on a block's
-view state during rendering. Only expandable blocks respond to click interactions.
+view state during rendering.
 
-Expandability is determined by `_compute_expandable()` in `rendering_impl.py`, which
-checks three conditions: (a) whether the block has children (hierarchical container),
+Expandability is determined during `_render_block_tree` in `rendering_impl.py` by
+checking three conditions: (a) whether the block has children (hierarchical container),
 (b) whether there is a different state-specific renderer for the expanded vs collapsed
 state (identity comparison), or (c) whether the rendered strip count exceeds the
 collapsed truncation limit for the current level.
 
-### Click Toggling
+### Expansion Override Sources
 
-Clicking an expandable block toggles its `expanded` override between `True` and
-`False`. The expanded override replaces the category-level expanded state for that
-specific block only.
+Per-block expansion overrides are set **programmatically**, not by user clicks:
 
-- Clicking a collapsed expandable block -> sets `expanded=True` on its view state
-- Clicking an expanded block -> sets `expanded=False`
-- Clicking a non-expandable block -> no effect on expansion (stores click position
-  for double-click text selection)
+- **Search reveal:** When navigating to a search match, the search system sets
+  `vis_override` on the containing block to ensure it is visible
+- **Location navigation:** Jumping to special markers or region tags can set
+  expansion overrides on target blocks
 
-The block is re-rendered using the same category VisState but with the block's
-`expanded` field overridden by the per-block value.
+The `on_click` handler on `ConversationView` does **not** toggle expansion — it
+only stores click position for double-click text selection scope.
 
 ### Visual Indicators
 
-- `▶` — expandable, currently collapsed (more content available)
-- `▼` — expandable, currently expanded (can be collapsed)
-- No arrow — block fits within its limit, not expandable
+The gutter arrow character varies by both the level (summary vs full) and the
+expanded state, defined in `GUTTER_ARROWS` (`rendering_impl.py`), keyed by
+`(full, expanded)`:
 
-### Scope of Click Expansion
+| State | Arrow | Description |
+|-------|-------|-------------|
+| Summary collapsed | `▷` (outline right) | Expandable at summary level, collapsed |
+| Summary expanded | `▽` (outline down) | Expandable at summary level, expanded |
+| Full collapsed | `▶` (filled right) | Expandable at full level, collapsed |
+| Full expanded | `▼` (filled down) | Expandable at full level, expanded |
+| Not expandable | *(none)* | Block fits within its truncation limit |
 
-Click expansion operates **within the current level**. It changes how many lines of a
-block are shown, but does not change whether the block is at summary or full detail.
-For example, clicking a tool block at summary level expands it from 3 to 8 lines,
-not to unlimited. This separation exists because if clicking jumped directly to full
+The outline vs filled distinction gives users a visual cue about which detail
+level they are at, reinforcing the two-tier (summary/full) mental model.
+
+### Scope of Expansion Overrides
+
+Expansion overrides operate **within the current level**. They change how many lines of a
+block are shown, but do not change whether the block is at summary or full detail.
+For example, expanding a tool block at summary level shows it at 8 lines (summary expanded),
+not unlimited. This separation exists because if expansion jumped directly to full
 expanded, there would be no medium-detail view; the level/expand split gives
 fine-grained control over how much detail is revealed at each interaction.
 
@@ -437,8 +453,8 @@ in order `["1", "2", "4", "5", "6", "7", "8", "9"]` for cycling.
 Both use `_cycle_filterset(app, direction)` which reads the current `filter:active`
 slot, finds its index in `FILTERSET_SLOTS`, and advances by `direction` (+1 or -1)
 with modulo wrapping. If the current slot is not found in the list (e.g., `None`
-from manual changes), cycling starts from index -1, which wraps to the first slot
-(for +1) or the seventh slot (for -1).
+from manual changes), cycling starts from index -1, which wraps to slot `"1"`
+Conversation (for +1) or slot `"8"` Assistant (for -1).
 
 **F1-F9 function keys** are listed in the keys help panel as "Load preset" but are
 **not bound** in `MODE_KEYMAP`. The only way to access filtersets via keyboard is
@@ -540,6 +556,7 @@ Categories are displayed in the footer in their registry order (key order: 1 thr
 | `src/cc_dump/tui/action_handlers.py` | `toggle_vis`, `toggle_detail`, `toggle_analytics`, `cycle_vis`, `apply_filterset`, `next_filterset`, `prev_filterset` |
 | `src/cc_dump/app/view_store.py` | Store schema, `active_filters` computed, `get_category_state()` |
 | `src/cc_dump/tui/view_overrides.py` | `BlockViewState`, `RegionViewState`, `ViewOverrides` |
+| `src/cc_dump/tui/category_config.py` | Re-exports `CATEGORY_CONFIG` from `filter_registry` (used by `view_store.py`) |
 | `src/cc_dump/tui/input_modes.py` | `MODE_KEYMAP` (key bindings per mode) |
-| `src/cc_dump/io/settings.py` | `DEFAULT_FILTERSETS` |
+| `src/cc_dump/io/settings.py` | `DEFAULT_FILTERSETS`, `get_filterset()` |
 | `src/cc_dump/tui/custom_footer.py` | Footer chip composition and click dispatch |

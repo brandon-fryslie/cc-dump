@@ -239,7 +239,7 @@ The `force=True` on `rerender()` is critical — without it, `TurnData.re_render
 
 | Component | Reads from | Color tuple index |
 |-----------|-----------|-------------------|
-| Gutter bars (`_add_gutter_to_strips()`) | `FILTER_INDICATORS[name]` | `[0]` gutter_fg |
+| Gutter bars (`_add_gutter_to_strips()`) | `runtime.filter_indicators[name]` | derived from `tc.filter_colors[name][1]` (chip_bg) |
 | Footer chip bg | `tc.filter_colors[name]` | `[1]` chip_bg |
 | Footer chip fg | `tc.filter_colors[name]` | `[2]` chip_fg |
 

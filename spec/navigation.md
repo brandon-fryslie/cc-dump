@@ -28,8 +28,8 @@ used. The app maintains an `_input_mode` property derived from search state:
 ### Dispatch Flow
 
 1. `_handle_pre_keymap_event()` runs first (in `app.py`):
-   - In `SEARCH_EDIT`: `event.prevent_default()` is called, then all keys routed to `search_controller.handle_search_editing_key()`. Returns `True` (consumed).
-   - In `SEARCH_NAV`: search-specific keys (`n`, `N`, `/`, `Escape`, `q`, `Enter`, `Ctrl+N`, `Ctrl+P`, `Tab`, `Shift+Tab`) handled by `search_controller.handle_search_nav_special_keys()`. If it returns `True`, the event is prevented and consumed. If `False`, falls through.
+   - In `SEARCH_EDIT`: `event.prevent_default()` is called, then all keys routed to `_handle_search_editing_key()` (delegates to `_search.handle_search_editing_key()`). Returns `True` (consumed).
+   - In `SEARCH_NAV`: search-specific keys (`n`, `N`, `/`, `Escape`, `q`, `Enter`, `Ctrl+N`, `Ctrl+P`, `Tab`, `Shift+Tab`) handled by `_handle_search_nav_special_keys()` (delegates to `_search.handle_search_nav_special_keys()`). If it returns `True`, the event is prevented and consumed. If `False`, falls through.
    - `Escape` closes topmost panel (launch config checked first, then settings) when not in search mode. Returns `True` if a panel was closed.
    - Focused widget key consumers (`check_consume_key`) are checked — panels with focused inputs (e.g., Chip widgets consuming Enter/Space) eat keys via Textual's event bubbling before reaching app.
    - `/` in `NORMAL` mode starts search (handled here, before the keymap, not via `MODE_KEYMAP`). Returns `True`.
@@ -272,10 +272,10 @@ The follow state machine responds to four events, each dispatched via
 
 | Event | Dispatched By | Purpose |
 |-------|--------------|---------|
-| `USER_SCROLL` | `on_scroll()` handler | User moved the scroll position (mouse wheel, j/k, page keys) |
+| `USER_SCROLL` | `watch_scroll_y()` reactive watcher | User moved the scroll position (mouse wheel, j/k, page keys). Guarded by `_scrolling_programmatically` — programmatic scrolls (via `_programmatic_scroll()` context manager) do not trigger this event. |
 | `TOGGLE` | `toggle_follow()` (`f` key) | Explicit follow toggle |
-| `SCROLL_BOTTOM` | `scroll_to_bottom()` (`G` key) | Programmatic scroll to end |
-| `DEACTIVATE` | `scroll_to_top()` (`g` key), `scroll_to_block()` (structured nav) | Leave ACTIVE without turning OFF |
+| `SCROLL_BOTTOM` | `scroll_to_bottom()` (`G` key) | Programmatic scroll to end. Does not scroll directly — the transition's `scroll_to_end=True` flag causes `_apply_follow_transition` to call `scroll_end(animate=False)`. |
+| `DEACTIVATE` | `scroll_to_top()` (`g` key), `scroll_to_block()` (structured nav), `reveal_search_match()` (search navigation) | Leave ACTIVE without turning OFF |
 
 ### Transition Table
 
@@ -303,9 +303,9 @@ takes `(current_state, event, at_bottom)` and returns `FollowTransition(next_sta
 ### Key Interactions with Follow Mode
 
 - **`f`** — Dispatches `TOGGLE` event. OFF -> ACTIVE (scrolls to end). ACTIVE/ENGAGED -> OFF.
-- **`G` (go_bottom)** — Dispatches `SCROLL_BOTTOM` event. Re-engages follow if ENGAGED. Always scrolls to end.
-- **`g` (go_top)** — Dispatches `DEACTIVATE` event. ACTIVE -> ENGAGED. Then scrolls to top via `scroll_home(animate=False)`.
-- **User scroll (mouse wheel, j/k, page keys)** — Dispatches `USER_SCROLL` with `at_bottom` computed from `is_vertical_scroll_end`. Scrolling away from bottom: ACTIVE -> ENGAGED. Scrolling back to bottom: ENGAGED -> ACTIVE.
+- **`G` (go_bottom)** — Dispatches `SCROLL_BOTTOM` event. Re-engages follow if ENGAGED. OFF stays OFF. The actual scroll happens indirectly: `_apply_follow_transition` observes the transition's `scroll_to_end=True` and calls `scroll_end(animate=False)` inside `_programmatic_scroll()`.
+- **`g` (go_top)** — Dispatches `DEACTIVATE` event first (ACTIVE -> ENGAGED), then scrolls to top via `scroll_home(animate=False)` inside `_programmatic_scroll()`. The programmatic scroll guard prevents `watch_scroll_y` from re-dispatching a `USER_SCROLL` event.
+- **User scroll (mouse wheel, j/k, page keys)** — Detected by `watch_scroll_y` reactive watcher. Dispatches `USER_SCROLL` with `at_bottom` computed from `is_vertical_scroll_end`. Also recomputes `_scroll_anchor` for turn-level position tracking. Scrolling away from bottom: ACTIVE -> ENGAGED. Scrolling back to bottom: ENGAGED -> ACTIVE. Programmatic scrolls (inside `_programmatic_scroll()` guard) are excluded.
 - **Structured navigation** (special sections, session boundaries) — Dispatches `DEACTIVATE` when using `scroll_to_block()`.
 
 ### Reactive Architecture

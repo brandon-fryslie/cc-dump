@@ -1,6 +1,6 @@
 # Recording and Replay
 
-**Status:** draft
+**Status:** verified
 
 ## Why This Exists
 
@@ -95,13 +95,13 @@ Each entry represents one complete API exchange:
 
 The HAR file stores **synthetic non-streaming representations**, not raw wire traffic:
 
-1. **Request body `stream` field is set to `false`.** The actual request has `stream: true` because cc-dump intercepts SSE streams. `build_har_request` copies the body and overwrites `stream` to `false` for clarity when viewing in standard HAR tools.
+1. **Request body `stream` field is set to `false`.** The actual request has `stream: true` because cc-dump intercepts SSE streams. `build_har_request` copies the body (`body.copy()`) and overwrites `stream` to `false` for clarity when viewing in standard HAR tools.
 
 2. **Response is the complete reconstructed message**, not the sequence of SSE `content_block_delta` events. The `ResponseAssembler` (upstream in the proxy pipeline) reconstructs the full message from the SSE stream; the recorder captures that final form via `ResponseCompleteEvent.body`.
 
 3. **Response headers are synthetic.** `build_har_response` always emits `content-type: application/json` and a computed `content-length` as the first two headers. Additional response headers from the actual response are appended, but `content-type`, `content-length`, and `transfer-encoding` are excluded (they would be inconsistent with the synthetic body).
 
-4. **Timing is coarse.** All time is attributed to `timings.wait`; `send` and `receive` are zero. The `time` field and `timings.wait` both reflect total wall-clock milliseconds. Timing is measured from `RequestHeadersEvent` receipt to `_commit_entry` execution (not from the original request start to response end).
+4. **Timing is coarse.** All time is attributed to `timings.wait`; `send` and `receive` are zero. The `time` field and `timings.wait` both reflect total wall-clock milliseconds. Timing is measured from `RequestHeadersEvent` receipt to `_commit_entry` execution (not from the original request start to response end). If `request_start_time` is None (no `REQUEST_HEADERS` event was received), timing defaults to 0.0.
 
 5. **Request URL comes from the provider registry**, not from the actual proxy request. Each `ProviderSpec` has a `har_request_url` field that provides the canonical upstream API endpoint URL. Current values: `https://api.anthropic.com/v1/messages` (anthropic), `https://api.openai.com/v1/chat/completions` (openai), `https://api.githubcopilot.com/chat/completions` (copilot).
 
@@ -130,11 +130,13 @@ The recorder (`HARRecordingSubscriber`) tracks per-request state in `_PendingExc
 | `RESPONSE_HEADERS` | Store response status code and headers |
 | `RESPONSE_COMPLETE` | Store complete message body, then call `_commit_entry` |
 
-Provider identity is stamped on every event (resolved through the provider registry). The pending exchange is committed only when all required data is present: `request_body` and `complete_message` must both be non-None for `_commit_entry` to write.
+Provider identity is resolved through the provider registry (`get_provider_spec(event.provider).key`) and stamped on every event — not just the first. The pending exchange is committed only when all required data is present: `request_body` and `complete_message` must both be non-None for `_commit_entry` to write. Missing `request_headers`, `response_status`, or `response_headers` are tolerated (defaulting to `{}`, `200`, and `{}` respectively).
 
 ### File Creation
 
 Recording files are created **lazily**: the file is not written to disk until the first complete API exchange is committed. Sessions with no API traffic produce no file. This avoids cluttering the recordings directory with empty files from sessions that were started and immediately closed.
+
+The parent directory is created with `os.makedirs(exist_ok=True)` on first file open.
 
 ### Incremental Writing
 
@@ -145,7 +147,7 @@ Each HAR entry is written to disk immediately upon completion. The recorder main
 3. After each entry: seeking to `_entries_end_pos`, writing the entry (with comma separator if not the first), updating `_entries_end_pos`, then re-writing the closing `\n]}}` footer
 4. Flushing after every entry
 
-This means the file is always valid JSON, even if the process crashes mid-session.
+This means the file is always valid JSON, even if the process crashes mid-session. Entry JSON is compact (no indentation, `ensure_ascii=False`).
 
 ### Per-Provider Separation
 
@@ -167,10 +169,11 @@ On close:
 - If no file was created (`_file is None`): nothing happens. If events were received (but no entries committed), a warning is logged with the event counts.
 - If a file was created but has zero entries (should not happen due to lazy init): the file is deleted and an error is logged. This is a belt-and-suspenders check.
 - Pending incomplete exchanges are silently dropped (the `_pending_by_request` dict is abandoned).
+- File close errors are caught and logged but do not propagate.
 
 ### Error Isolation
 
-All event handling is wrapped in a try/except in `on_event`. Errors are logged but never propagated to the router. Within `_commit_entry`, serialization errors are caught individually so a bad entry does not corrupt the file — the pending state for that request is still removed.
+All event handling is wrapped in a try/except in `on_event`. Errors are logged but never propagated to the router. Within `_commit_entry`, serialization errors are caught individually so a bad entry does not corrupt the file — the pending state for that request is still removed regardless of whether serialization succeeded.
 
 ## Storage Layout
 
@@ -197,7 +200,7 @@ Where:
 
 Example: `ccdump-anthropic-20260328-143000Z-a1b2c3d4.har`
 
-The hash component ensures uniqueness even if two sessions start in the same second.
+The hash component ensures uniqueness even if two sessions start in the same second. The UUID4 component means the hash is different on every call, even within the same process and second.
 
 ### Custom Output Directory
 
@@ -212,21 +215,32 @@ The `--record <path>` flag overrides the output directory:
 
 `load_har(path)` reads a HAR file and extracts valid request/response pairs. For each entry:
 
-1. Request body is parsed from `request.postData.text` (must decode to a JSON object)
-2. Response body is parsed from `response.content.text` (must decode to a JSON object)
+1. Request body is parsed from `request.postData.text` (must decode to a JSON object via `_load_json_object`)
+2. Response body is parsed from `response.content.text` (must decode to a JSON object via `_load_json_object`)
 3. Request headers are extracted from HAR's `[{name, value}]` format into a flat dict (later duplicate header names overwrite earlier ones)
 4. Response status is extracted from `response.status` (defaults to 200 if missing)
 5. Response headers are extracted the same way as request headers
-6. Provider is inferred from the HAR entry using a precedence chain:
+6. Provider is inferred from the HAR entry using `infer_provider_from_har_entry`, which applies a precedence chain:
    - `_cc_dump.provider` custom field (normalized and validated against known providers)
    - URL-based detection from `request.url` (matched against `url_markers` in provider specs)
    - Response body shape detection (`type: "message"` = Anthropic, `object: "chat.completion"` = OpenAI)
    - Falls back to the default provider key (`"anthropic"`) if none of the above match
-7. Response body is validated against the inferred provider's expected complete-response shape
+7. Response body is validated against the inferred provider's `protocol_family` expected complete-response shape via `is_complete_response_for_provider`
 
 Invalid entries are skipped with a warning log. If no valid entries remain after processing all entries, a `ValueError` is raised.
 
 Exceptions raised: `ValueError` (invalid HAR structure or no valid entries), `FileNotFoundError` (file missing), `json.JSONDecodeError` (file is not valid JSON).
+
+### Structural Validation
+
+`load_har` validates the HAR envelope before iterating entries:
+- `"log"` key must exist
+- `"log.entries"` must exist and be a list
+
+Per-entry validation requires:
+- `request` key with `postData.text` (must parse as JSON object)
+- `response` key with `content.text` (must parse as JSON object)
+- Header arrays are tolerant: missing `headers` key is allowed (results in empty dict), and malformed header entries (missing `name` or `value`) are silently skipped
 
 ### Event Synthesis
 
@@ -237,7 +251,7 @@ Each valid HAR entry is converted to the same four pipeline events that live mod
 3. `ResponseHeadersEvent` (seq=2) — carries status code and response headers dict
 4. `ResponseCompleteEvent` (seq=3) — carries complete message dict
 
-Each entry gets a fresh `request_id` (UUID4 hex string via `new_request_id()`). All four events share the same `request_id` and `provider`. Events flow through the same `_handle_event` path that live events use, producing identical formatting and rendering.
+Each entry gets a fresh `request_id` (UUID4 hex string via `new_request_id()`). All four events share the same `request_id` and `provider`, constructed via `event_envelope()`. Events flow through the same `_handle_event` path that live events use, producing identical formatting and rendering.
 
 ### Timing
 
@@ -249,7 +263,7 @@ The replay flow:
 3. During app startup (via `lifecycle_controller._resume_or_replay`), `_process_replay_data()` iterates the list, calling `convert_to_events()` for each tuple and feeding the resulting events through `_handle_event()`
 4. After all replay entries are processed, `_replay_complete` is set, unblocking the live event drain thread
 
-This means replay must complete before any live events are consumed. The live event drain thread (`_drain_events`) calls `self._replay_complete.wait()` before entering its main loop.
+This means replay must complete before any live events are consumed. The live event drain thread (`_drain_events`) calls `self._replay_complete.wait()` before entering its main loop. If no replay data is provided, `_replay_complete` is set immediately during `__init__`, so the drain thread starts without delay.
 
 ### Replay + Live (Continue/Resume)
 
@@ -300,7 +314,7 @@ On shutdown, cc-dump logs a command to resume the session:
 To resume: cc-dump --port <PORT> --resume <recording-path>
 ```
 
-The recording path is resolved with a preference chain: the primary recording from this session (if the file exists on disk), otherwise the replay file that was loaded (if it exists). The `--port` uses the actual bound port from the current session.
+The recording path is resolved with a preference chain: the primary recording from this session (if the file exists on disk), otherwise the replay file that was loaded (if it exists). The `--port` uses the actual bound port from the current session. SIGINT is masked during this print to prevent Ctrl+C from suppressing the resume command.
 
 ## Known Divergences Between Live and Replay
 
@@ -325,6 +339,7 @@ The `cleanup_recordings` function provides basic retention management:
 - Dry-run mode previews without deleting
 - Cleanup is a one-shot CLI command, not an automatic background process
 - The `keep` parameter is clamped to a minimum of 0 (negative values become 0)
+- Returns a `CleanupResult` TypedDict with `kept`, `removed`, `bytes_freed`, `removed_paths`, and `dry_run` fields
 
 ## Recording Metadata Query
 
@@ -334,13 +349,13 @@ The `cleanup_recordings` function provides basic retention management:
 |-------|--------|
 | `path` | Absolute filesystem path (as string) |
 | `filename` | Basename |
-| `provider` | Inferred from filename pattern first (`ccdump-<provider>-...`, validated against canonical provider keys), falling back to first HAR entry inspection via `detect_provider_from_har_entry` |
+| `provider` | Inferred from filename pattern first (`ccdump-<provider>-...`, validated against canonical provider keys), falling back to first HAR entry inspection via `detect_provider_from_har_entry` (without `complete_message`, so only `_cc_dump.provider` and URL marker detection are used) |
 | `created` | From first entry's `startedDateTime`, falling back to file mtime (UTC ISO format) |
 | `entry_count` | Number of entries in the HAR log |
 | `size_bytes` | File size on disk |
 
-Results are sorted by filename (alphabetical, from `Path.glob` sorted output).
+Results are sorted by filename (alphabetical, from `Path.glob` sorted output). Malformed files (invalid JSON, OS errors, missing keys) are skipped with a warning.
 
 `get_latest_recording()` returns the path to the most recently created recording, sorted by `created` timestamp (not filename). This differs from `list_recordings()` ordering. Returns `None` if no recordings exist.
 
-Provider inference from the filename uses the `ccdump-<provider>-...` prefix pattern: the filename is split on `-` with a max of 4 parts, and `parts[1]` is checked against the canonical provider registry. This avoids parsing the full HAR JSON for the common case. If the filename pattern does not match (e.g., a manually-named HAR file), the first entry is loaded and passed to `detect_provider_from_har_entry`.
+Provider inference from the filename uses the `ccdump-<provider>-...` prefix pattern: the stem is split on `-` with `maxsplit=3` (yielding at most 4 parts), requiring at least 4 parts and checking that `parts[1]` matches a canonical provider key. This avoids parsing the full HAR JSON for the common case. If the filename pattern does not match (e.g., a manually-named HAR file), the first entry is loaded and passed to `detect_provider_from_har_entry`.

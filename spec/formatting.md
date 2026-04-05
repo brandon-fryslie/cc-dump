@@ -1,6 +1,6 @@
 # Formatting: The FormattedBlock IR
 
-**Status:** draft-2
+**Status:** draft-3
 
 ## Overview
 
@@ -646,7 +646,7 @@ System prompts from `body.system` are converted to plain `TextContentBlock` inst
 
 All system `TextContentBlock` instances get `category=Category.SYSTEM` and `indent="    "`.
 
-**Content tracking is not implemented.** The ARCHITECTURE.md describes a content-hashing system where system prompt sections would be tracked across requests with SHA256 hashes, color-coded tags (`[sp-1]`, `[sp-2]`), and unified diffs for changed content. This feature does not exist in the codebase. There is no `TrackedContentBlock`, no hash computation on system prompt text, and no diff generation. The `_make_system_prompt_children()` function explicitly states "no cross-request tracking" in its docstring. System prompts are rendered as plain text without any cross-request comparison.
+**Content tracking is permanently absent.** ARCHITECTURE.md historically described a content-hashing system where system prompt sections would be tracked across requests with SHA256 hashes, color-coded tags (`[sp-1]`, `[sp-2]`), and unified diffs for changed content. This feature was never implemented and has been definitively removed from the design. There is no `TrackedContentBlock`, no hash computation on system prompt text, and no diff generation anywhere in the codebase. The `_make_system_prompt_children()` function explicitly states "no cross-request tracking" in its docstring. System prompts are rendered as plain text without any cross-request comparison. The `ProviderRuntimeState` carries no system prompt history -- only `request_counter`, `current_session`, and `tool_descriptions`.
 
 ---
 
