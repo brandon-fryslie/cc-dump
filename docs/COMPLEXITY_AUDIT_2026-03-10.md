@@ -1,7 +1,8 @@
 # Complexity Audit: cc-dump — Subsystems
 
-**Date:** 2026-03-10  
-**Scope:** 8 subsystems across 96 source files in `src/cc_dump` (30,232 LOC)
+**Date:** 2026-03-10
+**Status:** Historical snapshot. Some referenced modules (e.g. `src/cc_dump/ai/`) have since been removed or reorganized. LOC counts and file paths may no longer be accurate.
+**Scope:** 8 subsystems across 96 source files in `src/cc_dump` (30,232 LOC at time of audit)
 
 ## Executive Summary
 - Total files audited: 96

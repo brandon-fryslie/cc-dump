@@ -44,9 +44,11 @@ A 4-line display when active:
 3. **Toggle help:** `Toggle: Alt+c =case  Alt+w =word  Alt+r =regex  Alt+i =incr`
 4. **Navigation help:** Context-sensitive key hints (different for EDITING vs NAVIGATING).
 
+The EDITING help line shows `q =exit(restore)`, but this is misleading: in EDITING phase, `q` is a printable character and inserts into the query. The `q`-to-restore behavior only works in NAVIGATING phase.
+
 The SearchBar is a Textual `Static` widget, not an `Input`. All key handling is centralized in the search controller's `handle_search_editing_key` / `handle_search_nav_special_keys`, not in the widget.
 
-The SearchBar's display state is projected from the view store via a `search_ui_state` computed in the view store that aggregates `search:phase`, `search:query`, `search:modes`, `search:cursor_pos`, `search:current_index`, and `search:match_count`. The bar's visibility (`self.display`) is set to `phase != INACTIVE`.
+The SearchBar's display state is projected from the view store via a `search_ui_state` computed in the view store that aggregates `search:phase`, `search:query`, `search:modes`, `search:cursor_pos`, `search:current_index`, and `search:match_count`. The computed also derives `footer_visible` (True when phase is `"inactive"`). The bar's visibility (`self.display`) is set to `phase != INACTIVE`.
 
 **CSS:** `dock: bottom`, `max-height: 6`, `display: none` (default), `padding: 0 1`, `border-top: solid $accent`.
 
@@ -81,8 +83,8 @@ Every block type in the FormattedBlock IR has a text extraction function registe
 | `ProxyErrorBlock` | Error message |
 | `ImageBlock` | `"image: {media_type}"` |
 | `UnknownTypeBlock` | Type label |
-| `MessageBlock` | `"{role} {msg_index}"` (container — children searched recursively) |
-| `SystemSection` | `"SYSTEM"` (container — children searched recursively) |
+| `MessageBlock` | `"{role} {msg_index}"` (container -- children searched recursively) |
+| `SystemSection` | `"SYSTEM"` (container -- children searched recursively) |
 
 Blocks that produce empty strings (`SeparatorBlock`, `NewlineBlock`) are effectively unsearchable.
 
@@ -108,6 +110,8 @@ Four independently togglable flags (`SearchMode` IntFlag):
 **Default modes value:** 13 (`CASE_INSENSITIVE | REGEX | INCREMENTAL`), configured in `SCHEMA["search:modes"]` in `view_store.py`.
 
 When regex mode is off, the query is `re.escape()`-d for literal matching. An invalid regex pattern shows `[invalid pattern]` in the search bar. Mode toggles use XOR (`^=`) so each toggle is independent.
+
+Toggling a mode in EDITING phase triggers an immediate incremental search if the INCREMENTAL flag is active after the toggle.
 
 **Source:** `src/cc_dump/tui/search.py` (SearchMode enum, `compile_search_pattern`), `src/cc_dump/app/view_store.py` (SCHEMA defaults)
 
@@ -170,7 +174,7 @@ Two exit modes, available from different phases:
 - **q (restore position):** Available in NAVIGATING only. Exits, then restores the scroll position saved when search was started via `conv.restore_scroll_y()`.
 
 Both exit modes share `_exit_search_common()`:
-1. Restore saved visibility filter levels (batched via `store.update()` — all `vis:`, `full:`, `exp:` keys in one call).
+1. Restore saved visibility filter levels (batched via `store.update()` -- all `vis:`, `full:`, `exp:` keys in one call).
 2. Reset phase to INACTIVE, clear query, matches, and current index.
 3. Cancel any pending debounce timer.
 4. Sync match summary to store (resets `search:match_count`).
@@ -188,13 +192,14 @@ Search highlighting uses a **post-render strip overlay** applied at `render_line
 1. `_apply_search_to_strip()` runs on every visible strip during `render_line()`.
 2. It extracts plain text from the strip's segments and runs the search pattern against it.
 3. For each regex match span in the line, it applies a background color style via `Segment.divide()`.
+4. Highlights are applied in reverse order so that earlier character offsets remain stable during segment splitting.
 
 ### Two Highlight Tiers
 
 - **All matches:** Dim background (`search_all_bg`, derived from theme surface color). Applied to every match span across all visible strips.
 - **Current match:** Bright highlight (`search_current_style`, bold + accent color on contrasting background). Applied to match spans in strips belonging to the current match's block (determined by block identity, `current.block is block`).
 
-The current-match highlight is block-scoped, not character-offset-scoped. All occurrences of the pattern within the current match's block get the bright highlight.
+The current-match highlight is block-scoped, not character-offset-scoped. All occurrences of the pattern within the current match's block get the bright highlight. This means if the pattern appears 3 times in a single block and the current match points to that block, all 3 occurrences render with the bright style.
 
 ### Theme Integration
 
@@ -209,12 +214,12 @@ When navigating to a match, the system ensures the matched block is visible even
 
 1. **Visibility override:** `ViewOverrides.set_search_reveal()` sets `vis_override = ALWAYS_VISIBLE` on the matched block. This overrides category-level visibility so the block renders even at EXISTENCE level.
 2. **Region expansion:** If the match is inside a content region (determined by segmentation via `_match_region_index()`), the region's `expanded` override is set to `True` so the collapsed region expands to show the match.
-3. **Scroll positioning:** The viewport scrolls to center the match. The exact strip line containing the match text is found by scanning the block's strips for the pattern, then `_scroll_to_line()` centers it vertically.
-4. **Follow mode disabled:** Navigation always deactivates follow mode (auto-scroll).
+3. **Scroll positioning:** The viewport scrolls to center the match. The exact strip line containing the match text is found by scanning the block's rendered strips for the pattern, then `_scroll_to_line()` centers it vertically (target line minus half viewport height).
+4. **Follow mode disabled:** Navigation always deactivates follow mode (auto-scroll) via `FollowEvent.DEACTIVATE`.
 
-Only one block + region can be revealed at a time. Navigating to a new match clears the previous reveal before setting the new one.
+Only one block + region can be revealed at a time. Navigating to a new match clears the previous reveal before setting the new one. `set_search_reveal()` short-circuits (returns False) when the new reveal target matches the currently active one.
 
-**Source:** `src/cc_dump/tui/search_controller.py` (`navigate_to_current`)
+**Source:** `src/cc_dump/tui/search_controller.py` (`navigate_to_current`), `src/cc_dump/tui/widget_factory.py` (`reveal_search_match`, `_scroll_to_search_match`, `_scroll_to_line`), `src/cc_dump/tui/view_overrides.py` (`set_search_reveal`)
 
 ## Region Index Resolution
 
@@ -230,9 +235,39 @@ Segmentation results are cached per-block (keyed by `id(block)`) during a single
 
 ## Text Cache
 
-Searchable text extraction is cached in a bounded LRU (`SearchTextCache`, max 20,000 entries). Entries are keyed by `(block_id_str, id(block))` via `_search_cache_key()` and associated with an owner (turn identity via `id(td)`). When turns are pruned, `invalidate_missing_owners()` evicts stale entries. The cache survives across searches within a session but is rebuilt after hot-reload.
+Searchable text extraction is cached in a bounded LRU (`SearchTextCache`, max 20,000 entries). The cache uses an `OrderedDict` with move-to-end on access for LRU ordering.
 
-**Source:** `src/cc_dump/tui/search.py` (SearchTextCache)
+### Key Structure
+
+Entries are keyed by `(block_id_str, id(block))` via `_search_cache_key()` -- the `block_id_str` is `str(block.block_id)` (or `""` if absent), and `id(block)` provides object identity.
+
+### Owner Tracking
+
+Each cache entry is optionally associated with an owner (turn identity via `id(td)`). The cache maintains bidirectional mappings: `_owners_by_key` (key to owner) and `_keys_by_owner` (owner to set of keys). This enables efficient bulk invalidation.
+
+### Invalidation
+
+`invalidate_missing_owners()` is called at the start of each `run_search()` with the current set of active turn identities. Any owner not in the active set has all its entries evicted. This handles turn pruning without requiring explicit per-entry removal.
+
+When the cache exceeds `max_entries`, the oldest entry (front of the OrderedDict) is evicted automatically on `put()`.
+
+### Lifecycle
+
+The cache lives on the `SearchState` object as `text_cache`. It survives across searches within a session but is rebuilt after hot-reload (since `SearchState` is reconstructed). The `get_searchable_text_cached` function also accepts a plain `dict` as a legacy fallback (used by tests); plain dicts are cleared entirely when they exceed 20,000 entries.
+
+**Source:** `src/cc_dump/tui/search.py` (SearchTextCache, `get_searchable_text_cached`, `_search_cache_key`)
+
+## Debounce Behavior
+
+Incremental search uses a 150ms debounce timer (`app.set_timer(0.15, ...)`). The timer is managed as follows:
+
+- **On text change during EDITING (with INCREMENTAL enabled):** Any existing timer is stopped and a new one is scheduled. This prevents searches from running on every keystroke during rapid typing.
+- **On mode toggle (with INCREMENTAL enabled after toggle):** An incremental search is immediately scheduled (with debounce).
+- **On Enter (commit):** Any pending timer is cancelled before running the final search.
+- **On exit (Escape/q):** Any pending timer is cancelled.
+- **Timer fires:** `run_incremental_search()` runs the search and triggers a re-render with highlights. No navigation occurs (the user stays in EDITING phase).
+
+**Source:** `src/cc_dump/tui/search_controller.py` (`schedule_incremental_search`, `run_incremental_search`, `commit_search`)
 
 ## Hot-Reload Survival
 

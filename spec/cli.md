@@ -242,9 +242,11 @@ Both flags resolve to a `--replay` path. Applied in order:
 
 If no recording is found, prints a message to stdout and returns (exit code 0).
 
-### 9. Load replay data
+### 9. Create event queue and load replay data
 
-If `--replay` is set (directly or via resume/continue), load and parse the HAR file via `har_replayer.load_har()`. Prints entry count. On parse failure, prints error and returns (exit code 0).
+Create the shared `queue.Queue[PipelineEvent]` used by all proxy handlers and the event router.
+
+If `--replay` is set (directly or via resume/continue), load and parse the HAR file via `har_replayer.load_har()`. Prints `"Loading replay: <path>"` before attempting, then `"Found N request/response pairs"` on success. On parse failure, prints error message and returns (exit code 0).
 
 ### 10. Start proxy servers
 
@@ -253,7 +255,7 @@ If `--replay` is set (directly or via resume/continue), load and parse the HAR f
 1. Determine active providers: default provider + optional providers not disabled by `--no-<key>`
 2. Create forward proxy CA if any active provider uses forward proxy mode
 3. For each active provider:
-   a. Create a `ProxyHandler` subclass via `make_handler_class()` parameterized with provider key, target, and event queue
+   a. Create a `ProxyHandler` subclass via `make_handler_class()` parameterized with provider key, target, event queue, and forward proxy CA (for forward-mode providers)
    b. Bind a `ThreadingHTTPServer` to the configured host/port
    c. Start serving in a daemon thread
    d. Build `ProviderEndpoint` metadata from the actual bound port
@@ -309,11 +311,11 @@ If `run` subcommand was used with extra args, the auto-launch config name and ex
 After `app.run()` returns (in a `finally` block), `_shutdown_runtime()` executes:
 
 1. Dump buffered error log via `logger.error` (TUI is gone, terminal is restored)
-2. Clean up tmux state (`tmux_ctrl.cleanup()` — the method is intentionally empty/no-op)
+2. Clean up tmux state (`tmux_ctrl.cleanup()` — does NOT kill the launched pane; the method body is empty)
 3. Gracefully shut down each proxy server: spawn a daemon thread to call `server.shutdown()`, join with 3-second timeout, then force `server_close()` regardless
 4. Stop the event router (`router.stop()`)
 5. Close all HAR recorders (`recorder.close()`)
-6. Print resume command: mask SIGINT (`signal.SIG_IGN`), log "To resume: ..." with the port and resume path via `logger.info()` (not printed to stdout), restore SIGINT (`signal.SIG_DFL`)
+6. Print resume command: mask SIGINT (`signal.SIG_IGN`), log "To resume: ..." with the port and resume path via `logger.info()` (emitted to stderr and log file via the logger, not stdout), restore SIGINT (`signal.SIG_DFL`)
 
 The resume path is derived from `_resume_path()`: the primary HAR recording path if it exists on disk, otherwise the replay input path if it exists.
 
@@ -383,7 +385,7 @@ The recording output directory is resolved by `_recordings_output_dir()`:
 - `--no-record` suppresses HAR recording. Without it, recording is always active.
 - `--record` controls the output directory, not whether recording happens.
 - `--cleanup-dry-run` is only meaningful alongside `--cleanup-recordings`.
-- `--list-recordings` and `--cleanup-recordings` are early-exit commands that skip the proxy/TUI entirely.
+- `--list-recordings` and `--cleanup-recordings` are early-exit commands that skip the proxy/TUI entirely. If both are specified, `--list-recordings` takes precedence (checked first).
 - `--forward-proxy-ca-dir` is only used when at least one active provider has `proxy_type == "forward"`. The `ForwardProxyCertificateAuthority` class is only imported in that case (lazy import).
 
 ---

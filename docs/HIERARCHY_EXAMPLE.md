@@ -1,5 +1,7 @@
 # Block Hierarchy Restructuring: Visual Examples
 
+**Status:** Design document. Key elements of the proposed restructuring (MessageBlock containers, ThinkingBlock, 6-category consolidation) have been implemented. Some details in the "BEFORE" and "AFTER" sections may not exactly match the current rendering output.
+
 ## The API Data (for reference)
 
 A single API turn: Claude Code sends a request, gets a streaming response.

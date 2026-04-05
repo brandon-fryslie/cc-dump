@@ -68,7 +68,7 @@ All envelope fields are `kw_only=True` except `kind`. The `kind` field is `init=
 | `ResponseProgressEvent` | `RESPONSE_PROGRESS` | `delta_text: str`, `model: str`, `input_tokens: int\|None`, `cache_read_input_tokens: int\|None`, `cache_creation_input_tokens: int\|None`, `output_tokens: int\|None`, `stop_reason: str`, `task_tool_use_id: str` | Transport-normalized streaming hint for live UX. Not authoritative — use `ResponseCompleteEvent` for final data. All fields default to empty string or None. |
 | `ResponseNonStreamingEvent` | `RESPONSE_NON_STREAMING` | `status_code: int`, `headers: dict[str, str]`, `body: dict` | **Dead code.** Defined but never constructed. The TUI event handler registers a handler that normalizes it into the complete-response path, but no producer ever creates this event type. |
 | `ResponseCompleteEvent` | `RESPONSE_COMPLETE` | `body: dict` | Fully assembled response. For streaming responses, reconstructed from SSE fragments by `ResponseAssembler` (Anthropic) or `OpenAiChatResponseAssembler` (OpenAI). For non-streaming, the parsed response body directly. |
-| `ResponseDoneEvent` | `RESPONSE_DONE` | _(none)_ | Terminal event — response stream is fully consumed. Emitted after `ResponseCompleteEvent`. Only emitted for the streaming path. |
+| `ResponseDoneEvent` | `RESPONSE_DONE` | _(none)_ | Terminal event — response stream is fully consumed. Emitted after `ResponseCompleteEvent`. Emitted for the streaming path and the synthetic interceptor path, but NOT for the non-streaming path. |
 | `ErrorEvent` | `ERROR` | `code: int`, `reason: str` | HTTP error from upstream (e.g., 429, 500). |
 | `ProxyErrorEvent` | `PROXY_ERROR` | `error: str` | Proxy-level failure (connection refused, timeout, DNS failure, etc.). |
 | `LogEvent` | `LOG` | `method: str`, `path: str`, `status: str` | HTTP access log entry. Emitted for ALL HTTP requests (not just API requests) via the `log_message()` override. Non-API traffic (health checks, etc.) still produces `LogEvent` even though no request/response pipeline events are emitted. |
@@ -414,7 +414,7 @@ The reconstructed message shape:
 
 ### Bridge: `sse_event_to_dict()`
 
-The `sse_event_to_dict()` function in `response_assembler.py` converts typed `SSEEvent` subclasses back to raw dict format. This bridges the typed event world to the raw dict world used by reconstruction. It is used by HAR recorder and other subscribers that need to feed typed events into `reconstruct_message_from_events`.
+The `sse_event_to_dict()` function in `response_assembler.py` converts typed `SSEEvent` subclasses back to raw dict format. This bridges the typed event world to the raw dict world used by reconstruction. **Currently unused in production code** — no call sites exist in `src/` outside its own definition. It is tested in `tests/test_response_assembler.py` and was likely intended for subscribers that need to feed typed events into `reconstruct_message_from_events`, but the proxy assemblers receive raw dicts directly via `on_event()` and never go through the typed SSEEvent layer for reconstruction.
 
 ## Multi-Provider Support
 

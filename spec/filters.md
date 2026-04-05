@@ -50,6 +50,48 @@ Six content categories group all blocks for visibility control:
 
 Every `FormattedBlock` is assigned to exactly one category, or to no category (meaning it is always visible and not subject to filtering). Category assignment is resolved by `get_category()` in rendering, which checks the block's `.category` field first (set at formatting time for context-dependent blocks), then falls back to the static `BLOCK_CATEGORY` mapping keyed by block type name.
 
+### BLOCK_CATEGORY Mapping
+
+The static `BLOCK_CATEGORY` dict maps block type names to categories. This is the fallback when a block's `.category` field is not set at formatting time.
+
+| Block Type | Category | Notes |
+|------------|----------|-------|
+| `SeparatorBlock` | METADATA | |
+| `HeaderBlock` | METADATA | |
+| `HttpHeadersBlock` | METADATA | |
+| `MetadataBlock` | METADATA | |
+| `NewSessionBlock` | METADATA | |
+| `TurnBudgetBlock` | METADATA | |
+| `StreamInfoBlock` | METADATA | |
+| `StopReasonBlock` | METADATA | |
+| `ResponseUsageBlock` | METADATA | |
+| `MetadataSection` | METADATA | Hierarchical container |
+| `ResponseMetadataSection` | METADATA | Hierarchical container |
+| `ToolUseBlock` | TOOLS | |
+| `ToolResultBlock` | TOOLS | |
+| `ToolUseSummaryBlock` | TOOLS | Synthetic — created by `collapse_tool_runs()` pre-pass |
+| `StreamToolUseBlock` | TOOLS | |
+| `ToolDefsSection` | TOOLS | Hierarchical container |
+| `ToolDefBlock` | TOOLS | |
+| `SkillDefChild` | TOOLS | |
+| `AgentDefChild` | TOOLS | |
+| `ThinkingBlock` | THINKING | |
+| `SystemSection` | SYSTEM | Hierarchical container |
+| `ConfigContentBlock` | `None` | Inherits from parent (typically USER) |
+| `HookOutputBlock` | `None` | Inherits from parent (typically USER) |
+| `MessageBlock` | `None` | Context-dependent — `.category` set at formatting time to USER or ASSISTANT |
+| `TextContentBlock` | `None` | Context-dependent — `.category` set at formatting time |
+| `TextDeltaBlock` | `None` | Context-dependent — `.category` set at formatting time |
+| `ImageBlock` | `None` | Context-dependent — `.category` set at formatting time |
+| `ErrorBlock` | `None` | Always visible — no category control |
+| `ProxyErrorBlock` | `None` | Always visible — no category control |
+| `NewlineBlock` | `None` | Always visible — no category control |
+| `UnknownTypeBlock` | `None` | Always visible — no category control |
+
+Blocks mapped to `None` fall into two groups:
+- **Context-dependent blocks** (`MessageBlock`, `TextContentBlock`, `TextDeltaBlock`, `ImageBlock`, `ConfigContentBlock`, `HookOutputBlock`): their `.category` field is set during formatting based on the message role or parent context. `get_category()` returns that field value.
+- **Always-visible blocks** (`ErrorBlock`, `ProxyErrorBlock`, `NewlineBlock`, `UnknownTypeBlock`): no category is ever set, so `get_category()` returns `None`, and `_resolve_visibility()` assigns `ALWAYS_VISIBLE`.
+
 **Source:** `src/cc_dump/core/formatting_impl.py` (Category enum), `src/cc_dump/tui/rendering_impl.py` (BLOCK_CATEGORY mapping, get_category)
 
 ## Filter Registry
@@ -178,7 +220,7 @@ Any manual toggle or cycle clears the `filter:active` slot (the user has departe
 
 ### Override Clearing
 
-When a category's visibility state changes (via toggle or cycle), all per-block expansion overrides for that category are cleared via `clear_overrides()`, which calls `conv.clear_category_overrides(Category(category_name))`. This prevents stale click-to-expand state from conflicting with the new category-level setting.
+When a category's visibility state changes (via toggle or cycle), all per-block expansion overrides for that category are cleared via `clear_overrides()`, which calls `conv.clear_category_overrides(Category(category_name))`. This prevents stale expansion overrides (from search reveal or location navigation) from conflicting with the new category-level setting.
 
 **Source:** `src/cc_dump/tui/action_handlers.py` (`clear_overrides`)
 
@@ -193,7 +235,7 @@ Per-block overrides (keyed by `block_id`):
 | Field | Type | Meaning |
 |-------|------|---------|
 | `expandable` | `bool` | Renderer-computed: whether the block has enough content to expand |
-| `expanded` | `bool \| None` | User click override; `None` means use category default |
+| `expanded` | `bool \| None` | Programmatic override (search reveal, location navigation); `None` means use category default |
 | `vis_override` | `VisState \| None` | Programmatic override (search reveal); takes absolute priority |
 
 ### RegionViewState
@@ -202,7 +244,7 @@ Per-region overrides (keyed by `(block_id, region_index)`):
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `expanded` | `bool \| None` | Click toggle for independently expandable regions within a block |
+| `expanded` | `bool \| None` | Toggle for independently expandable regions within a block (set programmatically) |
 | `strip_range` | `tuple[int, int] \| None` | Renderer-computed strip range (transient) |
 
 ### Search Reveal
@@ -244,7 +286,7 @@ The resolved `VisState` is then used to:
 
 2. **Select the renderer** — The unified renderer registry is keyed by `(block_type_name, visible, full, expanded)`. State-specific renderers can produce fundamentally different output for the same block type at different visibility levels (e.g., a tool use block might show just the tool name at summary level vs. the full input JSON at full level).
 
-3. **Determine expandability** — After rendering, the pipeline checks whether the block would look different if expanded (either different renderer or enough lines to exceed the collapsed limit). This sets `BlockViewState.expandable`, which gates click-to-expand interaction.
+3. **Determine expandability** — After rendering, the pipeline checks whether the block would look different if expanded (either different renderer or enough lines to exceed the collapsed limit). This sets `BlockViewState.expandable`, which controls whether the gutter arrow is shown.
 
 4. **Recurse into children** — Child block visibility is resolved independently, but child recursion only occurs when the parent is at FE state. At non-FE states, children are not processed at all. At FE, a visible parent with hidden children renders the parent's own content but skips the children.
 
@@ -268,7 +310,7 @@ The `filters` dict is passed through a `_RenderContext` and is read-only during 
 A re-render of the conversation view happens when:
 
 - `active_filters` computed changes (any of the 18 store keys mutated)
-- A per-block override changes (click-to-expand, search reveal)
+- A per-block override changes (search reveal, location navigation)
 - The view width changes (terminal resize)
 - Theme changes (theme generation counter in store)
 

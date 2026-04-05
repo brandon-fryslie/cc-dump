@@ -16,12 +16,12 @@ Claude Code (HTTP client)
 │    router.py    │  Fan-out to subscribers
 └───┬─────────┬───┘
     ▼         ▼
- TUI path   DB path
+ TUI path   Analytics path
     │         │
     ▼         ▼
-┌────────┐ ┌─────────┐
-│ event_ │ │ store.py │  SQLite persistence
-│handlers│ └─────────┘
+┌────────┐ ┌──────────────────┐
+│ event_ │ │ analytics_store.py│  In-memory analytics
+│handlers│ └──────────────────┘
 └───┬────┘
     ▼
 ┌──────────────┐
@@ -59,9 +59,9 @@ The IR is a flat list of `FormattedBlock` subclasses. Key types:
 |-------|---------|
 | `HeaderBlock` | Request header (REQUEST #N) |
 | `MetadataBlock` | Model, max_tokens, stop_reason |
-| `RoleBlock` | Message role label (USER, ASSISTANT, SYSTEM) |
+| `MessageBlock` | Message role label and content |
 | `TextContentBlock` | Plain text content |
-| `TrackedContentBlock` | Content-hashed system prompt section |
+| `ConfigContentBlock` | Configuration/system prompt content section |
 | `ToolUseBlock` | Tool invocation (name, input size, detail) |
 | `ToolResultBlock` | Tool result (size, error flag, correlated name) |
 | `TextDeltaBlock` | Streaming text fragment |
@@ -76,13 +76,13 @@ The proxy emits raw events into a queue. The `EventRouter` fans them out to thre
 
 1. **QueueSubscriber** (TUI): Events are queued, drained by `app.py`'s worker thread, dispatched to `event_handlers.py` which calls formatting and updates widgets.
 
-2. **DirectSubscriber** (SQLite): `store.py` receives events inline, accumulates request/response data, and commits completed turns to the database.
+2. **DirectSubscriber** (Analytics): `analytics_store.py` receives events inline, accumulates request/response data, and stores completed turns in memory for analytics panels.
 
 3. **DirectSubscriber** (HAR): `har_recorder.py` accumulates events inline, reconstructs complete messages, and writes HAR 1.2 entries.
 
 Events in order per API call:
 ```
-request_headers → request → response_headers → response_event* → response_done
+request_headers → request_body → response_headers → response_progress* → response_complete → response_done
 ```
 
 ## Recording and Replay
@@ -91,7 +91,7 @@ cc-dump records all API traffic to HAR (HTTP Archive) 1.2 format for replay and 
 
 **Architecture principles:**
 - **HAR files are the source of truth** for raw event data (complete, ordered, replayable)
-- **SQLite is a derived index** for analytics queries (tokens, tools, search)
+- **In-memory analytics store is derived** runtime data for analytics panels (tokens, tools)
 - **Zero divergence:** Live and replay modes use identical code paths downstream of event emission
 
 ### Live Mode (Recording)
@@ -101,12 +101,12 @@ proxy.py (HTTP intercept)
     ↓ emits events
 router.py
     ├→ TUI subscriber (display)
-    ├→ SQLite subscriber (analytics)
+    ├→ Analytics subscriber (analytics)
     └→ HAR subscriber (recording)
         └→ har_recorder.py
             - Accumulates SSE events in memory
             - Reconstructs complete messages
-            - Writes HAR on response_done
+            - Writes HAR on response_complete
 ```
 
 ### Replay Mode
@@ -116,7 +116,7 @@ har_replayer.py (load HAR file)
     ↓ synthesizes events
 router.py (same as live)
     ├→ TUI subscriber (display)
-    ├→ SQLite subscriber (analytics)
+    ├→ Analytics subscriber (analytics)
     └→ (no recording in replay mode)
 ```
 
@@ -161,10 +161,11 @@ CLI commands:
 
 ```python
 TurnData:
-    blocks: list[FormattedBlock]     # source of truth
+    blocks: list[FormattedBlock]     # hierarchical source of truth
     strips: list[Strip]              # pre-rendered lines
     block_strip_map: dict            # block index → first strip line
-    line_offset: int                 # position in virtual space
+    relevant_filter_keys: set        # categories relevant to this turn
+    is_streaming: bool               # whether turn is still streaming
 ```
 
 `render_line(y)` uses binary search over turn offsets to find the right turn, then indexes into its strips. Cost: O(log n) lookup, O(viewport) rendering.
@@ -181,7 +182,7 @@ Widget-based alternatives were evaluated and rejected:
 - **Turn-level widgets** (ListView): Non-virtual. 100+ turns in long sessions hits the widget limit. Replaces O(log n) binary search with O(n) layout.
 - **Arrow overlay widgets**: Overlay positioning with virtual scroll is harder than the meta approach. Adds a second mechanism for the same outcome.
 
-Click targets are isolated via segment metadata: only the arrow segment carries `META_TOGGLE_BLOCK` metadata (defined in `rendering.py`). Content clicks produce empty meta and are ignored. This provides precise hit-testing without DOM nodes.
+Click targets are isolated via segment metadata. Content clicks produce empty meta and are ignored. This provides precise hit-testing without DOM nodes.
 
 ## Streaming
 
@@ -204,33 +205,26 @@ System prompts are tracked across requests:
 
 State is maintained in a dict passed through `format_request()`: positions, known hashes, ID counters.
 
-## Database Layer
+## Analytics Store
 
-SQLite with WAL mode. Two key patterns:
+`analytics_store.py` is an in-memory store that accumulates request/response pairs into completed turns with token counts and tool invocations. It supports state serialization for hot-reload preservation via `get_state()` / `restore_state()`.
 
-**Content-addressed blob storage:** Strings ≥512 bytes are extracted to a `blobs` table keyed by SHA256, replaced with `{"__blob__": hash}` references in the turn JSON. This deduplicates repeated system prompts.
-
-**Database as aggregate source of truth:** Token counts and tool statistics are queried from the database, not accumulated in memory. The stats panel, economics panel, and timeline panel all query `db_queries.py` which opens read-only connections.
-
-Tables: `turns` (metadata + tokens), `blobs` (content-addressed), `turn_blobs` (links), `turns_fts` (full-text search), `tool_invocations` (per-tool stats).
-
-**Relationship to HAR:** SQLite is a derived index built from events. In principle, SQLite could be deleted and rebuilt by replaying HAR files. In practice, SQLite is kept as a persistent cache for query performance.
+**HAR files are the persistent source of truth.** The analytics store is runtime-only derived data for analytics panels. In principle, it could be rebuilt by replaying HAR files.
 
 ## Filter System
 
-Eight toggleable filters, each with a keybinding and colored indicator:
+Six content categories, each with visibility state (`VisState`: visible, full, expanded):
 
-- **Content filters** (h, t, s, e, m): Control visibility of block types within turns. Managed by `render_blocks()` which checks `BLOCK_FILTER_KEY` mapping and returns `None` for hidden blocks.
-- **Panel filters** (a, c, l): Show/hide aggregate panels (stats, economics, timeline).
+- **Categories:** USER, ASSISTANT, TOOLS, SYSTEM, METADATA, THINKING
 
-Filter state lives as reactive attributes in `app.py`. Changes trigger `ConversationView.update_filters()` which re-renders only affected turns.
+Visibility state lives in a SnarfX `HotReloadStore` (`app/view_store.py`), not as reactive attributes in `app.py`. The view store schema is built programmatically from `CATEGORY_CONFIG`. Each category has three boolean axes: `vis:<name>`, `full:<name>`, `exp:<name>`. Changes trigger re-rendering of affected turns via `relevant_filter_keys` per turn.
 
 ## Tool Correlation
 
 Tool uses and results are correlated by `tool_use_id`:
 
 - In `formatting.py`: As tool_use blocks are processed, their IDs are recorded in a per-request map. When a tool_result references an ID, it inherits the tool's name, color, and detail string.
-- In `analysis.py`: `correlate_tools()` produces matched `ToolInvocation` pairs for database storage and aggregate analysis.
+- In `core/analysis.py`: `correlate_tools()` produces matched `ToolInvocation` pairs for analytics storage and aggregate analysis.
 - In `rendering.py`: Correlated blocks share the same color index for visual grouping.
 
 ## Color System
@@ -245,41 +239,14 @@ See `HOT_RELOAD_ARCHITECTURE.md` for full details.
 
 Modules are classified as **stable** (never reload) or **reloadable** (reload on file change):
 
-| Stable boundaries | Reloadable modules |
-|---|---|
-| `proxy.py`, `cli.py`, `hot_reload.py` | `palette.py`, `analysis.py` |
-| `tui/app.py` | `formatting.py`, `tui/rendering.py` |
-| `har_recorder.py`, `har_replayer.py` | `tui/event_handlers.py`, `tui/widget_factory.py` |
-| `sessions.py` | `tui/panel_renderers.py`, `tui/custom_footer.py` |
+Stable boundaries (from `_EXCLUDED_FILES` and `_EXCLUDED_MODULES` in `app/hot_reload.py`) include `pipeline/proxy.py`, `cli.py`, `pipeline/event_types.py`, `tui/app.py`, and others. Reloadable modules (from `_RELOAD_ORDER`) include 44 modules spanning `core/`, `tui/`, and `app/` packages.
 
 **Critical rule:** Stable modules must use `import cc_dump.module`, never `from cc_dump.module import func`. Direct imports create stale references that survive reload.
 
-Reloadable modules are reloaded in dependency order (leaves first). If `widget_factory.py` is reloaded, widgets are hot-swapped using the `HotSwappableWidget` protocol (`get_state()` / `restore_state()`).
+Reloadable modules are reloaded in dependency order (leaves first). Widgets are hot-swapped using the `get_state()` / `restore_state()` protocol.
 
 ## Module Dependency Graph
 
-```
-Stable layer:
-  cli.py → {router, store, app, palette, har_recorder, har_replayer, sessions}
-  proxy.py → router
-  app.py → {event_handlers, widget_factory, hot_reload, custom_footer}
-  har_recorder.py (no deps)
-  har_replayer.py (no deps)
-  sessions.py (no deps)
-
-Reloadable layer (reload order):
-  1. palette.py
-  2. analysis.py (no deps)
-  3. formatting.py → {palette, analysis}
-  4. rendering.py → {formatting, palette}
-  5. panel_renderers.py → analysis
-  6. event_handlers.py → {formatting, analysis}
-  7. widget_factory.py → {rendering, analysis, panel_renderers, db_queries}
-
-Database layer:
-  schema.py (no deps)
-  store.py → {analysis, schema}
-  db_queries.py → analysis
-```
+The authoritative reload order and exclusion lists are in `app/hot_reload.py`. Consult `_RELOAD_ORDER`, `_EXCLUDED_FILES`, and `_EXCLUDED_MODULES` directly for the current state.
 
 Dependencies are strictly one-way. No cycles.

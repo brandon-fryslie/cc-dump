@@ -16,7 +16,7 @@ Session identity is extracted from the Anthropic API's `metadata.user_id` field 
 user_<hash>_account_<uuid>_session_<uuid>
 ```
 
-Parsing is done by `parse_user_id()` (in `formatting.py`/`formatting_impl.py`) and extracts three components: `user_hash`, `account_id`, and `session_id`. The `session_id` (a UUID) is the canonical session identifier used throughout cc-dump. The same parsing logic is duplicated in `stream_registry.py:_extract_session_id()` and `analytics_store.py:_extract_session_id()`.
+Parsing is done by `parse_user_id()` (in `formatting_impl.py`) and extracts three components: `user_hash`, `account_id`, and `session_id`. The `session_id` (a UUID) is the canonical session identifier used throughout cc-dump. The same parsing logic is duplicated in `stream_registry.py:_extract_session_id()`, `analytics_store.py:_extract_session_id()`, and `app.py:_extract_session_id_from_body()` -- all delegate to `parse_user_id()` for the actual regex match.
 
 ### Where Session ID Appears
 
@@ -26,13 +26,14 @@ Parsing is done by `parse_user_id()` (in `formatting.py`/`formatting_impl.py`) a
 - **DomainStore._session_boundaries**: A list of `(session_id, turn_index)` pairs recording where each `NewSessionBlock` appeared in the completed turns list. Used for within-tab session navigation.
 - **SessionPanel**: Displays the current session ID and connection status in the UI panel strip. Renders via `render_session_panel()` in `panel_renderers.py`. Observes the `panel:session_state` key in the view store.
 - **StreamRegistry.RequestStreamContext**: Each active request stream records the `session_id` extracted from the request body.
+- **App._session_id**: The most recently seen session ID from the default provider. Updated by `_sync_detected_session` when `ProviderRuntimeState.current_session` changes. Used as the fallback for auto-resume when no non-default session tab is active.
 
 ### Session Transition Detection
 
 Session transitions are detected at a single enforcement point: `format_request_for_provider` in `formatting_impl.py`. The sequence is:
 
 1. Request body arrives; `session_id` is parsed from `metadata.user_id`.
-2. If `session_id` is non-empty and differs from `ProviderRuntimeState.current_session`, a `NewSessionBlock(session_id=...)` is prepended to the block list for that request.
+2. If `session_id` is non-empty and differs from `ProviderRuntimeState.current_session`, a `NewSessionBlock(session_id=...)` is appended to the block list for that request (after the request header blocks: `NewlineBlock`, `SeparatorBlock`, `HeaderBlock`, `SeparatorBlock`).
 3. *After* formatting completes, `_update_session_id` writes the new session ID into `ProviderRuntimeState.current_session`.
 
 The ordering matters: the formatter reads the *old* `current_session` to decide whether to emit `NewSessionBlock`, then the state is updated. This ensures the transition block appears exactly once at the boundary.
@@ -78,17 +79,72 @@ The age display uses tiered formatting via `_format_age()`:
 - <43200s: 30-min resolution (`"~2.5hr ago"`)
 - >=43200s: capped (`"12+ hours ago"`)
 
+### Session Panel State Flow
+
+The session panel receives state through a reactive chain:
+
+1. `_track_request_activity` records `time.monotonic()` per session key in `app_state["last_message_time_by_session"]`.
+2. `_publish_session_panel_state` derives the canonical `(session_id, last_message_time)` pair from the active tab context and writes it to `view_store["panel:session_state"]`.
+3. `SessionPanel._apply_store_state` observes the view store key and projects it into `SessionPanelState`.
+4. The 1-second clock tick forces re-evaluation so the age display and connected/disconnected status update even when no new messages arrive.
+
+Clicking the session ID span copies it to the system clipboard via `app.copy_to_clipboard()` and posts a notification.
+
 ## Multi-Session Model
 
-### Current State: Single Active Session
+### Per-Session Tab Architecture
 
-At present, cc-dump runs with a single `DomainStore` and a single `ConversationView`. All API traffic from all providers feeds into one stream. Session transitions within that stream are marked by `NewSessionBlock` boundaries, but there is no per-session isolation of block data.
+cc-dump implements per-session isolation through dynamic tab creation. Each session gets its own `DomainStore`, `ConversationView`, and `TabPane`. The app maintains several parallel dictionaries keyed by session key:
 
-The `_session_id` on the app tracks the most recently seen session ID (from the default provider). This is used for the auto-resume feature when launching Claude Code.
+- **`_session_domain_stores`**: Maps session key to its `DomainStore` instance.
+- **`_session_conv_ids`**: Maps session key to the CSS id of its `ConversationView` widget.
+- **`_session_tab_ids`**: Maps session key to its `TabPane` id.
 
-### Proposed Future: Multi-Session Isolation
+All three are initialized with a single entry for the `__default__` session key, which is the primary view that exists at app startup.
 
-A multi-session architecture has been designed (see `docs/multi-session-architecture.md`) but is not implemented. No `SessionRuntime` class, session registry, or per-session `DomainStore` isolation exists in current source code. The app has early scaffolding for multiple conversation tabs but full per-session isolation is not implemented.
+### Session Surface Creation
+
+When a new session key is encountered (via `_resolve_event_session_key` during event routing), `_ensure_session_surface` creates the per-session infrastructure:
+
+1. A new `DomainStore` is instantiated.
+2. A new `ConversationView` is created (bound to the new DomainStore and the shared view store/render runtime).
+3. A new `TabPane` is added to the conversation tabs widget.
+4. All three mapping dictionaries are updated.
+
+**Auto-focus behavior**: When the first non-default session appears and the default tab has no data (no completed turns and no active streams), the new tab is automatically activated.
+
+### Session Key Resolution
+
+Session keys are resolved differently depending on the event source:
+
+- **Default provider requests**: The session key is derived from the session ID extracted from the request body's `metadata.user_id`. If no session ID is present, falls back to `__default__`.
+- **Non-default provider requests** (e.g., Copilot): The session key is derived from the provider key, not the Anthropic session ID.
+- **Request binding**: `_bind_request_session` maps `request_id` to `session_key` in `_request_session_keys`, so subsequent events for the same request (streaming deltas, response complete) route to the correct session tab.
+
+### Active Session Tracking
+
+The active session is determined by the currently selected tab:
+
+- `_active_session_key_from_tabs()` inspects the tab widget's `active` attribute and reverse-maps it through `_session_tab_ids` to find the corresponding session key.
+- `_active_session_key` and `_last_primary_session_key` track the current and previous active session keys.
+- `_active_context_session_key()` resolves the canonical context key for the active tab.
+
+### Session Panel Integration
+
+The session panel shows different information based on the active tab:
+
+- When the active tab is `__default__`, the panel shows `app._session_id` (the most recently seen Anthropic session ID).
+- When a non-default tab is active, the panel shows that tab's session key and its per-session last message time.
+
+Per-session activity times are tracked in `app_state["last_message_time_by_session"]`.
+
+### Limitations
+
+While per-session tab creation and data routing are implemented, some cross-session features remain incomplete:
+
+- Session tab titles use a basic naming scheme (provider tab title for provider-keyed sessions, session ID prefix for Anthropic sessions).
+- There is no UI for closing or rearranging session tabs.
+- The `_session_id` on the app tracks only the default provider's most recent session; non-default provider sessions do not update this field.
 
 ## Tmux Integration
 
@@ -107,15 +163,15 @@ Tmux integration is available when both conditions are met:
 ### TmuxController State Machine
 
 ```
-                    ┌──($TMUX unset)──► NOT_IN_TMUX
-                    │
-init ───────────────┼──(no libtmux)──► NO_LIBTMUX
-                    │
-                    ├──(pane discovery fail)──► NOT_IN_TMUX
-                    │
-                    └──(success)──► READY ──(launch/adopt)──► TOOL_RUNNING
-                                      ▲                            │
-                                      └───(pane dies)─────────────┘
+                    +--($TMUX unset)-----> NOT_IN_TMUX
+                    |
+init ---------------+---(no libtmux)----> NO_LIBTMUX
+                    |
+                    +---(pane discovery fail)-> NOT_IN_TMUX
+                    |
+                    '---(success)---> READY --(launch/adopt)--> TOOL_RUNNING
+                                       ^                            |
+                                       '----(pane dies)-------------'
 ```
 
 States (defined as `TmuxState` enum):
@@ -282,12 +338,37 @@ If no configs exist in settings (or the list is empty), `default_configs()` crea
 
 ### Session ID for Auto-Resume
 
-When launching with `auto_resume` enabled (the default for Claude), the session ID is resolved from the app's active context:
+When launching with `auto_resume` enabled (the default for Claude), the session ID is resolved from the app's active context via `_active_resume_session_id()`:
 
-1. Check if a non-default session tab is active; if so, use that session's key. (Note: while the session ID resolution logic references tab state, the multi-tab system is not implemented, so this check currently always falls through to the fallback.)
-2. Otherwise, fall back to the most recently seen `_session_id` from the default provider.
+1. Check the active tab's context key via `_active_context_session_key()`. If the active tab is a non-default session, use that session's key as the resume ID.
+2. Otherwise, fall back to `app._session_id` -- the most recently seen session ID from the default provider.
 
 This session ID is passed to `build_full_command`, which emits `--resume <session_id>` in the final command. This means re-launching Claude Code from cc-dump automatically resumes the conversation it was monitoring.
+
+### Launch Orchestration
+
+`settings_launch_controller.launch_with_config(app, config)` is the entry point for all launch operations (both manual and auto-launch). It:
+
+1. Resolves the session ID for auto-resume via `_resume_session_id(app, config)`.
+2. Builds the `LaunchProfile` from the config, provider endpoints, and session ID.
+3. Calls `tmux.configure_launcher()` with the profile's command, process names, environment, and label.
+4. Calls `tmux.launch_tool(command=profile.command)` and notifies the user of the result.
+5. Updates the view store with `launch:active_name` and `launch:active_tool`.
+
+If tmux is unavailable, a "Tmux not available" warning notification is shown.
+
+### Launch Config Panel
+
+The `LaunchConfigPanel` (in `tui/launch_config_panel.py`) is a docked side panel for managing launch configurations. It supports:
+
+- **Preset selector**: A dropdown listing all saved configs by name.
+- **Base fields**: Name, Tool (launcher), Command, Model, Shell -- rendered as text inputs or select widgets.
+- **Tool options**: Dynamically shown/hidden per-launcher. Common options (like `extra_args`) are always visible; launcher-specific options (like Claude's `auto_resume`, `bypass`, `continue`, or Copilot's `yolo`) appear only when the corresponding launcher is selected.
+- **Actions**: New, Delete, Activate, Launch, Save, Close -- implemented as `Chip` widgets.
+
+The panel posts messages (`Saved`, `Cancelled`, `QuickLaunch`, `Activated`) for the app to handle. Form state is local to the panel (deep-copied on init) and only persisted when the user explicitly saves.
+
+Panel visibility is controlled by `view_store["panel:launch_config"]`, toggled by `settings_launch_controller.open_launch_config()` / `close_launch_config()`. Opening the launch config panel closes the settings panel and vice versa.
 
 ## The `run` Subcommand
 
@@ -316,10 +397,10 @@ cc-dump run haiku --port 5000 -- --continue           # Custom config + port + t
 
 ### Execution Flow
 
-1. **Argv parsing**: `_detect_run_subcommand` splits `sys.argv[1:]` into `(config_name, cc_dump_flags, tool_extra_args)`. If `argv[0]` is not `"run"`, returns `(None, original_argv, [])` -- normal mode. Separator is `--`.
+1. **Argv parsing**: `_detect_run_subcommand` splits `sys.argv[1:]` into `(config_name, cc_dump_flags, tool_extra_args)`. If `argv[0]` is not `"run"`, returns `(None, original_argv, [])` -- normal mode. Separator is `--`. If the first argument after `run` is `-h` or `--help`, a usage message is printed and the process exits with code 0.
 2. **Config validation**: `_resolve_auto_launch_config_name` loads saved configs and verifies the name exists. On mismatch, prints available configs to stderr and exits with code 2.
 3. **Normal startup**: cc-dump boots normally with `cc_dump_flags` as the argument list (proxy starts, TUI launches).
-4. **Auto-launch on mount**: In `CcDumpApp.on_mount`, `_execute_auto_launch` fires. It looks up the config by name, merges `tool_extra_args` into the config's `extra_args` option (creating a transient config via `config_with_extra_args` that is never persisted), and calls `_launch_with_config`.
+4. **Auto-launch on mount**: In `CcDumpApp.on_mount`, `_execute_auto_launch` fires. It looks up the config by name, merges `tool_extra_args` into the config's `extra_args` option (creating a transient config via `config_with_extra_args` that is never persisted), and calls `launch_with_config` (in `settings_launch_controller`).
 5. **Launch via tmux**: The standard launch path runs -- `build_launch_profile`, `tmux.configure_launcher`, `tmux.launch_tool`.
 
 ### Error Handling
@@ -327,6 +408,7 @@ cc-dump run haiku --port 5000 -- --continue           # Custom config + port + t
 - Unknown config name: Exits immediately (before TUI starts) with error message listing available configs and exit code 2.
 - Config found but tmux unavailable: TUI starts, auto-launch fires, user sees a "Tmux not available" notification in the UI.
 - Config found but launch fails: TUI starts, user sees a "Launch failed: ..." notification.
+- Config found but name resolves to None at mount time (race with settings change): Error notification with available config names and timeout of 10 seconds.
 
 ## Recordings and Session Storage
 
@@ -348,12 +430,12 @@ The hash is derived from `SHA1(provider:timestamp:pid:uuid4)[:8]` to avoid colli
 ### Provider Detection
 
 Provider identity for a recording is determined by:
-1. Filename parsing: extract the provider segment from `ccdump-<provider>-...` (second hyphen-delimited field) and validate against the canonical provider registry (`_provider_keys()`).
+1. Filename parsing: extract the provider segment from `ccdump-<provider>-...` (second hyphen-delimited field, splitting on `-` with limit 4) and validate against the canonical provider registry (`_provider_keys()`).
 2. Fallback: inspect the first HAR entry via `providers.detect_provider_from_har_entry`.
 
 ### Resume and Continue Modes
 
-- `--resume [path]`: Loads and replays the specified HAR file (or latest if no path), then continues in live proxy mode. The replayed data appears as historical turns in the TUI.
+- `--resume [path]`: Loads and replays the specified HAR file. If the value is `"latest"`, resolves to the most recent recording. The replayed data appears as historical turns in the TUI, then continues in live proxy mode.
 - `--continue`: Equivalent to `--resume latest`. Loads the most recent recording and continues live.
 
-On shutdown, cc-dump prints a resume command: `cc-dump --port <port> --resume <recording-path>` so the user can restart where they left off.
+On shutdown, cc-dump logs a resume command via `logger.info`: `<argv[0]> --port <port> --resume <recording-path>`. The resume path is the current session's recording if it exists, falling back to the replay path if the session was started from a replay. SIGINT is masked during this log line to prevent Ctrl+C from suppressing it.
