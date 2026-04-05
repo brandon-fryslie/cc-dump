@@ -684,7 +684,6 @@ def main():
     har_recorders, primary_record_path = _configure_har_recording_subscribers(
         args=args,
         router=router,
-        bindings=bindings,
     )
 
     # Tmux integration (optional — no-op when not in tmux or libtmux missing)

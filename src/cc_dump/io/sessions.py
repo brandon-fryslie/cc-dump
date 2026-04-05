@@ -38,23 +38,6 @@ def get_recordings_dir() -> str:
     return os.path.expanduser("~/.local/share/cc-dump/recordings")
 
 
-def _provider_keys() -> set[str]:
-    # [LAW:one-source-of-truth] Known provider keys come from provider registry.
-    return {spec.key for spec in cc_dump.providers.all_provider_specs()}
-
-
-def _provider_from_filename(path: Path, provider_keys: set[str]) -> str | None:
-    stem = path.stem
-    if not stem.startswith("ccdump-"):
-        return None
-    parts = stem.split("-", 3)
-    if len(parts) < 4:
-        return None
-    # [LAW:one-source-of-truth] Provider identity in filename must match canonical provider keys.
-    candidate = parts[1]
-    return candidate if candidate in provider_keys else None
-
-
 def _provider_from_entries(entries: list[dict]) -> str | None:
     if not entries:
         return None
@@ -68,10 +51,7 @@ def _entry_created_or_mtime(entries: list[dict], path: Path) -> str:
     return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
 
 
-def _load_recording_info(
-    path: Path,
-    provider_keys: set[str],
-) -> RecordingInfo:
+def _load_recording_info(path: Path) -> RecordingInfo:
     with open(path, "r", encoding="utf-8") as f:
         har = json.load(f)
 
@@ -79,8 +59,7 @@ def _load_recording_info(
     return {
         "path": str(path),
         "filename": path.name,
-        "provider": _provider_from_filename(path, provider_keys)
-        or _provider_from_entries(entries),
+        "provider": _provider_from_entries(entries),
         "created": _entry_created_or_mtime(entries, path),
         "entry_count": len(entries),
         "size_bytes": path.stat().st_size,
@@ -119,12 +98,11 @@ def list_recordings(recordings_dir: Optional[str] = None) -> list[RecordingInfo]
 
     # [LAW:one-source-of-truth] Canonical recording layout is flat under recordings root.
     har_files = sorted(path for path in recordings_path.glob("*.har") if path.is_file())
-    provider_keys = _provider_keys()
 
     # Process all found .har files
     for path in har_files:
         try:
-            recordings.append(_load_recording_info(path, provider_keys))
+            recordings.append(_load_recording_info(path))
 
         except (json.JSONDecodeError, OSError, KeyError) as e:
             # Skip malformed files, but continue processing others
