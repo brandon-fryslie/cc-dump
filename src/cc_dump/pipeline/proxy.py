@@ -489,14 +489,32 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             resp = urllib.request.urlopen(req, context=ctx, timeout=300)
         except urllib.error.HTTPError as e:
+            # Read error body first — e.read() can only be called once.
+            error_body_bytes = e.read()
             if emitted_request:
+                envelope_base = event_envelope(
+                    request_id=request_id, seq=0, provider=self.provider,
+                )
                 self.event_queue.put(ErrorEvent(
-                    code=e.code,
-                    reason=e.reason,
+                    code=e.code, reason=e.reason, **envelope_base,
+                ))
+                # // [LAW:one-type-per-behavior] Error responses are responses — emit
+                # the same events as success so HAR recorder and analytics see them.
+                safe_err_headers = _safe_headers(e.headers)
+                self.event_queue.put(ResponseHeadersEvent(
+                    status_code=e.code,
+                    headers=safe_err_headers,
                     **event_envelope(
-                        request_id=request_id,
-                        seq=0,
-                        provider=self.provider,
+                        request_id=request_id, seq=1, provider=self.provider,
+                    ),
+                ))
+                err_body = cc_dump.pipeline.proxy_flow.decode_json_response_body(
+                    error_body_bytes,
+                )
+                self.event_queue.put(ResponseCompleteEvent(
+                    body=err_body,
+                    **event_envelope(
+                        request_id=request_id, seq=2, provider=self.provider,
                     ),
                 ))
             self.send_response(e.code)
@@ -504,7 +522,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 if k.lower() != "transfer-encoding":
                     self.send_header(k, v)
             self.end_headers()
-            self.wfile.write(e.read())
+            self.wfile.write(error_body_bytes)
             return
         except Exception as e:
             if emitted_request:
@@ -666,8 +684,19 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         )
         return translated, upstream_url
 
+    @staticmethod
+    def _openai_chat_translate_request(body: dict, url: str) -> tuple[dict, str]:
+        translated = cc_dump.pipeline.copilot_translate.anthropic_to_chat_completions_request(body)
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        upstream_url = cc_dump.pipeline.copilot_translate.copilot_chat_completions_url(
+            f"{parsed.scheme}://{parsed.netloc}"
+        )
+        return translated, upstream_url
+
     _REQUEST_TRANSLATORS: dict[str, object] = {
         "openai-responses": _openai_responses_translate_request.__func__,
+        "openai-chat": _openai_chat_translate_request.__func__,
     }
 
     # [LAW:dataflow-not-control-flow] upstream_format → header builder.
@@ -679,14 +708,30 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             {}, token, len(body_bytes),
         )
 
+    @staticmethod
+    def _openai_chat_headers(handler, body_bytes: bytes) -> dict[str, str]:
+        token = cc_dump.pipeline.copilot_translate.read_copilot_token()
+        # Parse body to extract messages for X-Initiator determination
+        messages: list = []
+        try:
+            body = json.loads(body_bytes)
+            messages = body.get("messages", [])
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
+        return cc_dump.pipeline.copilot_translate.copilot_chat_headers(
+            messages, token, len(body_bytes),
+        )
+
     _HEADER_BUILDERS: dict[str, object] = {
         "openai-responses": _openai_responses_headers.__func__,
+        "openai-chat": _openai_chat_headers.__func__,
     }
 
     # [LAW:dataflow-not-control-flow] upstream_format → streaming strategy.
     # Absent key uses the default _stream_response path.
     _STREAM_HANDLERS: dict[str, str] = {
         "openai-responses": "_stream_translated_response",
+        "openai-chat": "_stream_chat_translated_response",
     }
 
     def _stream_response(self, resp, request_id: str = "", *, emit_events: bool = True):
@@ -769,6 +814,82 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                             logger.warning("Client write failure: %s", exc)
 
                         # Feed to TUI pipeline sinks
+                        anth_type = anth_event.get("type", "")
+                        try:
+                            event_sink.on_event(anth_type, anth_event)
+                        except Exception as exc:
+                            logger.warning("EventQueueSink failure: %s", exc)
+                        try:
+                            assembler.on_event(anth_type, anth_event)
+                        except Exception as exc:
+                            logger.warning("ResponseAssembler failure: %s", exc)
+        finally:
+            try:
+                event_sink.on_done()
+            except Exception:
+                pass
+            try:
+                assembler.on_done()
+            except Exception:
+                pass
+
+        seq = event_sink.seq
+        if assembler.result is not None:
+            seq += 1
+            self.event_queue.put(ResponseCompleteEvent(
+                body=assembler.result,
+                **event_envelope(
+                    request_id=request_id,
+                    seq=seq,
+                    provider=self.provider,
+                ),
+            ))
+        seq += 1
+        self.event_queue.put(ResponseDoneEvent(
+            **event_envelope(
+                request_id=request_id,
+                seq=seq,
+                provider=self.provider,
+            ),
+        ))
+
+    def _stream_chat_translated_response(self, resp, request_id: str = ""):
+        """Stream Chat Completions SSE, translating to Anthropic format.
+
+        // [LAW:single-enforcer] Chat Completions→Anthropic SSE translation is here only.
+        """
+        state = cc_dump.pipeline.copilot_translate.ChatTranslationState()
+        assembler = ResponseAssembler()
+        event_sink = EventQueueSink(self.event_queue, request_id=request_id, provider=self.provider)
+        line_buffer = b""
+
+        try:
+            for raw_chunk in resp:
+                line_buffer += raw_chunk
+                while b"\n" in line_buffer:
+                    line, line_buffer = line_buffer.split(b"\n", 1)
+                    line_str = line.decode("utf-8", errors="replace").strip()
+                    if not line_str:
+                        continue
+                    if not line_str.startswith("data: "):
+                        continue
+                    data_str = line_str[6:]
+                    if data_str == "[DONE]":
+                        continue
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    anthropic_events = cc_dump.pipeline.copilot_translate.chat_chunk_to_anthropic_events(
+                        chunk, state,
+                    )
+                    for anth_event in anthropic_events:
+                        anth_bytes = cc_dump.pipeline.copilot_translate.anthropic_sse_line(anth_event)
+                        try:
+                            self.wfile.write(anth_bytes)
+                            self.wfile.flush()
+                        except Exception as exc:
+                            logger.warning("Client write failure: %s", exc)
                         anth_type = anth_event.get("type", "")
                         try:
                             event_sink.on_event(anth_type, anth_event)

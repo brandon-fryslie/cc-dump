@@ -4,40 +4,22 @@ Comprehensive integration and unit tests for cc-dump TUI functionality.
 
 ## Test Organization
 
-### Integration Tests (`test_tui_integration.py`)
+### Integration Tests
 
-Tests complete user workflows and TUI functionality:
+Textual integration tests use `pytest-textual-snapshot` and in-process harness:
 
-- **TUI Startup/Shutdown**: Basic process lifecycle
-- **Filter Toggles**: All keybinding filters (h, t, s, e, m)
-- **Panel Toggles**: Stats, Economics, Timeline, Logs panels
-- **Request Handling**: API request processing and display
-- **Database Integration**: Database persistence and querying
-- **Content Filtering**: Verify content visibility changes with filters
-- **Stats Panel**: Token counts and statistics display
-- **Error Handling**: Resilience to malformed requests
-- **Rendering Stability**: Performance under load
-- **Complete Workflows**: End-to-end user scenarios
+- `test_textual_content.py`: Content rendering and display
+- `test_textual_navigation.py`: Scroll and navigation
+- `test_textual_panels.py`: Panel toggling and display
+- `test_textual_visibility.py`: Visibility state cycling
 
 ### Visual Indicators Tests (`test_visual_indicators.py`)
 
-Tests the colored bar indicators for filtered content:
-
-- **Filter Indicator Rendering**: Colored bars (▌) for each filter type
-  - Cyan for Headers
-  - Blue for Tools
-  - Yellow for System
-  - Green for Expand/Context
-  - Magenta for Metadata
-- **Indicator Visibility**: Appear/disappear based on filter state
-- **Rendering Performance**: Stability under filter toggling
-- **Block Rendering**: Individual block types render correctly
-- **Color Scheme**: Consistent colors for same filter types
-- **Helper Functions**: Unit tests for indicator functions
+Tests the colored bar indicators for filtered content.
 
 ### Hot Reload Tests (`test_hot_reload.py`)
 
-Tests hot-reload functionality (existing):
+Tests hot-reload functionality:
 
 - Module reload detection
 - Widget swapping
@@ -49,6 +31,11 @@ Tests hot-reload functionality (existing):
 - `test_analysis.py`: Analysis functions
 - `test_formatting.py`: Formatting logic
 - `test_router.py`: Routing functionality
+- `test_domain_store.py`: Domain store operations
+- `test_view_store.py`: View store state management
+- `test_search.py` / `test_search_controller_*.py`: Search functionality
+- `test_har_recorder.py` / `test_har_replayer.py`: HAR recording and replay
+- And many more — see the `tests/` directory for full listing
 
 ## Running Tests
 
@@ -112,15 +99,9 @@ uv run pytest tests/test_analysis.py tests/test_formatting.py -v
 
 ### Fixtures
 
-- `start_cc_dump`: Start cc-dump TUI process
-  - Returns PtyProcess for interaction
-  - Handles cleanup automatically
-  - Optional `port`, `db_path`, `session_id` parameters
-
-- `temp_db`: Create temporary database file
-  - Returns path to temp database
-  - Automatically cleaned up after test
-
+- `class_proc` / `class_proc_with_port`: Class-scoped PTY process fixtures (share process across tests in a class)
+- `settle()`: Wait helper for process stabilization
+- `wait_for_content()`: Polling-based content assertion helper
 - `backup_file`: Backup/restore files for hot-reload tests
 
 ### Best Practices
@@ -135,12 +116,7 @@ uv run pytest tests/test_analysis.py tests/test_formatting.py -v
 
 ## Continuous Integration
 
-Tests run automatically on:
-- Every push to main branch
-- Every pull request
-- Manual workflow dispatch
-
-See `.github/workflows/test.yml` for CI configuration.
+Tests run automatically on push and pull request. See `.github/workflows/test.yml` for CI configuration.
 
 ## Test Coverage
 

@@ -17,6 +17,8 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import re
+
 logger = logging.getLogger(__name__)
 
 
@@ -24,14 +26,45 @@ logger = logging.getLogger(__name__)
 
 _TOKEN_PATH = Path.home() / ".local" / "share" / "copilot-api" / "github_token"
 
-# Anthropic models → Copilot model names
+# Strip dated suffixes like -20250514, -20251001 from model names.
+_DATED_SUFFIX_RE = re.compile(r"-\d{8,}$")
+
+# Anthropic model IDs → Copilot model IDs.
+# Copilot uses dotted short names (claude-sonnet-4.6); Anthropic uses dashed
+# or dated names (claude-sonnet-4-6, claude-haiku-4-5-20251001).
+# // [LAW:one-source-of-truth] Model name translation lives here only.
 _MODEL_MAP: dict[str, str] = {
-    "claude-sonnet-4-20250514": "claude-sonnet-4",
-    "claude-opus-4-20250514": "claude-opus-4",
-    "claude-haiku-3.5-20241022": "claude-haiku-3.5",
+    # Current generation — dashed → dotted
+    "claude-sonnet-4-6": "claude-sonnet-4.6",
+    "claude-opus-4-6": "claude-opus-4.6",
+    "claude-opus-4-6-fast": "claude-opus-4.6-fast",
+    "claude-haiku-4-5": "claude-haiku-4.5",
+    "claude-sonnet-4-5": "claude-sonnet-4.5",
+    "claude-opus-4-5": "claude-opus-4.5",
+    # Older generation
+    "claude-sonnet-4": "claude-sonnet-4",
+    "claude-opus-4": "claude-opus-4",
 }
 
-_DEFAULT_COPILOT_MODEL = "claude-sonnet-4"
+_DEFAULT_COPILOT_MODEL = "claude-sonnet-4.6"
+
+
+def _map_model(raw: str) -> str:
+    """Map Anthropic model name to Copilot model name.
+
+    Strategy: try exact match first, then strip dated suffix and retry.
+    // [LAW:one-source-of-truth] Model resolution logic lives here only.
+    """
+    result = _MODEL_MAP.get(raw)
+    if result is not None:
+        return result
+    # Strip dated suffix (e.g. claude-haiku-4-5-20251001 → claude-haiku-4-5)
+    stripped = _DATED_SUFFIX_RE.sub("", raw)
+    result = _MODEL_MAP.get(stripped)
+    if result is not None:
+        return result
+    # Pass through unknown models as-is
+    return raw
 
 # Required Copilot request headers
 _COPILOT_HEADERS: dict[str, str] = {
@@ -66,7 +99,7 @@ def anthropic_to_copilot_request(body: dict) -> dict:
 
     # Model
     raw_model = body.get("model", "")
-    result["model"] = _MODEL_MAP.get(raw_model, raw_model) if isinstance(raw_model, str) else _DEFAULT_COPILOT_MODEL
+    result["model"] = _map_model(raw_model) if isinstance(raw_model, str) else _DEFAULT_COPILOT_MODEL
 
     # System prompt: Anthropic top-level "system" → Responses API "instructions"
     result["instructions"] = _translate_system(body.get("system"))
@@ -263,6 +296,26 @@ def _translate_one_tool(tool: dict) -> dict:
         "description": tool.get("description", ""),
         "parameters": tool.get("input_schema", {}),
     }
+
+
+def _translate_chat_tools(tools: list) -> list[dict]:
+    """Translate Anthropic tool definitions to Chat Completions nested format.
+
+    Chat Completions: {type:"function", function: {name, description, parameters}}
+    // [LAW:one-source-of-truth] Chat Completions tool format lives here.
+    """
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t.get("name", ""),
+                "description": t.get("description", ""),
+                "parameters": t.get("input_schema", {}),
+            },
+        }
+        for t in tools
+        if isinstance(t, dict)
+    ]
 
 
 # ─── Response Translation: Copilot SSE → Anthropic SSE ─────────────────────
@@ -552,3 +605,420 @@ def copilot_upstream_headers(
     }
     headers.update(_COPILOT_HEADERS)
     return headers
+
+
+# ─── Chat Completions Translation: Anthropic → OpenAI Chat Completions ─────
+#
+# Used when upstream_format == "openai-chat" (Copilot's Claude models).
+# The Responses API translation above is for upstream_format == "openai-responses".
+#
+# // [LAW:one-source-of-truth] All Chat Completions format mapping lives in this section.
+
+
+def anthropic_to_chat_completions_request(body: dict) -> dict:
+    """Translate Anthropic Messages API request to OpenAI Chat Completions format.
+
+    // [LAW:dataflow-not-control-flow] Pure transform — every field mapped unconditionally.
+    """
+    raw_model = body.get("model", "")
+    model = _map_model(raw_model) if isinstance(raw_model, str) else _DEFAULT_COPILOT_MODEL
+
+    messages: list[dict] = []
+
+    # System prompt → system message
+    system_text = _translate_system(body.get("system"))
+    if system_text:
+        messages.append({"role": "system", "content": system_text})
+
+    # Anthropic messages → Chat Completions messages
+    for msg in body.get("messages", []):
+        messages.extend(_chat_translate_one_message(msg))
+
+    result: dict = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": body.get("max_tokens"),
+        "stream": body.get("stream", True),
+        "store": False,
+    }
+
+    # Optional fields — pass through when present
+    temperature = body.get("temperature")
+    if temperature is not None:
+        result["temperature"] = temperature
+    top_p = body.get("top_p")
+    if top_p is not None:
+        result["top_p"] = top_p
+    stop = body.get("stop_sequences")
+    if stop is not None:
+        result["stop"] = stop
+
+    # Tools — Chat Completions uses nested {type, function: {name, desc, parameters}}
+    tools = body.get("tools")
+    if tools:
+        result["tools"] = _translate_chat_tools(tools)
+
+    # Tool choice
+    tool_choice = body.get("tool_choice")
+    if tool_choice is not None:
+        result["tool_choice"] = _translate_tool_choice(tool_choice)
+
+    return result
+
+
+def _chat_translate_one_message(msg: dict) -> list[dict]:
+    """Translate one Anthropic message to Chat Completions message(s).
+
+    An assistant message with tool_use blocks becomes one message with tool_calls.
+    A user message with tool_result blocks becomes tool-role messages.
+    """
+    role = msg.get("role", "user")
+    content = msg.get("content", "")
+
+    # String content — single message
+    if isinstance(content, str):
+        return [{"role": role, "content": content}]
+
+    content_blocks = content if isinstance(content, list) else []
+
+    # // [LAW:dataflow-not-control-flow] Role → handler dispatch.
+    handler = _CHAT_MSG_HANDLERS.get(role, _chat_handle_generic_message)
+    return handler(role, content_blocks)
+
+
+def _chat_handle_user_message(role: str, blocks: list) -> list[dict]:
+    """User message: extract tool_results as tool messages, rest as user content."""
+    messages: list[dict] = []
+    text_parts: list[str] = []
+
+    for block in blocks:
+        block_type = block.get("type", "") if isinstance(block, dict) else ""
+        if block_type == "tool_result":
+            # Flush text before tool result
+            if text_parts:
+                messages.append({"role": "user", "content": "\n".join(text_parts)})
+                text_parts.clear()
+            output = _extract_tool_result_text(block.get("content"))
+            messages.append({
+                "role": "tool",
+                "tool_call_id": block.get("tool_use_id", ""),
+                "content": output,
+            })
+        elif block_type == "text":
+            text = block.get("text", "")
+            if text:
+                text_parts.append(text)
+
+    if text_parts:
+        messages.append({"role": "user", "content": "\n".join(text_parts)})
+
+    return messages
+
+
+def _chat_handle_assistant_message(role: str, blocks: list) -> list[dict]:
+    """Assistant message: text + tool_use blocks → single message with tool_calls."""
+    text_parts: list[str] = []
+    tool_calls: list[dict] = []
+
+    for block in blocks:
+        block_type = block.get("type", "") if isinstance(block, dict) else ""
+        if block_type == "tool_use":
+            tool_input = block.get("input", {})
+            tool_calls.append({
+                "id": block.get("id", ""),
+                "type": "function",
+                "function": {
+                    "name": block.get("name", ""),
+                    "arguments": json.dumps(tool_input) if isinstance(tool_input, dict) else str(tool_input),
+                },
+            })
+        elif block_type == "text":
+            text = block.get("text", "")
+            if text:
+                text_parts.append(text)
+        elif block_type == "thinking":
+            # Fold thinking into text (Chat Completions has no thinking blocks)
+            text = block.get("thinking", "")
+            if text:
+                text_parts.append(text)
+
+    combined_text = "\n\n".join(text_parts) if text_parts else None
+
+    msg: dict = {"role": "assistant", "content": combined_text}
+    if tool_calls:
+        msg["tool_calls"] = tool_calls
+    return [msg]
+
+
+def _chat_handle_generic_message(role: str, blocks: list) -> list[dict]:
+    """Fallback: concatenate text blocks."""
+    parts = [
+        block.get("text", "")
+        for block in blocks
+        if isinstance(block, dict) and block.get("type") == "text"
+    ]
+    return [{"role": role, "content": "\n".join(parts)}]
+
+
+# // [LAW:dataflow-not-control-flow] Role → message handler dispatch.
+_CHAT_MSG_HANDLERS: dict[str, object] = {
+    "user": _chat_handle_user_message,
+    "assistant": _chat_handle_assistant_message,
+}
+
+
+def _translate_tool_choice(tool_choice: object) -> object:
+    """Translate Anthropic tool_choice to Chat Completions format."""
+    if not isinstance(tool_choice, dict):
+        return None
+    tc_type = tool_choice.get("type", "")
+    # // [LAW:dataflow-not-control-flow] Type → value dispatch.
+    mapping: dict[str, object] = {
+        "auto": "auto",
+        "any": "required",
+        "none": "none",
+    }
+    result = mapping.get(tc_type)
+    if result is not None:
+        return result
+    # Named tool
+    if tc_type == "tool" and tool_choice.get("name"):
+        return {"type": "function", "function": {"name": tool_choice["name"]}}
+    return None
+
+
+def copilot_chat_completions_url(base_url: str) -> str:
+    """Build the Copilot Chat Completions API URL.
+
+    // [LAW:one-source-of-truth] Chat Completions endpoint path lives here only.
+    """
+    return base_url.rstrip("/") + "/chat/completions"
+
+
+def copilot_chat_headers(
+    original_messages: list,
+    token: str,
+    content_length: int,
+) -> dict[str, str]:
+    """Build headers for Chat Completions upstream, including X-Initiator.
+
+    // [LAW:single-enforcer] X-Initiator derivation happens at this boundary.
+    """
+    is_agent = any(
+        isinstance(m, dict) and m.get("role") in ("assistant", "tool")
+        for m in original_messages
+    )
+    headers = copilot_upstream_headers({}, token, content_length)
+    headers["X-Initiator"] = "agent" if is_agent else "user"
+    return headers
+
+
+# ─── Chat Completions SSE Response Translation ─────────────────────────────
+#
+# OpenAI Chat Completions uses standard SSE: `data: {...}\n\n`
+# with `data: [DONE]` as termination. Each chunk has `choices[0].delta`.
+
+
+_CHAT_STOP_REASON_MAP: dict[str, str] = {
+    "stop": "end_turn",
+    "tool_calls": "tool_use",
+    "length": "max_tokens",
+    "content_filter": "end_turn",
+}
+
+
+@dataclass
+class ChatTranslationState:
+    """Tracks state during Chat Completions → Anthropic SSE translation.
+
+    // [LAW:one-source-of-truth] Chat translation state lives here.
+    """
+    message_id: str = field(default_factory=lambda: "msg_" + uuid.uuid4().hex[:12])
+    message_start_sent: bool = False
+    block_index: int = 0
+    content_block_open: bool = False
+    # tool_call index → (block_index, id, name)
+    tool_calls: dict[int, dict] = field(default_factory=dict)
+    model: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+def chat_chunk_to_anthropic_events(
+    chunk: dict,
+    state: ChatTranslationState,
+) -> list[dict]:
+    """Translate one Chat Completions chunk to Anthropic SSE events.
+
+    // [LAW:dataflow-not-control-flow] Each chunk phase produces events unconditionally.
+    """
+    events: list[dict] = []
+
+    choices = chunk.get("choices", [])
+    if not choices:
+        return events
+
+    choice = choices[0]
+    delta = choice.get("delta", {})
+
+    # First chunk → message_start
+    if not state.message_start_sent:
+        state.model = chunk.get("model", "copilot")
+        usage = chunk.get("usage") or {}
+        cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+        state.input_tokens = usage.get("prompt_tokens", 0) - cached
+        events.append({
+            "type": "message_start",
+            "message": {
+                "id": state.message_id,
+                "type": "message",
+                "role": "assistant",
+                "model": state.model,
+                "content": [],
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {
+                    "input_tokens": state.input_tokens,
+                    "output_tokens": 0,
+                    "cache_read_input_tokens": cached,
+                    "cache_creation_input_tokens": 0,
+                },
+            },
+        })
+        state.message_start_sent = True
+
+    # Text delta
+    text_content = delta.get("content")
+    if text_content is not None:
+        events.extend(_chat_handle_text_delta(text_content, state))
+
+    # Tool calls
+    tool_calls = delta.get("tool_calls")
+    if tool_calls:
+        for tc in tool_calls:
+            events.extend(_chat_handle_tool_call_delta(tc, state))
+
+    # Finish reason → close blocks + message_delta + message_stop
+    finish_reason = choice.get("finish_reason")
+    if finish_reason is not None:
+        events.extend(_chat_handle_finish(finish_reason, chunk, state))
+
+    return events
+
+
+def _chat_handle_text_delta(text: str, state: ChatTranslationState) -> list[dict]:
+    """Handle text content delta — open text block if needed, emit delta."""
+    events: list[dict] = []
+
+    # Close any open tool block first
+    if state.content_block_open and _is_tool_block(state):
+        events.append({"type": "content_block_stop", "index": state.block_index})
+        state.block_index += 1
+        state.content_block_open = False
+
+    # Open text block if not already open
+    if not state.content_block_open:
+        events.append({
+            "type": "content_block_start",
+            "index": state.block_index,
+            "content_block": {"type": "text", "text": ""},
+        })
+        state.content_block_open = True
+
+    events.append({
+        "type": "content_block_delta",
+        "index": state.block_index,
+        "delta": {"type": "text_delta", "text": text},
+    })
+    return events
+
+
+def _chat_handle_tool_call_delta(tc: dict, state: ChatTranslationState) -> list[dict]:
+    """Handle a tool_calls[] delta entry."""
+    events: list[dict] = []
+    tc_index = tc.get("index", 0)
+
+    # New tool call (has id + function.name)
+    tc_id = tc.get("id")
+    tc_func = tc.get("function") or {}
+    tc_name = tc_func.get("name")
+
+    if tc_id and tc_name:
+        # Close any open block
+        if state.content_block_open:
+            events.append({"type": "content_block_stop", "index": state.block_index})
+            state.block_index += 1
+            state.content_block_open = False
+
+        block_idx = state.block_index
+        state.tool_calls[tc_index] = {
+            "block_index": block_idx,
+            "id": tc_id,
+            "name": tc_name,
+        }
+        events.append({
+            "type": "content_block_start",
+            "index": block_idx,
+            "content_block": {
+                "type": "tool_use",
+                "id": tc_id,
+                "name": tc_name,
+                "input": {},
+            },
+        })
+        state.content_block_open = True
+
+    # Arguments delta
+    args_delta = tc_func.get("arguments")
+    if args_delta:
+        tc_info = state.tool_calls.get(tc_index)
+        if tc_info is not None:
+            events.append({
+                "type": "content_block_delta",
+                "index": tc_info["block_index"],
+                "delta": {"type": "input_json_delta", "partial_json": args_delta},
+            })
+
+    return events
+
+
+def _chat_handle_finish(
+    finish_reason: str,
+    chunk: dict,
+    state: ChatTranslationState,
+) -> list[dict]:
+    """Handle finish_reason — close blocks, emit message_delta + message_stop."""
+    events: list[dict] = []
+
+    # Close any open block
+    if state.content_block_open:
+        events.append({"type": "content_block_stop", "index": state.block_index})
+        state.content_block_open = False
+
+    # Usage from final chunk
+    usage = chunk.get("usage") or {}
+    output_tokens = usage.get("completion_tokens", 0)
+    cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+    input_tokens = usage.get("prompt_tokens", 0) - cached
+
+    stop_reason = _CHAT_STOP_REASON_MAP.get(finish_reason, "end_turn")
+
+    events.append({
+        "type": "message_delta",
+        "delta": {"stop_reason": stop_reason, "stop_sequence": None},
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cache_read_input_tokens": cached,
+        },
+    })
+    events.append({"type": "message_stop"})
+    return events
+
+
+def _is_tool_block(state: ChatTranslationState) -> bool:
+    """Check if the current open block is a tool_use block."""
+    return any(
+        tc["block_index"] == state.block_index
+        for tc in state.tool_calls.values()
+    )

@@ -121,11 +121,9 @@ Every content category has three visibility levels, cycled with number keys:
 | SUMMARY | `◐` | Compact (3–12 lines) — meaningful preview |
 | FULL | `●` | Complete — all content visible |
 
-Seven categories: **user** (1), **assistant** (2), **tools** (3), **system** (4), **budget** (5), **metadata** (6), **headers** (7).
+Six categories: **user** (1), **assistant** (2), **tools** (3), **system** (4), **metadata** (5), **thinking** (6).
 
 **Click to expand/collapse:** Click any block with `▶`/`▼` to toggle it within the current level. Blocks that exceed their line limit show these indicators.
-
-See [docs/VISIBILITY_SYSTEM.md](docs/VISIBILITY_SYSTEM.md) for detailed documentation.
 
 ### Tool Correlation and Summaries
 
@@ -133,9 +131,7 @@ Tool use/result pairs are correlated by ID. At tools level SUMMARY or below, con
 
 ### Token and Cost Analysis
 
-**Cost panel** (`.` to cycle) — Per-tool token usage estimates (from tool payload size heuristics). Press `,` to toggle between aggregate and per-model breakdown views.
-
-**Timeline panel** (`.` to cycle) — Context growth visualization across requests.
+**Stats panel** (`.` to cycle panels, `,` to cycle views) — Three views: summary (per-tool token usage), timeline (context growth), and models (per-model breakdown).
 
 **Budget blocks** — Per-turn token accounting: input, output, cache creation, cache read tokens, and cost estimates.
 
@@ -175,8 +171,7 @@ All API traffic is recorded in HAR 1.2 format. Recordings are stored in `~/.loca
 When running inside tmux with `libtmux` installed:
 
 - `c` — Launch the active CLI config in a split pane (for example Claude or Copilot). If already running, focuses that pane
-- `z` — Manual zoom toggle (cc-dump pane ↔ full screen)
-- `Z` — Toggle auto-zoom: automatically zooms cc-dump when API requests arrive, unzooms when the turn completes
+- `L` — Open tmux log tail pane
 
 ### Filterset Presets
 
@@ -192,8 +187,8 @@ Apply and cycle built-in visibility presets:
 | F1 | Conversation | User + assistant at full |
 | F2 | Overview | Everything at summary |
 | F4 | Tools | Tools at full, user/assistant at summary |
-| F5 | System | System + metadata + headers at full |
-| F6 | Cost | Budget + metadata at full |
+| F5 | System | System + metadata at full |
+| F6 | Cost | Metadata at full |
 | F7 | Full Debug | Everything at full |
 | F8 | Assistant | Assistant only at full |
 | F9 | Minimal | User + assistant + tools at summary |
@@ -218,9 +213,9 @@ Available via the command palette (`Ctrl+P` → "Dump conversation"). Exports th
 
 `Ctrl+P` opens Textual's command palette — a searchable list of all available actions (toggle panels, navigate, change themes, export, etc.).
 
-### Economics Breakdown
+### Panel Mode Cycling
 
-`,` toggles the cost panel between aggregate view and per-model breakdown view, useful for multi-model sessions.
+`,` cycles the active panel through its view modes (e.g., summary → timeline → models for the stats panel).
 
 ### Hot-Reload Development
 
@@ -236,22 +231,21 @@ File changes in the `cc_dump` package trigger automatic hot-reload of the render
 | `2` | Assistant | visible, full, expanded |
 | `3` | Tools | visible, summary, collapsed |
 | `4` | System | visible, summary, collapsed |
-| `5` | Budget | hidden |
-| `6` | Metadata | hidden |
-| `7` | Headers | hidden |
+| `5` | Metadata | hidden |
+| `6` | Thinking | visible, summary, collapsed |
 
-Each press cycles: current → next visibility level.
+Each press cycles: current → next visibility state.
 
-**Shift+number** (`!@#$%^&`) or **Shift+letter** (`QWERTYU`) — Toggle the detail axis for the corresponding category.
+**Shift+number** (`!@#$%^`) or **Shift+letter** (`QWERTY`) — Toggle the detail axis for the corresponding category.
 
-**Lowercase letter** (`qwertyu`) — Toggle the expand axis for the corresponding category.
+**Lowercase letter** (`qwerty`) — Toggle the analytics/expand axis for the corresponding category.
 
 ### Panels
 
 | Key | Panel |
 |-----|-------|
-| `.` | Cycle panel (stats → economics → timeline) |
-| `,` | Cycle panel mode (aggregate ↔ per-model breakdown) |
+| `.` | Cycle panel (session → stats) |
+| `,` | Cycle panel mode (summary → timeline → models) |
 | `i` | Server info panel |
 | `Ctrl+L` | Debug logs panel |
 
@@ -262,9 +256,9 @@ Each press cycles: current → next visibility level.
 | `g` / `G` | Go to top / bottom |
 | `j` / `k` | Scroll down / up one line |
 | `h` / `l` | Scroll left / right one column |
-| `Ctrl+D` / `Ctrl+U` | Half-page down / up |
-| `Ctrl+F` / `Ctrl+B` | Full-page down / up |
-| `0` | Toggle follow mode (auto-scroll to new content) |
+| `Ctrl+D` / `Ctrl+U` | Half-page down / up (search nav mode) |
+| `Ctrl+F` / `Ctrl+B` | Full-page down / up (search nav mode) |
+| `f` | Toggle follow mode (auto-scroll to new content) |
 
 ### Search
 
@@ -295,8 +289,7 @@ Each press cycles: current → next visibility level.
 | Key | Action |
 |-----|--------|
 | `c` | Launch active tool in split pane (or focus if running) |
-| `z` | Toggle manual zoom |
-| `Z` | Toggle auto-zoom on API activity |
+| `L` | Open tmux log tail pane |
 
 ### Other
 
@@ -333,4 +326,4 @@ just install                      # uv tool install -e .
 just reinstall                    # after structural changes
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for system design and [PROJECT_SPEC.md](PROJECT_SPEC.md) for project goals.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for system design and [docs/PROJECT_SPEC.md](docs/PROJECT_SPEC.md) for project goals.
