@@ -3,6 +3,7 @@
 import pytest
 
 import cc_dump.providers
+from cc_dump.pipeline.har_replayer import ReplayPair
 
 from tests.harness import run_app, strips_to_text
 
@@ -30,13 +31,13 @@ def _make_replay_entry(*, session_id: str, content: str, response_text: str):
         "stop_reason": "end_turn",
         "usage": {"input_tokens": 100, "output_tokens": 50},
     }
-    return (
-        {"content-type": "application/json"},
-        req_body,
-        200,
-        {"content-type": "application/json"},
-        complete_message,
-        "anthropic",
+    return ReplayPair(
+        request_headers={"content-type": "application/json"},
+        request_body=req_body,
+        response_status=200,
+        response_headers={"content-type": "application/json"},
+        complete_message=complete_message,
+        provider="anthropic",
     )
 
 

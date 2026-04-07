@@ -273,13 +273,14 @@ class TestHotReloadMultiSessionTabs:
                 "stop_reason": "end_turn",
                 "usage": {"input_tokens": 10, "output_tokens": 5},
             }
-            return (
-                {"content-type": "application/json"},
-                req_body,
-                200,
-                {"content-type": "application/json"},
-                complete,
-                "anthropic",
+            from cc_dump.pipeline.har_replayer import ReplayPair
+            return ReplayPair(
+                request_headers={"content-type": "application/json"},
+                request_body=req_body,
+                response_status=200,
+                response_headers={"content-type": "application/json"},
+                complete_message=complete,
+                provider="anthropic",
             )
 
         replay_data = [

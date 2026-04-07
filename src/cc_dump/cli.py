@@ -31,6 +31,7 @@ import cc_dump.app.settings_store
 import cc_dump.app.launch_config
 import cc_dump.pipeline.sentinel
 from cc_dump.pipeline.proxy import RequestPipeline
+from cc_dump.pipeline.har_replayer import ReplayPair
 import cc_dump.app.view_store
 import cc_dump.app.hot_reload
 import cc_dump.app.domain_store
@@ -491,7 +492,7 @@ def _apply_continue_argument(args: argparse.Namespace) -> bool:
     return True
 
 
-ReplayData = list[tuple[dict, dict, int, dict, dict, str]]
+ReplayData = list[ReplayPair]
 
 
 def _load_replay_data(replay_path: str | None) -> tuple[ReplayData | None, bool]:

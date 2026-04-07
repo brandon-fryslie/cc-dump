@@ -22,7 +22,7 @@ from cc_dump.core.formatting import (
     format_complete_response,
     format_request_for_provider,
 )
-from cc_dump.pipeline.har_replayer import load_har, convert_to_events
+from cc_dump.pipeline.har_replayer import load_har, convert_to_events, ReplayPair
 from cc_dump.tui.event_handlers import (
     handle_request_headers,
     handle_request,
@@ -405,7 +405,7 @@ class TestReplayEndToEnd:
 
         # Load and convert
         pairs = load_har(str(har_path))
-        events = convert_to_events(*pairs[0])
+        events = convert_to_events(pairs[0])
 
         # Feed through handlers
         widgets = _mock_widgets()
@@ -451,7 +451,7 @@ class TestReplayEndToEnd:
             json.dump(har, f)
 
         pairs = load_har(str(har_path))
-        events = convert_to_events(*pairs[0])
+        events = convert_to_events(pairs[0])
 
         widgets = _mock_widgets()
         state = ProviderRuntimeState()
@@ -498,7 +498,7 @@ class TestReplayEndToEnd:
         app_state = {}
 
         for pair in pairs:
-            events = convert_to_events(*pair)
+            events = convert_to_events(pair)
             for event in events:
                 kind = event.kind
                 if kind == PipelineEventKind.REQUEST:
@@ -620,13 +620,14 @@ class TestLiveReplayParityContracts:
             )
         )
 
-        replay_events = convert_to_events(
-            request_headers,
-            request_body,
-            200,
-            response_headers,
-            dict(assembler.result),
-        )
+        replay_events = convert_to_events(ReplayPair(
+            request_headers=request_headers,
+            request_body=request_body,
+            response_status=200,
+            response_headers=response_headers,
+            complete_message=dict(assembler.result),
+            provider="anthropic",
+        ))
 
         live_state, live_widgets, _ = _run_pipeline_events(live_events)
         replay_state, replay_widgets, _ = _run_pipeline_events(replay_events)
