@@ -4,7 +4,7 @@ import json
 import logging
 import pytest
 
-from cc_dump.pipeline.har_replayer import load_har, convert_to_events
+from cc_dump.pipeline.har_replayer import load_har, convert_to_events, ReplayPair
 from cc_dump.pipeline.event_types import (
     RequestHeadersEvent,
     RequestBodyEvent,
@@ -69,18 +69,18 @@ def test_load_har_basic(tmp_path):
     pairs = load_har(str(har_path))
 
     assert len(pairs) == 1
-    req_headers, req_body, resp_status, resp_headers, complete_message, provider = pairs[0]
+    pair = pairs[0]
 
     # Verify request
-    assert "content-type" in req_headers
-    assert req_body["model"] == "claude-3-opus-20240229"
+    assert "content-type" in pair.request_headers
+    assert pair.request_body["model"] == "claude-3-opus-20240229"
 
     # Verify response
-    assert resp_status == 200
-    assert "content-type" in resp_headers
-    assert complete_message["id"] == "msg_123"
-    assert complete_message["type"] == "message"
-    assert provider == "anthropic"
+    assert pair.response_status == 200
+    assert "content-type" in pair.response_headers
+    assert pair.complete_message["id"] == "msg_123"
+    assert pair.complete_message["type"] == "message"
+    assert pair.provider == "anthropic"
 
 
 def test_load_har_multiple_entries(tmp_path):
@@ -144,26 +144,29 @@ def test_load_har_multiple_entries(tmp_path):
     pairs = load_har(str(har_path))
 
     assert len(pairs) == 2
-    assert pairs[0][4]["id"] == "msg_1"
-    assert pairs[1][4]["id"] == "msg_2"
+    assert pairs[0].complete_message["id"] == "msg_1"
+    assert pairs[1].complete_message["id"] == "msg_2"
 
 
 @pytest.mark.parametrize(
     "har_dict,error_match",
     [
+        # // [LAW:single-enforcer] Pydantic ValidationError (subclass of
+        # //   ValueError) is the one error type for HAR file shape failures.
+        # //   match strings assert on the Pydantic error format.
         pytest.param(
             {"invalid": "structure"},
-            "missing 'log' key",
+            r"(?s)\blog\b.*Field required",
             id="missing_log",
         ),
         pytest.param(
             {"log": {"version": "1.2"}},
-            "missing 'log.entries' key",
+            r"(?s)log\.entries\b.*Field required",
             id="missing_entries",
         ),
         pytest.param(
             {"log": {"entries": "not a list"}},
-            "log.entries must be a list",
+            r"(?s)log\.entries\b.*Input should be a valid list",
             id="entries_not_list",
         ),
     ],
@@ -234,7 +237,7 @@ def test_load_har_malformed_entry_skipped(tmp_path, caplog):
 
     # Should have one valid entry
     assert len(pairs) == 1
-    assert pairs[0][4]["id"] == "msg_valid"
+    assert pairs[0].complete_message["id"] == "msg_valid"
 
     assert "skipping HAR entry 1" in caplog.text
 
@@ -336,7 +339,14 @@ def test_convert_to_events_produces_four_events():
         "usage": {"input_tokens": 10, "output_tokens": 5},
     }
 
-    events = convert_to_events(req_headers, req_body, resp_status, resp_headers, complete_message)
+    events = convert_to_events(ReplayPair(
+        request_headers=req_headers,
+        request_body=req_body,
+        response_status=resp_status,
+        response_headers=resp_headers,
+        complete_message=complete_message,
+        provider="anthropic",
+    ))
 
     assert len(events) == 4
     assert isinstance(events[0], RequestHeadersEvent)
@@ -366,7 +376,14 @@ def test_convert_to_events_preserves_body_exactly():
         "usage": {"input_tokens": 100, "output_tokens": 20},
     }
 
-    events = convert_to_events({}, {}, 200, {}, complete_message)
+    events = convert_to_events(ReplayPair(
+        request_headers={},
+        request_body={},
+        response_status=200,
+        response_headers={},
+        complete_message=complete_message,
+        provider="anthropic",
+    ))
 
     assert isinstance(events[2], ResponseHeadersEvent)
     assert events[3].body is complete_message
@@ -384,13 +401,14 @@ def test_convert_to_events_uses_single_request_envelope():
         "usage": {"input_tokens": 1, "output_tokens": 1},
     }
 
-    events = convert_to_events(
-        {"content-type": "application/json"},
-        {"model": "claude-3-opus-20240229", "messages": []},
-        200,
-        {"content-type": "application/json"},
-        complete_message,
-    )
+    events = convert_to_events(ReplayPair(
+        request_headers={"content-type": "application/json"},
+        request_body={"model": "claude-3-opus-20240229", "messages": []},
+        response_status=200,
+        response_headers={"content-type": "application/json"},
+        complete_message=complete_message,
+        provider="anthropic",
+    ))
 
     request_ids = {event.request_id for event in events}
     seqs = [event.seq for event in events]
@@ -451,7 +469,7 @@ def test_roundtrip_har_load_and_convert(tmp_path):
     assert len(pairs) == 1
 
     # Convert to events
-    events = convert_to_events(*pairs[0])
+    events = convert_to_events(pairs[0])
 
     # Verify event structure
     assert len(events) == 4
@@ -508,7 +526,7 @@ def test_load_har_detects_openai_from_url(tmp_path):
 
     pairs = load_har(str(har_path))
     assert len(pairs) == 1
-    assert pairs[0][5] == "openai"
+    assert pairs[0].provider == "openai"
 
 
 def test_load_har_detects_provider_from_cc_dump_metadata(tmp_path):
@@ -554,7 +572,7 @@ def test_load_har_detects_provider_from_cc_dump_metadata(tmp_path):
 
     pairs = load_har(str(har_path))
     # _cc_dump metadata takes precedence over URL
-    assert pairs[0][5] == "openai"
+    assert pairs[0].provider == "openai"
 
 
 def test_load_har_detects_copilot_from_url(tmp_path):
@@ -599,7 +617,7 @@ def test_load_har_detects_copilot_from_url(tmp_path):
 
     pairs = load_har(str(har_path))
     assert len(pairs) == 1
-    assert pairs[0][5] == "copilot"
+    assert pairs[0].provider == "copilot"
 
 
 def test_load_har_openai_response_accepted(tmp_path):
@@ -640,19 +658,19 @@ def test_load_har_openai_response_accepted(tmp_path):
 
     pairs = load_har(str(har_path))
     assert len(pairs) == 1
-    assert pairs[0][4]["object"] == "chat.completion"
+    assert pairs[0].complete_message["object"] == "chat.completion"
 
 
 def test_convert_to_events_passes_provider():
     """convert_to_events passes provider to all events."""
-    events = convert_to_events(
+    events = convert_to_events(ReplayPair(
         request_headers={},
         request_body={"model": "gpt-4o"},
         response_status=200,
         response_headers={},
         complete_message={"object": "chat.completion", "choices": []},
         provider="openai",
-    )
+    ))
 
     for event in events:
         assert event.provider == "openai"

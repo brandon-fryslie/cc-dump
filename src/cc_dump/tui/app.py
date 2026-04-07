@@ -963,20 +963,10 @@ class CcDumpApp(App):
         self._app_log("INFO", f"Processing {len(self._replay_data)} request/response pairs")
 
         try:
-            for (
-                req_headers,
-                req_body,
-                resp_status,
-                resp_headers,
-                complete_message,
-                provider,
-            ) in self._replay_data:
+            for pair in self._replay_data:
                 try:
                     # // [LAW:one-source-of-truth] Replay uses the same event pipeline as live.
-                    events = cc_dump.pipeline.har_replayer.convert_to_events(
-                        req_headers, req_body, resp_status, resp_headers, complete_message,
-                        provider=provider,
-                    )
+                    events = cc_dump.pipeline.har_replayer.convert_to_events(pair)
                     for event in events:
                         self._handle_event(event)
                 except Exception as e:
