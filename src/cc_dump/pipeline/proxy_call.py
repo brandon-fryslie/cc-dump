@@ -196,6 +196,17 @@ HEADER_BUILDERS: dict[UpstreamFormat, HeaderBuilder] = {
 }
 
 
+# // [LAW:dataflow-not-control-flow] upstream_format -> SSE-translation method
+# //   on the proxy handler. None means "no translation, default fan-out".
+# // [LAW:no-mode-explosion] Adding a new format requires adding a row here;
+# //   no `if upstream_fmt == "new"` branch elsewhere.
+TRANSLATION_STREAM_HANDLERS: dict[UpstreamFormat, str | None] = {
+    "anthropic": None,
+    "openai-responses": "_stream_translated_response",
+    "openai-chat": "_stream_chat_translated_response",
+}
+
+
 # ─── UpstreamResult: typed outcome of execute_upstream ───────────────────────
 # // [LAW:dataflow-not-control-flow] HTTP outcome is a sum type, not a tuple
 # //   of (resp, exception, is_streaming). Construction is the try/except;
@@ -254,6 +265,12 @@ class ResponseEventEmitter:
     events is data, not a branch.
     """
 
+    # // [LAW:dataflow-not-control-flow] These class-level fields make the
+    # //   emitter usable without isinstance checks: the proxy reads them
+    # //   uniformly on traced and non-traced calls.
+    request_id: str = ""
+    translation_handler_name: str | None = None
+
     def emit_unary(
         self, upstream: UnaryUpstream
     ) -> tuple[PipelineEvent, ...]:
@@ -290,13 +307,19 @@ class TracedResponseEventEmitter(ResponseEventEmitter):
     // [LAW:single-enforcer] Response-side event construction lives here only.
     """
 
-    def __init__(self, *, request_id: str, provider: str) -> None:
-        self._request_id = request_id
+    def __init__(
+        self, *, request_id: str, provider: str, upstream_format: UpstreamFormat
+    ) -> None:
+        self.request_id = request_id
         self._provider = provider
+        # // [LAW:dataflow-not-control-flow] Translation strategy is data,
+        # //   resolved once at construction. The proxy never re-asks the
+        # //   provider/format question.
+        self.translation_handler_name = TRANSLATION_STREAM_HANDLERS[upstream_format]
 
     def _envelope(self, seq: int) -> dict:
         return event_envelope(
-            request_id=self._request_id,
+            request_id=self.request_id,
             seq=seq,
             provider=self._provider,
         )
@@ -376,7 +399,7 @@ class TracedResponseEventEmitter(ResponseEventEmitter):
         return [
             EventQueueSink(
                 event_queue,
-                request_id=self._request_id,
+                request_id=self.request_id,
                 seq_start=1,
                 provider=self._provider,
             ),
@@ -599,7 +622,9 @@ def plan_proxy_call(
         parsed_body=final_body,
         request_events=request_events,
         emitter=TracedResponseEventEmitter(
-            request_id=request_id, provider=provider,
+            request_id=request_id,
+            provider=provider,
+            upstream_format=spec.upstream_format,
         ),
     )
 
