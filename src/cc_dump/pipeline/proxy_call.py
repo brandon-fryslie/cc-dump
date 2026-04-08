@@ -396,6 +396,12 @@ class TracedResponseEventEmitter(ResponseEventEmitter):
         # The streaming headers event uses seq=0 of the response side. The
         # EventQueueSink starts at seq_start=1 so the first ResponseProgress
         # event is seq=1, leaving room for the headers event at seq=0.
+        #
+        # ResponseAssembler / OpenAiChatResponseAssembler implement the
+        # StreamSink protocol structurally (on_raw/on_event/on_done) but don't
+        # inherit from StreamSink — adding that inheritance edge would
+        # introduce an import cycle with proxy.py. The list-item ignore is
+        # the minimum-site acknowledgement of the structural conformance.
         return [
             EventQueueSink(
                 event_queue,
@@ -403,7 +409,7 @@ class TracedResponseEventEmitter(ResponseEventEmitter):
                 seq_start=1,
                 provider=self._provider,
             ),
-            assembler_cls(),
+            assembler_cls(),  # type: ignore[list-item]
         ]
 
     def streaming_finalize(

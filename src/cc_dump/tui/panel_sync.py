@@ -212,6 +212,37 @@ def _apply_presence(app, spec: PanelSpec, existing, will_visible: bool):
 # ─── The driver ────────────────────────────────────────────────────────
 
 
+def _should_focus_conv_on_transition(spec: PanelSpec, was: bool, will: bool) -> bool:
+    """// [LAW:dataflow-not-control-flow] Focus-conv eligibility is data."""
+    return spec.focus_conv_on_hide and was and not will
+
+
+def _should_focus_show(spec: PanelSpec, widget, will: bool) -> bool:
+    """// [LAW:dataflow-not-control-flow] Focus-show eligibility is data."""
+    return will and spec.focus_on_show and widget is not None
+
+
+def _higher_priority(
+    candidate: tuple[object, PanelSpec],
+    current: tuple[object, PanelSpec] | None,
+) -> bool:
+    """// [LAW:dataflow-not-control-flow] Priority comparison is data."""
+    return current is None or candidate[1].close_priority > current[1].close_priority
+
+
+def _resolve_focus_action(
+    app,
+    focus_show_target: tuple[object, PanelSpec] | None,
+    focus_conv: bool,
+) -> None:
+    """Apply the decided focus action at end of sync pass."""
+    if focus_show_target is not None:
+        _focus_default(app, focus_show_target[0])
+        return
+    if focus_conv:
+        _focus_conv(app)
+
+
 def sync_group(app, specs: tuple[PanelSpec, ...], visible_flags: tuple[bool, ...]) -> None:
     """Sync a group of toggle panels to their store-driven visibility.
 
@@ -230,22 +261,15 @@ def sync_group(app, specs: tuple[PanelSpec, ...], visible_flags: tuple[bool, ...
         if widget is not None:
             widget.display = will_visible
 
-        # [LAW:dataflow-not-control-flow] Widget.display carries prev-state;
-        # transition detection is a pure read.
-        if spec.focus_conv_on_hide and was_visible and not will_visible:
+        if _should_focus_conv_on_transition(spec, was_visible, will_visible):
             focus_conv = True
 
-        if will_visible and spec.focus_on_show and widget is not None:
-            if (
-                focus_show_target is None
-                or spec.close_priority > focus_show_target[1].close_priority
-            ):
-                focus_show_target = (widget, spec)
+        if _should_focus_show(spec, widget, will_visible):
+            candidate = (widget, spec)
+            if _higher_priority(candidate, focus_show_target):
+                focus_show_target = candidate
 
-    if focus_show_target is not None:
-        _focus_default(app, focus_show_target[0])
-    elif focus_conv:
-        _focus_conv(app)
+    _resolve_focus_action(app, focus_show_target, focus_conv)
 
 
 def _focus_default(app, widget) -> None:

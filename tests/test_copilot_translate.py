@@ -1,14 +1,12 @@
 """Tests for Anthropic ↔ Copilot translation (Responses API + Chat Completions)."""
 
 import json
-import pytest
 
 from cc_dump.pipeline.copilot_translate import (
     anthropic_to_copilot_request,
     copilot_sse_to_anthropic_events,
     CopilotSSEParser,
     TranslationState,
-    anthropic_sse_line,
     copilot_upstream_url,
     anthropic_to_chat_completions_request,
     chat_chunk_to_anthropic_events,

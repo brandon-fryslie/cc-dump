@@ -1,6 +1,5 @@
 """Tests for ConversationView public seam methods used by search."""
 
-from types import SimpleNamespace
 
 import cc_dump.core.formatting
 from cc_dump.tui.widget_factory import ConversationView, ScrollAnchor, TurnData

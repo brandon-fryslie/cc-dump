@@ -76,42 +76,47 @@ class ReplayPair:
 # entry-level `_cc_dump` metadata, neither of which we model explicitly.
 
 
-class _HarHeader(BaseModel):
+# // [LAW:single-enforcer] Every pydantic BaseModel subclass trips
+# //   `disallow_any_explicit` (pydantic's BaseModel carries Any in its
+# //   metaclass machinery). One `# type: ignore[explicit-any]` per class
+# //   is the minimum-site suppression — the alternative (disabling the
+# //   rule globally) would weaken type safety everywhere else.
+class _HarHeader(BaseModel):  # type: ignore[explicit-any]
     model_config = ConfigDict(extra="allow")
     name: str
     value: str
 
 
-class _HarPostData(BaseModel):
+class _HarPostData(BaseModel):  # type: ignore[explicit-any]
     model_config = ConfigDict(extra="allow")
     text: str
 
 
-class _HarRequest(BaseModel):
+class _HarRequest(BaseModel):  # type: ignore[explicit-any]
     model_config = ConfigDict(extra="allow")
     headers: list[_HarHeader] = []
     postData: _HarPostData
 
 
-class _HarContent(BaseModel):
+class _HarContent(BaseModel):  # type: ignore[explicit-any]
     model_config = ConfigDict(extra="allow")
     text: str
 
 
-class _HarResponse(BaseModel):
+class _HarResponse(BaseModel):  # type: ignore[explicit-any]
     model_config = ConfigDict(extra="allow")
     status: int = 200
     headers: list[_HarHeader] = []
     content: _HarContent
 
 
-class _HarEntry(BaseModel):
+class _HarEntry(BaseModel):  # type: ignore[explicit-any]
     model_config = ConfigDict(extra="allow")
     request: _HarRequest
     response: _HarResponse
 
 
-class _HarLog(BaseModel):
+class _HarLog(BaseModel):  # type: ignore[explicit-any]
     # // [LAW:dataflow-not-control-flow] entries is `list[dict]`, NOT
     # //   `list[_HarEntry]`, so per-entry validation happens in the loop
     # //   inside load_har (wrapped in _SkipEntry). One bad entry must not
@@ -120,7 +125,7 @@ class _HarLog(BaseModel):
     entries: list[dict]
 
 
-class _HarFile(BaseModel):
+class _HarFile(BaseModel):  # type: ignore[explicit-any]
     model_config = ConfigDict(extra="allow")
     log: _HarLog
 
