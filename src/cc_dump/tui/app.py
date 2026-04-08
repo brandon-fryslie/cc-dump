@@ -43,6 +43,7 @@ import cc_dump.tui.info_panel
 import cc_dump.tui.custom_footer
 import cc_dump.tui.session_panel
 import cc_dump.tui.session_registry
+import cc_dump.tui.provider_registry
 # Extracted controller modules (module-object imports — safe for hot-reload)
 from cc_dump.tui import action_handlers as _actions
 import cc_dump.tui.panel_registry
@@ -144,7 +145,6 @@ class AppState(TypedDict, total=False):
     current_turn_usage_by_request: dict[str, TurnUsage]
     pending_request_headers: dict[str, dict[str, str]]
     recent_messages: list[dict]
-    last_message_time_by_session: dict[str, float]
     stream_registry: object
 
 
@@ -193,34 +193,33 @@ class CcDumpApp(App):
     ):
         super().__init__()
         self._event_queue = event_queue
-        # [LAW:one-source-of-truth] Default-provider state is an alias into canonical per-provider state.
-        self._provider_states = dict(provider_states or {})
-        self._provider_states.setdefault(cc_dump.providers.DEFAULT_PROVIDER_KEY, state)
-        self._state = self._provider_states[cc_dump.providers.DEFAULT_PROVIDER_KEY]
+        # [LAW:single-enforcer] Provider runtime state + endpoint + per-provider
+        # session tracking all live on Provider records in the registry.
+        self._providers = cc_dump.tui.provider_registry.build_registry(
+            provider_states=provider_states,
+            default_state=state,
+            provider_endpoints=provider_endpoints,
+            host=host,
+            port=port,
+            target=target,
+        )
         self._router = router
         self._analytics_store = analytics_store
-        self._session_id: str | None = None
         self._host = host
         self._port = port
         self._target = target
-        # // [LAW:one-source-of-truth] Active provider endpoints are owned here.
-        if provider_endpoints is None:
-            provider_endpoints = {
-                cc_dump.providers.DEFAULT_PROVIDER_KEY: cc_dump.providers.default_provider_endpoint(
-                    host,
-                    port,
-                    target or "",
-                )
-            }
-        # // [LAW:single-enforcer] Provider endpoint normalization is centralized in cc_dump.providers.
-        self._provider_endpoints = dict(provider_endpoints)
         self._replay_data = replay_data
         self._recording_path = recording_path
         self._replay_file = replay_file
         self._tmux_controller = tmux_controller
         self._settings_store = settings_store
         self._view_store = view_store
-        self._domain_store = domain_store if domain_store is not None else cc_dump.app.domain_store.DomainStore()
+        # [LAW:one-source-of-truth] The default session's domain_store is owned
+        # by the SessionRegistry; the constructor param seeds it directly.
+        default_domain_store = (
+            domain_store if domain_store is not None
+            else cc_dump.app.domain_store.DomainStore()
+        )
         self._store_context = store_context
         # // [LAW:one-source-of-truth] App owns render runtime state for theme/render coupling.
         self._render_runtime = cc_dump.tui.rendering.create_render_runtime()
@@ -243,7 +242,6 @@ class CcDumpApp(App):
         self._app_state: AppState = {
             "current_turn_usage_by_request": {},
             "pending_request_headers": {},
-            "last_message_time_by_session": {},
         }
 
         self._launch_configs_cache: list | None = None
@@ -262,7 +260,7 @@ class CcDumpApp(App):
             key=cc_dump.providers.DEFAULT_SESSION_KEY,
             tab_id=self._conv_tab_main_id,
             conv_id=self._conv_id,
-            domain_store=self._domain_store,
+            domain_store=default_domain_store,
             provider=cc_dump.providers.DEFAULT_PROVIDER_KEY,
             is_default=True,
         )
@@ -336,10 +334,10 @@ class CcDumpApp(App):
         return tuple(s.domain_store for s in self._sessions.all())
 
     def _provider_state(self, provider: str) -> cc_dump.core.formatting_impl.ProviderRuntimeState:
-        return self._provider_states.get(provider, self._state)
+        return self._providers.get(provider).runtime_state
 
     def _total_request_count(self) -> int:
-        return sum(state.request_counter for state in self._provider_states.values())
+        return self._providers.total_request_count()
 
     def _build_session(self, key: str) -> "cc_dump.tui.session_registry.Session":
         """Factory for new Sessions. Called by SessionRegistry.ensure.
@@ -463,21 +461,22 @@ class CcDumpApp(App):
         if not request_id:
             return
         session = self._session_for_request_id(request_id)
-        per_session = self._app_state.get("last_message_time_by_session", {})
-        if not isinstance(per_session, dict):
-            per_session = {}
-        per_session[session.key] = time.monotonic()
-        self._app_state["last_message_time_by_session"] = per_session
+        # // [LAW:one-source-of-truth] last_message_time lives on the Session.
+        session.last_message_time = time.monotonic()
         self._publish_session_panel_state()
 
-    def _sync_detected_session(self, state: cc_dump.core.formatting_impl.ProviderRuntimeState) -> None:
-        # // [LAW:one-source-of-truth] Session ID comes from formatting state,
-        # not from blocks or app_state side-channels.
-        current_session = state.current_session or ""
-        if not current_session or current_session == self._session_id:
+    def _sync_detected_session(
+        self, provider: "cc_dump.tui.provider_registry.Provider"
+    ) -> None:
+        """Notify once when a provider's runtime state reports a new session.
+
+        // [LAW:single-enforcer] Notification dedup is the Provider's concern.
+        """
+        current_session = provider.runtime_state.current_session or ""
+        if not current_session or current_session == provider.last_notified_session:
             return
         self._app_log("INFO", f"Session detected: {current_session}")
-        self._session_id = current_session
+        provider.last_notified_session = current_session
         self._publish_session_panel_state()
         self.post_message(NewSession(current_session))
         self.notify(f"New session: {current_session[:8]}...")
@@ -504,16 +503,11 @@ class CcDumpApp(App):
     def _get_active_session_panel_state(self) -> tuple[str | None, float | None]:
         """Return session panel identity + last activity for active tab context."""
         active = self._sync_active_from_tabs()
-        per_session = self._app_state.get("last_message_time_by_session", {})
-        last_message_time = None
-        if isinstance(per_session, dict):
-            raw_time = per_session.get(active.key)
-            if isinstance(raw_time, (int, float)):
-                last_message_time = float(raw_time)
-        # [LAW:dataflow-not-control-flow] is_default decided at construction.
+        # [LAW:dataflow-not-control-flow] last_message_time is a typed field on
+        # the Session; is_default decided at construction.
         if not active.is_default:
-            return active.key, last_message_time
-        return self._session_id, last_message_time
+            return active.key, active.last_message_time
+        return self._providers.default().last_notified_session, active.last_message_time
 
     def _publish_session_panel_state(self) -> None:
         """Publish canonical session panel projection to the view store.
@@ -536,7 +530,7 @@ class CcDumpApp(App):
         # [LAW:dataflow-not-control-flow] is_default already decided.
         if not active.is_default:
             return active.key
-        return str(self._session_id or "")
+        return str(self._providers.default().last_notified_session or "")
 
     def _get_conv(self, session_key: str | None = None):
         if session_key is None:
@@ -852,35 +846,26 @@ class CcDumpApp(App):
         )
 
     def _build_server_info(self) -> dict:
-        """// [LAW:one-source-of-truth] All server info derived from constructor params."""
-        default_endpoint = self._provider_endpoints.get(
-            cc_dump.providers.DEFAULT_PROVIDER_KEY
-        )
-        proxy_url = (
-            default_endpoint.proxy_url
-            if default_endpoint is not None and default_endpoint.proxy_url
-            else "http://{}:{}".format(self._host, self._port)
-        )
-        primary_target = default_endpoint.target if default_endpoint is not None else None
-        provider_modes: list[str] = []
+        """// [LAW:dataflow-not-control-flow] Straight pipe over the provider registry."""
+        default = self._providers.default()
+        proxy_url = default.endpoint.proxy_url or "http://{}:{}".format(self._host, self._port)
+        primary_target = default.endpoint.target
 
         provider_rows: list[dict[str, str]] = []
-        for spec in cc_dump.providers.all_provider_specs():
-            endpoint = self._provider_endpoints.get(spec.key)
-            if endpoint is None:
-                continue
-            provider_modes.append(endpoint.proxy_mode)
+        for provider in self._providers.all():
+            spec = cc_dump.providers.get_provider_spec(provider.key)
             provider_rows.append(
                 {
-                    "key": spec.key,
+                    "key": provider.key,
                     "name": spec.display_name,
-                    "proxy_url": endpoint.proxy_url,
-                    "target": endpoint.target or "",
-                    "proxy_mode": endpoint.proxy_mode,
+                    "proxy_url": provider.endpoint.proxy_url,
+                    "target": provider.endpoint.target or "",
+                    "proxy_mode": provider.endpoint.proxy_mode,
                     "base_url_env": spec.base_url_env,
                     "client_hint": spec.client_hint,
                 }
             )
+        provider_modes = [p.endpoint.proxy_mode for p in self._providers.all()]
         unique_modes = set(provider_modes)
         proxy_mode = provider_modes[0] if len(unique_modes) == 1 and provider_modes else "mixed"
 
@@ -889,7 +874,7 @@ class CcDumpApp(App):
             "proxy_mode": proxy_mode,
             "target": primary_target,
             "providers": provider_rows,
-            "session_id": self._session_id,
+            "session_id": default.last_notified_session,
             "recording_path": self._recording_path,
             "recording_dir": cc_dump.io.sessions.get_recordings_dir(),
             "replay_file": self._replay_file,
@@ -997,9 +982,10 @@ class CcDumpApp(App):
             return
 
         kind = event.kind
-        provider = self._resolve_event_provider(event)
-        state = self._provider_state(provider)
-        session = self._resolve_event_session(event, provider=provider)
+        provider_key = self._resolve_event_provider(event)
+        provider = self._providers.get(provider_key)
+        state = provider.runtime_state
+        session = self._resolve_event_session(event, provider=provider_key)
         conv = self._query_safe("#" + session.conv_id)
         if conv is None:
             conv = self._query_safe("#" + self._sessions.default().conv_id)
@@ -1032,7 +1018,7 @@ class CcDumpApp(App):
             handler(event, state, widgets, self._app_state, self._app_log),
         )
         self._track_request_activity(str(getattr(event, "request_id", "") or ""))
-        self._sync_detected_session(state)
+        self._sync_detected_session(provider)
 
     def on_tabbed_content_tab_activated(
         self, event: TabbedContent.TabActivated
@@ -1046,9 +1032,6 @@ class CcDumpApp(App):
         pane_id = str(getattr(event.pane, "id", "") or "")
         self._sessions.sync_from_tab_id(pane_id)
         self._publish_session_panel_state()
-        # // [LAW:one-source-of-truth] _domain_store alias mirrors the active session store
-        # for hot-reload backcompat. Phase 2 will delete this alias.
-        self._domain_store = self._sessions.active().domain_store
 
     # ─── Delegates to extracted modules ────────────────────────────────
     # Textual requires action_* and watch_* as methods on the App class.

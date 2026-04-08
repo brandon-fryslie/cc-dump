@@ -307,10 +307,8 @@ async def _replace_all_widgets_inner(app) -> None:
 
     for new_conv in new_conversations.values():
         new_conv.rerender(app.active_filters)
-    sessions = getattr(app, "_sessions", None)
-    if sessions is not None:
-        # // [LAW:one-source-of-truth] _domain_store alias mirrors the active session store.
-        app._domain_store = sessions.active().domain_store
+    # // [LAW:one-source-of-truth] No _domain_store alias: callers go through
+    # app._sessions.active().domain_store directly.
 
 
 def _collect_conversation_swaps(app) -> list[_ConversationSwap]:

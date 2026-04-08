@@ -1,6 +1,5 @@
 from types import SimpleNamespace
 
-import cc_dump.providers
 import cc_dump.tui.settings_launch_controller as settings_launch
 from cc_dump.app.tmux_controller import LaunchAction, LaunchResult
 
@@ -13,10 +12,15 @@ class _ViewStore:
         self.last_update = values
 
 
+class _Providers:
+    def all(self):
+        return ()
+
+
 class _App:
     def __init__(self, tmux):
         self._tmux_controller = tmux
-        self._provider_endpoints: dict[str, cc_dump.providers.ProviderEndpoint] = {}
+        self._providers = _Providers()
         self._view_store = _ViewStore()
         self.notifications: list[str] = []
 

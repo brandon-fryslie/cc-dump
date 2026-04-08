@@ -33,7 +33,7 @@ def _materialize_session(app, key: str):
 
 def test_active_resume_session_id_prefers_active_session_tab(monkeypatch):
     app = _make_app()
-    app._session_id = "legacy-main"
+    app._providers.default().last_notified_session = "legacy-main"
     _materialize_session(app, "sess-a")
 
     monkeypatch.setattr(app, "_sync_active_from_tabs", lambda: app._sessions.active())
@@ -43,12 +43,10 @@ def test_active_resume_session_id_prefers_active_session_tab(monkeypatch):
 
 def test_get_active_session_panel_state_reads_per_session_last_message(monkeypatch):
     app = _make_app()
-    app._session_id = "legacy-main"
-    _materialize_session(app, "sess-a")
-    app._app_state["last_message_time_by_session"] = {
-        "__default__": 11.0,
-        "sess-a": 42.5,
-    }
+    app._providers.default().last_notified_session = "legacy-main"
+    session_a = _materialize_session(app, "sess-a")
+    app._sessions.default().last_message_time = 11.0
+    session_a.last_message_time = 42.5
 
     monkeypatch.setattr(app, "_sync_active_from_tabs", lambda: app._sessions.active())
 

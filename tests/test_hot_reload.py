@@ -310,7 +310,7 @@ class TestHotReloadMultiSessionTabs:
             # Combined turns: each request-response pair is 1 turn.
             assert len(new_conv._turns) >= 2  # At least 1 combined turn per replay entry
             assert tabs.active == default.tab_id
-            assert app._domain_store is default.domain_store
+            assert app._sessions.active().domain_store is default.domain_store
 
 
 # ============================================================================

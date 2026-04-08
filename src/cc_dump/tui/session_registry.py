@@ -33,6 +33,7 @@ class Session:
     domain_store: "cc_dump.app.domain_store.DomainStore"
     provider: str
     is_default: bool
+    last_message_time: float | None = None
 
     def tab_title(self) -> str:
         """Compute the tab title for this session.
