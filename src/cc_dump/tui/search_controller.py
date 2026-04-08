@@ -223,11 +223,6 @@ def handle_search_editing_key(app, event) -> None:
         exit_search_keep_position(app)
         return
 
-    # Exit search - restore original position
-    if key == "q":
-        exit_search_restore_position(app)
-        return
-
     # Printable character
     if event.character and len(event.character) == 1 and event.character.isprintable():
         state.query = (

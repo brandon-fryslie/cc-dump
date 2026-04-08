@@ -4,253 +4,218 @@
 
 ### Category Filters (Number Keys)
 
+| Key | Category | Default | Action |
+|-----|----------|---------|--------|
+| `1` | User | visible, full, expanded | Toggle visibility on/off |
+| `2` | Assistant | visible, full, expanded | Toggle visibility on/off |
+| `3` | Tools | visible, summary, collapsed | Toggle visibility on/off |
+| `4` | System | visible, summary, collapsed | Toggle visibility on/off |
+| `5` | Metadata | hidden | Toggle visibility on/off |
+| `6` | Thinking | visible, summary, collapsed | Toggle visibility on/off |
+
+### Detail and Analytics Toggles
+
+| Key | Alternate | Category | Action |
+|-----|-----------|----------|--------|
+| `!` or `Q` | Shift+1 | User | Toggle detail (full on/off) |
+| `@` or `W` | Shift+2 | Assistant | Toggle detail (full on/off) |
+| `#` or `E` | Shift+3 | Tools | Toggle detail (full on/off) |
+| `$` or `R` | Shift+4 | System | Toggle detail (full on/off) |
+| `%` or `T` | Shift+5 | Metadata | Toggle detail (full on/off) |
+| `^` or `Y` | Shift+6 | Thinking | Toggle detail (full on/off) |
+
 | Key | Category | Action |
 |-----|----------|--------|
-| `1` | User | Toggle visibility |
-| `2` | Assistant | Toggle visibility |
-| `3` | Tools | Toggle visibility |
-| `4` | System | Toggle visibility |
-| `5` | Budget | Toggle visibility |
-| `6` | Metadata | Toggle visibility |
-| `7` | Headers | Toggle visibility (hidden ↔ remembered level) |
-
-| Key | Action | Description |
-|-----|--------|-------------|
-| `!`, `@`, `#`, etc. | Toggle detail | Switch between SUMMARY and FULL (level 2 ↔ 3) |
-| `Ctrl+Shift+<number>` | Expand/collapse all | Toggle all blocks in category |
-| Click | Expand/collapse block | Toggle individual block within current level |
+| `q` | User | Toggle analytics/expanded |
+| `w` | Assistant | Toggle analytics/expanded |
+| `e` | Tools | Toggle analytics/expanded |
+| `r` | System | Toggle analytics/expanded |
+| `t` | Metadata | Toggle analytics/expanded |
+| `y` | Thinking | Toggle analytics/expanded |
 
 **Examples:**
 - `1` hides/shows user messages
-- `!` (Shift+1) toggles user between SUMMARY and FULL
-- `7` hides/shows headers
+- `!` (Shift+1) or `Q` toggles user detail level (full on/off)
+- `q` toggles user expanded/collapsed within current level
 
 ### Panels & Modes
 
 | Key | Action |
 |-----|--------|
-| `.` | Cycle panel (stats → economics → timeline) |
-| `,` | Cycle panel mode (e.g., aggregate ↔ per-model) |
-| `0` | Toggle follow mode (auto-scroll) |
+| `.` | Cycle panel |
+| `,` | Cycle panel mode (e.g., aggregate vs per-model) |
+| `f` | Toggle follow mode (auto-scroll) |
+| `i` | Toggle info panel |
+| `?` | Toggle keys panel |
+| `S` | Toggle settings panel |
+| `C` | Toggle launch config panel |
+| `D` | Toggle debug settings panel |
 | `Ctrl+L` | Toggle logs panel |
-| `Ctrl+P` | Command palette |
+
+### Search & Presets
+
+| Key | Action |
+|-----|--------|
+| `/` | Enter search mode |
+| `=` | Next filterset preset |
+| `-` | Previous filterset preset |
+| `Alt+N` | Jump to next special section |
+| `Alt+P` | Jump to previous special section |
 
 ### Vim-Style Navigation
 
 | Key | Action |
 |-----|--------|
-| `g` | Go to top (disables follow mode) |
-| `G` | Go to bottom (enables follow mode) |
+| `g` | Go to top |
+| `G` | Go to bottom |
 | `j` | Scroll down one line |
 | `k` | Scroll up one line |
 | `h` | Scroll left one column |
 | `l` | Scroll right one column |
+
+In search navigation mode (`/` then Enter), additional keys are available:
+
+| Key | Action |
+|-----|--------|
 | `Ctrl+D` | Scroll down half page |
 | `Ctrl+U` | Scroll up half page |
 | `Ctrl+F` | Scroll down full page |
 | `Ctrl+B` | Scroll up full page |
+| `n` / `N` | Next / previous search match |
 
-## Visual Examples at Each Level
+### Other
 
-### Example: System Prompts (4 key)
+| Key | Action |
+|-----|--------|
+| `[` / `]` | Previous / next theme |
+| `{` / `}` | Previous / next session |
+| `c` | Launch tool (tmux) |
+| `L` | Open tmux log tail |
+| `Ctrl+C Ctrl+C` | Quit |
 
-#### Level 1: EXISTENCE `·` (fully hidden)
-```
-(No output - category completely hidden)
-```
-**What you see:** Nothing. Press `4` again to show at SUMMARY level.
+## Visibility Model
 
----
+Each category has three independent boolean flags:
 
-#### Level 2: SUMMARY `◐` (collapsed)
-```
-▐ ▶ [sp-1] CHANGED (100→245 chars):
-      @@ -1,5 +1,8 @@
-      + You are Claude Code
-      ··· 8 more lines
+| Flag | Store key | Toggled by | Effect |
+|------|-----------|------------|--------|
+| **visible** | `vis:<name>` | Number key (1-6) | Show/hide the category entirely |
+| **full** | `full:<name>` | Shift+number or QWERTY uppercase | Toggle between summary and full detail |
+| **expanded** | `exp:<name>` | qwerty lowercase | Toggle expanded/collapsed within current detail level |
 
-▐   [sp-2] UNCHANGED (512 chars)
-```
-**What you see:** First 3 lines of diff for changed items. Arrow (▶) appears after color bar for expandable blocks. Click arrow to expand to 12 lines.
+These combine into 5 states when cycling (used by filterset presets):
 
----
-
-#### Level 2: SUMMARY `◐` (expanded)
-```
-▐ ▼ [sp-1] CHANGED (100→245 chars):
-      @@ -1,5 +1,8 @@
-      + You are Claude Code
-      + You help users with software
-      + engineering tasks
-      - Old instruction removed
-      @@ -10,3 +13,6 @@
-      + More changes here
-      ··· 2 more lines
-
-▐   [sp-2] UNCHANGED (512 chars)
-```
-**What you see:** Up to 12 lines of diff. Arrow (▼) indicates expanded state. Click arrow to collapse back to 3 lines.
-
----
-
-#### Level 3: FULL `●`
-```
-▐ ▼ [sp-1] CHANGED (100→245 chars):
-      @@ -1,5 +1,8 @@
-      + You are Claude Code
-      + You help users with software
-      + engineering tasks
-      - Old instruction removed
-      @@ -10,3 +13,6 @@
-      + More changes here
-      + Additional context
-      [complete diff visible - 15 lines total]
-
-▐   [sp-2] UNCHANGED:
-      You are Claude Code, Anthropic's official CLI.
-      You are an interactive agent that helps users
-      with software engineering tasks...
-      [full content - 512 chars / 42 lines]
-```
-**What you see:** Complete diff and full content for all tracked items. Arrow (▼) on expandable blocks can be clicked to collapse to 5-line preview.
-
----
-
-## Level Progression Chart
-
-```
-                    EXISTENCE          SUMMARY            FULL
-                        ·                 ◐                ●
-                      (hidden)         (3-12 lines)    (5-∞ lines)
-
-User (1)           Hidden            3-12 lines       Full message
-Assistant (2)      Hidden            3-12 lines       Full message
-Tools (3)          Hidden            Tool counts      Full use/results
-System (4)         Hidden            First lines      Complete diffs
-Budget (5)         Hidden            Category split   Full accounting
-Metadata (6)       Hidden            Breakdown        All fields
-Headers (7)        Hidden            Basic headers    All HTTP headers
-```
+| State | visible | full | expanded | Description |
+|-------|---------|------|----------|-------------|
+| Hidden | false | false | false | Category not shown |
+| Summary Collapsed | true | false | false | Compact view |
+| Summary Expanded | true | false | true | Expanded compact view |
+| Full Collapsed | true | true | false | Full detail, collapsed |
+| Full Expanded | true | true | true | Full detail, expanded |
 
 ## Default Configuration
 
 When cc-dump starts:
 ```
-1 ● user         FULL       — see all user input
-2 ● assistant    FULL       — see all responses
-3 ◐ tools        SUMMARY    — compact tool view
-4 ◐ system       SUMMARY    — system prompts with preview
-5 · budget       EXISTENCE  — hidden
-6 · metadata     EXISTENCE  — hidden
-7 · headers      EXISTENCE  — hidden (clean view)
+1  user         visible, full, expanded     -- see all user input
+2  assistant    visible, full, expanded     -- see all responses
+3  tools        visible, summary, collapsed -- compact tool view
+4  system       visible, summary, collapsed -- system prompts with preview
+5  metadata     hidden                      -- hidden by default
+6  thinking     visible, summary, collapsed -- thinking blocks with preview
 ```
 
-**Result:** A clean conversation view focused on user/assistant messages, with tool/system context available but not overwhelming.
+The default filterset is F1 "Conversation".
 
-## Common Workflows
+## Filterset Presets
 
-### "I want to see EVERYTHING"
-```bash
-# Show all hidden categories:
-5        # show budget (toggles to remembered SUMMARY)
-6        # show metadata (toggles to remembered SUMMARY)
-7        # show headers (toggles to remembered SUMMARY)
+Cycle through presets with `=` (next) and `-` (previous). Available slots:
 
-# Then upgrade detail levels to FULL:
-#        # tools SUMMARY → FULL
-$        # system SUMMARY → FULL
-%        # budget SUMMARY → FULL
-^        # metadata SUMMARY → FULL
-&        # headers SUMMARY → FULL
-```
+| Slot | Name |
+|------|------|
+| F1 | Conversation |
+| F2 | Overview |
+| F4 | Tools |
+| F5 | System |
+| F6 | Cost |
+| F7 | Full Debug |
+| F8 | Assistant |
+| F9 | Minimal |
 
-### "Hide ALL the noise"
-```bash
-# Hide everything except user/assistant:
-3        # hide tools (press until hidden)
-4        # hide system (press until hidden)
-# 5, 6, 7 already hidden at EXISTENCE
-```
-Result: Ultra-compact view, just user/assistant messages.
-
-### "Debug this tool call"
-```bash
-3        # If hidden, press to show at SUMMARY
-#        # Press Shift+3 to toggle to FULL (●)
-         # Individual tool blocks appear
-         # Click ▶ on long result to expand
-         # Click ▼ to collapse when done
-```
-
-### "What changed in the system prompt?"
-```bash
-4        # Press to show at SUMMARY (◐) if hidden
-         # See first lines of diff
-         # Click ▶ on the changed item to see more
-$        # Press Shift+4 to toggle to FULL (●)
-         # Complete diff visible
-```
+Note: F3 is skipped in the cycle.
 
 ## Click Behavior
 
-Clicking a block **only works within the current level**:
+Clicking a block toggles its expansion **within the current level**:
 
 | Current State | After Click | Effect |
 |---------------|-------------|--------|
-| `▶` collapsed | `▼` expanded | Show more lines (up to level's expanded limit) |
-| `▼` expanded | `▶` collapsed | Show fewer lines (level's collapsed limit) |
+| Collapsed | Expanded | Show more lines |
+| Expanded | Collapsed | Show fewer lines |
 | No arrow | No change | Block fits within current limit |
 
-**Important:** Clicking does NOT change the level. Use keyboard keys to change levels.
+**Important:** Clicking does NOT change the visibility or detail level. Use keyboard keys for that.
 
 ## Footer Legend
 
-The footer shows current level for each category with key number and icon:
+The footer shows current state for each category:
 
 ```
-1●user  2●assistant  3◐tools  4◐system  5·budget  6·metadata  7·headers
-│       │            │        │         │         │            └─ headers: EXISTENCE
-│       │            │        │         │         └─────────────  metadata: EXISTENCE
-│       │            │        │         └───────────────────────  budget: EXISTENCE
-│       │            │        └─────────────────────────────────  system: SUMMARY
-│       │            └──────────────────────────────────────────  tools: SUMMARY
-│       └───────────────────────────────────────────────────────  assistant: FULL
-└───────────────────────────────────────────────────────────────  user: FULL
+1-6 filters  qwerty analytics  QWERTY detail  . panel  , mode  f follow  ...
 ```
 
-Active categories (level > EXISTENCE) have colored backgrounds matching their indicator bars.
+Active categories have colored backgrounds matching their indicator bars.
+
+## Common Workflows
+
+### "I want to see everything"
+```
+5        # show metadata (toggle visible)
+Q W E R T Y   # toggle all to full detail
+q w e r t y   # expand all categories
+```
+
+### "Hide the noise"
+```
+3        # hide tools
+4        # hide system
+6        # hide thinking
+# 5 already hidden
+```
+Result: Just user/assistant messages.
+
+### "Debug a tool call"
+```
+3        # show tools if hidden
+E        # toggle tools to full detail
+e        # expand tools
+         # click individual blocks to expand/collapse
+```
+
+### "What changed in the system prompt?"
+```
+4        # show system if hidden
+R        # toggle system to full detail
+         # full diff now visible
+```
 
 ## Technical Notes
 
-### Line Limits
-
-| Level | Collapsed | Expanded |
-|-------|-----------|----------|
-| EXISTENCE | 0 (hidden) | 0 (hidden) |
-| SUMMARY | 3 lines | 12 lines |
-| FULL | 5 lines | unlimited |
-
-**Note:** EXISTENCE level is now fully hidden (0 lines). Use SUMMARY level for compact views with titles/summaries.
-
 ### Category Assignment
 
-- **Fixed:** Most blocks have a fixed category (e.g., `SeparatorBlock` → HEADERS)
-- **Dynamic:** `TextContentBlock`, `RoleBlock`, `ImageBlock` get category set during formatting based on context (USER, ASSISTANT, or SYSTEM)
+- **Dynamic:** `TextContentBlock`, `RoleBlock`, `ImageBlock` get their category set during formatting based on context (USER, ASSISTANT, or SYSTEM)
+- **Fixed:** Most other block types have a fixed category mapping
 
 ### Tool Summarization
 
-At SUMMARY level, consecutive tool use/result blocks are automatically combined into a single summary line:
+When tools are visible but not at full detail, consecutive tool use/result blocks are automatically combined into a summary line:
 ```
-▐   [used 3 tools: Read 2x, Bash 1x]
+[used 3 tools: Read 2x, Bash 1x]
 ```
 
-At EXISTENCE level, tools are completely hidden (no summary line).
-
-At FULL level, individual blocks are shown with full details.
+At full detail, individual blocks are shown with complete content.
 
 ### State Persistence
 
-- **Level changes:** Toggling visibility or detail level resets category expansion state for that category
-- **No per-block expansion layer:** Expansion is controlled by category/turn-level state; region-level collapse (for segmented content) is tracked separately
-- **Remembered detail:** When you hide a category (level 1), it remembers whether it was at SUMMARY (2) or FULL (3), so toggling visibility restores the previous detail level
-- **Session:** Follow mode and scroll position persist across hot-reloads
+- **Override clearing:** Toggling visibility or detail level resets per-block expansion overrides for that category
+- **Follow mode** and scroll position persist across hot-reloads

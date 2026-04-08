@@ -1,41 +1,49 @@
-"""HTTP proxy handler — pure data source, no display logic."""
+"""HTTP proxy handler — pure data source, no display logic.
+
+// [LAW:single-enforcer] All planning and HTTP-transport decisions live in
+//   pipeline/proxy_call.py. This module is the BaseHTTPRequestHandler glue
+//   that drives the planner and writes its outputs to the wire.
+"""
 
 import http.server
 import json
 import logging
 import queue
 import ssl
-
-import truststore
 import uuid
-import urllib.error
-import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from cc_dump.pipeline.event_types import (
-    ErrorEvent,
     LogEvent,
     PipelineEvent,
-    ProxyErrorEvent,
-    RequestBodyEvent,
-    RequestHeadersEvent,
     ResponseCompleteEvent,
     ResponseDoneEvent,
-    ResponseHeadersEvent,
     ResponseProgressEvent,
     event_envelope,
-    new_request_id,
     parse_sse_event,
     sse_progress_payload,
 )
-from cc_dump.pipeline.response_assembler import (
-    OpenAiChatResponseAssembler,
-    ResponseAssembler,
+from cc_dump.pipeline.proxy_call import (
+    HttpErrorUpstream,
+    NetworkErrorUpstream,
+    OutboundCall,
+    PlannedCall,
+    RefusedCall,
+    RequestPipeline,
+    StreamingUpstream,
+    UnaryUpstream,
+    UpstreamResult,
+    execute_upstream,
+    plan_proxy_call,
 )
+from cc_dump.pipeline.response_assembler import ResponseAssembler
 import cc_dump.pipeline.proxy_flow
 import cc_dump.providers
+
+# Re-export RequestPipeline so existing imports (`from cc_dump.pipeline.proxy
+# import RequestPipeline` in cli.py) keep working.
+__all__ = ["ProxyHandler", "RequestPipeline", "make_handler_class"]
 
 if TYPE_CHECKING:
     from cc_dump.pipeline.forward_proxy_tls import ForwardProxyCertificateAuthority
@@ -109,30 +117,8 @@ def _parse_connect_authority(authority: str) -> tuple[str, int] | None:
     return host, port
 
 
-# ─── Request Pipeline ────────────────────────────────────────────────────────
-# // [LAW:dataflow-not-control-flow] Transforms compose by chaining; interceptors compose by first-match.
-
-
-@dataclass
-class RequestPipeline:
-    """Composable request processing: transforms modify, interceptors short-circuit.
-
-    Phase 1 — transforms run unconditionally, each sees the output of the previous.
-    Phase 2 — interceptors run after transforms. First non-None return wins.
-    """
-
-    transforms: list[Callable[[dict, str], tuple[dict, str]]] = field(default_factory=list)
-    interceptors: list[Callable[[dict], str | None]] = field(default_factory=list)
-
-    def process(self, body: dict, url: str) -> tuple[dict, str, str | None]:
-        """Run pipeline. Returns (body, url, intercept_response_or_none)."""
-        for transform in self.transforms:
-            body, url = transform(body, url)
-        for interceptor in self.interceptors:
-            response = interceptor(body)
-            if response is not None:
-                return body, url, response
-        return body, url, None
+# RequestPipeline lives in pipeline/proxy_call.py — re-exported above for
+# back-compat with `from cc_dump.pipeline.proxy import RequestPipeline`.
 
 
 def _build_synthetic_sse_bytes(response_text: str, model: str = "synthetic") -> bytes:
@@ -215,6 +201,41 @@ def _build_synthetic_sse_bytes(response_text: str, model: str = "synthetic") -> 
 def _sse_line(event: dict) -> bytes:
     """Format a single SSE data line."""
     return b"data: " + json.dumps(event).encode() + b"\n\n"
+
+
+def _iter_chat_sse_chunks(resp):
+    """Parse an SSE byte stream into decoded JSON chunks.
+
+    // [LAW:single-enforcer] One place owns SSE line buffering + JSON decode.
+    //   Callers receive already-decoded dicts and never branch on framing.
+    """
+    buf = b""
+    for raw in resp:
+        buf += raw
+        while b"\n" in buf:
+            line, buf = buf.split(b"\n", 1)
+            text = line.decode("utf-8", errors="replace").strip()
+            if not text.startswith("data: "):
+                continue
+            data_str = text[6:]
+            if data_str == "[DONE]":
+                continue
+            try:
+                yield json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+
+
+def _call_sink(fn, label: str) -> None:
+    """Run a sink callable inside a logged error boundary.
+
+    // [LAW:single-enforcer] Error isolation shape lives here, not scattered
+    //   as try/except pellets at each sink callsite.
+    """
+    try:
+        fn()
+    except Exception as exc:
+        logger.warning("%s: %s", label, exc)
 
 
 class StreamSink:
@@ -380,7 +401,10 @@ def _fan_out_sse(resp, sinks):
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
     target_host: str | None = None  # set by cli.py or factory before server starts
     event_queue: queue.Queue[PipelineEvent] = queue.Queue()  # set by cli.py or factory before server starts
-    request_pipeline: RequestPipeline | None = None  # set by cli.py or factory before server starts
+    # // [LAW:dataflow-not-control-flow] Default is the empty (identity)
+    # //   pipeline, NOT None. The proxy never asks "if request_pipeline is
+    # //   not None"; the absence of work is encoded as empty lists.
+    request_pipeline: RequestPipeline = RequestPipeline()
     provider: str = "anthropic"  # set by factory for multi-provider support
     forward_proxy_ca: "ForwardProxyCertificateAuthority | None" = None  # set by factory when forward proxy CONNECT interception is enabled
 
@@ -391,271 +415,175 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         tunnel_target = getattr(self, "_connect_target_host", None)
         return tunnel_target if tunnel_target is not None else self.target_host
 
-    def _proxy(self):
-        request_id = new_request_id()
+    def _proxy(self) -> None:
+        """Drive the proxy_call planner and write its outputs to the wire.
+
+        // [LAW:dataflow-not-control-flow] Same operations every request:
+        //   plan → emit request events → execute → deliver. The variant of
+        //   PlannedCall and UpstreamResult carries all variance.
+        // // [LAW:single-enforcer] No request-shape decisions live here.
+        //   Translation, interception, header building, JSON parsing,
+        //   and HTTP transport all live in pipeline/proxy_call.py.
+        """
         content_len = int(self.headers.get("Content-Length", 0))
         body_bytes = self.rfile.read(content_len) if content_len else b""
 
-        target = cc_dump.pipeline.proxy_flow.resolve_proxy_target_for_origin(
-            self.path,
-            self._active_target_host(),
+        planned = plan_proxy_call(
+            method=self.command,
+            path=self.path,
+            raw_headers=self.headers,
+            body_bytes=body_bytes,
+            provider=self.provider,
+            target_host=self._active_target_host(),
             required_origin=getattr(self, "_connect_target_host", None),
+            request_pipeline=self.request_pipeline,
         )
-        request_path = target.request_path
-        url = target.upstream_url
-        if target.error_reason:
-            self.event_queue.put(
-                ErrorEvent(
-                    code=target.error_status or 500,
-                    reason=target.error_reason,
-                    **event_envelope(
-                        request_id=request_id,
-                        seq=0,
-                        provider=self.provider,
-                    ),
-                )
-            )
-            self.send_response(target.error_status or 500)
-            self.end_headers()
-            self.wfile.write(
-                b"No target configured. Use --target or send absolute URIs."
-            )
+        self._dispatch(planned)
+
+    def _dispatch(self, planned: PlannedCall) -> None:
+        # // [LAW:dataflow-not-control-flow] One match over the call shape.
+        # //   RefusedCall is short-circuit; the outbound variants share the
+        # //   exact same straight-pipe path because the emitter absorbs the
+        # //   "is this observed?" decision.
+        if isinstance(planned, RefusedCall):
+            self._deliver_refused(planned)
             return
 
-        body, parse_error = cc_dump.pipeline.proxy_flow.parse_request_json(
-            body_bytes,
-            expects_json=self._expects_json_body(request_path),
-        )
-        if parse_error:
-            logger.warning("malformed request JSON: %s", parse_error)
-        if body is not None:
-            # Emit request headers before request body (TUI sees original request)
-            safe_req_headers = _safe_headers(self.headers)
-            # // [LAW:one-source-of-truth] request_id/seq/recv_ns envelope is
-            # carried by request-side events too, not only response-side events.
-            self.event_queue.put(RequestHeadersEvent(
-                headers=safe_req_headers,
-                **event_envelope(
-                    request_id=request_id,
-                    seq=0,
-                    provider=self.provider,
-                ),
-            ))
-            self.event_queue.put(RequestBodyEvent(
-                body=body,
-                **event_envelope(
-                    request_id=request_id,
-                    seq=1,
-                    provider=self.provider,
-                ),
-            ))
+        self._emit_events(planned.request_events)
+        upstream = execute_upstream(planned)
+        self._deliver_upstream(planned, upstream)
 
-        # // [LAW:single-enforcer] Only emit response/error events for API-path requests
-        # that also emitted request events. Non-API traffic (health checks, token counting)
-        # is forwarded to the client but produces no pipeline events.
-        emitted_request = body is not None
+    def _emit_events(self, events) -> None:
+        for evt in events:
+            self.event_queue.put(evt)
 
-        # Pipeline processing — transforms modify body/url, interceptors short-circuit
-        if body is not None and self.request_pipeline is not None:
-            body, url, intercept_response = self.request_pipeline.process(body, url)
-            if intercept_response is not None:
-                self._send_synthetic_response(intercept_response, body, request_id)
-                return
-            body_bytes = json.dumps(body).encode()  # re-serialize for upstream
-
-        # Forward
-        headers = cc_dump.pipeline.proxy_flow.build_upstream_headers(
-            self.headers,
-            content_length=len(body_bytes),
-        )
-
-        req = urllib.request.Request(
-            url, data=body_bytes or None, headers=headers, method=self.command
-        )
+    def _deliver_refused(self, refused: RefusedCall) -> None:
+        self.send_response(refused.status)
+        for k, v in refused.response_headers.items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(refused.response_body_bytes)
         try:
-            ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            resp = urllib.request.urlopen(req, context=ctx, timeout=300)
-        except urllib.error.HTTPError as e:
-            if emitted_request:
-                self.event_queue.put(ErrorEvent(
-                    code=e.code,
-                    reason=e.reason,
-                    **event_envelope(
-                        request_id=request_id,
-                        seq=0,
-                        provider=self.provider,
-                    ),
-                ))
-            self.send_response(e.code)
-            for k, v in e.headers.items():
-                if k.lower() != "transfer-encoding":
-                    self.send_header(k, v)
-            self.end_headers()
-            self.wfile.write(e.read())
-            return
-        except Exception as e:
-            if emitted_request:
-                self.event_queue.put(ProxyErrorEvent(
-                    error=str(e),
-                    **event_envelope(
-                        request_id=request_id,
-                        seq=0,
-                        provider=self.provider,
-                    ),
-                ))
-            self.send_response(502)
-            self.end_headers()
-            return
+            self.wfile.flush()
+        except Exception:
+            pass
+        self._emit_events(refused.events)
 
-        self.send_response(resp.status)
-        is_stream = False
-        for k, v in resp.headers.items():
+    def _deliver_upstream(
+        self, planned: OutboundCall, upstream: UpstreamResult
+    ) -> None:
+        # // [LAW:dataflow-not-control-flow] One match over the upstream shape.
+        # //   Each arm calls planned.emitter.emit_*; for ForwardOnly the
+        # //   null emitter returns no events and the loop emits nothing —
+        # //   no `if emitted_request:` re-checks anywhere.
+        match upstream:
+            case StreamingUpstream():
+                self._deliver_streaming(planned, upstream)
+            case UnaryUpstream():
+                self._write_response(upstream.status, upstream.headers, upstream.body_bytes)
+                self._emit_events(planned.emitter.emit_unary(upstream))
+            case HttpErrorUpstream():
+                self._write_response(upstream.status, upstream.headers, upstream.body_bytes)
+                self._emit_events(planned.emitter.emit_http_error(upstream))
+            case NetworkErrorUpstream():
+                self.send_response(502)
+                self.end_headers()
+                self._emit_events(planned.emitter.emit_network_error(upstream))
+
+    def _write_response(self, status: int, headers, body_bytes: bytes) -> None:
+        """Forward a non-streaming upstream response to the client."""
+        self.send_response(status)
+        for k, v in headers.items():
             if k.lower() == "transfer-encoding":
                 continue
-            if k.lower() == "content-type" and "text/event-stream" in v:
-                is_stream = True
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(body_bytes)
+
+    def _deliver_streaming(
+        self, planned: OutboundCall, upstream: StreamingUpstream
+    ) -> None:
+        # Forward HTTP status + headers (always — every variant of OutboundCall
+        # is forwarding bytes to the client; the only difference is event emission).
+        self.send_response(upstream.status)
+        for k, v in upstream.headers.items():
+            if k.lower() == "transfer-encoding":
+                continue
             self.send_header(k, v)
         self.end_headers()
 
-        if is_stream:
-            if emitted_request:
-                safe_resp_headers = _safe_headers(resp.headers)
-                self.event_queue.put(ResponseHeadersEvent(
-                    status_code=resp.status,
-                    headers=safe_resp_headers,
-                    **event_envelope(
-                        request_id=request_id,
-                        seq=0,
-                        provider=self.provider,
-                    ),
-                ))
-            self._stream_response(resp, request_id, emit_events=emitted_request)
-        else:
-            data = resp.read()
-            self.wfile.write(data)
-            if emitted_request:
-                safe_resp_headers = _safe_headers(resp.headers)
-                resp_body = cc_dump.pipeline.proxy_flow.decode_json_response_body(data)
-                self.event_queue.put(ResponseHeadersEvent(
-                    status_code=resp.status,
-                    headers=safe_resp_headers,
-                    **event_envelope(
-                        request_id=request_id,
-                        seq=0,
-                        provider=self.provider,
-                    ),
-                ))
-                self.event_queue.put(ResponseCompleteEvent(
-                    body=resp_body,
-                    **event_envelope(
-                        request_id=request_id,
-                        seq=1,
-                        provider=self.provider,
-                    ),
-                ))
+        # Response-headers event (empty tuple for ForwardOnly).
+        self._emit_events(planned.emitter.emit_streaming_headers(upstream))
 
-    def _send_synthetic_response(self, response_text: str, body: dict, request_id: str) -> None:
-        """Send a synthetic SSE response and emit pipeline events.
-
-        Used when an interceptor short-circuits the request.
-        """
-        model = body.get("model", "synthetic")
-        if not isinstance(model, str):
-            model = "synthetic"
-
-        sse_bytes = _build_synthetic_sse_bytes(response_text, model)
-
-        # Send HTTP response to client
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.end_headers()
-        self.wfile.write(sse_bytes)
-        self.wfile.flush()
-
-        # Emit events to TUI pipeline (same path as real responses)
-        seq = 0
-        self.event_queue.put(
-            ResponseHeadersEvent(
-                status_code=200,
-                headers={"content-type": "text/event-stream"},
-                **event_envelope(
-                    request_id=request_id,
-                    seq=seq,
-                    provider=self.provider,
-                ),
+        # // [LAW:dataflow-not-control-flow] One load-bearing branch:
+        # //   translated SSE protocols vs passthrough fan-out. The strategy
+        # //   name lives on the emitter (None for ForwardOnly + anthropic),
+        # //   so the proxy never asks "is this traced?" or "what format?".
+        translation_handler = planned.emitter.translation_handler_name
+        if translation_handler is not None:
+            getattr(self, translation_handler)(
+                upstream.body_source, planned.emitter.request_id,
             )
-        )
-        # Parse our own SSE bytes through the event queue sink + assembler
-        assembler = ResponseAssembler()
-        for line in sse_bytes.split(b"\n"):
-            line_str = line.decode("utf-8", errors="replace").rstrip("\r")
-            if not line_str.startswith("data: "):
-                continue
-            json_str = line_str[6:]
-            if json_str == "[DONE]":
-                break
-            try:
-                event = json.loads(json_str)
-            except json.JSONDecodeError:
-                continue
-            event_type = event.get("type", "")
-            assembler.on_event(event_type, event)
-            try:
-                sse = parse_sse_event(event_type, event)
-                payload = sse_progress_payload(sse)
-                if payload is not None:
-                    seq += 1
-                    self.event_queue.put(ResponseProgressEvent(
-                        **event_envelope(
-                            request_id=request_id,
-                            seq=seq,
-                            provider=self.provider,
-                        ),
-                        **payload,
-                    ))
-            except ValueError:
-                pass
-        assembler.on_done()
-        if assembler.result is not None:
-            seq += 1
-            self.event_queue.put(ResponseCompleteEvent(
-                body=assembler.result,
-                **event_envelope(
-                    request_id=request_id,
-                    seq=seq,
-                    provider=self.provider,
-                ),
-            ))
-        seq += 1
-        self.event_queue.put(ResponseDoneEvent(
-            **event_envelope(
-                request_id=request_id,
-                seq=seq,
-                provider=self.provider,
-            ),
-        ))
-
-    # [LAW:dataflow-not-control-flow] Provider → assembler type.
-    _ASSEMBLER_CLASSES_BY_FAMILY: dict[str, type] = {
-        "anthropic": ResponseAssembler,
-        "openai": OpenAiChatResponseAssembler,
-    }
-
-    def _stream_response(self, resp, request_id: str = "", *, emit_events: bool = True):
-        if not emit_events:
-            # Forward SSE bytes to client only — no pipeline events.
-            _fan_out_sse(resp, [ClientSink(self.wfile)])
             return
 
-        family = cc_dump.providers.get_provider_spec(self.provider).protocol_family
-        assembler_cls = self._ASSEMBLER_CLASSES_BY_FAMILY.get(family, OpenAiChatResponseAssembler)
-        assembler = assembler_cls()
+        # Default fan-out: client + emitter-supplied sinks ([] for ForwardOnly).
+        extra_sinks = planned.emitter.streaming_extra_sinks(self.event_queue)
+        sinks: list = [ClientSink(self.wfile), *extra_sinks]
+        _fan_out_sse(upstream.body_source, sinks)
+        self._emit_events(planned.emitter.streaming_finalize(extra_sinks))
+
+    def _stream_translated_response(self, resp, request_id: str = ""):
+        """Stream Copilot (OpenAI Responses API) SSE, translating to Anthropic format.
+
+        Reads Copilot SSE events from upstream, translates each to Anthropic SSE events,
+        writes Anthropic-format bytes to client, and feeds Anthropic events to the
+        TUI pipeline (EventQueueSink + ResponseAssembler).
+
+        // [LAW:dataflow-not-control-flow] Same sink pipeline as _stream_response —
+        // the translation happens before events enter the sinks.
+        // [LAW:single-enforcer] Copilot→Anthropic SSE translation is here only.
+        """
+        parser = cc_dump.pipeline.copilot_translate.CopilotSSEParser()
+        state = cc_dump.pipeline.copilot_translate.TranslationState()
+        assembler = ResponseAssembler()
         event_sink = EventQueueSink(self.event_queue, request_id=request_id, provider=self.provider)
-        _fan_out_sse(resp, [
-            ClientSink(self.wfile),
-            event_sink,
-            assembler,
-        ])
+
+        try:
+            for raw_line in resp:
+                parsed_events = parser.feed(raw_line)
+                for copilot_event_type, copilot_data in parsed_events:
+                    anthropic_events = cc_dump.pipeline.copilot_translate.copilot_sse_to_anthropic_events(
+                        copilot_event_type, copilot_data, state,
+                    )
+                    for anth_event in anthropic_events:
+                        # Write Anthropic SSE bytes to client
+                        anth_bytes = cc_dump.pipeline.copilot_translate.anthropic_sse_line(anth_event)
+                        try:
+                            self.wfile.write(anth_bytes)
+                            self.wfile.flush()
+                        except Exception as exc:
+                            logger.warning("Client write failure: %s", exc)
+
+                        # Feed to TUI pipeline sinks
+                        anth_type = anth_event.get("type", "")
+                        try:
+                            event_sink.on_event(anth_type, anth_event)
+                        except Exception as exc:
+                            logger.warning("EventQueueSink failure: %s", exc)
+                        try:
+                            assembler.on_event(anth_type, anth_event)
+                        except Exception as exc:
+                            logger.warning("ResponseAssembler failure: %s", exc)
+        finally:
+            try:
+                event_sink.on_done()
+            except Exception:
+                pass
+            try:
+                assembler.on_done()
+            except Exception:
+                pass
+
         seq = event_sink.seq
         if assembler.result is not None:
             seq += 1
@@ -676,10 +604,64 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             ),
         ))
 
-    def _expects_json_body(self, request_path: str) -> bool:
-        """Check if this request path should be parsed as JSON."""
-        prefixes = cc_dump.providers.get_provider_spec(self.provider).api_paths
-        return any(request_path.startswith(p) for p in prefixes)
+    def _emit_translated_event(self, anth_event: dict, event_sink, assembler) -> None:
+        """Fan one Anthropic-shaped event to client + sinks with per-sink boundaries.
+
+        // [LAW:dataflow-not-control-flow] Fan-out is a straight sequence, each
+        //   sink call isolated by one `_call_sink` wrapper.
+        """
+        anth_bytes = cc_dump.pipeline.copilot_translate.anthropic_sse_line(anth_event)
+
+        def _write_to_client() -> None:
+            self.wfile.write(anth_bytes)
+            self.wfile.flush()
+
+        _call_sink(_write_to_client, "Client write failure")
+        anth_type = anth_event.get("type", "")
+        _call_sink(lambda: event_sink.on_event(anth_type, anth_event),
+                   "EventQueueSink failure")
+        _call_sink(lambda: assembler.on_event(anth_type, anth_event),
+                   "ResponseAssembler failure")
+
+    def _stream_chat_translated_response(self, resp, request_id: str = ""):
+        """Stream Chat Completions SSE, translating to Anthropic format.
+
+        // [LAW:single-enforcer] Chat Completions→Anthropic SSE translation is here only.
+        """
+        state = cc_dump.pipeline.copilot_translate.ChatTranslationState()
+        assembler = ResponseAssembler()
+        event_sink = EventQueueSink(self.event_queue, request_id=request_id, provider=self.provider)
+
+        try:
+            for chunk in _iter_chat_sse_chunks(resp):
+                anthropic_events = cc_dump.pipeline.copilot_translate.chat_chunk_to_anthropic_events(
+                    chunk, state,
+                )
+                for anth_event in anthropic_events:
+                    self._emit_translated_event(anth_event, event_sink, assembler)
+        finally:
+            _call_sink(event_sink.on_done, "EventQueueSink.on_done failure")
+            _call_sink(assembler.on_done, "ResponseAssembler.on_done failure")
+
+        seq = event_sink.seq
+        if assembler.result is not None:
+            seq += 1
+            self.event_queue.put(ResponseCompleteEvent(
+                body=assembler.result,
+                **event_envelope(
+                    request_id=request_id,
+                    seq=seq,
+                    provider=self.provider,
+                ),
+            ))
+        seq += 1
+        self.event_queue.put(ResponseDoneEvent(
+            **event_envelope(
+                request_id=request_id,
+                seq=seq,
+                provider=self.provider,
+            ),
+        ))
 
     def do_CONNECT(self):
         """Handle HTTPS CONNECT tunneling with forward-proxy TLS interception."""
@@ -766,13 +748,18 @@ def make_handler_class(
     provider: str,
     target_host: str | None,
     event_queue: queue.Queue[PipelineEvent],
-    request_pipeline: RequestPipeline | None = None,
+    request_pipeline: RequestPipeline = RequestPipeline(),
     forward_proxy_ca: "ForwardProxyCertificateAuthority | None" = None,
 ) -> type[ProxyHandler]:
     """Create a configured ProxyHandler subclass for a specific provider.
 
     // [LAW:one-type-per-behavior] All providers share one handler type,
     // parameterized by class attributes set here.
+    // [LAW:dataflow-not-control-flow] Default request_pipeline is a module
+    //   identity pipeline — never None, so the proxy interior is forbidden
+    //   from asking "is the pipeline configured?". The default instance is
+    //   treated as read-only by callers (RequestPipeline lists are not
+    //   mutated after construction; they are replaced wholesale).
     """
     spec = cc_dump.providers.get_provider_spec(provider)
     return type(

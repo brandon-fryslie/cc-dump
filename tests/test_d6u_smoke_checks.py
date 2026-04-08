@@ -160,13 +160,15 @@ def test_m3_replay_parity_matches_live_analytics_projection():
         live_store.on_event(event)
 
     complete_event = next(e for e in live_events if isinstance(e, ResponseCompleteEvent))
-    replay_events = convert_to_events(
+    from cc_dump.pipeline.har_replayer import ReplayPair
+    replay_events = convert_to_events(ReplayPair(
         request_headers={"content-type": "application/json"},
         request_body=request,
         response_status=200,
         response_headers={"content-type": "application/json"},
         complete_message=complete_event.body,
-    )
+        provider="anthropic",
+    ))
 
     replay_store = AnalyticsStore()
     for event in replay_events:

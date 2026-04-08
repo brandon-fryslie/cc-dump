@@ -16,9 +16,7 @@ from pathlib import Path
 
 import cc_dump.core.formatting
 import cc_dump.pipeline.har_replayer
-
-
-HARPair = tuple[dict, dict, int, dict, dict, str]
+from cc_dump.pipeline.har_replayer import ReplayPair
 
 
 @dataclass(frozen=True)
@@ -122,7 +120,7 @@ def _extract_task_tool_use_ids(request_body: dict) -> set[str]:
     return task_ids
 
 
-def build_runtime_sessions(har_pairs: list[HARPair]) -> tuple[RuntimeSessionSummary, ...]:
+def build_runtime_sessions(har_pairs: list[ReplayPair]) -> tuple[RuntimeSessionSummary, ...]:
     """Build per-session runtime summaries from HAR pairs.
 
     // [LAW:one-source-of-truth] Runtime session/task lineage comes from HAR
@@ -130,13 +128,13 @@ def build_runtime_sessions(har_pairs: list[HARPair]) -> tuple[RuntimeSessionSumm
     """
     counts: dict[str, int] = {}
     task_ids: dict[str, set[str]] = {}
-    for _req_headers, request_body, _status, _resp_headers, _complete, _provider in har_pairs:
-        session_id = _extract_runtime_session_id(request_body)
+    for pair in har_pairs:
+        session_id = _extract_runtime_session_id(pair.request_body)
         if not session_id:
             continue
         counts[session_id] = counts.get(session_id, 0) + 1
         ids = task_ids.setdefault(session_id, set())
-        ids.update(_extract_task_tool_use_ids(request_body))
+        ids.update(_extract_task_tool_use_ids(pair.request_body))
 
     summaries = []
     for session_id in sorted(counts):
@@ -294,7 +292,7 @@ def enrich_runtime_sessions(
 
 
 def build_subagent_enrichment_report(
-    har_pairs: list[HARPair],
+    har_pairs: list[ReplayPair],
     claude_projects_root: str = "~/.claude/projects",
 ) -> SubagentEnrichmentReport:
     """Build a full offline enrichment report from HAR pairs and Claude logs."""

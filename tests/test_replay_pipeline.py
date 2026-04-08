@@ -22,7 +22,7 @@ from cc_dump.core.formatting import (
     format_complete_response,
     format_request_for_provider,
 )
-from cc_dump.pipeline.har_replayer import load_har, convert_to_events
+from cc_dump.pipeline.har_replayer import load_har, convert_to_events, ReplayPair
 from cc_dump.tui.event_handlers import (
     handle_request_headers,
     handle_request,
@@ -92,8 +92,14 @@ def _make_har(entries):
     return {"log": {"version": "1.2", "entries": har_entries}}
 
 
-def _mock_widgets():
-    """Create minimal mock widgets for event handler tests."""
+def _mock_context():
+    """Create minimal mock context dict for event handler tests.
+
+    // [LAW:dataflow-not-control-flow] Registries carried in context; handlers
+    //   mutate Request/Stream records directly.
+    """
+    import cc_dump.tui.request_registry
+    import cc_dump.tui.stream_registry
     conv = MagicMock()
     stats = MagicMock()
     ds = DomainStore()
@@ -104,7 +110,13 @@ def _mock_widgets():
         "refresh_callbacks": {},
         "analytics_store": None,
         "domain_store": ds,
+        "request_registry": cc_dump.tui.request_registry.RequestRegistry(),
+        "stream_registry": cc_dump.tui.stream_registry.StreamRegistry(),
     }
+
+
+# Backward-compat alias for existing call sites.
+_mock_widgets = _mock_context
 
 
 def _find_blocks(blocks, block_type):
@@ -126,39 +138,27 @@ def _walk_blocks(blocks):
 
 def _run_pipeline_events(events):
     """Run request/response events through the canonical handler boundary."""
-    widgets = _mock_widgets()
+    context = _mock_context()
     state = ProviderRuntimeState()
-    app_state = {}
+    def log_fn(*_a):
+        pass
+
+    dispatch = {
+        PipelineEventKind.REQUEST_HEADERS: handle_request_headers,
+        PipelineEventKind.REQUEST: handle_request,
+        PipelineEventKind.RESPONSE_HEADERS: handle_response_headers,
+        PipelineEventKind.RESPONSE_EVENT: handle_response_event,
+        PipelineEventKind.RESPONSE_PROGRESS: handle_response_progress,
+        PipelineEventKind.RESPONSE_COMPLETE: handle_response_complete,
+        PipelineEventKind.RESPONSE_NON_STREAMING: handle_response_non_streaming,
+    }
 
     for event in events:
-        if event.kind == PipelineEventKind.REQUEST_HEADERS:
-            app_state = handle_request_headers(
-                event, state, widgets, app_state, lambda *a: None
-            )
-        elif event.kind == PipelineEventKind.REQUEST:
-            app_state = handle_request(event, state, widgets, app_state, lambda *a: None)
-        elif event.kind == PipelineEventKind.RESPONSE_HEADERS:
-            app_state = handle_response_headers(
-                event, state, widgets, app_state, lambda *a: None
-            )
-        elif event.kind == PipelineEventKind.RESPONSE_EVENT:
-            app_state = handle_response_event(
-                event, state, widgets, app_state, lambda *a: None
-            )
-        elif event.kind == PipelineEventKind.RESPONSE_PROGRESS:
-            app_state = handle_response_progress(
-                event, state, widgets, app_state, lambda *a: None
-            )
-        elif event.kind == PipelineEventKind.RESPONSE_COMPLETE:
-            app_state = handle_response_complete(
-                event, state, widgets, app_state, lambda *a: None
-            )
-        elif event.kind == PipelineEventKind.RESPONSE_NON_STREAMING:
-            app_state = handle_response_non_streaming(
-                event, state, widgets, app_state, lambda *a: None
-            )
+        handler = dispatch.get(event.kind)
+        if handler is not None:
+            handler(event, state, context, log_fn)
 
-    return state, widgets, app_state
+    return state, context
 
 
 def _project_response_turn(blocks):
@@ -282,9 +282,8 @@ class TestCompleteResponseEventHandler:
     """Verify canonical handle_response_complete adds turns to conversation."""
 
     def test_adds_turn_to_conversation(self):
-        widgets = _mock_widgets()
+        context = _mock_context()
         state = {"current_session": "sess_abc"}
-        app_state = {}
 
         headers_event = ResponseHeadersEvent(
             status_code=200,
@@ -296,11 +295,11 @@ class TestCompleteResponseEventHandler:
             request_id="req-1",
         )
 
-        handle_response_headers(headers_event, state, widgets, app_state, lambda *a: None)
-        handle_response_complete(complete_event, state, widgets, app_state, lambda *a: None)
+        handle_response_headers(headers_event, state, context, lambda *a: None)
+        handle_response_complete(complete_event, state, context, lambda *a: None)
 
         # Verify blocks were added to domain store
-        ds = widgets["domain_store"]
+        ds = context["domain_store"]
         completed = ds.iter_completed_blocks()
         assert len(completed) == 1
         blocks = completed[0]
@@ -308,9 +307,8 @@ class TestCompleteResponseEventHandler:
         assert all(isinstance(b, FormattedBlock) for b in blocks)
 
     def test_response_blocks_contain_text_content(self):
-        widgets = _mock_widgets()
+        context = _mock_context()
         state = {}
-        app_state = {}
 
         headers_event = ResponseHeadersEvent(
             status_code=200,
@@ -322,18 +320,17 @@ class TestCompleteResponseEventHandler:
             request_id="req-1",
         )
 
-        handle_response_headers(headers_event, state, widgets, app_state, lambda *a: None)
-        handle_response_complete(complete_event, state, widgets, app_state, lambda *a: None)
+        handle_response_headers(headers_event, state, context, lambda *a: None)
+        handle_response_complete(complete_event, state, context, lambda *a: None)
 
-        ds = widgets["domain_store"]
+        ds = context["domain_store"]
         blocks = ds.iter_completed_blocks()[0]
         text_blocks = _find_blocks(blocks, TextContentBlock)
         assert any("Visible content" in b.content for b in text_blocks)
 
     def test_non_streaming_transport_normalizes_to_complete_path(self):
-        widgets = _mock_widgets()
+        context = _mock_context()
         state = {"current_session": "sess_abc"}
-        app_state = {}
 
         event = ResponseNonStreamingEvent(
             status_code=200,
@@ -341,9 +338,9 @@ class TestCompleteResponseEventHandler:
             body=_make_complete_message(text="Hello via wrapper"),
             request_id="req-legacy",
         )
-        handle_response_non_streaming(event, state, widgets, app_state, lambda *a: None)
+        handle_response_non_streaming(event, state, context, lambda *a: None)
 
-        ds = widgets["domain_store"]
+        ds = context["domain_store"]
         completed = ds.iter_completed_blocks()
         assert len(completed) == 1
         text_blocks = _find_blocks(completed[0], TextContentBlock)
@@ -405,24 +402,23 @@ class TestReplayEndToEnd:
 
         # Load and convert
         pairs = load_har(str(har_path))
-        events = convert_to_events(*pairs[0])
+        events = convert_to_events(pairs[0])
 
         # Feed through handlers
-        widgets = _mock_widgets()
+        context = _mock_context()
         state = ProviderRuntimeState()
-        app_state = {}
 
         for event in events:
             kind = event.kind
             if kind == PipelineEventKind.REQUEST:
-                app_state = handle_request(event, state, widgets, app_state, lambda *a: None)
+                handle_request(event, state, context, lambda *a: None)
             elif kind == PipelineEventKind.RESPONSE_HEADERS:
-                app_state = handle_response_headers(event, state, widgets, app_state, lambda *a: None)
+                handle_response_headers(event, state, context, lambda *a: None)
             elif kind == PipelineEventKind.RESPONSE_COMPLETE:
-                app_state = handle_response_complete(event, state, widgets, app_state, lambda *a: None)
+                handle_response_complete(event, state, context, lambda *a: None)
 
         # Combined turns: 1 request-response pair = 1 turn.
-        ds = widgets["domain_store"]
+        ds = context["domain_store"]
         assert ds.completed_count == 1
 
         # Combined turn should contain the answer text
@@ -451,23 +447,22 @@ class TestReplayEndToEnd:
             json.dump(har, f)
 
         pairs = load_har(str(har_path))
-        events = convert_to_events(*pairs[0])
+        events = convert_to_events(pairs[0])
 
-        widgets = _mock_widgets()
+        context = _mock_context()
         state = ProviderRuntimeState()
-        app_state = {}
 
         for event in events:
             kind = event.kind
             if kind == PipelineEventKind.REQUEST:
-                app_state = handle_request(event, state, widgets, app_state, lambda *a: None)
+                handle_request(event, state, context, lambda *a: None)
             elif kind == PipelineEventKind.RESPONSE_HEADERS:
-                app_state = handle_response_headers(event, state, widgets, app_state, lambda *a: None)
+                handle_response_headers(event, state, context, lambda *a: None)
             elif kind == PipelineEventKind.RESPONSE_COMPLETE:
-                app_state = handle_response_complete(event, state, widgets, app_state, lambda *a: None)
+                handle_response_complete(event, state, context, lambda *a: None)
 
         assert state.current_session == session_uuid
-        ds = widgets["domain_store"]
+        ds = context["domain_store"]
         # Combined turn at index 0 contains both request and response blocks.
         combined_blocks = ds.iter_completed_blocks()[0]
         assert len(combined_blocks) > 0
@@ -493,23 +488,22 @@ class TestReplayEndToEnd:
         pairs = load_har(str(har_path))
         assert len(pairs) == 2
 
-        widgets = _mock_widgets()
+        context = _mock_context()
         state = ProviderRuntimeState()
-        app_state = {}
 
         for pair in pairs:
-            events = convert_to_events(*pair)
+            events = convert_to_events(pair)
             for event in events:
                 kind = event.kind
                 if kind == PipelineEventKind.REQUEST:
-                    app_state = handle_request(event, state, widgets, app_state, lambda *a: None)
+                    handle_request(event, state, context, lambda *a: None)
                 elif kind == PipelineEventKind.RESPONSE_HEADERS:
-                    app_state = handle_response_headers(event, state, widgets, app_state, lambda *a: None)
+                    handle_response_headers(event, state, context, lambda *a: None)
                 elif kind == PipelineEventKind.RESPONSE_COMPLETE:
-                    app_state = handle_response_complete(event, state, widgets, app_state, lambda *a: None)
+                    handle_response_complete(event, state, context, lambda *a: None)
 
         # Combined turns: 2 request-response pairs = 2 turns.
-        ds = widgets["domain_store"]
+        ds = context["domain_store"]
         assert ds.completed_count == 2
 
 
@@ -620,19 +614,20 @@ class TestLiveReplayParityContracts:
             )
         )
 
-        replay_events = convert_to_events(
-            request_headers,
-            request_body,
-            200,
-            response_headers,
-            dict(assembler.result),
-        )
+        replay_events = convert_to_events(ReplayPair(
+            request_headers=request_headers,
+            request_body=request_body,
+            response_status=200,
+            response_headers=response_headers,
+            complete_message=dict(assembler.result),
+            provider="anthropic",
+        ))
 
-        live_state, live_widgets, _ = _run_pipeline_events(live_events)
-        replay_state, replay_widgets, _ = _run_pipeline_events(replay_events)
+        live_state, live_context = _run_pipeline_events(live_events)
+        replay_state, replay_context = _run_pipeline_events(replay_events)
 
-        live_ds = live_widgets["domain_store"]
-        replay_ds = replay_widgets["domain_store"]
+        live_ds = live_context["domain_store"]
+        replay_ds = replay_context["domain_store"]
         # Combined turns: 1 request-response pair = 1 turn.
         assert live_ds.completed_count == 1
         assert replay_ds.completed_count == 1

@@ -3,6 +3,7 @@
 import pytest
 
 import cc_dump.providers
+from cc_dump.pipeline.har_replayer import ReplayPair
 
 from tests.harness import run_app, strips_to_text
 
@@ -30,13 +31,13 @@ def _make_replay_entry(*, session_id: str, content: str, response_text: str):
         "stop_reason": "end_turn",
         "usage": {"input_tokens": 100, "output_tokens": 50},
     }
-    return (
-        {"content-type": "application/json"},
-        req_body,
-        200,
-        {"content-type": "application/json"},
-        complete_message,
-        "anthropic",
+    return ReplayPair(
+        request_headers={"content-type": "application/json"},
+        request_body=req_body,
+        response_status=200,
+        response_headers={"content-type": "application/json"},
+        complete_message=complete_message,
+        provider="anthropic",
     )
 
 
@@ -60,23 +61,22 @@ async def test_all_sessions_route_to_default_tab():
 
     async with run_app(replay_data=replay_data) as (pilot, app):
         _ = pilot
-        default_ds = app._get_domain_store(app._default_session_key)
+        default_ds = app._sessions.default().domain_store
 
         # Both sessions' turns land in the single default DomainStore.
         # Combined turns: each request-response pair is 1 turn = 1 per session.
         assert default_ds.completed_count >= 2
 
         # Only one Claude tab exists (the default), not per-session tabs.
-        anthropic_tabs = [
-            k for k in app._session_tab_ids
-            if cc_dump.providers.session_provider(k)
-            == cc_dump.providers.DEFAULT_PROVIDER_KEY
+        anthropic_sessions = [
+            s for s in app._sessions.all()
+            if s.provider == cc_dump.providers.DEFAULT_PROVIDER_KEY
         ]
-        assert len(anthropic_tabs) == 1
-        assert anthropic_tabs[0] == app._default_session_key
+        assert len(anthropic_sessions) == 1
+        assert anthropic_sessions[0].is_default
 
         # Both sessions' content visible in the single ConversationView.
-        conv = app._get_conv(session_key=app._default_session_key)
+        conv = app._get_conv(session_key=app._sessions.default().key)
         assert conv is not None
         text = "".join(strips_to_text(td.strips) for td in conv._turns)
         assert "session-a-request" in text
@@ -104,14 +104,13 @@ async def test_single_claude_tab_active_domain_store():
 
     async with run_app(replay_data=replay_data) as (pilot, app):
         _ = pilot
-        active_store = app._get_active_domain_store()
-        default_store = app._get_domain_store(app._default_session_key)
+        active_store = app._sessions.active().domain_store
+        default_store = app._sessions.default().domain_store
         assert active_store is default_store
-        assert app._domain_store is default_store
 
 
 async def test_session_id_tracks_most_recent_session():
-    """app._session_id tracks the most recent session from API metadata."""
+    """Provider.last_notified_session tracks the most recent session from API metadata."""
     session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     session_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     replay_data = [
@@ -129,9 +128,9 @@ async def test_session_id_tracks_most_recent_session():
 
     async with run_app(replay_data=replay_data) as (pilot, app):
         _ = pilot
-        # session_b was processed last, so _session_id should reflect it.
-        assert app._session_id == session_b
-        # _active_resume_session_id falls through to _session_id on the default tab.
+        # session_b was processed last, so default provider's last_notified should reflect it.
+        assert app._providers.default().last_notified_session == session_b
+        # _active_resume_session_id falls through to default provider on the default tab.
         assert app._active_resume_session_id() == session_b
 
 
@@ -154,7 +153,7 @@ async def test_session_boundary_tracking():
 
     async with run_app(replay_data=replay_data) as (pilot, app):
         _ = pilot
-        default_ds = app._get_domain_store(app._default_session_key)
+        default_ds = app._sessions.default().domain_store
         boundaries = default_ds.get_session_boundaries()
         # Should have at least one boundary (when session changes from a to b).
         # Session a is the first session seen, so a NewSessionBlock fires for it too.

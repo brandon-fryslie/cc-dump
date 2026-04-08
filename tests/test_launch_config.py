@@ -78,7 +78,8 @@ class TestSerialization:
         save_configs(configs)
 
         loaded = load_configs()
-        assert len(loaded) == 2
+        # Saved 2 configs + codex default auto-added by _ensure_default_tool_configs
+        assert len(loaded) == 3
 
         claude = loaded[0]
         assert claude.name == "claude"

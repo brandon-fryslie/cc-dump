@@ -12,6 +12,7 @@ from cc_dump.experiments.subagent_enrichment import (
     build_subagent_enrichment_report_from_har,
     report_to_dict,
 )
+from cc_dump.pipeline.har_replayer import ReplayPair
 
 
 def _request_body(session_id: str, task_tool_use_id: str = "") -> dict:
@@ -37,14 +38,14 @@ def _request_body(session_id: str, task_tool_use_id: str = "") -> dict:
     }
 
 
-def _har_pair(session_id: str, task_tool_use_id: str = "") -> tuple[dict, dict, int, dict, dict, str]:
-    return (
-        {"content-type": "application/json"},
-        _request_body(session_id, task_tool_use_id),
-        200,
-        {"content-type": "application/json"},
-        {"id": "msg_1", "type": "message", "content": [], "usage": {}},
-        "anthropic",
+def _har_pair(session_id: str, task_tool_use_id: str = "") -> ReplayPair:
+    return ReplayPair(
+        request_headers={"content-type": "application/json"},
+        request_body=_request_body(session_id, task_tool_use_id),
+        response_status=200,
+        response_headers={"content-type": "application/json"},
+        complete_message={"id": "msg_1", "type": "message", "content": [], "usage": {}},
+        provider="anthropic",
     )
 
 
