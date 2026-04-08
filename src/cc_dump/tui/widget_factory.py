@@ -39,7 +39,7 @@ from cc_dump.tui.follow_mode import (
     FollowTransition,
 )
 from cc_dump.io.perf_logging import monitor_complexity
-from cc_dump.tui.prefix_sum_tree import FenwickTree, MaxTracker
+from cc_dump.tui.turn_store import TurnStore
 
 logger = logging.getLogger(__name__)
 
@@ -234,18 +234,13 @@ class ConversationView(ScrollView):
         # Auto-create domain store for tests that don't provide one
         self._domain_store = domain_store if domain_store is not None else cc_dump.app.domain_store.DomainStore()
         self._render_runtime: "RenderRuntime | None" = runtime
-        self._turns: list[TurnData] = []
-        self._total_lines: int = 0
+        # // [LAW:one-source-of-truth] ViewOverrides must exist before TurnStore so
+        # // block indexing can register into its category index.
+        self._view_overrides = cc_dump.tui.view_overrides.ViewOverrides()
+        # // [LAW:one-source-of-truth] TurnStore owns turns + offset_tree +
+        # // width_tracker + block_index + line_cache + cache_keys_by_turn.
+        self._turn_store = TurnStore(view_overrides=self._view_overrides)
         self._widest_line: int = 0
-        self._line_cache: LRUCache = LRUCache(1024)
-        self._block_strip_cache: LRUCache = LRUCache(
-            4096
-        )  # Block-level rendering cache
-        self._cache_keys_by_turn: dict[
-            int, set[tuple]
-        ] = {}  # Track cache keys per turn
-        self._line_cache_index_write_count: int = 0
-        self._line_cache_index_prune_interval: int = 256
         self._last_filters: dict = {}
         self._last_width: int = 78
         self._last_search_ctx = None  # Store search context for lazy rerenders
@@ -279,8 +274,6 @@ class ConversationView(ScrollView):
             self._persist_follow_state,
             fire_immediately=True,
         )
-        # // [LAW:one-source-of-truth] All per-block view state lives here.
-        self._view_overrides = cc_dump.tui.view_overrides.ViewOverrides()
         # Streaming preview rendering state (rendering concern).
         # Block lists and delta buffers live in DomainStore.
         self._stream_preview_turns: dict[str, TurnData] = {}
@@ -288,16 +281,67 @@ class ConversationView(ScrollView):
         self._pending_stream_delta_request_ids: set[str] = set()
         self._stream_delta_flush_scheduled: bool = False
         self._active_filter_revision: int = 0
-        # // [LAW:one-source-of-truth] FenwickTree IS the line-offset source of truth.
-        self._offset_tree = FenwickTree()
-        # // [LAW:one-source-of-truth] MaxTracker IS the widest-strip source of truth.
-        self._width_tracker = MaxTracker()
         self._deferred_anchor_resolve_scheduled: bool = False
-        # // [LAW:one-source-of-truth] Block ID → block object index for O(1) lookup.
-        self._block_index: dict[int, object] = {}
 
         # Wire domain store callbacks
         self._wire_domain_store(self._domain_store)
+
+    # ─── TurnStore delegating properties ───────────────────────────────
+    # // [LAW:one-source-of-truth] All reads/writes funnel to the store.
+    # // Tests and external consumers use these attributes; they are thin
+    # // views over `self._turn_store`, not independent copies.
+
+    @property
+    def _turns(self) -> list:
+        return self._turn_store.turns
+
+    @_turns.setter
+    def _turns(self, value) -> None:
+        self._turn_store.turns = value
+
+    @property
+    def _offset_tree(self):
+        return self._turn_store.offset_tree
+
+    @property
+    def _width_tracker(self):
+        return self._turn_store.width_tracker
+
+    @property
+    def _block_index(self) -> dict:
+        return self._turn_store.block_index
+
+    @property
+    def _line_cache(self):
+        return self._turn_store.line_cache
+
+    @property
+    def _block_strip_cache(self):
+        return self._turn_store.block_strip_cache
+
+    @property
+    def _cache_keys_by_turn(self) -> dict:
+        return self._turn_store.cache_keys_by_turn
+
+    @_cache_keys_by_turn.setter
+    def _cache_keys_by_turn(self, value: dict) -> None:
+        self._turn_store.cache_keys_by_turn = value
+
+    @property
+    def _line_cache_index_write_count(self) -> int:
+        return self._turn_store.line_cache_index_write_count
+
+    @_line_cache_index_write_count.setter
+    def _line_cache_index_write_count(self, value: int) -> None:
+        self._turn_store.line_cache_index_write_count = int(value)
+
+    @property
+    def _line_cache_index_prune_interval(self) -> int:
+        return self._turn_store.line_cache_index_prune_interval
+
+    @property
+    def _total_lines(self) -> int:
+        return self._turn_store.total_lines
 
     def _read_theme_generation(self) -> int:
         if self._view_store is None:
@@ -483,49 +527,19 @@ class ConversationView(ScrollView):
         return SearchTurnsSnapshot(turns=tuple(self._turns))
 
     def _iter_blocks_with_descendants(self):
-        """Yield all blocks in render-order pre-order traversal."""
-        stack: list = []
-        for td in reversed(self._turns):
-            stack.extend(reversed(td.blocks))
-        while stack:
-            block = stack.pop()
-            yield block
-            children = getattr(block, "children", []) or []
-            for child in reversed(children):
-                stack.append(child)
+        return self._turn_store.iter_blocks_with_descendants()
 
     def _unindex_blocks(self, blocks) -> None:
-        """Remove blocks and their descendants from the block_id index."""
-        stack = list(blocks)
-        while stack:
-            block = stack.pop()
-            block_id = getattr(block, "block_id", None)
-            if block_id is not None:
-                self._block_index.pop(block_id, None)
-                self._view_overrides.unregister_block(block_id)
-            stack.extend(getattr(block, "children", []) or [])
+        self._turn_store.unindex_blocks(blocks)
 
     def _index_blocks(self, blocks) -> None:
-        """Add blocks and their descendants to the block_id index + category registry."""
-        stack = list(blocks)
-        while stack:
-            block = stack.pop()
-            block_id = getattr(block, "block_id", None)
-            if block_id is not None:
-                self._block_index[block_id] = block
-                # // [LAW:one-source-of-truth] Category registration for O(overrides) clearing.
-                category = cc_dump.tui.rendering.get_category(block)
-                self._view_overrides.register_block(block_id, category)
-            stack.extend(getattr(block, "children", []) or [])
+        self._turn_store.index_blocks(blocks)
 
     def _unindex_turn_range(self, turns) -> None:
-        """Remove all blocks from a sequence of TurnData from the block_id index."""
-        for td in turns:
-            self._unindex_blocks(td.blocks)
+        self._turn_store.unindex_turn_range(turns)
 
     def _find_block_by_id(self, block_id: int):
-        """Locate a block object by stable block_id. O(1) via index."""
-        return self._block_index.get(block_id)
+        return self._turn_store.find_block_by_id(block_id)
 
     def _default_block_expanded(self, block) -> bool:
         category = cc_dump.tui.rendering.get_category(block)
@@ -788,14 +802,11 @@ class ConversationView(ScrollView):
         # [LAW:dataflow-not-control-flow] Selection disables cache writes to avoid persisting transient highlighting.
         if selection is not None:
             return
-        self._line_cache[cache_key] = strip
-        if turn_idx not in self._cache_keys_by_turn:
-            self._cache_keys_by_turn[turn_idx] = set()
-        self._cache_keys_by_turn[turn_idx].add(cache_key)
-        self._line_cache_index_write_count += 1
-        if self._line_cache_index_write_count >= self._line_cache_index_prune_interval:
-            self._line_cache_index_write_count = 0
-            self._prune_line_cache_index()
+        self._turn_store.record_line_cache_entry(
+            turn_idx=turn_idx,
+            cache_key=cache_key,
+            strip=strip,
+        )
 
     def _overlay_line(self, strip: Strip, *, y: int, width: int) -> Strip:
         # [LAW:single-enforcer] Error indicator overlay is applied from a single boundary.
@@ -962,60 +973,17 @@ class ConversationView(ScrollView):
         self.refresh()
 
     def _find_turn_with_offset(self, line_y: int) -> tuple[TurnData, int] | None:
-        """Find the turn containing virtual line y. O(log n) via Fenwick tree.
-
-        Returns (TurnData, turn_offset) or None.
-        // [LAW:single-enforcer] All line→turn lookups go through the tree.
-        """
-        result = self._offset_tree.find(line_y)
-        if result is None:
-            return None
-        idx, offset = result
-        if idx >= len(self._turns):
-            return None
-        return (self._turns[idx], offset)
+        return self._turn_store.find_turn_with_offset(line_y)
 
     def _find_turn_for_line(self, line_y: int) -> TurnData | None:
-        """Find turn containing virtual line y. O(log n).
-
-        Convenience wrapper that discards the offset.
-        """
-        result = self._find_turn_with_offset(line_y)
-        return result[0] if result is not None else None
+        return self._turn_store.find_turn_for_line(line_y)
 
     def _viewport_turn_range(self, buffer_lines: int = 200) -> tuple[int, int]:
-        """Return (start_idx, end_idx) of turns visible in viewport + buffer.
-
-        Returns inclusive start, exclusive end indices into self._turns.
-        Buffer extends the range above and below the viewport by buffer_lines
-        to avoid popping when scrolling.
-        """
-        if not self._turns:
-            return (0, 0)
-
-        scroll_y = int(self.scroll_offset.y)
-        viewport_height = self.scrollable_content_region.height
-
-        # Expand range by buffer
-        range_start = max(0, scroll_y - buffer_lines)
-        range_end = scroll_y + viewport_height + buffer_lines
-
-        # Find first turn via binary search
-        start_turn = self._find_turn_for_line(range_start)
-        if start_turn is None:
-            # range_start is before all turns or no turns visible
-            start_idx = 0
-        else:
-            start_idx = start_turn.turn_index
-
-        # Find last turn via binary search
-        end_turn = self._find_turn_for_line(min(range_end, self._total_lines - 1))
-        if end_turn is None:
-            end_idx = len(self._turns)
-        else:
-            end_idx = end_turn.turn_index + 1  # exclusive
-
-        return (start_idx, end_idx)
+        return self._turn_store.viewport_turn_range(
+            scroll_y=int(self.scroll_offset.y),
+            viewport_height=self.scrollable_content_region.height,
+            buffer_lines=buffer_lines,
+        )
 
     def _lazy_rerender_turn(self, turn: TurnData):
         """Lazily re-render a stale turn when it scrolls into the viewport.
@@ -1112,82 +1080,30 @@ class ConversationView(ScrollView):
                 self._resolve_anchor()
 
     def _clear_line_cache(self) -> None:
-        """Clear line cache and its turn-key index together."""
-        # // [LAW:single-enforcer] Cache + index invalidation is centralized here.
-        self._line_cache.clear()
-        self._cache_keys_by_turn.clear()
-        self._line_cache_index_write_count = 0
+        self._turn_store.clear_line_cache()
 
     def _prune_line_cache_index(self) -> None:
-        """Drop stale index keys that no longer exist in LRU line cache."""
-        live_keys = set(self._line_cache.keys())
-        stale_turns: list[int] = []
-        for turn_idx, keys in self._cache_keys_by_turn.items():
-            keys.intersection_update(live_keys)
-            if not keys:
-                stale_turns.append(turn_idx)
-        for turn_idx in stale_turns:
-            self._cache_keys_by_turn.pop(turn_idx, None)
+        self._turn_store.prune_line_cache_index()
 
     def _invalidate_cache_for_turns(self, start_idx: int, end_idx: int | None = None) -> None:
-        """Drop line-cache entries for turns in [start_idx, end_idx).
-
-        When end_idx is None the range is unbounded — full cache clear.
-        When end_idx is provided the invalidation is strictly bounded to
-        [start_idx, end_idx), even when start_idx is 0, so viewport-only
-        callers do not incidentally wipe the entire cache.
-
-        // [LAW:single-enforcer] Range invalidation for line cache happens only here.
-        """
-        if end_idx is None:
-            self._clear_line_cache()
-            return
-
-        upper = min(end_idx, len(self._turns))
-        if upper <= start_idx:
-            return
-
-        for turn_idx in range(start_idx, upper):
-            keys = self._cache_keys_by_turn.pop(turn_idx, None)
-            if not keys:
-                continue
-            for key in keys:
-                self._line_cache.discard(key)
+        self._turn_store.invalidate_cache_for_turns(start_idx, end_idx)
 
     def _recalculate_offsets(self):
-        """Full rebuild of offset tree and width tracker. O(n)."""
-        values = [td.line_count for td in self._turns]
-        self._offset_tree.rebuild(values)
-        self._width_tracker.rebuild([td._widest_strip for td in self._turns])
+        """Full rebuild of offset tree and width tracker, then sync virtual size."""
+        self._turn_store.recalculate_offsets()
         self._update_virtual_size()
-        self._invalidate_cache_for_turns(0, len(self._turns))
 
     def _recalculate_offsets_from(self, start_idx: int):
-        """Sync offset tree for turns from start_idx onwards. O(k log n).
-
-        // [LAW:one-source-of-truth] FenwickTree stores line counts; offsets are derived.
-        Rebuilds the full tree and width tracker for correctness — callers that
-        need this are structural mutations (replace, ensure_rendered) where a
-        full rebuild is acceptable.
-        """
         self._recalculate_offsets()
 
     def _sync_turn_in_tree(self, td: TurnData) -> None:
-        """Sync one turn's line count and width in the tree. O(log n).
-
-        // [LAW:single-enforcer] All per-turn offset mutations go through here.
-        """
-        idx = td.turn_index
-        old_count = self._offset_tree.get(idx)
-        new_count = td.line_count
-        if old_count != new_count:
-            self._offset_tree.set(idx, new_count)
+        self._turn_store.sync_turn_in_tree(td)
 
     def _update_virtual_size(self) -> None:
-        """Recompute virtual_size from tree + width tracker. O(log n)."""
-        self._total_lines = self._offset_tree.total()
-        self._widest_line = max(self._width_tracker.max, self._last_width)
-        self.virtual_size = Size(self._widest_line, self._total_lines)
+        """Recompute virtual_size from store totals. O(log n)."""
+        self._turn_store.refresh_totals()
+        self._widest_line = max(self._turn_store.widest_strip, self._last_width)
+        self.virtual_size = Size(self._widest_line, self._turn_store.total_lines)
 
     def _on_turn_added(self, blocks: list, index: int) -> None:
         """Domain store callback: a completed turn was added."""
@@ -1196,25 +1112,15 @@ class ConversationView(ScrollView):
         self._invalidate("new_turn", blocks=blocks)
 
     def _on_turn_replaced(self, turn_index: int, new_blocks: list) -> None:
-        """Domain store callback: a completed turn was replaced (provisional → final).
-
-        Re-renders the turn in-place, invalidates caches, and recalculates
-        offsets if line count changed. Scroll position preserved by anchor.
-        // [LAW:dataflow-not-control-flow] Always re-render; let render pipeline
-        // decide what changed.
-        """
+        """Domain store callback: a completed turn was replaced (provisional → final)."""
         if not self.is_attached:
             return
-        if turn_index < 0 or turn_index >= len(self._turns):
+        td = self._turn_store.replace_blocks_at(turn_index, new_blocks)
+        if td is None:
             return
         preserve_scroll = not self._is_following
         if preserve_scroll:
             self.capture_scroll_anchor()
-        td = self._turns[turn_index]
-        self._unindex_blocks(td.blocks)
-        td.blocks = new_blocks
-        self._index_blocks(new_blocks)
-        td.rebuild_block_derivatives()
         width = self._content_width if self._size_known else self._last_width
         td.re_render(
             self._last_filters,
@@ -1235,14 +1141,14 @@ class ConversationView(ScrollView):
         self.refresh()
 
     def _prune_all_turns(self) -> None:
-        self._turns.clear()
-        self._block_index.clear()
+        self._turn_store.clear_all()
         self._scroll_anchor = None
-        self._recalculate_offsets()
+        self._update_virtual_size()
         if self.is_attached:
             self.refresh()
 
     def _reindex_turns(self) -> None:
+        # // Kept for test compatibility; TurnStore.prune_front reindexes too.
         for idx, td in enumerate(self._turns):
             td.turn_index = idx
 
@@ -1256,8 +1162,7 @@ class ConversationView(ScrollView):
         )
 
     def _refresh_after_turn_prune(self) -> None:
-        self._clear_line_cache()
-        self._recalculate_offsets()
+        self._update_virtual_size()
         if not self._is_following and self.is_attached:
             self._resolve_anchor()
         if self.is_attached:
@@ -1273,10 +1178,8 @@ class ConversationView(ScrollView):
             self._prune_all_turns()
             return
 
-        # // [LAW:one-source-of-truth] Unindex pruned blocks before removing turns.
-        self._unindex_turn_range(self._turns[:pruned_count])
-        del self._turns[:pruned_count]
-        self._reindex_turns()
+        # // [LAW:single-enforcer] Store handles unindex + delete + reindex + cache clear + tree rebuild atomically.
+        self._turn_store.prune_front(pruned_count)
         self._rebase_scroll_anchor_after_prune(pruned_count)
         self._refresh_after_turn_prune()
 
@@ -1337,15 +1240,12 @@ class ConversationView(ScrollView):
             self._attached_stream_id and self._turns and self._turns[-1].is_streaming
         )
         if had_preview_attached:
-            popped = self._turns.pop()
-            self._offset_tree.rebuild([t.line_count for t in self._turns])
-            self._width_tracker.remove(popped._widest_strip)
+            # // [LAW:single-enforcer] Store.pop_last handles the five-write unwind.
+            self._turn_store.pop_last()
             self._attached_stream_id = None
 
-        td.turn_index = len(self._turns)
-        self._turns.append(td)
-        self._offset_tree.append(td.line_count)
-        self._width_tracker.add(td._widest_strip)
+        # // [LAW:single-enforcer] Store.append handles turn_index + tree + width + totals.
+        self._turn_store.append(td)
 
         if had_preview_attached:
             self._attach_stream_preview()
