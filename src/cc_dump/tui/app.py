@@ -17,7 +17,7 @@ import time
 import tracemalloc
 import traceback
 from functools import lru_cache
-from typing import Callable, Optional, Protocol, TypedDict, cast
+from typing import Callable, Optional, Protocol, cast
 
 import textual
 import textual.filter as _textual_filter
@@ -45,6 +45,8 @@ import cc_dump.tui.session_panel
 import cc_dump.tui.session_registry
 import cc_dump.tui.provider_registry
 import cc_dump.tui.panel_sync
+import cc_dump.tui.request_registry
+import cc_dump.tui.stream_registry
 # Extracted controller modules (module-object imports — safe for hot-reload)
 from cc_dump.tui import action_handlers as _actions
 import cc_dump.tui.panel_registry
@@ -133,20 +135,6 @@ def _resolve_factory(dotted_path: str):
     module_path, func_name = parts[0], parts[1]
     mod = importlib.import_module(module_path)
     return getattr(mod, func_name)
-
-
-class TurnUsage(TypedDict, total=False):
-    input_tokens: int
-    output_tokens: int
-    cache_read_tokens: int
-    cache_creation_tokens: int
-
-
-class AppState(TypedDict, total=False):
-    current_turn_usage_by_request: dict[str, TurnUsage]
-    pending_request_headers: dict[str, dict[str, str]]
-    recent_messages: list[dict]
-    stream_registry: object
 
 
 # [LAW:dataflow-not-control-flow] Pure 1-line delegates are a table, not 40 methods.
@@ -330,10 +318,13 @@ class CcDumpApp(App):
         if not replay_data:
             self._replay_complete.set()
 
-        self._app_state: AppState = {
-            "current_turn_usage_by_request": {},
-            "pending_request_headers": {},
-        }
+        # [LAW:single-enforcer] Per-request ephemeral state lives in the RequestRegistry.
+        # [LAW:one-source-of-truth] StreamRegistry is owned eagerly (not lazily created
+        # inside event_handlers); navigation cursors are explicit typed fields.
+        self._requests = cc_dump.tui.request_registry.RequestRegistry()
+        self._stream_registry = cc_dump.tui.stream_registry.StreamRegistry()
+        self._special_nav_cursor: dict[str, int] = {}
+        self._region_nav_cursor: dict[str, int] = {}
 
         self._launch_configs_cache: list | None = None
         self._search_state = cc_dump.tui.search.SearchState(self._view_store)
@@ -510,13 +501,11 @@ class CcDumpApp(App):
         if request_id and request_id in self._sessions._request_bindings:
             return self._sessions.session_for_request(request_id)
         # Not yet bound — try the stream registry as a backstop.
-        stream_registry = self._app_state.get("stream_registry")
-        if stream_registry is not None:
-            ctx = stream_registry.get(request_id)
-            if ctx is not None:
-                session = self._ensure_session(str(ctx.session_id or ""))
-                self._sessions.bind_request(request_id, session.key)
-                return session
+        ctx = self._stream_registry.get(request_id)
+        if ctx is not None:
+            session = self._ensure_session(str(ctx.session_id or ""))
+            self._sessions.bind_request(request_id, session.key)
+            return session
         return self._sessions.default()
 
     def _resolve_event_provider(self, event: cc_dump.pipeline.event_types.PipelineEvent) -> str:
@@ -1088,13 +1077,16 @@ class CcDumpApp(App):
             self._view_store if session.key == active_session.key else None
         )
 
-        # [LAW:dataflow-not-control-flow] Unified context dict
-        widgets = {
+        # [LAW:dataflow-not-control-flow] Unified context dict carrying widgets
+        # + both registries; handlers mutate records, no app_state dict passthrough.
+        context = {
             "conv": conv,
             "filters": self.active_filters,
             "view_store": event_view_store,
             "domain_store": session.domain_store,
             "analytics_store": self._analytics_store,
+            "request_registry": self._requests,
+            "stream_registry": self._stream_registry,
         }
 
         # [LAW:dataflow-not-control-flow] Always call handler, use no-op for unknown
@@ -1104,10 +1096,7 @@ class CcDumpApp(App):
                 kind, cc_dump.tui.event_handlers._noop
             ),
         )
-        self._app_state = cast(
-            AppState,
-            handler(event, state, widgets, self._app_state, self._app_log),
-        )
+        handler(event, state, context, self._app_log)
         self._track_request_activity(str(getattr(event, "request_id", "") or ""))
         self._sync_detected_session(provider)
 

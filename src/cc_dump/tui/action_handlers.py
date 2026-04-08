@@ -223,21 +223,13 @@ def toggle_follow(app) -> None:
 
 
 def _special_nav_cursor_map(app) -> dict[str, int]:
-    """Return mutable cursor map for special-navigation markers."""
-    cursor_map = app._app_state.get("special_nav_cursor")
-    if not isinstance(cursor_map, dict):
-        cursor_map = {}
-        app._app_state["special_nav_cursor"] = cursor_map
-    return cursor_map
+    """// [LAW:one-source-of-truth] App owns the cursor map; typed field access."""
+    return app._special_nav_cursor
 
 
 def _region_nav_cursor_map(app) -> dict[str, int]:
-    """Return mutable cursor map for region-tag navigation."""
-    cursor_map = app._app_state.get("region_nav_cursor")
-    if not isinstance(cursor_map, dict):
-        cursor_map = {}
-        app._app_state["region_nav_cursor"] = cursor_map
-    return cursor_map
+    """// [LAW:one-source-of-truth] App owns the cursor map; typed field access."""
+    return app._region_nav_cursor
 
 
 @dataclass(frozen=True)
