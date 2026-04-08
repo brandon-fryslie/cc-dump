@@ -44,6 +44,7 @@ import cc_dump.tui.custom_footer
 import cc_dump.tui.session_panel
 import cc_dump.tui.session_registry
 import cc_dump.tui.provider_registry
+import cc_dump.tui.panel_sync
 # Extracted controller modules (module-object imports — safe for hot-reload)
 from cc_dump.tui import action_handlers as _actions
 import cc_dump.tui.panel_registry
@@ -1314,114 +1315,22 @@ class CcDumpApp(App):
                 widget.display = (name == active)
 
     def _sync_chrome_panels(self, state: tuple[bool, bool]) -> None:
-        """Sync logs/info visibility from canonical view-store projection."""
-        logs_visible, info_visible = state
-        logs = self._get_logs()
-        if logs is not None:
-            logs.display = bool(logs_visible)
-        info = self._get_info()
-        if info is not None:
-            info.display = bool(info_visible)
+        """// [LAW:dataflow-not-control-flow] Driven by panel_sync spec table."""
+        cc_dump.tui.panel_sync.sync_group(
+            self, cc_dump.tui.panel_sync.specs_for_group("chrome"), state
+        )
 
     def _sync_sidebar_panels(self, state: tuple[bool, bool]) -> None:
-        """Single enforcer for sidebar visibility + focus.
-
-        Creates panels on-demand when the store says visible but no widget
-        exists — this makes sidebar panels survive hot-reload (matching the
-        aux-panel create-on-demand pattern).
-        """
-        settings_open, launch_open = state
-
-        def _first_or_none(panel_type):
-            try:
-                return self.screen.query(panel_type).first()
-            except NoMatches:
-                return None
-
-        # [LAW:dataflow-not-control-flow] Each panel always resolves to a
-        # (widget-or-None, visible) pair; creation is a data-driven side effect.
-        settings_panel = _first_or_none(cc_dump.tui.settings_panel.SettingsPanel)
-        if settings_panel is None and settings_open:
-            settings_panel = _settings_launch._ensure_settings_panel(self)
-        if settings_panel is not None:
-            settings_panel.display = settings_open
-
-        launch_panel = _first_or_none(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
-        if launch_panel is None and launch_open:
-            configs = cc_dump.app.launch_config.load_configs()
-            active_name = cc_dump.app.launch_config.load_active_name()
-            launch_panel = _settings_launch._ensure_launch_config_panel(
-                self, configs, active_name
-            )
-        if launch_panel is not None:
-            launch_panel.display = launch_open
-
-        focus_target = None
-        if launch_open:
-            focus_target = launch_panel
-        elif settings_open:
-            focus_target = settings_panel
-        if focus_target is not None:
-            focus_default = getattr(focus_target, "focus_default_control", None)
-            if callable(focus_default):
-                self.call_after_refresh(focus_default)
-        else:
-            conv = self._get_conv()
-            if conv is not None:
-                self.call_after_refresh(conv.focus)
+        """// [LAW:dataflow-not-control-flow] Driven by panel_sync spec table."""
+        cc_dump.tui.panel_sync.sync_group(
+            self, cc_dump.tui.panel_sync.specs_for_group("sidebar"), state
+        )
 
     def _sync_aux_panels(self, state: tuple[bool, bool]) -> None:
-        """Mount/unmount keys + debug overlays from canonical store flags."""
-        keys_visible, debug_visible = state
-        self._ensure_panel_mounted(
-            panel_type=cc_dump.tui.keys_panel.KeysPanel,
-            create_panel=cc_dump.tui.keys_panel.create_keys_panel,
+        """// [LAW:dataflow-not-control-flow] Driven by panel_sync spec table."""
+        cc_dump.tui.panel_sync.sync_group(
+            self, cc_dump.tui.panel_sync.specs_for_group("aux"), state
         )
-        keys_panels: list[Widget] = list(self.screen.query(cc_dump.tui.keys_panel.KeysPanel))
-        for panel in keys_panels:
-            panel.display = bool(keys_visible)
-        self._sync_optional_panel(
-            panel_type=cc_dump.tui.debug_settings_panel.DebugSettingsPanel,
-            visible=debug_visible,
-            create_panel=lambda: cc_dump.tui.debug_settings_panel.create_debug_settings_panel(app_ref=self),
-            on_hidden=self._focus_active_conversation,
-        )
-
-    def _ensure_panel_mounted(
-        self,
-        *,
-        panel_type: type[Widget],
-        create_panel: Callable[[], Widget],
-    ) -> None:
-        """Mount a panel if missing, without changing display state."""
-        panels: list[Widget] = list(self.screen.query(panel_type))
-        if not panels:
-            self.screen.mount(create_panel())
-
-    def _sync_optional_panel(
-        self,
-        *,
-        panel_type: type[Widget],
-        visible: bool,
-        create_panel: Callable[[], Widget],
-        on_hidden: Callable[[], None] | None = None,
-    ) -> None:
-        """Sync optional overlay panel presence to a boolean visibility flag."""
-        panels: list[Widget] = list(self.screen.query(panel_type))
-        if visible:
-            if not panels:
-                self.screen.mount(create_panel())
-            return
-        if panels:
-            for panel in panels:
-                panel.remove()
-            if on_hidden is not None:
-                on_hidden()
-
-    def _focus_active_conversation(self) -> None:
-        conv = self._get_conv()
-        if conv is not None:
-            conv.focus()
 
     def _sync_error_items(self, items: list[cc_dump.app.error_models.ErrorItem]) -> None:
         """Project canonical error items to the active conversation indicator."""
@@ -1459,17 +1368,8 @@ class CcDumpApp(App):
     # ─── Key dispatch ──────────────────────────────────────────────────
 
     def _close_topmost_panel(self) -> bool:
-        """Close the topmost open panel. Returns True if a panel was closed.
-
-        Checks store booleans in priority order (launch_config → settings).
-        """
-        if self._view_store.get("panel:launch_config"):
-            self._close_launch_config()
-            return True
-        if self._view_store.get("panel:settings"):
-            self._close_settings()
-            return True
-        return False
+        """// [LAW:dataflow-not-control-flow] Priority order is spec data."""
+        return cc_dump.tui.panel_sync.close_topmost(self)
 
     def _handle_pre_keymap_event(self, event, mode) -> bool:
         InputMode = cc_dump.tui.input_modes.InputMode
