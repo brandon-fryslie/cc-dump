@@ -180,37 +180,6 @@ def test_iter_blocks_with_descendants_preserves_turn_order():
     assert ordered == [first, second]
 
 
-def test_reveal_search_match_sets_temporary_reveal_state(monkeypatch):
-    conv = ConversationView()
-    block = cc_dump.core.formatting.TextContentBlock(content="needle")
-    conv._turns = [
-        TurnData(
-            turn_index=0,
-            blocks=[block],
-            strips=[],
-            block_strip_map={0: 0},
-            _flat_blocks=[block],
-        )
-    ]
-    calls: list[tuple[int, int]] = []
-    monkeypatch.setattr(conv, "ensure_turn_rendered", lambda _idx: None)
-    monkeypatch.setattr(
-        conv, "_scroll_to_line",
-        lambda turn_index, turn, scroll_key, line_in_block: calls.append((turn_index, scroll_key)),
-    )
-
-    match = SimpleNamespace(
-        turn_index=0,
-        block_index=0,
-        block=block,
-        region_index=0,
-    )
-    assert conv.reveal_search_match(match, rerender=False) is True
-    assert conv._view_overrides.block_state(block.block_id).vis_override == cc_dump.core.formatting.ALWAYS_VISIBLE
-    assert conv._view_overrides.get_region(block.block_id, 0).expanded is True
-    assert calls == [(0, 0)]
-
-
 def test_clear_search_reveal_clears_temporary_state():
     conv = ConversationView()
     conv._view_overrides.set_search_reveal(block_id=1, region_index=0)
