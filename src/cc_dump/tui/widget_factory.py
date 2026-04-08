@@ -40,6 +40,7 @@ from cc_dump.tui.follow_mode import (
 )
 from cc_dump.io.perf_logging import monitor_complexity
 from cc_dump.tui.turn_store import TurnStore
+from cc_dump.tui.streaming_preview import StreamingPreviewManager
 
 logger = logging.getLogger(__name__)
 
@@ -274,12 +275,9 @@ class ConversationView(ScrollView):
             self._persist_follow_state,
             fire_immediately=True,
         )
-        # Streaming preview rendering state (rendering concern).
-        # Block lists and delta buffers live in DomainStore.
-        self._stream_preview_turns: dict[str, TurnData] = {}
-        self._attached_stream_id: str | None = None
-        self._pending_stream_delta_request_ids: set[str] = set()
-        self._stream_delta_flush_scheduled: bool = False
+        # // [LAW:one-source-of-truth] StreamingPreviewManager owns preview turns,
+        # // attached-stream id, pending-delta set, and flush-scheduled flag.
+        self._streaming = StreamingPreviewManager(self)
         self._active_filter_revision: int = 0
         self._deferred_anchor_resolve_scheduled: bool = False
 
@@ -342,6 +340,36 @@ class ConversationView(ScrollView):
     @property
     def _total_lines(self) -> int:
         return self._turn_store.total_lines
+
+    # ─── StreamingPreviewManager delegating properties ─────────────────
+
+    @property
+    def _stream_preview_turns(self) -> dict:
+        return self._streaming.stream_preview_turns
+
+    @property
+    def _attached_stream_id(self) -> str | None:
+        return self._streaming.attached_stream_id
+
+    @_attached_stream_id.setter
+    def _attached_stream_id(self, value) -> None:
+        self._streaming.attached_stream_id = value
+
+    @property
+    def _pending_stream_delta_request_ids(self) -> set:
+        return self._streaming.pending_delta_request_ids
+
+    @_pending_stream_delta_request_ids.setter
+    def _pending_stream_delta_request_ids(self, value) -> None:
+        self._streaming.pending_delta_request_ids = value
+
+    @property
+    def _stream_delta_flush_scheduled(self) -> bool:
+        return self._streaming.delta_flush_scheduled
+
+    @_stream_delta_flush_scheduled.setter
+    def _stream_delta_flush_scheduled(self, value: bool) -> None:
+        self._streaming.delta_flush_scheduled = bool(value)
 
     def _read_theme_generation(self) -> int:
         if self._view_store is None:
@@ -455,9 +483,7 @@ class ConversationView(ScrollView):
         if self._view_store is not None:
             self._last_filters = self._view_store.active_filters.get()
         self._turns = []
-        self._stream_preview_turns = {}
-        self._attached_stream_id = None
-        self._pending_stream_delta_request_ids = set()
+        self._streaming.reset()
         self._clear_line_cache()
 
         for blocks in self._domain_store.iter_completed_blocks():
@@ -1253,70 +1279,28 @@ class ConversationView(ScrollView):
         self._update_virtual_size()
 
     def _attach_focused_stream_preview(self) -> None:
-        """Ensure focused active stream preview is attached as the last turn."""
-        focused = self._domain_store.get_focused_stream_id()
-        if not focused or focused not in self._stream_preview_turns:
-            self._detach_stream_preview()
-            return
-
-        if self._attached_stream_id == focused and self._turns and self._turns[-1].is_streaming:
-            return
-
-        self._detach_stream_preview()
-        td = self._stream_preview_turns[focused]
-        td.turn_index = len(self._turns)
-        self._turns.append(td)
-        self._attached_stream_id = focused
-        self._recalculate_offsets()
+        self._streaming.attach_focused()
 
     def _attach_stream_preview(self) -> None:
-        """Attach the active streaming preview."""
-        self._attach_focused_stream_preview()
+        self._streaming.attach()
 
     def _detach_stream_preview(self) -> None:
-        """Remove attached streaming preview turn from completed turn list."""
-        if self._attached_stream_id is None:
-            return
-        if self._turns and self._turns[-1].is_streaming:
-            self._turns.pop()
-        self._attached_stream_id = None
-        self._recalculate_offsets()
+        self._streaming.detach()
 
     # ─── Domain store callbacks (rendering side) ─────────────────────────────
 
     def _on_stream_preview_cleanup(self, request_id: str, was_focused: bool) -> None:
-        """Domain store callback: stream preview should be removed without creating a turn.
-
-        // [LAW:one-way-deps] Called before on_turn_replaced so turn list is clean
-        // before re-rendering the combined turn.
-        """
         if not self.is_attached:
             return
-        if was_focused:
-            self._detach_stream_preview()
-        self._stream_preview_turns.pop(request_id, None)
-        self._pending_stream_delta_request_ids.discard(request_id)
-        self._attach_stream_preview()
+        self._streaming.on_preview_cleanup(request_id, was_focused)
 
     def _on_stream_started(self, request_id: str, meta: dict) -> None:
-        """Domain store callback: a new stream was created."""
         if not self.is_attached:
             return
         self._invalidate("stream_started", request_id=request_id, meta=meta)
 
     def _render_stream_started(self, request_id: str, meta: dict | None = None) -> None:
-        """Create streaming preview TurnData for a new stream."""
-        if request_id in self._stream_preview_turns:
-            return
-
-        td = TurnData(
-            turn_index=-1,
-            blocks=[],
-            strips=[],
-            is_streaming=True,
-        )
-        self._stream_preview_turns[request_id] = td
-        self._attach_stream_preview()
+        self._streaming.render_started(request_id, meta)
 
     def _refresh_streaming_delta(
         self,
@@ -1326,89 +1310,23 @@ class ConversationView(ScrollView):
         force: bool = False,
         width: int | None = None,
     ) -> bool:
-        """Re-render delta buffer with lightweight streaming preview.
-
-        Uses render_streaming_preview() — Markdown + gutter only, bypassing
-        the full rendering pipeline (visibility, dispatch, truncation, caching).
-        Finalization re-renders through the full pipeline.
-        """
-        width = (
-            width
-            if width is not None
-            else (self._content_width if self._size_known else self._last_width)
+        return self._streaming.refresh_streaming_delta(
+            request_id, td, force=force, width=width
         )
-        delta_version = self._domain_store.get_delta_version(request_id)
-        if (
-            not force
-            and delta_version == td._stream_last_delta_version
-            and width == td._stream_last_render_width
-        ):
-            return False
-
-        delta_text = self._domain_store.get_delta_preview_text(request_id)
-        if not delta_text:
-            td.strips = td.strips[: td._stable_strip_count]
-            td._strip_version = _next_strip_version()
-            td._widest_strip = _compute_widest(td.strips)
-            td._stream_last_delta_version = delta_version
-            td._stream_last_render_width = width
-            return True
-
-        console = self.app.console
-        delta_strips = cc_dump.tui.rendering.render_streaming_preview(
-            delta_text, console, width, runtime=self._render_runtime
-        )
-
-        td.strips = td.strips[: td._stable_strip_count] + delta_strips
-        td._strip_version = _next_strip_version()
-        td._widest_strip = _compute_widest(td.strips)
-        td._stream_last_delta_version = delta_version
-        td._stream_last_render_width = width
-        return True
 
     def _queue_stream_delta(self, request_id: str) -> None:
-        """Coalesce streaming delta paints to one invalidate per UI tick."""
-        self._pending_stream_delta_request_ids.add(request_id)
-        if self._stream_delta_flush_scheduled:
-            return
-        self._stream_delta_flush_scheduled = True
-        self.call_later(self._flush_stream_delta_frame)
+        self._streaming.queue_delta(request_id)
 
     def _flush_stream_delta_frame(self) -> None:
-        """Flush coalesced stream delta invalidation for focused stream."""
-        self._stream_delta_flush_scheduled = False
-        pending = self._pending_stream_delta_request_ids
-        self._pending_stream_delta_request_ids = set()
-        if not pending:
-            return
-        focused_id = self._domain_store.get_focused_stream_id()
-        if not focused_id or focused_id not in pending:
-            return
-        self._invalidate("stream_delta", request_id=focused_id)
+        self._streaming.flush_delta_frame()
 
     def _on_stream_block(self, request_id: str, block) -> None:
-        """Domain store callback: a block was appended to a stream."""
         if not self.is_attached:
             return
-        td = self._stream_preview_turns.get(request_id)
-        if td is None:
-            return
-
-        # // [LAW:dataflow-not-control-flow] Block declares streaming behavior via property
-        focused_id = self._domain_store.get_focused_stream_id()
-        is_focused = request_id == focused_id
-        if block.show_during_streaming and is_focused:
-            # // [LAW:dataflow-not-control-flow] Pending set holds variability; flush loop stays fixed.
-            self._queue_stream_delta(request_id)
+        self._streaming.on_stream_block(request_id, block)
 
     def _render_stream_delta(self, request_id: str = "") -> None:
-        """Re-render focused stream preview after new delta block."""
-        td = self._stream_preview_turns.get(request_id)
-        if td is None:
-            return
-        self._attach_stream_preview()
-        if self._refresh_streaming_delta(request_id, td):
-            self._recalculate_offsets()
+        self._streaming.render_delta(request_id)
 
     def _finalize_turn_data(
         self,
@@ -1419,96 +1337,34 @@ class ConversationView(ScrollView):
         block_strip_map: dict,
         flat_blocks: list,
     ) -> TurnData:
-        """Return finalized TurnData with derived projections refreshed when reused."""
-        if td is None:
-            return TurnData(
-                turn_index=-1,
-                blocks=final_blocks,
-                strips=strips,
-                block_strip_map=block_strip_map,
-                _flat_blocks=flat_blocks,
-                is_streaming=False,
-            )
-
-        td.blocks = final_blocks
-        td.strips = strips
-        td.block_strip_map = block_strip_map
-        td._flat_blocks = flat_blocks
-        # [LAW:one-source-of-truth] Rebuild derived turn projections after final blocks replace preview state.
-        td.rebuild_block_derivatives()
-        return td
-
-    def _on_stream_finalized(self, request_id: str, final_blocks: list, was_focused: bool) -> None:
-        """Domain store callback: a stream was finalized with consolidated blocks."""
-        if not self.is_attached:
-            return
-        self._invalidate("stream_finalized", request_id=request_id, final_blocks=final_blocks, was_focused=was_focused)
-
-    def _render_stream_finalized(self, request_id: str, final_blocks: list, was_focused: bool = False) -> None:
-        """Finalize stream: full re-render from consolidated blocks."""
-        td = self._stream_preview_turns.get(request_id)
-
-        if was_focused:
-            self._detach_stream_preview()
-
-        # Full re-render from consolidated blocks
-        width = self._content_width if self._size_known else self._last_width
-        console = self.app.console
-        strips, block_strip_map, flat_blocks = cc_dump.tui.rendering.render_turn_to_strips(
-            final_blocks,
-            self._last_filters,
-            console,
-            width,
-            block_cache=self._block_strip_cache,
-            overrides=self._view_overrides,
-            runtime=self._render_runtime,
-        )
-
-        # Create or reuse TurnData for the finalized turn
-        td = self._finalize_turn_data(
+        return self._streaming.finalize_turn_data(
             td,
             final_blocks=final_blocks,
             strips=strips,
             block_strip_map=block_strip_map,
             flat_blocks=flat_blocks,
         )
-        td._strip_version = _next_strip_version()
-        td._widest_strip = _compute_widest(td.strips)
-        td.is_streaming = False
-        td._text_delta_buffer.clear()
-        td._stable_strip_count = 0
-        td._stream_last_delta_version = -1
-        td._stream_last_render_width = 0
 
-        td._last_filter_snapshot = {
-            k: self._last_filters.get(k, cc_dump.core.formatting.ALWAYS_VISIBLE) for k in td.relevant_filter_keys
-        }
-        td._filter_revision = self._active_filter_revision
-        self._index_blocks(final_blocks)
+    def _on_stream_finalized(self, request_id: str, final_blocks: list, was_focused: bool) -> None:
+        if not self.is_attached:
+            return
+        self._invalidate(
+            "stream_finalized",
+            request_id=request_id,
+            final_blocks=final_blocks,
+            was_focused=was_focused,
+        )
 
-        # Remove from preview registry
-        self._stream_preview_turns.pop(request_id, None)
-        self._pending_stream_delta_request_ids.discard(request_id)
-
-        # Append as a completed turn while preserving active preview at end.
-        self._append_completed_turn(td)
-
-        # Reattach if there's a new focused stream
-        self._attach_stream_preview()
+    def _render_stream_finalized(self, request_id: str, final_blocks: list, was_focused: bool = False) -> None:
+        self._streaming.render_finalized(request_id, final_blocks, was_focused=was_focused)
 
     def _on_focus_changed(self, request_id: str) -> None:
-        """Domain store callback: focused stream changed."""
         if not self.is_attached:
             return
         self._invalidate("focus_changed", request_id=request_id)
 
     def _render_focus_changed(self, request_id: str) -> None:
-        """Re-render after focus stream change."""
-        self._pending_stream_delta_request_ids.discard(request_id)
-        td = self._stream_preview_turns.get(request_id)
-        if td is not None:
-            self._refresh_streaming_delta(request_id, td, force=True)
-        self._attach_stream_preview()
+        self._streaming.render_focus_changed(request_id)
 
     # ─── Delegating accessors (read from domain_store) ─────────────────────
 
@@ -2129,10 +1985,7 @@ class ConversationView(ScrollView):
         self._pending_restore = None
         self._turns.clear()
         self._block_index.clear()
-        self._stream_preview_turns.clear()
-        self._attached_stream_id = None
-        self._pending_stream_delta_request_ids.clear()
-        self._stream_delta_flush_scheduled = False
+        self._streaming.reset()
 
         self._rebuild_from_domain_store(filters)
 
