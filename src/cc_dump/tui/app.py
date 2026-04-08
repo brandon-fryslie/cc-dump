@@ -149,6 +149,95 @@ class AppState(TypedDict, total=False):
     stream_registry: object
 
 
+# [LAW:dataflow-not-control-flow] Pure 1-line delegates are a table, not 40 methods.
+# [LAW:one-source-of-truth] Adding an action is one row here, not a new method body.
+#
+# Each lambda is late-binding: it references the module object (_theme, _actions, ...)
+# which remains stable across hot-reloads; attribute lookup at call time always hits
+# the current reloaded function.
+_DELEGATE_TABLE: dict[str, Callable] = {
+    # Theme
+    "action_next_theme": lambda self: _theme.cycle_theme(self, 1),
+    "action_prev_theme": lambda self: _theme.cycle_theme(self, -1),
+    "_apply_markdown_theme": lambda self: _theme.apply_markdown_theme(self),
+    # Session navigation
+    "action_next_session": lambda self: _actions.next_session(self),
+    "action_prev_session": lambda self: _actions.prev_session(self),
+    # Dump / export
+    "action_dump_conversation": lambda self: _dump.dump_conversation(self),
+    "_write_block_text": lambda self, f, block, block_idx: _dump.write_block_text(
+        f, block, block_idx, log_fn=self._app_log
+    ),
+    # Visibility
+    "action_toggle_vis": lambda self, category: _actions.toggle_vis(self, category),
+    "action_toggle_detail": lambda self, category: _actions.toggle_detail(self, category),
+    "action_toggle_analytics": lambda self, category: _actions.toggle_analytics(self, category),
+    "action_toggle_expand": lambda self, category: _actions.toggle_analytics(self, category),
+    "action_cycle_vis": lambda self, category: _actions.cycle_vis(self, category),
+    "_clear_overrides": lambda self, category_name: _actions.clear_overrides(self, category_name),
+    # Filtersets
+    "action_apply_filterset": lambda self, slot: _actions.apply_filterset(self, slot),
+    "action_next_filterset": lambda self: _actions.next_filterset(self),
+    "action_prev_filterset": lambda self: _actions.prev_filterset(self),
+    # Panels
+    "action_cycle_panel": lambda self: _actions.cycle_panel(self),
+    "action_cycle_panel_mode": lambda self: _actions.cycle_panel_mode(self),
+    "action_toggle_logs": lambda self: _actions.toggle_logs(self),
+    "action_toggle_info": lambda self: _actions.toggle_info(self),
+    "action_toggle_keys": lambda self: _actions.toggle_keys(self),
+    "action_show_help_panel": lambda self: _actions.toggle_keys(self),
+    "action_hide_help_panel": lambda self: _actions.toggle_keys(self),
+    "action_toggle_settings": lambda self: _actions.toggle_settings(self),
+    "action_toggle_debug_settings": lambda self: _actions.toggle_debug_settings(self),
+    "action_toggle_launch_config": lambda self: _actions.toggle_launch_config(self),
+    "_open_settings": lambda self: _settings_launch.open_settings(self),
+    "_close_settings": lambda self: _settings_launch.close_settings(self),
+    "_open_launch_config": lambda self: _settings_launch.open_launch_config(self),
+    "_close_launch_config": lambda self: _settings_launch.close_launch_config(self),
+    "_launch_with_config": lambda self, config, log_label="launch_with_config": _settings_launch.launch_with_config(
+        self, config, log_label=log_label
+    ),
+    # Navigation
+    "action_toggle_follow": lambda self: _actions.toggle_follow(self),
+    "action_next_special": lambda self, marker_key="all": _actions.next_special(self, marker_key),
+    "action_prev_special": lambda self, marker_key="all": _actions.prev_special(self, marker_key),
+    "action_next_region_tag": lambda self, tag="all": _actions.next_region_tag(self, tag),
+    "action_prev_region_tag": lambda self, tag="all": _actions.prev_region_tag(self, tag),
+    "action_go_top": lambda self: _actions.go_top(self),
+    "action_go_bottom": lambda self: _actions.go_bottom(self),
+    "action_scroll_down_line": lambda self: _actions.scroll_down_line(self),
+    "action_scroll_up_line": lambda self: _actions.scroll_up_line(self),
+    "action_scroll_left_col": lambda self: _actions.scroll_left_col(self),
+    "action_scroll_right_col": lambda self: _actions.scroll_right_col(self),
+    "action_page_down": lambda self: _actions.page_down(self),
+    "action_page_up": lambda self: _actions.page_up(self),
+    "action_half_page_down": lambda self: _actions.half_page_down(self),
+    "action_half_page_up": lambda self: _actions.half_page_up(self),
+    # Search
+    "_start_search": lambda self: _search.start_search(self),
+    "_handle_search_editing_key": lambda self, event: _search.handle_search_editing_key(self, event),
+    "_handle_search_nav_special_keys": lambda self, event: _search.handle_search_nav_special_keys(self, event),
+}
+
+
+def _install_delegates(cls):
+    """// [LAW:single-enforcer] All glue delegates generated from one table.
+
+    Creates real class attributes (not __getattr__ magic) so inherited-method
+    overrides like action_show_help_panel work and dir()/hasattr introspection
+    behaves identically to hand-written methods.
+    """
+    for name, fn in _DELEGATE_TABLE.items():
+        def _make(f, n):
+            def method(self, *args, **kwargs):
+                return f(self, *args, **kwargs)
+            method.__name__ = n
+            method.__qualname__ = f"{cls.__name__}.{n}"
+            return method
+        setattr(cls, name, _make(fn, name))
+    return cls
+
+
 class NewSession(Message):
     """Message posted when a new Claude Code session is detected."""
 
@@ -165,6 +254,7 @@ class _ProxyEvent(Message, bubble=False):
         super().__init__()
 
 
+@_install_delegates
 class CcDumpApp(App):
     """TUI application for cc-dump."""
 
@@ -1035,87 +1125,13 @@ class CcDumpApp(App):
         self._publish_session_panel_state()
 
     # ─── Delegates to extracted modules ────────────────────────────────
-    # Textual requires action_* and watch_* as methods on the App class.
+    # Pure 1-line delegates are generated from _DELEGATE_TABLE via the
+    # @_install_delegates decorator on the class. Only methods with real
+    # logic remain as hand-written definitions.
 
-    # Hot-reload
+    # Hot-reload (async — not in table; only async entry)
     async def _start_file_watcher(self):
         await _hot_reload.start_file_watcher(self)
-
-    # Theme
-    def _apply_markdown_theme(self):
-        _theme.apply_markdown_theme(self)
-
-    def action_next_theme(self):
-        _theme.cycle_theme(self, 1)
-
-    def action_prev_theme(self):
-        _theme.cycle_theme(self, -1)
-
-    # Session navigation
-    def action_next_session(self):
-        _actions.next_session(self)
-
-    def action_prev_session(self):
-        _actions.prev_session(self)
-
-    # Dump/export
-    def action_dump_conversation(self):
-        _dump.dump_conversation(self)
-
-    def _write_block_text(self, f, block, block_idx: int):
-        _dump.write_block_text(f, block, block_idx, log_fn=self._app_log)
-
-    # Visibility actions
-    def action_toggle_vis(self, category: str):
-        _actions.toggle_vis(self, category)
-
-    def action_toggle_detail(self, category: str):
-        _actions.toggle_detail(self, category)
-
-    def action_toggle_analytics(self, category: str):
-        _actions.toggle_analytics(self, category)
-
-    def action_toggle_expand(self, category: str):
-        self.action_toggle_analytics(category)
-
-    def action_cycle_vis(self, category: str):
-        _actions.cycle_vis(self, category)
-
-    def _clear_overrides(self, category_name: str):
-        _actions.clear_overrides(self, category_name)
-
-    # Filterset actions
-    def action_apply_filterset(self, slot: str):
-        _actions.apply_filterset(self, slot)
-
-    def action_next_filterset(self):
-        _actions.next_filterset(self)
-
-    def action_prev_filterset(self):
-        _actions.prev_filterset(self)
-
-    # Panel cycling
-    def action_cycle_panel(self):
-        _actions.cycle_panel(self)
-
-    def action_cycle_panel_mode(self):
-        _actions.cycle_panel_mode(self)
-
-    def action_toggle_logs(self):
-        _actions.toggle_logs(self)
-
-    def action_toggle_info(self):
-        _actions.toggle_info(self)
-
-    def action_toggle_keys(self):
-        _actions.toggle_keys(self)
-
-    # Override Textual's built-in help panel to use ours
-    def action_show_help_panel(self):
-        _actions.toggle_keys(self)
-
-    def action_hide_help_panel(self):
-        _actions.toggle_keys(self)
 
     # Tmux integration
     def action_launch_tool(self):
@@ -1148,19 +1164,6 @@ class CcDumpApp(App):
         self.copy_to_clipboard(log_path)
         self.notify(f"Copied: {log_path}")
 
-    # Settings
-    def action_toggle_settings(self):
-        _actions.toggle_settings(self)
-
-    def action_toggle_debug_settings(self):
-        _actions.toggle_debug_settings(self)
-
-    def _open_settings(self):
-        _settings_launch.open_settings(self)
-
-    def _close_settings(self) -> None:
-        _settings_launch.close_settings(self)
-
     def on_settings_panel_saved(self, msg) -> None:
         """Handle SettingsPanel.Saved — update store (reactions handle persistence + side effects)."""
         if self._settings_store is not None:
@@ -1171,16 +1174,6 @@ class CcDumpApp(App):
     def on_settings_panel_cancelled(self, msg) -> None:
         """Handle SettingsPanel.Cancelled — close without saving."""
         self._close_settings()
-
-    # Launch configs
-    def action_toggle_launch_config(self):
-        _actions.toggle_launch_config(self)
-
-    def _open_launch_config(self):
-        _settings_launch.open_launch_config(self)
-
-    def _close_launch_config(self) -> None:
-        _settings_launch.close_launch_config(self)
 
     def _execute_auto_launch(self) -> None:
         """Execute auto-launch from the CLI 'run' subcommand.
@@ -1209,10 +1202,6 @@ class CcDumpApp(App):
         extra_desc = " + {}".format(" ".join(self._auto_launch_extra_args)) if self._auto_launch_extra_args else ""
         self._app_log("INFO", "auto-launching '{}'{}".format(config_name, extra_desc))
         self._launch_with_config(merged, log_label="auto_launch:{}".format(config_name))
-
-    def _launch_with_config(self, config, log_label: str = "launch_with_config") -> None:
-        """Build args from config + session_id, launch via tmux."""
-        _settings_launch.launch_with_config(self, config, log_label=log_label)
 
     def _save_launch_configs(self, configs: list, active_name: str) -> None:
         """Persist configs and active name, invalidating the command palette cache."""
@@ -1248,62 +1237,6 @@ class CcDumpApp(App):
         self._save_launch_configs(msg.configs, msg.name)
         self._sync_active_launch_config_state()
         self.notify("Active: {}".format(msg.name))
-
-    # Navigation
-    def action_toggle_follow(self):
-        _actions.toggle_follow(self)
-
-    def action_next_special(self, marker_key: str = "all"):
-        _actions.next_special(self, marker_key)
-
-    def action_prev_special(self, marker_key: str = "all"):
-        _actions.prev_special(self, marker_key)
-
-    def action_next_region_tag(self, tag: str = "all"):
-        _actions.next_region_tag(self, tag)
-
-    def action_prev_region_tag(self, tag: str = "all"):
-        _actions.prev_region_tag(self, tag)
-
-    def action_go_top(self):
-        _actions.go_top(self)
-
-    def action_go_bottom(self):
-        _actions.go_bottom(self)
-
-    def action_scroll_down_line(self):
-        _actions.scroll_down_line(self)
-
-    def action_scroll_up_line(self):
-        _actions.scroll_up_line(self)
-
-    def action_scroll_left_col(self):
-        _actions.scroll_left_col(self)
-
-    def action_scroll_right_col(self):
-        _actions.scroll_right_col(self)
-
-    def action_page_down(self):
-        _actions.page_down(self)
-
-    def action_page_up(self):
-        _actions.page_up(self)
-
-    def action_half_page_down(self):
-        _actions.half_page_down(self)
-
-    def action_half_page_up(self):
-        _actions.half_page_up(self)
-
-    # Search
-    def _start_search(self):
-        _search.start_search(self)
-
-    def _handle_search_editing_key(self, event):
-        _search.handle_search_editing_key(self, event)
-
-    def _handle_search_nav_special_keys(self, event) -> bool:
-        return _search.handle_search_nav_special_keys(self, event)
 
     # ─── Reactive watchers ─────────────────────────────────────────────
 
