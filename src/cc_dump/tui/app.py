@@ -42,6 +42,7 @@ import cc_dump.tui.input_modes
 import cc_dump.tui.info_panel
 import cc_dump.tui.custom_footer
 import cc_dump.tui.session_panel
+import cc_dump.tui.session_registry
 # Extracted controller modules (module-object imports — safe for hot-reload)
 from cc_dump.tui import action_handlers as _actions
 import cc_dump.tui.panel_registry
@@ -255,20 +256,17 @@ class CcDumpApp(App):
         self._conv_tabs_id = "conversation-tabs"
         self._conv_tab_main_id = "conversation-tab-main"
         self._search_bar_id = "search-bar"
-        self._default_session_key = "__default__"
-        # // [LAW:one-source-of-truth] Request/session routing ownership lives in app state.
-        self._request_session_keys: dict[str, str] = {}
-        self._session_domain_stores: dict[str, cc_dump.app.domain_store.DomainStore] = {
-            self._default_session_key: self._domain_store
-        }
-        self._session_conv_ids: dict[str, str] = {
-            self._default_session_key: self._conv_id
-        }
-        self._session_tab_ids: dict[str, str] = {
-            self._default_session_key: self._conv_tab_main_id
-        }
-        self._active_session_key = self._default_session_key
-        self._last_primary_session_key = self._default_session_key
+        # [LAW:single-enforcer] Session identity ownership lives in the registry.
+        # [LAW:one-source-of-truth] No more parallel dicts; one Session per tab.
+        default_session = cc_dump.tui.session_registry.Session(
+            key=cc_dump.providers.DEFAULT_SESSION_KEY,
+            tab_id=self._conv_tab_main_id,
+            conv_id=self._conv_id,
+            domain_store=self._domain_store,
+            provider=cc_dump.providers.DEFAULT_PROVIDER_KEY,
+            is_default=True,
+        )
+        self._sessions = cc_dump.tui.session_registry.SessionRegistry(default_session)
         # [LAW:one-source-of-truth] Panel IDs derived from registry
         self._panel_ids = dict(cc_dump.tui.panel_registry.PANEL_CSS_IDS)
         self._logs_id = "logs-panel"
@@ -323,41 +321,19 @@ class CcDumpApp(App):
     def _get_conv_tabs(self):
         return self._query_safe("#" + self._conv_tabs_id)
 
-    def _normalize_session_key(self, session_id: str) -> str:
-        return session_id if session_id else self._default_session_key
+    def _sync_active_from_tabs(self) -> "cc_dump.tui.session_registry.Session":
+        """Pull the active session from the tabs widget into the registry.
 
-    def _context_session_key(self, session_key: str) -> str:
-        """Resolve canonical conversation context for session tabs.
-
-        // [LAW:one-source-of-truth] Context/session linkage is normalized here.
+        // [LAW:single-enforcer] Tabs widget → registry is the only direction.
         """
-        return self._normalize_session_key(session_key)
-
-    def _active_context_session_key(self) -> str:
-        """Return the active conversation context key, even on derived tabs."""
-        return self._context_session_key(self._active_session_key_from_tabs())
-
-    def _active_session_key_from_tabs(self) -> str:
         tabs = self._get_conv_tabs()
         if tabs is None:
-            return self._active_session_key
+            return self._sessions.active()
         active_tab_id = str(getattr(tabs, "active", "") or "")
-        for session_key, tab_id in self._session_tab_ids.items():
-            if tab_id == active_tab_id:
-                self._active_session_key = session_key
-                self._last_primary_session_key = session_key
-                break
-        return self._active_session_key
-
-    def _get_domain_store(self, session_key: str | None = None):
-        key = session_key if session_key is not None else self._active_session_key_from_tabs()
-        return self._session_domain_stores.get(key, self._domain_store)
-
-    def _get_active_domain_store(self):
-        return self._get_domain_store(self._active_session_key_from_tabs())
+        return self._sessions.sync_from_tab_id(active_tab_id)
 
     def _iter_domain_stores(self):
-        return tuple(self._session_domain_stores.values())
+        return tuple(s.domain_store for s in self._sessions.all())
 
     def _provider_state(self, provider: str) -> cc_dump.core.formatting_impl.ProviderRuntimeState:
         return self._provider_states.get(provider, self._state)
@@ -365,63 +341,60 @@ class CcDumpApp(App):
     def _total_request_count(self) -> int:
         return sum(state.request_counter for state in self._provider_states.values())
 
-    def _session_tab_title(self, session_key: str) -> str:
-        if session_key == self._default_session_key:
-            return cc_dump.providers.get_provider_spec(
-                cc_dump.providers.DEFAULT_PROVIDER_KEY
-            ).tab_title
-        # Provider-prefixed session keys: "<provider>:__default__" → provider tab title.
-        provider = cc_dump.providers.session_provider(session_key)
-        if provider != cc_dump.providers.DEFAULT_PROVIDER_KEY:
-            spec = cc_dump.providers.get_provider_spec(provider)
-            _, _, suffix = session_key.partition(":")
-            if suffix == "__default__":
-                return spec.tab_title
-            return f"{spec.tab_short_prefix} {suffix[:8]}"
-        return session_key[:8]
+    def _build_session(self, key: str) -> "cc_dump.tui.session_registry.Session":
+        """Factory for new Sessions. Called by SessionRegistry.ensure.
 
-    def _ensure_session_surface(self, session_key: str) -> None:
-        """Ensure one DomainStore + TabPane + ConversationView exists for session key.
-
-        // [LAW:one-source-of-truth] session_key owns DomainStore + ConversationView identity.
-        // [LAW:locality-or-seam] Dynamic tab/session creation is isolated here.
+        // [LAW:single-enforcer] The only place a non-default Session is constructed.
         """
-        key = self._normalize_session_key(session_key)
-        if key in self._session_conv_ids and key in self._session_domain_stores:
-            return
-
-        tab_index = len(self._session_tab_ids)
-        conv_id = f"{self._conv_id}-{tab_index}"
-        tab_id = f"{self._conv_tab_main_id}-{tab_index}"
+        tab_index = len(self._sessions.all())
         domain_store = cc_dump.app.domain_store.DomainStore()
+        return cc_dump.tui.session_registry.Session(
+            key=key,
+            tab_id=f"{self._conv_tab_main_id}-{tab_index}",
+            conv_id=f"{self._conv_id}-{tab_index}",
+            domain_store=domain_store,
+            provider=cc_dump.providers.session_provider(key),
+            is_default=False,
+        )
+
+    def _ensure_session(self, raw_key: str | None) -> "cc_dump.tui.session_registry.Session":
+        """Ensure one TabPane + ConversationView exists for session key.
+
+        // [LAW:single-enforcer] All raw → Session conversion funnels through here.
+        // [LAW:locality-or-seam] Dynamic tab creation is isolated here.
+        """
+        existing = self._sessions.get(cc_dump.tui.session_registry.normalize_session_key(raw_key))
+        session = self._sessions.ensure(raw_key, factory=self._build_session)
+        if existing is not None:
+            return session
+
+        # New session — mount its conversation view + tab pane.
         conv = cc_dump.tui.widget_factory.create_conversation_view(
             view_store=self._view_store,
-            domain_store=domain_store,
+            domain_store=session.domain_store,
             runtime=self._render_runtime,
         )
-        conv.id = conv_id
-
-        self._session_domain_stores[key] = domain_store
-        self._session_conv_ids[key] = conv_id
-        self._session_tab_ids[key] = tab_id
+        conv.id = session.conv_id
 
         tabs = self._get_conv_tabs()
         if tabs is None:
-            return
+            return session
 
-        pane = TabPane(self._session_tab_title(key), conv, id=tab_id)
+        pane = TabPane(session.tab_title(), conv, id=session.tab_id)
         tabs.add_pane(pane)
 
         # // [LAW:dataflow-not-control-flow] Default tab always exists; first real
         # session auto-focuses only when default has no data.
-        default_store = self._session_domain_stores[self._default_session_key]
+        default_store = self._sessions.default().domain_store
+        active = self._sessions.active()
         if (
-            self._active_session_key == self._default_session_key
-            and key != self._default_session_key
+            active.is_default
+            and not session.is_default
             and default_store.completed_count == 0
             and not default_store.get_active_stream_ids()
         ):
-            tabs.active = tab_id
+            tabs.active = session.tab_id
+        return session
 
     def _extract_session_id_from_body(self, body: object) -> str:
         """Extract session_id from request body metadata.user_id."""
@@ -439,24 +412,23 @@ class CcDumpApp(App):
         session_id = parsed.get("session_id", "")
         return session_id if isinstance(session_id, str) else ""
 
-    def _bind_request_session(self, request_id: str, session_key: str) -> None:
-        if not request_id:
-            return
-        self._request_session_keys[request_id] = self._normalize_session_key(session_key)
+    def _session_for_request_id(self, request_id: str) -> "cc_dump.tui.session_registry.Session":
+        """Resolve a request_id to its Session.
 
-    def _session_key_for_request_id(self, request_id: str) -> str:
-        key = self._request_session_keys.get(request_id)
-        if key:
-            return key
+        // [LAW:dataflow-not-control-flow] Always returns a Session — never None,
+        //   never a raw key.
+        """
+        if request_id and request_id in self._sessions._request_bindings:
+            return self._sessions.session_for_request(request_id)
+        # Not yet bound — try the stream registry as a backstop.
         stream_registry = self._app_state.get("stream_registry")
-        if stream_registry is None:
-            return self._default_session_key
-        ctx = stream_registry.get(request_id)
-        if ctx is None:
-            return self._default_session_key
-        key = self._normalize_session_key(str(ctx.session_id or ""))
-        self._bind_request_session(request_id, key)
-        return key
+        if stream_registry is not None:
+            ctx = stream_registry.get(request_id)
+            if ctx is not None:
+                session = self._ensure_session(str(ctx.session_id or ""))
+                self._sessions.bind_request(request_id, session.key)
+                return session
+        return self._sessions.default()
 
     def _resolve_event_provider(self, event: cc_dump.pipeline.event_types.PipelineEvent) -> str:
         """Extract provider from event. Empty provider is a hard error.
@@ -480,24 +452,21 @@ class CcDumpApp(App):
             provider,
         )
 
-    def _resolve_default_provider_session_key(self, event) -> str:
+    def _resolve_default_provider_session(self, event) -> "cc_dump.tui.session_registry.Session":
         request_id = str(getattr(event, "request_id", "") or "")
-        session_key = self._default_session_key
-        if request_id:
-            session_key = self._request_session_keys.get(request_id, session_key)
-        self._bind_request_session(request_id, session_key)
-        self._ensure_session_surface(session_key)
-        return session_key
+        bound_key = self._sessions._request_bindings.get(request_id) if request_id else None
+        session = self._ensure_session(bound_key)
+        self._sessions.bind_request(request_id, session.key)
+        return session
 
     def _track_request_activity(self, request_id: str) -> None:
         if not request_id:
             return
-        resolved_key = self._session_key_for_request_id(request_id)
-        self._ensure_session_surface(resolved_key)
+        session = self._session_for_request_id(request_id)
         per_session = self._app_state.get("last_message_time_by_session", {})
         if not isinstance(per_session, dict):
             per_session = {}
-        per_session[resolved_key] = time.monotonic()
+        per_session[session.key] = time.monotonic()
         self._app_state["last_message_time_by_session"] = per_session
         self._publish_session_panel_state()
 
@@ -516,33 +485,34 @@ class CcDumpApp(App):
         if info is not None:
             info.update_info(self._build_server_info())
 
-    def _resolve_event_session_key(self, event, *, provider: str | None = None) -> str:
-        """Resolve session key for event routing.
+    def _resolve_event_session(
+        self, event, *, provider: str | None = None
+    ) -> "cc_dump.tui.session_registry.Session":
+        """Resolve Session for event routing.
 
-        // [LAW:one-source-of-truth] request_id -> session routing is resolved once here.
-        // Provider determines the tab. One tab per provider instance.
-        // Session identity preserved on blocks (block.session_id) and in
-        // formatting state (state["current_session"]), not in tab routing.
+        // [LAW:one-source-of-truth] request_id -> session routing resolved once here.
+        // [LAW:dataflow-not-control-flow] Returns a typed Session, not a key string.
         """
         resolved_provider = provider or self._resolve_event_provider(event)
-        provider_key = self._provider_tab_key(resolved_provider)
         if resolved_provider != cc_dump.providers.DEFAULT_PROVIDER_KEY:
-            self._bind_request_session(event.request_id, provider_key)
-            self._ensure_session_surface(provider_key)
-            return provider_key
-        return self._resolve_default_provider_session_key(event)
+            provider_key = self._provider_tab_key(resolved_provider)
+            session = self._ensure_session(provider_key)
+            self._sessions.bind_request(event.request_id, session.key)
+            return session
+        return self._resolve_default_provider_session(event)
 
     def _get_active_session_panel_state(self) -> tuple[str | None, float | None]:
         """Return session panel identity + last activity for active tab context."""
-        active_key = self._active_session_key_from_tabs()
+        active = self._sync_active_from_tabs()
         per_session = self._app_state.get("last_message_time_by_session", {})
         last_message_time = None
         if isinstance(per_session, dict):
-            raw_time = per_session.get(active_key)
+            raw_time = per_session.get(active.key)
             if isinstance(raw_time, (int, float)):
                 last_message_time = float(raw_time)
-        if active_key != self._default_session_key:
-            return active_key, last_message_time
+        # [LAW:dataflow-not-control-flow] is_default decided at construction.
+        if not active.is_default:
+            return active.key, last_message_time
         return self._session_id, last_message_time
 
     def _publish_session_panel_state(self) -> None:
@@ -562,15 +532,18 @@ class CcDumpApp(App):
 
     def _active_resume_session_id(self) -> str:
         """Resolve session_id used for launch auto-resume from active tab context."""
-        active_key = self._active_context_session_key()
-        if active_key and active_key != self._default_session_key:
-            return active_key
+        active = self._sync_active_from_tabs()
+        # [LAW:dataflow-not-control-flow] is_default already decided.
+        if not active.is_default:
+            return active.key
         return str(self._session_id or "")
 
     def _get_conv(self, session_key: str | None = None):
-        key = session_key if session_key is not None else self._active_session_key_from_tabs()
-        conv_id = self._session_conv_ids.get(key, self._conv_id)
-        return self._query_safe("#" + conv_id)
+        if session_key is None:
+            session = self._sync_active_from_tabs()
+        else:
+            session = self._sessions.get(session_key) or self._sessions.default()
+        return self._query_safe("#" + session.conv_id)
 
     def _get_panel(self, name: str):
         """// [LAW:one-source-of-truth] Generic panel accessor using registry IDs."""
@@ -712,13 +685,14 @@ class CcDumpApp(App):
             yield widget
 
         with TabbedContent(id=self._conv_tabs_id):
-            with TabPane("Claude", id=self._conv_tab_main_id):
+            default = self._sessions.default()
+            with TabPane("Claude", id=default.tab_id):
                 conv = cc_dump.tui.widget_factory.create_conversation_view(
                     view_store=self._view_store,
-                    domain_store=self._domain_store,
+                    domain_store=default.domain_store,
                     runtime=self._render_runtime,
                 )
-                conv.id = self._conv_id
+                conv.id = default.conv_id
                 yield conv
 
         logs = cc_dump.tui.widget_factory.create_logs_panel()
@@ -1025,19 +999,16 @@ class CcDumpApp(App):
         kind = event.kind
         provider = self._resolve_event_provider(event)
         state = self._provider_state(provider)
-        session_key = self._resolve_event_session_key(event, provider=provider)
-        conv = self._get_conv(session_key=session_key)
+        session = self._resolve_event_session(event, provider=provider)
+        conv = self._query_safe("#" + session.conv_id)
         if conv is None:
-            conv = self._query_safe("#" + self._conv_id)
+            conv = self._query_safe("#" + self._sessions.default().conv_id)
         if conv is None:
             return
-        domain_store = self._get_domain_store(session_key)
-        active_session_key = self._active_session_key_from_tabs()
-        # [LAW:single-enforcer] Active-session gating for stats snapshot writes is enforced here.
+        active_session = self._sync_active_from_tabs()
+        # [LAW:single-enforcer] Active-session gating for stats snapshot writes.
         event_view_store = (
-            self._view_store
-            if session_key == active_session_key
-            else None
+            self._view_store if session.key == active_session.key else None
         )
 
         # [LAW:dataflow-not-control-flow] Unified context dict
@@ -1045,7 +1016,7 @@ class CcDumpApp(App):
             "conv": conv,
             "filters": self.active_filters,
             "view_store": event_view_store,
-            "domain_store": domain_store,
+            "domain_store": session.domain_store,
             "analytics_store": self._analytics_store,
         }
 
@@ -1066,17 +1037,18 @@ class CcDumpApp(App):
     def on_tabbed_content_tab_activated(
         self, event: TabbedContent.TabActivated
     ) -> None:
-        """Sync active session context when conversation tab changes."""
+        """Sync active session context when conversation tab changes.
+
+        // [LAW:single-enforcer] Tabs widget → registry sync happens exactly here.
+        """
         if event.tabbed_content.id != self._conv_tabs_id:
             return
         pane_id = str(getattr(event.pane, "id", "") or "")
-        for session_key, tab_id in self._session_tab_ids.items():
-            if tab_id == pane_id:
-                self._active_session_key = session_key
-                break
+        self._sessions.sync_from_tab_id(pane_id)
         self._publish_session_panel_state()
-        # // [LAW:one-source-of-truth] _domain_store mirrors the active session store.
-        self._domain_store = self._get_active_domain_store()
+        # // [LAW:one-source-of-truth] _domain_store alias mirrors the active session store
+        # for hot-reload backcompat. Phase 2 will delete this alias.
+        self._domain_store = self._sessions.active().domain_store
 
     # ─── Delegates to extracted modules ────────────────────────────────
     # Textual requires action_* and watch_* as methods on the App class.
