@@ -32,7 +32,8 @@ class _Conv:
 class _App:
     def __init__(self, conv):
         self._conv = conv
-        self._app_state: dict = {}
+        self._special_nav_cursor: dict[str, int] = {}
+        self._region_nav_cursor: dict[str, int] = {}
         self.active_filters = {}
         self.notifications: list[str] = []
 
@@ -53,7 +54,7 @@ def test_next_special_navigates_to_first_location():
     assert conv.ensure_calls == [0]
     assert conv.scroll_calls == [(0, 0)]
     assert conv.rerender_calls == 1
-    assert app._app_state["special_nav_cursor"]["all"] == 0
+    assert app._special_nav_cursor["all"] == 0
     assert any("CLAUDE.md" in msg for msg in app.notifications)
 
 
@@ -68,7 +69,7 @@ def test_next_special_wraps_across_multiple_locations():
     actions.next_special(app)
 
     assert conv.scroll_calls == [(0, 0), (1, 0), (0, 0)]
-    assert app._app_state["special_nav_cursor"]["all"] == 0
+    assert app._special_nav_cursor["all"] == 0
 
 
 def test_prev_special_wraps_to_last_location_on_first_call():
@@ -80,7 +81,7 @@ def test_prev_special_wraps_to_last_location_on_first_call():
     actions.prev_special(app)
 
     assert conv.scroll_calls == [(1, 0)]
-    assert app._app_state["special_nav_cursor"]["all"] == 1
+    assert app._special_nav_cursor["all"] == 1
 
 
 def test_next_special_notifies_when_no_locations():
@@ -106,7 +107,7 @@ def test_next_region_tag_navigates_to_matching_region():
     assert conv.ensure_calls == [0]
     assert conv.scroll_calls == [(0, 0)]
     assert conv.rerender_calls == 1
-    assert app._app_state["region_nav_cursor"]["thinking"] == 0
+    assert app._region_nav_cursor["thinking"] == 0
     assert any("thinking" in msg for msg in app.notifications)
 
 

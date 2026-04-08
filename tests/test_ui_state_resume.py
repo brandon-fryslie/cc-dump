@@ -75,10 +75,9 @@ def test_handle_event_inner_uses_view_store_only_for_active_session(monkeypatch)
     other = _make_fake_session(app, "session-other")
     active = _make_fake_session(app, "session-active")
 
-    def fake_handler(event_obj, state_obj, widgets_obj, app_state_obj, log_fn):
-        _ = (event_obj, state_obj, app_state_obj, log_fn)
-        captured["view_store"] = widgets_obj.get("view_store")
-        return app._app_state
+    def fake_handler(event_obj, state_obj, context_obj, log_fn):
+        _ = (event_obj, state_obj, log_fn)
+        captured["view_store"] = context_obj.get("view_store")
 
     monkeypatch.setitem(cc_dump.tui.event_handlers.EVENT_HANDLERS, event.kind, fake_handler)
     monkeypatch.setattr(cc_dump.tui.app.stx, "is_safe", lambda _app: True)
@@ -102,10 +101,9 @@ def test_handle_event_inner_passes_view_store_for_active_session(monkeypatch):
 
     active = _make_fake_session(app, "session-active")
 
-    def fake_handler(event_obj, state_obj, widgets_obj, app_state_obj, log_fn):
-        _ = (event_obj, state_obj, app_state_obj, log_fn)
-        captured["view_store"] = widgets_obj.get("view_store")
-        return app._app_state
+    def fake_handler(event_obj, state_obj, context_obj, log_fn):
+        _ = (event_obj, state_obj, log_fn)
+        captured["view_store"] = context_obj.get("view_store")
 
     monkeypatch.setitem(cc_dump.tui.event_handlers.EVENT_HANDLERS, event.kind, fake_handler)
     monkeypatch.setattr(cc_dump.tui.app.stx, "is_safe", lambda _app: True)
