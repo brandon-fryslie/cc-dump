@@ -25,10 +25,10 @@ from snarfx import transaction
 
 
 def _active_domain_store(app):
-    """Return active tab domain store when available, fallback to singleton field."""
-    getter = getattr(app, "_get_active_domain_store", None)
-    if callable(getter):
-        return getter()
+    """Return active tab domain store via the session registry."""
+    sessions = getattr(app, "_sessions", None)
+    if sessions is not None:
+        return sessions.active().domain_store
     return getattr(app, "_domain_store", None)
 
 

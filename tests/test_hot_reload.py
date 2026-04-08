@@ -293,25 +293,24 @@ class TestHotReloadMultiSessionTabs:
             assert tabs is not None
 
             # With one-tab-per-instance, both sessions share the default tab.
-            default_key = app._default_session_key
-            default_tab = app._session_tab_ids[default_key]
-            tabs.active = default_tab
+            default = app._sessions.default()
+            tabs.active = default.tab_id
             await pilot.pause()
 
-            old_conv_id = id(app._get_conv(session_key=default_key))
+            old_conv_id = id(app._get_conv(session_key=default.key))
 
             await hr.replace_all_widgets(app)
             await pilot.pause()
 
-            new_conv = app._get_conv(session_key=default_key)
+            new_conv = app._get_conv(session_key=default.key)
             assert new_conv is not None
             assert id(new_conv) != old_conv_id
 
             # Both sessions' turns should be in the default tab's ConversationView.
             # Combined turns: each request-response pair is 1 turn.
             assert len(new_conv._turns) >= 2  # At least 1 combined turn per replay entry
-            assert tabs.active == default_tab
-            assert app._domain_store is app._get_domain_store(default_key)
+            assert tabs.active == default.tab_id
+            assert app._domain_store is default.domain_store
 
 
 # ============================================================================

@@ -307,40 +307,35 @@ async def _replace_all_widgets_inner(app) -> None:
 
     for new_conv in new_conversations.values():
         new_conv.rerender(app.active_filters)
-    if hasattr(app, "_get_active_domain_store"):
-        # // [LAW:one-source-of-truth] _domain_store mirrors the active session store.
-        app._domain_store = app._get_active_domain_store()
+    sessions = getattr(app, "_sessions", None)
+    if sessions is not None:
+        # // [LAW:one-source-of-truth] _domain_store alias mirrors the active session store.
+        app._domain_store = sessions.active().domain_store
 
 
 def _collect_conversation_swaps(app) -> list[_ConversationSwap]:
-    """Collect existing conversation widgets and durable per-session state."""
-    # // [LAW:one-source-of-truth] Conversation swap scope is owned by app._session_conv_ids.
-    session_conv_ids = getattr(app, "_session_conv_ids", {})
-    session_domain_stores = getattr(app, "_session_domain_stores", {})
-    if not isinstance(session_conv_ids, dict) or not session_conv_ids:
+    """Collect existing conversation widgets and durable per-session state.
+
+    // [LAW:one-source-of-truth] Conversation swap scope iterates app._sessions.
+    """
+    sessions = getattr(app, "_sessions", None)
+    if sessions is None:
         return []
 
     swaps: list[_ConversationSwap] = []
-    for session_key, conv_id in session_conv_ids.items():
-        old_conv = app._query_safe("#" + str(conv_id))
+    for session in sessions.all():
+        old_conv = app._query_safe("#" + session.conv_id)
         if old_conv is None:
             continue
-        if isinstance(session_domain_stores, dict):
-            domain_store = session_domain_stores.get(
-                session_key,
-                getattr(app, "_domain_store", None),
-            )
-        else:
-            domain_store = getattr(app, "_domain_store", None)
         conv_widget = cast(_ConversationWidget, old_conv)
         swaps.append(
             _ConversationSwap(
-                session_key=str(session_key),
-                conv_id=str(conv_id),
+                session_key=session.key,
+                conv_id=session.conv_id,
                 conv=conv_widget,
                 parent=conv_widget.parent,
                 state=conv_widget.get_state(),
-                domain_store=domain_store,
+                domain_store=session.domain_store,
             )
         )
     return swaps
