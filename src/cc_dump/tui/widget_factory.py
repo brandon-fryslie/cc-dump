@@ -41,6 +41,7 @@ from cc_dump.tui.follow_mode import (
 from cc_dump.io.perf_logging import monitor_complexity
 from cc_dump.tui.turn_store import TurnStore
 from cc_dump.tui.streaming_preview import StreamingPreviewManager
+from cc_dump.tui.scroll_coordinator import ScrollCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -250,11 +251,10 @@ class ConversationView(ScrollView):
         self._overrides_revision: int = 0
         self._last_search_signature: tuple | None = None
         self._last_theme_generation: int = self._read_theme_generation()
-        # [LAW:one-source-of-truth] Canonical follow state lives in FollowModeStore Observable.
-        self._follow_store = FollowModeStore(self._initial_follow_state())
+        # // [LAW:one-source-of-truth] ScrollCoordinator owns follow_store + anchor +
+        # // programmatic-scroll guard + deferred anchor resolve.
+        self._scroll = ScrollCoordinator(self)
         self._pending_restore: dict | None = None
-        self._scrolling_programmatically: bool = False
-        self._scroll_anchor: ScrollAnchor | None = None
         self._indicator = cc_dump.tui.error_indicator.IndicatorState()
         self._indicator_state: Observable[tuple[list, bool]] = Observable(([], False))
         # [LAW:single-enforcer] One reactive projection owns indicator invalidation/refresh.
@@ -263,23 +263,10 @@ class ConversationView(ScrollView):
             self._apply_indicator_state,
             fire_immediately=False,
         )
-        # [LAW:single-enforcer] Follow transition side effects flow from one reactive projection.
-        self._follow_transition_reaction = reaction(
-            lambda: self._follow_store.transition.get(),
-            self._apply_follow_transition,
-            fire_immediately=False,
-        )
-        # [LAW:single-enforcer] One projection syncs follow state into view_store/persistence.
-        self._follow_state_sync_reaction = reaction(
-            lambda: self._follow_store.state.get(),
-            self._persist_follow_state,
-            fire_immediately=True,
-        )
         # // [LAW:one-source-of-truth] StreamingPreviewManager owns preview turns,
         # // attached-stream id, pending-delta set, and flush-scheduled flag.
         self._streaming = StreamingPreviewManager(self)
         self._active_filter_revision: int = 0
-        self._deferred_anchor_resolve_scheduled: bool = False
 
         # Wire domain store callbacks
         self._wire_domain_store(self._domain_store)
@@ -371,19 +358,61 @@ class ConversationView(ScrollView):
     def _stream_delta_flush_scheduled(self, value: bool) -> None:
         self._streaming.delta_flush_scheduled = bool(value)
 
+    # ─── ScrollCoordinator delegating properties ───────────────────────
+
+    @property
+    def _follow_store(self):
+        return self._scroll.follow_store
+
+    @property
+    def _scroll_anchor(self):
+        return self._scroll.scroll_anchor
+
+    @_scroll_anchor.setter
+    def _scroll_anchor(self, value) -> None:
+        self._scroll.scroll_anchor = value
+
+    @property
+    def _scrolling_programmatically(self) -> bool:
+        return self._scroll.scrolling_programmatically
+
+    @_scrolling_programmatically.setter
+    def _scrolling_programmatically(self, value: bool) -> None:
+        self._scroll.scrolling_programmatically = bool(value)
+
+    @property
+    def _deferred_anchor_resolve_scheduled(self) -> bool:
+        return self._scroll.deferred_anchor_resolve_scheduled
+
+    @_deferred_anchor_resolve_scheduled.setter
+    def _deferred_anchor_resolve_scheduled(self, value: bool) -> None:
+        self._scroll.deferred_anchor_resolve_scheduled = bool(value)
+
+    @property
+    def _follow_state(self):
+        return self._scroll.follow_state
+
+    @_follow_state.setter
+    def _follow_state(self, value) -> None:
+        self._scroll.follow_state = value
+
+    @property
+    def _is_following(self) -> bool:
+        return self._scroll.is_following
+
+    @property
+    def _follow_transition_reaction(self):
+        return self._scroll.follow_transition_reaction
+
+    @property
+    def _follow_state_sync_reaction(self):
+        return self._scroll.follow_state_sync_reaction
+
     def _read_theme_generation(self) -> int:
         if self._view_store is None:
             return 0
         raw = self._view_store.get("theme:generation")
         return int(raw) if isinstance(raw, int) else 0
-
-    def _initial_follow_state(self) -> FollowState:
-        follow_raw = self._view_store.get("nav:follow") if self._view_store is not None else FollowState.ACTIVE.value
-        try:
-            return FollowState(str(follow_raw))
-        except ValueError:
-            # [LAW:dataflow-not-control-flow] exception: guard malformed persisted state.
-            return FollowState.ACTIVE
 
     @staticmethod
     def _search_match_signature(match) -> tuple | None:
@@ -451,9 +480,7 @@ class ConversationView(ScrollView):
 
     def on_unmount(self) -> None:
         self._indicator_reaction.dispose()
-        self._follow_transition_reaction.dispose()
-        self._follow_state_sync_reaction.dispose()
-        self._follow_store.dispose()
+        self._scroll.dispose()
 
     def _set_indicator_state(
         self,
@@ -493,51 +520,11 @@ class ConversationView(ScrollView):
         self._recalculate_offsets()
         self.refresh()
 
-    # // [LAW:one-source-of-truth] Follow state stored as string in view store.
-    # String persistence in view_store remains derived from this canonical Observable.
-    @property
-    def _follow_state(self) -> FollowState:
-        return self._follow_store.state.get()
+    def _dispatch_follow_event(self, event, *, at_bottom: bool) -> None:
+        self._scroll.dispatch_follow_event(event, at_bottom=at_bottom)
 
-    @_follow_state.setter
-    def _follow_state(self, value: FollowState):
-        self._follow_store.state.set(value)
-
-    def _persist_follow_state(self, value: FollowState) -> None:
-        if self._view_store is not None:
-            self._view_store.set("nav:follow", value.value)
-
-    def _dispatch_follow_event(
-        self,
-        event: FollowEvent,
-        *,
-        at_bottom: bool,
-    ) -> None:
-        """Dispatch a follow intent with explicit caller-owned scroll context.
-
-        // [LAW:one-source-of-truth] Caller-provided at_bottom is authoritative.
-        """
-        self._follow_store.dispatch(event, at_bottom=bool(at_bottom))
-
-    def _apply_follow_transition(self, payload: tuple[int, FollowTransition]) -> None:
-        _seq, transition = payload
-        if transition.scroll_to_end:
-            with self._programmatic_scroll():
-                self.scroll_end(animate=False)
-
-    @contextmanager
     def _programmatic_scroll(self):
-        """Guard scroll operations from anchor recomputation."""
-        self._scrolling_programmatically = True
-        try:
-            yield
-        finally:
-            self._scrolling_programmatically = False
-
-    @property
-    def _is_following(self) -> bool:
-        """Whether auto-scroll is active (ACTIVE state only)."""
-        return self._follow_state == FollowState.ACTIVE
+        return self._scroll.programmatic_scroll()
 
     @property
     def view_overrides(self):
@@ -745,8 +732,7 @@ class ConversationView(ScrollView):
         return changed
 
     def current_scroll_y(self) -> float:
-        """Return current vertical scroll offset."""
-        return float(self.scroll_offset.y)
+        return self._scroll.current_scroll_y()
 
     def _blank_line(self, width: int) -> Strip:
         return Strip.blank(width, self.rich_style)
@@ -1045,18 +1031,10 @@ class ConversationView(ScrollView):
         self._schedule_deferred_anchor_resolve()
 
     def _schedule_deferred_anchor_resolve(self) -> None:
-        """Schedule one deferred anchor resolve + refresh after lazy rerenders."""
-        if self._deferred_anchor_resolve_scheduled:
-            return
-        self._deferred_anchor_resolve_scheduled = True
-        self.call_later(self._flush_deferred_anchor_resolve)
+        self._scroll.schedule_deferred_anchor_resolve()
 
     def _flush_deferred_anchor_resolve(self) -> None:
-        """Apply deferred anchor restoration after lazy rerenders."""
-        self._deferred_anchor_resolve_scheduled = False
-        if not self._is_following:
-            self._resolve_anchor()
-        self.refresh()
+        self._scroll.flush_deferred_anchor_resolve()
 
     # ─── Unified render invalidation ─────────────────────────────────────────
 
@@ -1179,13 +1157,7 @@ class ConversationView(ScrollView):
             td.turn_index = idx
 
     def _rebase_scroll_anchor_after_prune(self, pruned_count: int) -> None:
-        anchor = self._scroll_anchor
-        if anchor is None:
-            return
-        self._scroll_anchor = ScrollAnchor(
-            turn_index=max(0, anchor.turn_index - pruned_count),
-            line_in_turn=anchor.line_in_turn,
-        )
+        self._scroll.rebase_scroll_anchor_after_prune(pruned_count)
 
     def _refresh_after_turn_prune(self) -> None:
         self._update_virtual_size()
@@ -1669,79 +1641,34 @@ class ConversationView(ScrollView):
     # ─── Sprint 2: Follow mode ───────────────────────────────────────────────
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
-        """Detect scroll position changes from ALL sources.
-
-        CRITICAL: Must call super() to preserve scrollbar sync and refresh.
-        CRITICAL: Signature is (old_value, new_value), not (value).
-
-        // [LAW:dataflow-not-control-flow] Transition dispatched to reactive follow store.
-        """
+        """Detect scroll position changes; route user-scrolls through coordinator."""
         super().watch_scroll_y(old_value, new_value)
-        if self._scrolling_programmatically:
+        if self._scroll.scrolling_programmatically:
             return
-        # Compute anchor on user scroll (turn-level anchor for vis_state changes)
-        self._scroll_anchor = self._compute_anchor_from_scroll()
-        self._dispatch_follow_event(
-            FollowEvent.USER_SCROLL,
-            at_bottom=bool(self.is_vertical_scroll_end),
-        )
+        self._scroll.on_user_scroll()
 
     def toggle_follow(self):
-        """Toggle follow mode.
-
-        // [LAW:dataflow-not-control-flow] Transition dispatched to reactive follow store.
-        """
-        self._dispatch_follow_event(FollowEvent.TOGGLE, at_bottom=False)
+        self._scroll.toggle_follow()
 
     def scroll_to_bottom(self):
-        """Scroll to bottom. Transitions ENGAGED→ACTIVE; OFF stays OFF.
-
-        // [LAW:dataflow-not-control-flow] Transition dispatched to reactive follow store.
-        """
-        self._dispatch_follow_event(FollowEvent.SCROLL_BOTTOM, at_bottom=False)
+        self._scroll.scroll_to_bottom()
 
     def scroll_to_top(self) -> None:
-        """Scroll to top and deactivate follow mode."""
-        self._dispatch_follow_event(FollowEvent.DEACTIVATE, at_bottom=False)
-        with self._programmatic_scroll():
-            self.scroll_home(animate=False)
+        self._scroll.scroll_to_top()
 
     def capture_scroll_anchor(self) -> None:
-        """Capture the current turn-level anchor for later restore.
-
-        // [LAW:one-source-of-truth] ConversationView owns `_scroll_anchor` lifecycle.
-        """
-        self._scroll_anchor = self._compute_anchor_from_scroll()
+        # // Route through self._compute_anchor_from_scroll so tests can monkeypatch it.
+        self._scroll.scroll_anchor = self._compute_anchor_from_scroll()
 
     def restore_scroll_y(self, y: float) -> None:
-        """Restore absolute vertical scroll position without animation."""
-        with self._programmatic_scroll():
+        with self._scroll.programmatic_scroll():
             self.scroll_to(y=y, animate=False)
-        # // [LAW:one-source-of-truth] Refresh anchor after programmatic restore
-        # because watch_scroll_y skips recompute while the guard is active.
+        # // Refresh anchor via self.capture_scroll_anchor so tests monkeypatching
+        # // _compute_anchor_from_scroll see the seam.
         self.capture_scroll_anchor()
 
     def scroll_to_block(self, turn_index: int, block_index: int) -> None:
-        """Scroll to center a specific block in the viewport."""
-        if turn_index >= len(self._turns):
-            return
-        td = self._turns[turn_index]
-        strip_offset = td.strip_offset_for_block(block_index)
-        turn_offset = self._offset_tree.prefix_sum(turn_index)
-        if strip_offset is None:
-            # Block filtered out — scroll to turn start instead
-            target_y = turn_offset
-        else:
-            target_y = turn_offset + strip_offset
-
-        # Center in viewport
-        viewport_height = self.scrollable_content_region.height
-        centered_y = max(0, target_y - viewport_height // 2)
-
-        # // [LAW:dataflow-not-control-flow] Deactivate via follow transition event.
-        self._dispatch_follow_event(FollowEvent.DEACTIVATE, at_bottom=False)
-        with self._programmatic_scroll():
-            self.scroll_to(y=centered_y, animate=False)
+        self._scroll.scroll_to_block(turn_index, block_index)
 
     def _block_index_at_line(self, turn: TurnData, content_y: int) -> int | None:
         """Find the block index within a turn for a given content line.
@@ -1776,53 +1703,18 @@ class ConversationView(ScrollView):
         return next_start - block_start
 
     def _compute_anchor_from_scroll(self) -> ScrollAnchor | None:
-        """Compute turn-level anchor from current scroll_y.
-
-        Returns ScrollAnchor(turn_index, line_in_turn).
-        Returns None if no turns or scroll position invalid.
-        """
-        if not self._turns:
-            return None
-
-        scroll_y = int(self.scroll_offset.y)
-        turn = self._find_turn_for_line(scroll_y)
-        if turn is None:
-            return None
-
-        line_in_turn = scroll_y - self._offset_tree.prefix_sum(turn.turn_index)
-        return ScrollAnchor(turn_index=turn.turn_index, line_in_turn=max(0, line_in_turn))
+        return self._scroll.compute_anchor_from_scroll()
 
     def _scroll_programmatically_to(self, *, y: int) -> None:
-        with self._programmatic_scroll():
-            self.scroll_to(y=y, animate=False)
+        self._scroll.scroll_programmatically_to(y=y)
 
     def _last_visible_turn_index(self) -> int | None:
-        for idx in range(len(self._turns) - 1, -1, -1):
-            if self._turns[idx].line_count > 0:
-                return idx
-        return None
+        return self._scroll.last_visible_turn_index()
 
     def _resolve_anchor_turn_index(self, *, anchor_turn_index: int) -> int | None:
-        """Resolve the canonical topmost-visible-turn anchor index.
-
-        // [LAW:one-source-of-truth] One anchor strategy: scan forward from anchor turn,
-        // wrapping once, and pick the first visible turn.
-        """
-        turn_count = len(self._turns)
-        if turn_count == 0:
-            return None
-
-        if anchor_turn_index >= turn_count:
-            # // [LAW:dataflow-not-control-flow] Stale out-of-range anchors map to
-            # // the last visible turn to preserve bottom-of-viewport semantics.
-            return self._last_visible_turn_index()
-
-        start = min(max(anchor_turn_index, 0), turn_count - 1)
-        for step in range(turn_count):
-            idx = (start + step) % turn_count
-            if self._turns[idx].line_count > 0:
-                return idx
-        return None
+        return self._scroll.resolve_anchor_turn_index(
+            anchor_turn_index=anchor_turn_index
+        )
 
     @staticmethod
     def _coerce_non_negative_int(raw_value: object, *, default: int = 0) -> int:
@@ -1842,29 +1734,7 @@ class ConversationView(ScrollView):
         return max(0, coerced)
 
     def _resolve_anchor(self):
-        """Resolve stored anchor to scroll_y after content changes.
-
-        Scrolls to the position that matches the stored anchor.
-        Uses _scrolling_programmatically guard to prevent anchor corruption.
-        """
-        anchor = self._scroll_anchor
-        if anchor is None:
-            return
-
-        resolved_turn_index = self._resolve_anchor_turn_index(
-            anchor_turn_index=anchor.turn_index
-        )
-        if resolved_turn_index is None:
-            return
-
-        turn = self._turns[resolved_turn_index]
-        line_in_turn = (
-            min(anchor.line_in_turn, turn.line_count - 1)
-            if resolved_turn_index == anchor.turn_index
-            else 0
-        )
-        target_y = self._offset_tree.prefix_sum(resolved_turn_index) + line_in_turn
-        self._scroll_programmatically_to(y=target_y)
+        self._scroll.resolve_anchor()
 
     def text_select_all(self) -> None:
         """Override to select only the block at the last click position.
