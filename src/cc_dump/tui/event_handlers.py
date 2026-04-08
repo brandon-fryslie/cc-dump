@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import cc_dump.core.analysis
 import cc_dump.core.formatting
@@ -87,6 +88,20 @@ def _with_capacity_summary(snapshot: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _focused_stream_id(domain_store) -> str | None:
+    """// [LAW:dataflow-not-control-flow] Absent domain store → no focused id."""
+    if domain_store is None:
+        return None
+    return domain_store.get_focused_stream_id()
+
+
+def _ensure_dict(value) -> dict:
+    """// [LAW:single-enforcer] Single place that normalizes unknown-shape headers."""
+    if isinstance(value, dict):
+        return dict(value)
+    return {}
+
+
 def _refresh_stats_snapshot(context) -> None:
     """Recompute and publish canonical stats panel snapshot.
 
@@ -100,12 +115,8 @@ def _refresh_stats_snapshot(context) -> None:
         view_store.set("panel:stats_snapshot", {"summary": {}, "timeline": [], "models": []})
         return
 
-    domain_store = context.get("domain_store")
     request_registry = context["request_registry"]
-    focused_id = None
-    focused_getter = getattr(domain_store, "get_focused_stream_id", None)
-    if callable(focused_getter):
-        focused_id = focused_getter()
+    focused_id = _focused_stream_id(context.get("domain_store"))
     snapshot = analytics_store.get_dashboard_snapshot(
         current_turn=request_registry.focused_usage(focused_id)
     )
@@ -204,6 +215,62 @@ def _commit_combined_turn(
         domain_store.replace_turn(turn_index, combined)
 
 
+@dataclass
+class _CompletionFrame:
+    """Typed snapshot of the pending Request state at complete-response time.
+
+    // [LAW:dataflow-not-control-flow] Callers read named fields; they never
+    //   ask "is the request record present?".
+    """
+
+    turn_index: int
+    status_code: int
+    headers_dict: dict
+
+
+def _completion_frame(req) -> _CompletionFrame:
+    if req is None:
+        return _CompletionFrame(turn_index=-1, status_code=0, headers_dict={})
+    return _CompletionFrame(
+        turn_index=req.turn_index,
+        status_code=req.response_status,
+        headers_dict=req.response_headers,
+    )
+
+
+def _build_response_blocks(frame: _CompletionFrame, provider: str, complete_body: dict) -> list:
+    blocks: list = []
+    if frame.status_code > 0 or frame.headers_dict:
+        blocks.extend(
+            cc_dump.core.formatting.format_response_headers(
+                frame.status_code or 200, frame.headers_dict
+            )
+        )
+    blocks.extend(
+        cc_dump.core.formatting.format_complete_response_for_provider(provider, complete_body)
+    )
+    return blocks
+
+
+def _commit_or_fallback(
+    request_id: str,
+    frame: _CompletionFrame,
+    request_blocks: list,
+    response_blocks: list,
+    domain_store,
+) -> None:
+    """Single enforcer for "reuse provisional turn or fall back to a new turn"."""
+    if 0 <= frame.turn_index < domain_store.completed_count:
+        _commit_combined_turn(
+            request_id, frame.turn_index, request_blocks, response_blocks, domain_store
+        )
+        return
+    if domain_store.get_stream_blocks(request_id):
+        domain_store.finalize_stream_with_blocks(request_id, response_blocks)
+        return
+    domain_store.add_turn(response_blocks)
+
+
 def _handle_complete_response_payload(
     *,
     request_id: str,
@@ -223,32 +290,15 @@ def _handle_complete_response_payload(
 
     # // [LAW:single-enforcer] Registry owns the Request record; we pop it on complete.
     req = request_registry.pop(request_id)
+    frame = _completion_frame(req)
 
-    # ── Build request blocks (with cache zones if usage available) ──
     request_blocks: list = []
-    turn_index = req.turn_index if req is not None else -1
-    if req is not None and req.turn_index >= 0:
+    if req is not None and frame.turn_index >= 0:
         request_blocks = _get_request_blocks_with_zones(req, complete_body, domain_store)
 
-    # ── Build response blocks ──
-    status_code = req.response_status if req is not None else 0
-    headers_dict = req.response_headers if req is not None else {}
-    response_blocks: list = []
-    if status_code > 0 or headers_dict:
-        response_blocks.extend(
-            cc_dump.core.formatting.format_response_headers(status_code or 200, headers_dict)
-        )
-    response_blocks.extend(cc_dump.core.formatting.format_complete_response_for_provider(provider, complete_body))
+    response_blocks = _build_response_blocks(frame, provider, complete_body)
 
-    # ── Combine and replace, or fall back to separate turn ──
-    if req is not None and 0 <= turn_index < domain_store.completed_count:
-        _commit_combined_turn(request_id, turn_index, request_blocks, response_blocks, domain_store)
-    else:
-        # No provisional data or stale index — graceful degradation
-        if domain_store.get_stream_blocks(request_id):
-            domain_store.finalize_stream_with_blocks(request_id, response_blocks)
-        else:
-            domain_store.add_turn(response_blocks)
+    _commit_or_fallback(request_id, frame, request_blocks, response_blocks, domain_store)
 
     _refresh_post_response(state, context, rerender_budget=True)
 
@@ -313,7 +363,7 @@ def handle_response_headers(event: ResponseHeadersEvent, state, context, log_fn)
         stream_registry = context["stream_registry"]
         req = context["request_registry"].get_or_create(event.request_id)
         req.response_status = status_code
-        req.response_headers = dict(headers_dict) if isinstance(headers_dict, dict) else {}
+        req.response_headers = _ensure_dict(headers_dict)
         stream_registry.mark_streaming(
             event.request_id,
             seq=event.seq,
@@ -468,7 +518,7 @@ def handle_response_non_streaming(event: ResponseNonStreamingEvent, state, conte
     try:
         req = context["request_registry"].get_or_create(event.request_id)
         req.response_status = event.status_code
-        req.response_headers = dict(event.headers) if isinstance(event.headers, dict) else {}
+        req.response_headers = _ensure_dict(event.headers)
         _handle_complete_response_payload(
             request_id=event.request_id,
             complete_body=event.body,

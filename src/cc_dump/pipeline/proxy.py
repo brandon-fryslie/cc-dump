@@ -203,6 +203,41 @@ def _sse_line(event: dict) -> bytes:
     return b"data: " + json.dumps(event).encode() + b"\n\n"
 
 
+def _iter_chat_sse_chunks(resp):
+    """Parse an SSE byte stream into decoded JSON chunks.
+
+    // [LAW:single-enforcer] One place owns SSE line buffering + JSON decode.
+    //   Callers receive already-decoded dicts and never branch on framing.
+    """
+    buf = b""
+    for raw in resp:
+        buf += raw
+        while b"\n" in buf:
+            line, buf = buf.split(b"\n", 1)
+            text = line.decode("utf-8", errors="replace").strip()
+            if not text.startswith("data: "):
+                continue
+            data_str = text[6:]
+            if data_str == "[DONE]":
+                continue
+            try:
+                yield json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+
+
+def _call_sink(fn, label: str) -> None:
+    """Run a sink callable inside a logged error boundary.
+
+    // [LAW:single-enforcer] Error isolation shape lives here, not scattered
+    //   as try/except pellets at each sink callsite.
+    """
+    try:
+        fn()
+    except Exception as exc:
+        logger.warning("%s: %s", label, exc)
+
+
 class StreamSink:
     """Consumer of an SSE stream. Each method is called in its own error boundary."""
 
@@ -569,6 +604,25 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             ),
         ))
 
+    def _emit_translated_event(self, anth_event: dict, event_sink, assembler) -> None:
+        """Fan one Anthropic-shaped event to client + sinks with per-sink boundaries.
+
+        // [LAW:dataflow-not-control-flow] Fan-out is a straight sequence, each
+        //   sink call isolated by one `_call_sink` wrapper.
+        """
+        anth_bytes = cc_dump.pipeline.copilot_translate.anthropic_sse_line(anth_event)
+
+        def _write_to_client() -> None:
+            self.wfile.write(anth_bytes)
+            self.wfile.flush()
+
+        _call_sink(_write_to_client, "Client write failure")
+        anth_type = anth_event.get("type", "")
+        _call_sink(lambda: event_sink.on_event(anth_type, anth_event),
+                   "EventQueueSink failure")
+        _call_sink(lambda: assembler.on_event(anth_type, anth_event),
+                   "ResponseAssembler failure")
+
     def _stream_chat_translated_response(self, resp, request_id: str = ""):
         """Stream Chat Completions SSE, translating to Anthropic format.
 
@@ -577,53 +631,17 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         state = cc_dump.pipeline.copilot_translate.ChatTranslationState()
         assembler = ResponseAssembler()
         event_sink = EventQueueSink(self.event_queue, request_id=request_id, provider=self.provider)
-        line_buffer = b""
 
         try:
-            for raw_chunk in resp:
-                line_buffer += raw_chunk
-                while b"\n" in line_buffer:
-                    line, line_buffer = line_buffer.split(b"\n", 1)
-                    line_str = line.decode("utf-8", errors="replace").strip()
-                    if not line_str:
-                        continue
-                    if not line_str.startswith("data: "):
-                        continue
-                    data_str = line_str[6:]
-                    if data_str == "[DONE]":
-                        continue
-                    try:
-                        chunk = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        continue
-                    anthropic_events = cc_dump.pipeline.copilot_translate.chat_chunk_to_anthropic_events(
-                        chunk, state,
-                    )
-                    for anth_event in anthropic_events:
-                        anth_bytes = cc_dump.pipeline.copilot_translate.anthropic_sse_line(anth_event)
-                        try:
-                            self.wfile.write(anth_bytes)
-                            self.wfile.flush()
-                        except Exception as exc:
-                            logger.warning("Client write failure: %s", exc)
-                        anth_type = anth_event.get("type", "")
-                        try:
-                            event_sink.on_event(anth_type, anth_event)
-                        except Exception as exc:
-                            logger.warning("EventQueueSink failure: %s", exc)
-                        try:
-                            assembler.on_event(anth_type, anth_event)
-                        except Exception as exc:
-                            logger.warning("ResponseAssembler failure: %s", exc)
+            for chunk in _iter_chat_sse_chunks(resp):
+                anthropic_events = cc_dump.pipeline.copilot_translate.chat_chunk_to_anthropic_events(
+                    chunk, state,
+                )
+                for anth_event in anthropic_events:
+                    self._emit_translated_event(anth_event, event_sink, assembler)
         finally:
-            try:
-                event_sink.on_done()
-            except Exception:
-                pass
-            try:
-                assembler.on_done()
-            except Exception:
-                pass
+            _call_sink(event_sink.on_done, "EventQueueSink.on_done failure")
+            _call_sink(assembler.on_done, "ResponseAssembler.on_done failure")
 
         seq = event_sink.seq
         if assembler.result is not None:
@@ -730,16 +748,18 @@ def make_handler_class(
     provider: str,
     target_host: str | None,
     event_queue: queue.Queue[PipelineEvent],
-    request_pipeline: RequestPipeline | None = None,
+    request_pipeline: RequestPipeline = RequestPipeline(),
     forward_proxy_ca: "ForwardProxyCertificateAuthority | None" = None,
 ) -> type[ProxyHandler]:
     """Create a configured ProxyHandler subclass for a specific provider.
 
     // [LAW:one-type-per-behavior] All providers share one handler type,
     // parameterized by class attributes set here.
-    // [LAW:dataflow-not-control-flow] An omitted request_pipeline becomes
-    //   the empty (identity) pipeline, never None — the proxy interior is
-    //   forbidden from asking "is the pipeline configured?".
+    // [LAW:dataflow-not-control-flow] Default request_pipeline is a module
+    //   identity pipeline — never None, so the proxy interior is forbidden
+    //   from asking "is the pipeline configured?". The default instance is
+    //   treated as read-only by callers (RequestPipeline lists are not
+    //   mutated after construction; they are replaced wholesale).
     """
     spec = cc_dump.providers.get_provider_spec(provider)
     return type(
@@ -749,7 +769,7 @@ def make_handler_class(
             "provider": spec.key,
             "target_host": target_host.rstrip("/") if target_host else None,
             "event_queue": event_queue,
-            "request_pipeline": request_pipeline if request_pipeline is not None else RequestPipeline(),
+            "request_pipeline": request_pipeline,
             "forward_proxy_ca": forward_proxy_ca,
         },
     )

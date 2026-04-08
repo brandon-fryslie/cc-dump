@@ -16,6 +16,9 @@ class _Providers:
     def all(self):
         return ()
 
+    def endpoints(self):
+        return {}
+
 
 class _App:
     def __init__(self, tmux):

@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -129,9 +130,9 @@ def _translate_system(system: object) -> str:
     Anthropic system can be: string, list of content blocks, or None.
     """
     # // [LAW:dataflow-not-control-flow] All three shapes handled by dispatch, not guards.
-    translators = {
-        str: lambda s: s,
-        list: _system_blocks_to_text,
+    translators: dict[type, Callable[[object], str]] = {
+        str: lambda s: s if isinstance(s, str) else "",
+        list: lambda s: _system_blocks_to_text(s) if isinstance(s, list) else "",
     }
     translator = translators.get(type(system), lambda _: "")
     return translator(system)
@@ -253,7 +254,10 @@ def _extract_tool_result_text(content: object) -> str:
 
 
 # // [LAW:dataflow-not-control-flow] Dispatch table keyed by (role, block_type).
-_BLOCK_TRANSLATORS: dict[tuple[str, str], object] = {
+_BLOCK_TRANSLATORS: dict[
+    tuple[str, str],
+    Callable[[dict, list[dict], list[str], str], None],
+] = {
     ("assistant", "tool_use"): _translate_tool_use_block,
     ("user", "tool_result"): _translate_tool_result_block,
 }
@@ -429,7 +433,9 @@ def _handle_function_call_item_added(item: dict, item_id: str, state: Translatio
     }]
 
 
-_OUTPUT_ITEM_HANDLERS: dict[str, object] = {
+_OUTPUT_ITEM_HANDLERS: dict[
+    str, Callable[[dict, str, TranslationState], list[dict]]
+] = {
     "message": _handle_message_item_added,
     "function_call": _handle_function_call_item_added,
 }
@@ -495,7 +501,9 @@ def _handle_unknown(data: dict, state: TranslationState) -> list[dict]:
 
 
 # // [LAW:dataflow-not-control-flow] Event type → handler dispatch table.
-_COPILOT_EVENT_HANDLERS: dict[str, object] = {
+_COPILOT_EVENT_HANDLERS: dict[
+    str, Callable[[dict, TranslationState], list[dict]]
+] = {
     "response.created": _handle_response_created,
     "response.in_progress": _handle_unknown,  # no Anthropic equivalent
     "response.output_item.added": _handle_output_item_added,
@@ -715,36 +723,56 @@ def _chat_handle_user_message(role: str, blocks: list) -> list[dict]:
     return messages
 
 
+def _asst_text_extract(block: dict) -> str:
+    return block.get("text", "") or ""
+
+
+def _asst_thinking_extract(block: dict) -> str:
+    # Fold thinking into text (Chat Completions has no thinking blocks).
+    return block.get("thinking", "") or ""
+
+
+def _asst_tool_use_to_call(block: dict) -> dict:
+    tool_input = block.get("input", {})
+    arguments = (
+        json.dumps(tool_input) if isinstance(tool_input, dict) else str(tool_input)
+    )
+    return {
+        "id": block.get("id", ""),
+        "type": "function",
+        "function": {
+            "name": block.get("name", ""),
+            "arguments": arguments,
+        },
+    }
+
+
+# // [LAW:dataflow-not-control-flow] Assistant block type → text-extractor.
+#   Unknown types map to the identity "no text" extractor, so the caller never
+#   branches on "did this block contribute text?".
+_ASST_TEXT_EXTRACTORS: dict[str, Callable[[dict], str]] = {
+    "text": _asst_text_extract,
+    "thinking": _asst_thinking_extract,
+}
+
+
 def _chat_handle_assistant_message(role: str, blocks: list) -> list[dict]:
     """Assistant message: text + tool_use blocks → single message with tool_calls."""
-    text_parts: list[str] = []
-    tool_calls: list[dict] = []
+    dicts = [b for b in blocks if isinstance(b, dict)]
+    text_parts = [
+        text
+        for b in dicts
+        for text in [_ASST_TEXT_EXTRACTORS.get(b.get("type", ""), lambda _b: "")(b)]
+        if text
+    ]
+    tool_calls = [
+        _asst_tool_use_to_call(b) for b in dicts if b.get("type") == "tool_use"
+    ]
 
-    for block in blocks:
-        block_type = block.get("type", "") if isinstance(block, dict) else ""
-        if block_type == "tool_use":
-            tool_input = block.get("input", {})
-            tool_calls.append({
-                "id": block.get("id", ""),
-                "type": "function",
-                "function": {
-                    "name": block.get("name", ""),
-                    "arguments": json.dumps(tool_input) if isinstance(tool_input, dict) else str(tool_input),
-                },
-            })
-        elif block_type == "text":
-            text = block.get("text", "")
-            if text:
-                text_parts.append(text)
-        elif block_type == "thinking":
-            # Fold thinking into text (Chat Completions has no thinking blocks)
-            text = block.get("thinking", "")
-            if text:
-                text_parts.append(text)
-
-    combined_text = "\n\n".join(text_parts) if text_parts else None
-
-    msg: dict = {"role": "assistant", "content": combined_text}
+    msg: dict = {
+        "role": "assistant",
+        "content": "\n\n".join(text_parts) if text_parts else None,
+    }
     if tool_calls:
         msg["tool_calls"] = tool_calls
     return [msg]
@@ -761,7 +789,7 @@ def _chat_handle_generic_message(role: str, blocks: list) -> list[dict]:
 
 
 # // [LAW:dataflow-not-control-flow] Role → message handler dispatch.
-_CHAT_MSG_HANDLERS: dict[str, object] = {
+_CHAT_MSG_HANDLERS: dict[str, Callable[[str, list], list[dict]]] = {
     "user": _chat_handle_user_message,
     "assistant": _chat_handle_assistant_message,
 }

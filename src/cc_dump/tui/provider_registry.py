@@ -59,6 +59,10 @@ class ProviderRegistry:
     def all(self) -> tuple[Provider, ...]:
         return tuple(self._providers.values())
 
+    def endpoints(self) -> dict[str, object]:
+        """// [LAW:one-source-of-truth] Canonical key→endpoint projection."""
+        return {p.key: p.endpoint for p in self._providers.values()}
+
     def total_request_count(self) -> int:
         return sum(p.runtime_state.request_counter for p in self._providers.values())
 

@@ -9,6 +9,7 @@
 
 import importlib
 import logging
+import operator
 import os
 import queue
 import sys
@@ -413,7 +414,9 @@ class CcDumpApp(App):
         return self._sessions.sync_from_tab_id(active_tab_id)
 
     def _iter_domain_stores(self):
-        return tuple(s.domain_store for s in self._sessions.all())
+        # // [LAW:dataflow-not-control-flow] attrgetter keeps the projection
+        # //   as data, not a generator expression.
+        return tuple(map(operator.attrgetter("domain_store"), self._sessions.all()))
 
     def _provider_state(self, provider: str) -> cc_dump.core.formatting_impl.ProviderRuntimeState:
         return self._providers.get(provider).runtime_state
@@ -616,7 +619,7 @@ class CcDumpApp(App):
         if session_key is None:
             session = self._sync_active_from_tabs()
         else:
-            session = self._sessions.get(session_key) or self._sessions.default()
+            session = self._sessions.get_or_default(session_key)
         return self._query_safe("#" + session.conv_id)
 
     def _get_panel(self, name: str):

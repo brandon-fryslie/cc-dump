@@ -437,6 +437,25 @@ _UPSTREAM_PRESETS: dict[str, tuple[str, str]] = {
 }
 
 
+def _apply_upstream_preset(
+    args: argparse.Namespace,
+    default_provider_spec: "cc_dump.providers.ProviderSpec",
+) -> "cc_dump.providers.ProviderSpec":
+    """Apply --upstream preset (if any) to args.target + default provider spec.
+
+    // [LAW:single-enforcer] One place decides how a preset name maps onto
+    //   (target, upstream_format). Callers never branch on the preset shape.
+    """
+    if args.upstream is None:
+        return default_provider_spec
+    from dataclasses import replace
+    preset_target, preset_format = _UPSTREAM_PRESETS[args.upstream]
+    args.target = preset_target
+    updated = replace(default_provider_spec, upstream_format=preset_format)
+    cc_dump.providers.update_provider_spec(updated)
+    return updated
+
+
 def _handle_recording_admin_commands(args: argparse.Namespace) -> bool:
     """Handle one-shot recording admin commands.
 
@@ -612,12 +631,7 @@ def main():
     args = parser.parse_args(_argv)
 
     # Apply upstream preset — overrides target + upstream_format on default provider
-    if args.upstream is not None:
-        preset_target, preset_format = _UPSTREAM_PRESETS[args.upstream]
-        args.target = preset_target
-        from dataclasses import replace
-        default_provider_spec = replace(default_provider_spec, upstream_format=preset_format)
-        cc_dump.providers.update_provider_spec(default_provider_spec)
+    default_provider_spec = _apply_upstream_preset(args, default_provider_spec)
 
     auto_launch_config = _resolve_auto_launch_config_name(auto_launch_config)
 

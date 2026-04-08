@@ -92,6 +92,10 @@ class SessionRegistry:
     def get(self, key: str) -> Session | None:
         return self._sessions.get(normalize_session_key(key))
 
+    def get_or_default(self, key: str) -> Session:
+        """// [LAW:dataflow-not-control-flow] Missing key → default, no caller branch."""
+        return self._sessions.get(normalize_session_key(key), self._default)
+
     def all(self) -> tuple[Session, ...]:
         return tuple(self._sessions.values())
 
