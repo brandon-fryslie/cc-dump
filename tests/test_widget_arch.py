@@ -290,10 +290,20 @@ class TestTurnDataReRender:
         assert td._strip_version > old_version
 
     def test_re_render_skips_when_render_key_unchanged(self):
-        """Rerender should skip when render key and filters are unchanged."""
+        """Search-active rerender should skip when render key and filters are unchanged."""
+        from cc_dump.tui.search import SearchContext, SearchMode, compile_search_pattern
+
         blocks = [TextContentBlock(content="Hello", indent="")]
         console = Console()
         filters = {}
+        pattern = compile_search_pattern("hello", SearchMode.CASE_INSENSITIVE)
+        assert pattern is not None
+        search_ctx = SearchContext(
+            pattern=pattern,
+            pattern_str="hello",
+            current_match=None,
+            all_matches=[],
+        )
 
         td = TurnData(turn_index=0, blocks=blocks, strips=[])
         td.compute_relevant_keys()
@@ -304,13 +314,15 @@ class TestTurnDataReRender:
                 filters,
                 console,
                 80,
-                render_key=(80, 1, 1),
+                search_ctx=search_ctx,
+                render_key=(80, 1, 1, 1),
             )
             second = td.re_render(
                 filters,
                 console,
                 80,
-                render_key=(80, 1, 1),
+                search_ctx=search_ctx,
+                render_key=(80, 1, 1, 1),
             )
 
         assert first is True
@@ -1406,9 +1418,8 @@ class TestSearchRerenderGeometry:
             all_matches=[],
         )
 
-    def test_search_context_does_not_trigger_strip_rerender(self):
-        """Search decoration is a post-render overlay — setting search_ctx should not
-        re-render strips (no TurnData.re_render calls beyond the initial filter pass)."""
+    def test_search_rerender_skips_geometry_when_unchanged(self):
+        """Search highlight is style-only — no offset tree or width tracker updates."""
         console = Console()
         filters = {}
         conv = self._make_conv_with_turns(console, 10, filters)
@@ -1416,47 +1427,59 @@ class TestSearchRerenderGeometry:
 
         with self._patch_scroll(conv, scroll_y=0, height=50):
             conv._follow_state = FollowState.OFF
-            # Initial filter rerender
-            conv.rerender(filters)
+            # First rerender establishes search-highlighted baseline strips.
+            conv.rerender(filters, search_ctx=search_ctx)
 
-            # Track strip versions before search
-            versions_before = [td._strip_version for td in conv._turns]
+            old_total_lines = conv._total_lines
+            old_widest = conv._widest_line
 
-            # Setting search_ctx should NOT re-render strips
-            conv._last_search_ctx = search_ctx
-            conv.refresh()
+            # Bump search revision so re_render detects a change and re-renders.
+            conv._search_revision += 1
 
-            versions_after = [td._strip_version for td in conv._turns]
-            assert versions_before == versions_after, (
-                "strip versions should not change when search context is set"
-            )
+            with patch.object(conv, '_sync_turn_in_tree', wraps=conv._sync_turn_in_tree) as sync_mock, \
+                 patch.object(conv, '_update_virtual_size', wraps=conv._update_virtual_size) as vsize_mock:
+                conv.rerender(filters, search_ctx=search_ctx)
 
-    def test_line_cache_skips_writes_during_search(self):
-        """Line cache writes are skipped when search is active to avoid persisting
-        transient overlay styling."""
+        # Geometry should be unchanged — search only changes styles.
+        assert conv._total_lines == old_total_lines
+        assert conv._widest_line == old_widest
+        # _sync_turn_in_tree and _update_virtual_size should NOT have been called
+        # because search highlighting doesn't change line counts or widths.
+        assert sync_mock.call_count == 0, "geometry sync should be skipped for style-only search changes"
+        assert vsize_mock.call_count == 0, "virtual size update should be skipped for style-only search changes"
+
+    def test_search_rerender_invalidates_line_cache(self):
+        """After search rerender, stale line cache entries for viewport turns are flushed."""
         console = Console()
         filters = {}
         conv = self._make_conv_with_turns(console, 5, filters)
         search_ctx = self._make_search_ctx()
 
-        # Activate search
-        conv._last_search_ctx = search_ctx
+        # Prime the line cache with some entries.
+        for td in conv._turns:
+            key = (td.turn_index, 0, 0, 80)
+            conv._line_cache[key] = Strip.blank(80)
+            conv._cache_keys_by_turn.setdefault(td.turn_index, set()).add(key)
 
-        # _record_line_cache_key should skip writes when search active
-        key = (0, 0, 0, 80)
-        strip = Strip.blank(80)
-        conv._record_line_cache_key(
-            turn_idx=0, cache_key=key, strip=strip, selection=None
-        )
-        assert key not in conv._line_cache, (
-            "line cache should skip writes when search is active"
-        )
+        assert len(conv._line_cache) == 5
 
-        # Clear search — writes should work again
-        conv._last_search_ctx = None
-        conv._record_line_cache_key(
-            turn_idx=0, cache_key=key, strip=strip, selection=None
-        )
-        assert key in conv._line_cache, (
-            "line cache should accept writes when search is inactive"
-        )
+        with self._patch_scroll(conv, scroll_y=0, height=50):
+            conv._follow_state = FollowState.OFF
+            conv.rerender(filters, search_ctx=search_ctx)
+
+        # Viewport cache entries should have been invalidated.
+        for td in conv._turns:
+            key = (td.turn_index, 0, 0, 80)
+            assert key not in conv._line_cache, f"stale cache entry for turn {td.turn_index} should be flushed"
+
+    def test_search_rerender_calls_refresh(self):
+        """Search rerender must call refresh() to repaint visible lines."""
+        console = Console()
+        filters = {}
+        conv = self._make_conv_with_turns(console, 5, filters)
+        search_ctx = self._make_search_ctx()
+
+        with self._patch_scroll(conv, scroll_y=0, height=50):
+            conv._follow_state = FollowState.OFF
+            conv.rerender(filters, search_ctx=search_ctx)
+            assert conv.refresh.called, "refresh() should be called after search rerender"

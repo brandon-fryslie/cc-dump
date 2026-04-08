@@ -101,7 +101,7 @@ def launch_with_config(app, config, *, log_label: str = "launch_with_config") ->
     session_id = _resume_session_id(app, config)
     profile = cc_dump.app.launch_config.build_launch_profile(
         config,
-        provider_endpoints=app._provider_endpoints,
+        provider_endpoints={p.key: p.endpoint for p in app._providers.all()},
         session_id=session_id,
     )
     tmux.configure_launcher(

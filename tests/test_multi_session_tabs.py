@@ -107,11 +107,10 @@ async def test_single_claude_tab_active_domain_store():
         active_store = app._sessions.active().domain_store
         default_store = app._sessions.default().domain_store
         assert active_store is default_store
-        assert app._domain_store is default_store
 
 
 async def test_session_id_tracks_most_recent_session():
-    """app._session_id tracks the most recent session from API metadata."""
+    """Provider.last_notified_session tracks the most recent session from API metadata."""
     session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     session_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     replay_data = [
@@ -129,9 +128,9 @@ async def test_session_id_tracks_most_recent_session():
 
     async with run_app(replay_data=replay_data) as (pilot, app):
         _ = pilot
-        # session_b was processed last, so _session_id should reflect it.
-        assert app._session_id == session_b
-        # _active_resume_session_id falls through to _session_id on the default tab.
+        # session_b was processed last, so default provider's last_notified should reflect it.
+        assert app._providers.default().last_notified_session == session_b
+        # _active_resume_session_id falls through to default provider on the default tab.
         assert app._active_resume_session_id() == session_b
 
 
