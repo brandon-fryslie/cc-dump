@@ -38,11 +38,29 @@ def get_recordings_dir() -> str:
     return os.path.expanduser("~/.local/share/cc-dump/recordings")
 
 
+def _collect_entry_providers(entries: list[dict]) -> set[str]:
+    detected = [
+        cc_dump.providers.detect_provider_from_har_entry(entry)
+        for entry in entries
+    ]
+    return {p for p in detected if p is not None}
+
+
 def _provider_from_entries(entries: list[dict]) -> str | None:
-    if not entries:
+    """// [LAW:one-source-of-truth] HAR provider label is derived from ALL
+    //   entries, not just the first — recordings can now contain traffic
+    //   from multiple providers in one session.
+    """
+    providers = _collect_entry_providers(entries)
+    return _provider_label(providers)
+
+
+def _provider_label(providers: set[str]) -> str | None:
+    if not providers:
         return None
-    # [LAW:one-source-of-truth] HAR provider precedence is owned by providers module.
-    return cc_dump.providers.detect_provider_from_har_entry(entries[0])
+    if len(providers) == 1:
+        return next(iter(providers))
+    return "mixed"
 
 
 def _entry_created_or_mtime(entries: list[dict], path: Path) -> str:
