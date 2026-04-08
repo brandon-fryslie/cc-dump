@@ -29,7 +29,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 import cc_dump.providers
 from cc_dump.pipeline.event_types import (
@@ -94,7 +94,7 @@ class _HarPostData(BaseModel):  # type: ignore[explicit-any]
 
 class _HarRequest(BaseModel):  # type: ignore[explicit-any]
     model_config = ConfigDict(extra="allow")
-    headers: list[_HarHeader] = []
+    headers: list[_HarHeader] = Field(default_factory=list)
     postData: _HarPostData
 
 
@@ -106,7 +106,7 @@ class _HarContent(BaseModel):  # type: ignore[explicit-any]
 class _HarResponse(BaseModel):  # type: ignore[explicit-any]
     model_config = ConfigDict(extra="allow")
     status: int = 200
-    headers: list[_HarHeader] = []
+    headers: list[_HarHeader] = Field(default_factory=list)
     content: _HarContent
 
 

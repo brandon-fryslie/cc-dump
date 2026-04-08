@@ -12,10 +12,12 @@ This module is RELOADABLE. Stable boundary modules import it as a module object.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import cc_dump.providers
-import cc_dump.app.domain_store
+
+if TYPE_CHECKING:
+    import cc_dump.app.domain_store
 
 
 @dataclass
