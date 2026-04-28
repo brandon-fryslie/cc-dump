@@ -1,0 +1,63 @@
+{
+  "project": {
+    "eyebrow": "by brandon-fryslie",
+    "name": "cc-dump",
+    "tagline": "Transparent HTTP proxy for Claude Code API traffic. Real-time Textual TUI with system-prompt diff tracking, HAR recording, and replay.",
+    "github_url": "https://github.com/brandon-fryslie/cc-dump",
+    "language": "Python",
+    "license": "MIT",
+    "badges": ["Python 3.10+", "Textual TUI"],
+    "ctas": [
+      { "label": "View source", "url": "https://github.com/brandon-fryslie/cc-dump", "primary": true },
+      { "label": "README",      "url": "https://github.com/brandon-fryslie/cc-dump#readme" }
+    ]
+  },
+
+  "hero": {
+    "kind": "code",
+    "code": "# Terminal 1: start cc-dump\n$ cc-dump\nListening on: http://127.0.0.1:54321\n\n# Terminal 2: point Claude Code at it\n$ ANTHROPIC_BASE_URL=http://127.0.0.1:54321 claude\n\n# All API traffic now flows through cc-dump and is displayed in the TUI:\n#  • request/response framing with model, max_tokens, stream flag, tool count\n#  • system prompts get color-coded tracking tags ([sp-1], [sp-2], …)\n#  • unified diffs render inline whenever a tracked prompt changes between requests\n#  • HAR file is written to ~/.local/share/cc-dump/recordings/ for later replay"
+  },
+
+  "highlights": [
+    {
+      "title": "Real-time streaming display",
+      "description": "API responses stream into the TUI as they arrive. Request framing, message roles, content summaries, and tool correlation are all live."
+    },
+    {
+      "title": "System-prompt diff tracking",
+      "description": "Prompts are content-addressed and assigned color-coded tags (sp-1, sp-2, …). When a tracked prompt changes between requests, a unified diff renders inline."
+    },
+    {
+      "title": "Cache-zone analysis",
+      "description": "Combines request and response into a single turn view with cache-zone analysis — see which fragments of your prompt got cached and how the cache evolves."
+    },
+    {
+      "title": "3-level visibility",
+      "description": "Every content category cycles between Existence (·), Summary, and Full via number keys. Read at the density you actually want."
+    },
+    {
+      "title": "Recording and replay",
+      "description": "HAR files are the source of truth for events. cc-dump writes them automatically; --replay reloads a session and the proxy keeps capturing new traffic on top."
+    },
+    {
+      "title": "Forward and reverse proxy modes",
+      "description": "Default mode targets api.anthropic.com directly. Pass --target \"\" to switch to forward-proxy mode and inspect any HTTP API your tooling talks to."
+    }
+  ],
+
+  "quickstart": {
+    "code": "# Install\nuv tool install -e .\n\n# Or with the optional tmux integration (split-pane CLI launching, auto-zoom):\nuv tool install -e \".[tmux]\"\n\n# Run the proxy (port is OS-assigned by default and printed on startup)\ncc-dump\n\n# Point Claude Code at it\nANTHROPIC_BASE_URL=http://127.0.0.1:<PORT> claude\n\n# Replay a previous session\ncc-dump --replay latest\n\n# Browser mode (textual-serve)\ncc-dump-serve   # then open http://localhost:8000"
+  },
+
+  "links": [
+    { "label": "snarfx (dependency)",        "url": "https://github.com/brandon-fryslie/snarfx" },
+    { "label": "Textual",                    "url": "https://github.com/Textualize/textual" },
+    { "label": "textual-serve",              "url": "https://github.com/Textualize/textual-serve" },
+    { "label": "deployed-sites index",       "url": "https://brandon-fryslie.github.io/" }
+  ],
+
+  "headings": {
+    "highlights": "What it does",
+    "quickstart": "Try it"
+  }
+}
