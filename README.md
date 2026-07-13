@@ -1,336 +1,126 @@
 # cc-dump
 
-Transparent HTTP proxy for monitoring Claude Code API traffic. Intercepts requests to the Anthropic API, tracks system prompt changes with diffs, and provides a real-time Textual TUI with HAR recording/replay capabilities.
+A live viewer for everything Claude Code sends to and receives from the Anthropic API. Run it, point Claude Code at it, and watch the full conversation — system prompts, tool calls, token costs, streaming responses — in a terminal UI.
 
-## Install
-
-```bash
-uv tool install -e .
-```
-
-Requires Python 3.10+. Production dependencies: [Textual](https://github.com/Textualize/textual), [textual-serve](https://github.com/Textualize/textual-serve), [libtmux](https://github.com/tmux-python/libtmux), [watchfiles](https://github.com/samuelcolvin/watchfiles), [snarfx](https://github.com/brandon-fryslie/snarfx).
-
-**Optional:** For tmux integration (split-pane CLI launching, auto-zoom):
+## Quickstart
 
 ```bash
-uv tool install -e ".[tmux]"  # adds libtmux
-```
+# 1. Install (pulls all dependencies, including snarfx, from PyPI)
+uv tool install "git+https://github.com/brandon-fryslie/cc-dump.git"
 
-## Quick Start
-
-```bash
-# Terminal 1: start cc-dump
+# 2. Start cc-dump — it prints the port it's listening on
 cc-dump
-# prints: Listening on: http://127.0.0.1:<PORT>
+# → Listening on: http://127.0.0.1:<PORT>
 
-# Terminal 2: point Claude Code at cc-dump
+# 3. In another terminal, launch Claude Code pointed at cc-dump
 ANTHROPIC_BASE_URL=http://127.0.0.1:<PORT> claude
 ```
 
-All API traffic now flows through cc-dump and is displayed in the TUI.
+That's it. Every request Claude Code makes now streams into the cc-dump UI, and is recorded to disk automatically so you can replay it later.
 
-## Usage Modes
-
-### Terminal — Reverse Proxy (default)
-
-cc-dump sits between Claude Code and the Anthropic API:
+To replay a past session instead of proxying live traffic:
 
 ```bash
-cc-dump [--port PORT] [--target URL]
-# Port is OS-assigned by default; printed on startup
-ANTHROPIC_BASE_URL=http://127.0.0.1:<PORT> claude
-```
-
-### Terminal — Forward Proxy
-
-For dynamic targets (e.g., non-Anthropic APIs), pass an empty target:
-
-```bash
-cc-dump --target ""
-# Port printed on startup
-HTTP_PROXY=http://127.0.0.1:<PORT> ANTHROPIC_BASE_URL=http://api.minimax.com claude
-```
-
-Requests are sent as plain HTTP to cc-dump, inspected, then upgraded to HTTPS for the upstream API.
-
-### Browser Mode
-
-Run cc-dump in your browser via textual-serve:
-
-```bash
-cc-dump-serve          # visit http://localhost:8000
-# or:
-just web
-```
-
-Each browser tab runs an independent cc-dump instance.
-
-### Recording and Replay
-
-cc-dump automatically records all API traffic to HAR files:
-
-```bash
-# Normal operation — records to ~/.local/share/cc-dump/recordings/
-cc-dump
-
-# Replay a previous session (proxy still runs for new traffic)
-cc-dump --replay path/to/recording.har
 cc-dump --replay latest
-
-# Continue from most recent recording (replay + capture new traffic)
-cc-dump --continue
-
-# Disable recording
-cc-dump --no-record
-
-# Custom recording output directory
-cc-dump --record /path/to/recordings
 ```
 
-HAR files are the source of truth for events. Replay mode loads previous data, then the proxy accepts new traffic on top.
+## Requirements
 
-## CLI Reference
+- **[uv](https://docs.astral.sh/uv/)** — the installer used above. Install it with `curl -LsSf https://astral.sh/uv/install.sh | sh`.
+- **Python 3.10+** — `uv` will fetch a suitable Python for you if you don't have one.
+- **[Claude Code](https://github.com/anthropics/claude-code)** — the thing you're monitoring.
+- A terminal that renders 256 colors / truecolor (any modern terminal: iTerm2, Ghostty, Kitty, Windows Terminal, etc.).
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--host HOST` | `127.0.0.1` | Bind address |
-| `--port PORT` | `0` (OS-assigned) | Listen port |
-| `--target URL` | `https://api.anthropic.com` | Upstream API URL (empty string for forward proxy mode). Defaults to `ANTHROPIC_BASE_URL` env var if set |
-| `--replay PATH` | — | Replay a HAR file (`latest` for most recent) |
-| `--continue` | — | Continue from most recent recording (replay + live proxy) |
-| `--record PATH` | auto | Custom HAR recording output directory |
-| `--no-record` | — | Disable HAR recording |
+No API keys, certificates, or config files are needed. cc-dump sits between Claude Code and Anthropic as a plain reverse proxy — Claude Code still uses your normal auth.
 
-## Features
+**Optional:** running inside `tmux` unlocks split-pane launching and auto-zoom (see the Tmux keys below).
 
-### Real-Time Streaming Display
+## Using it
 
-API responses stream into the TUI as they arrive. Request details (model, max_tokens, stream flag, tool count), message roles, and content summaries are displayed with tool correlation.
+cc-dump is keyboard-driven. The conversation scrolls in the main pane; every content type can be shown at three levels of detail, and panels along the side show cost and timeline analysis.
 
-### System Prompt Tracking
+### The core idea: 3 levels of detail
 
-System prompts are content-addressed and assigned color-coded tracking tags (`[sp-1]`, `[sp-2]`, etc.). When a tracked prompt changes between requests, unified diffs are shown inline.
+Each **category** of content (your messages, the assistant's, tool calls, etc.) can be displayed at one of three levels. Press a category's number key to cycle it:
 
-### 3-Level Visibility System
+| Level | Symbol | Shows |
+|-------|--------|-------|
+| Existence | `·` | One line — "this exists," details hidden |
+| Summary | `◐` | A short preview |
+| Full | `●` | Everything |
 
-Every content category has three visibility levels, cycled with number keys:
+You can also **click any block** marked `▶`/`▼` to expand or collapse just that one block.
 
-| Level | Symbol | Meaning |
-|-------|--------|---------|
-| EXISTENCE | `·` | Minimal (1 line) — content exists but details hidden |
-| SUMMARY | `◐` | Compact (3–12 lines) — meaningful preview |
-| FULL | `●` | Complete — all content visible |
+### Category keys
 
-Seven categories: **user** (1), **assistant** (2), **tools** (3), **system** (4), **budget** (5), **metadata** (6), **headers** (7).
+| Key | Category | Starts at |
+|-----|----------|-----------|
+| `1` | Your messages | Full |
+| `2` | Assistant | Full |
+| `3` | Tool calls & results | Summary |
+| `4` | System prompt | Summary |
+| `5` | Token budget | Hidden |
+| `6` | Metadata | Hidden |
+| `7` | HTTP headers | Hidden |
 
-**Click to expand/collapse:** Click any block with `▶`/`▼` to toggle it within the current level. Blocks that exceed their line limit show these indicators.
-
-See [docs/VISIBILITY_SYSTEM.md](docs/VISIBILITY_SYSTEM.md) for detailed documentation.
-
-### Tool Correlation and Summaries
-
-Tool use/result pairs are correlated by ID. At tools level SUMMARY or below, consecutive tool runs are collapsed into a single `ToolUseSummaryBlock` showing per-tool counts.
-
-### Token and Cost Analysis
-
-**Cost panel** (`.` to cycle) — Per-tool token usage estimates (from tool payload size heuristics). Press `,` to toggle between aggregate and per-model breakdown views.
-
-**Timeline panel** (`.` to cycle) — Context growth visualization across requests.
-
-**Budget blocks** — Per-turn token accounting: input, output, cache creation, cache read tokens, and cost estimates.
-
-### Search
-
-Vim-style `/` search with incremental matching:
-
-| Key | Action |
-|-----|--------|
-| `/` | Open search bar |
-| `Enter` | Commit search, go to first match |
-| `n` / `N` | Next / previous match |
-| `Esc` | Close search, keep current filters |
-| `q` | Cancel search, restore original filters |
-
-**Mode toggles** (during editing, via `Alt+key`):
-- `Alt+c` — Case sensitivity (default: insensitive)
-- `Alt+w` — Word boundary matching
-- `Alt+r` — Regex mode (default: on)
-- `Alt+i` — Incremental search (default: on)
-
-Search automatically raises category visibility to FULL and expands blocks containing matches.
-
-### Content Rendering
-
-Text content is rendered using Rich:
-- **Markdown** — Prose is rendered as formatted Markdown
-- **Code blocks** — Syntax-highlighted with language detection
-- **XML blocks** — Detected and rendered with collapsible tag structure (click `▷`/`▽` to toggle)
-
-### HAR Recording and Replay
-
-All API traffic is recorded in HAR 1.2 format. Recordings are stored in `~/.local/share/cc-dump/recordings/` with filenames like `ccdump-<provider>-<timestamp>-<shortid>.har`. Replay feeds saved data through the same rendering pipeline as live traffic.
-
-### Tmux Integration
-
-When running inside tmux with `libtmux` installed:
-
-- `c` — Launch the active CLI config in a split pane (for example Claude or Copilot). If already running, focuses that pane
-- `z` — Manual zoom toggle (cc-dump pane ↔ full screen)
-- `Z` — Toggle auto-zoom: automatically zooms cc-dump when API requests arrive, unzooms when the turn completes
-
-### Filterset Presets
-
-Apply and cycle built-in visibility presets:
-
-- `F1`–`F9` — Apply a filterset preset (F3 reserved)
-- `=` / `-` — Cycle forward/backward through presets
-
-**Built-in defaults:**
-
-| Slot | Name | Shows |
-|------|------|-------|
-| F1 | Conversation | User + assistant at full |
-| F2 | Overview | Everything at summary |
-| F4 | Tools | Tools at full, user/assistant at summary |
-| F5 | System | System + metadata + headers at full |
-| F6 | Cost | Budget + metadata at full |
-| F7 | Full Debug | Everything at full |
-| F8 | Assistant | Assistant only at full |
-| F9 | Minimal | User + assistant + tools at summary |
-
-### Theme Cycling
-
-`[` / `]` cycle through Textual's built-in themes. The selected theme is persisted to settings.
-
-### Info Panel
-
-`i` toggles a panel showing server configuration: proxy URL, mode, target, session ID, recording path, Python/Textual versions, PID. Click any row to copy its value to the clipboard.
-
-### Logs Panel
-
-`Ctrl+L` toggles a debug log panel with timestamped, color-coded messages (INFO, WARNING, ERROR).
-
-### Conversation Export
-
-Available via the command palette (`Ctrl+P` → "Dump conversation"). Exports the full conversation to a text file. On macOS, opens in `$VISUAL` if set.
-
-### Command Palette
-
-`Ctrl+P` opens Textual's command palette — a searchable list of all available actions (toggle panels, navigate, change themes, export, etc.).
-
-### Economics Breakdown
-
-`,` toggles the cost panel between aggregate view and per-model breakdown view, useful for multi-model sessions.
-
-### Hot-Reload Development
-
-File changes in the `cc_dump` package trigger automatic hot-reload of the rendering pipeline. The TUI re-renders without restart, preserving scroll position and conversation state.
-
-## TUI Controls
-
-### Category Visibility
-
-| Key | Category | Default |
-|-----|----------|---------|
-| `1` | User | visible, full, expanded |
-| `2` | Assistant | visible, full, expanded |
-| `3` | Tools | visible, summary, collapsed |
-| `4` | System | visible, summary, collapsed |
-| `5` | Budget | hidden |
-| `6` | Metadata | hidden |
-| `7` | Headers | hidden |
-
-Each press cycles: current → next visibility level.
-
-**Shift+number** (`!@#$%^&`) or **Shift+letter** (`QWERTYU`) — Toggle the detail axis for the corresponding category.
-
-**Lowercase letter** (`qwertyu`) — Toggle the expand axis for the corresponding category.
-
-### Panels
-
-| Key | Panel |
-|-----|-------|
-| `.` | Cycle panel (stats → economics → timeline) |
-| `,` | Cycle panel mode (aggregate ↔ per-model breakdown) |
-| `i` | Server info panel |
-| `Ctrl+L` | Debug logs panel |
+Hold **Shift** with a number to toggle its detail axis; the matching lowercase letter (`q w e r t y u` → categories 1–7) toggles expansion.
 
 ### Navigation
 
 | Key | Action |
 |-----|--------|
-| `g` / `G` | Go to top / bottom |
-| `j` / `k` | Scroll down / up one line |
-| `h` / `l` | Scroll left / right one column |
-| `Ctrl+D` / `Ctrl+U` | Half-page down / up |
-| `Ctrl+F` / `Ctrl+B` | Full-page down / up |
-| `0` | Toggle follow mode (auto-scroll to new content) |
+| `j` / `k` | Scroll down / up a line |
+| `h` / `l` | Scroll left / right a column |
+| `Ctrl+D` / `Ctrl+U` | Half page down / up |
+| `Ctrl+F` / `Ctrl+B` | Full page down / up |
+| `g` / `G` | Jump to top / bottom |
+| `0` | Follow mode — auto-scroll to newest content |
 
 ### Search
 
 | Key | Action |
 |-----|--------|
-| `/` | Start search |
-| `Enter` | Commit and navigate |
+| `/` | Open search (regex, case-insensitive by default) |
+| `Enter` | Jump to first match |
 | `n` / `N` | Next / previous match |
-| `Esc` | Close search, keep filters |
-| `q` | Cancel, restore original filters |
-| `Alt+c/w/r/i` | Toggle case/word/regex/incremental |
+| `Alt+c` / `Alt+w` / `Alt+r` / `Alt+i` | Toggle case / word / regex / incremental |
+| `Esc` | Close search, keep the view it opened |
+| `q` | Cancel and restore the view you had before |
 
-### Filterset Presets
+Searching automatically reveals matching content in full, even if that category was collapsed.
 
-| Key | Action |
-|-----|--------|
-| `F1`–`F9` | Apply preset (F3 skipped) |
-| `=` / `-` | Cycle forward / backward through presets |
-
-### Theme
+### Panels & views
 
 | Key | Action |
 |-----|--------|
-| `[` / `]` | Previous / next theme |
+| `.` | Cycle side panel: stats → cost → timeline |
+| `,` | Toggle cost panel between totals and per-model breakdown |
+| `i` | Server info (URL, mode, session, versions) — click a row to copy it |
+| `Ctrl+L` | Debug log panel |
 
-### Tmux
-
-| Key | Action |
-|-----|--------|
-| `c` | Launch active tool in split pane (or focus if running) |
-| `z` | Toggle manual zoom |
-| `Z` | Toggle auto-zoom on API activity |
-
-### Other
+### Presets & themes
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+P` | Command palette |
+| `F1`–`F9` | Apply a visibility preset (Conversation, Overview, Tools, Cost, Full Debug, …) |
+| `=` / `-` | Cycle presets forward / backward |
+| `[` / `]` | Previous / next color theme (remembered across runs) |
+
+### Tmux (only when running inside tmux)
+
+| Key | Action |
+|-----|--------|
+| `c` | Launch Claude Code in a split pane (or focus it if already running) |
+| `z` | Toggle zoom on the cc-dump pane |
+| `Z` | Auto-zoom cc-dump whenever a request is in flight |
+
+### Everything else
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+P` | Command palette — searchable list of every action, including "Dump conversation" to export |
 | `Ctrl+C` | Quit |
 
-## File Locations
+---
 
-| Path | Contents |
-|------|----------|
-| `~/.local/share/cc-dump/recordings/` | HAR recordings (flat directory; provider encoded in filename) |
-| `~/.config/cc-dump/settings.json` | Persisted app settings (theme, launch configs, defaults) |
-
-## Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `ANTHROPIC_BASE_URL` | Default upstream target (overridden by `--target`) |
-| `CC_DUMP_SEED_HUE` | Base hue (0–360) for the color palette |
-
-## Development
-
-```bash
-just run                          # Run the proxy
-uv run pytest                     # All tests
-uv run pytest -k "test_name"      # Single test
-just lint                         # uvx ruff check src/
-just quality-gate                 # no new lint/complexity regressions
-just quality-gate-refresh         # intentionally update baseline
-just fmt                          # uvx ruff format src/
-just install                      # uv tool install -e .
-just reinstall                    # after structural changes
-```
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for system design and [PROJECT_SPEC.md](PROJECT_SPEC.md) for project goals.
+Contributing or want the full CLI reference? Run `cc-dump --help`, and see [ARCHITECTURE.md](ARCHITECTURE.md) and [CLAUDE.md](CLAUDE.md).
