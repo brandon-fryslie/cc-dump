@@ -59,6 +59,32 @@ subagent-enrich har projects="~/.claude/projects":
 fmt:
     uv run ruff format src/
 
+# Build sdist + wheel into dist/ (clean first)
+build:
+    rm -rf dist/
+    uv build
+
+# Publish the current pyproject.toml version to PyPI via twine (~/.pypirc).
+# Version bump, commit, PR, and merge are manual — see RELEASING.md.
+publish: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    version=$(grep -E '^version' pyproject.toml | sed -E 's/.*"(.*)".*/\1/')
+    echo "Publishing cc-dump ${version}..."
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "ERROR: working tree is dirty — commit or stash before publishing." >&2
+        exit 1
+    fi
+    code=$(curl -s -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/cc-dump/${version}/json")
+    if [ "${code}" = "200" ]; then
+        echo "ERROR: cc-dump ${version} is already on PyPI — releases are immutable." >&2
+        echo "       Bump 'version' in pyproject.toml first (see RELEASING.md)." >&2
+        exit 1
+    fi
+    uvx twine check dist/*
+    uvx twine upload dist/*
+    echo "Published. Verify: https://pypi.org/pypi/cc-dump/${version}/json"
+
 # Run in browser via textual-serve
 web:
     uv run cc-dump-serve
