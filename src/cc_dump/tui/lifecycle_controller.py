@@ -58,14 +58,11 @@ def _connect_stderr_tee(app) -> None:
 def _log_proxy_endpoints(app) -> None:
     app._app_log("INFO", "🚀 cc-dump proxy started")
     app._app_log("INFO", f"Listening on: http://{app._host}:{app._port}")
-    for spec in cc_dump.providers.all_provider_specs():
-        endpoint = app._provider_endpoints.get(spec.key)
-        if endpoint is None:
+    # // [LAW:dataflow-not-control-flow] Iterate Provider records, not the raw spec list.
+    for provider in app._providers.all():
+        if not provider.endpoint.proxy_url:
             continue
-        if not endpoint.proxy_url:
-            continue
-        # // [LAW:dataflow-not-control-flow] Endpoint logging is derived line data.
-        for line in cc_dump.providers.build_provider_endpoint_detail_lines(endpoint):
+        for line in cc_dump.providers.build_provider_endpoint_detail_lines(provider.endpoint):
             app._app_log("INFO", line)
 
 

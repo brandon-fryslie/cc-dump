@@ -151,14 +151,4 @@ Discover the dispatch tables: `grep 'BLOCK_.*RENDERERS\|TRUNCATION_LIMITS\|BLOCK
 - Vim navigation: `g`/`G` top/bottom, `j`/`k` line scroll, `h`/`l` column scroll, `ctrl+d`/`ctrl+u` half-page, `ctrl+f`/`ctrl+b` full-page
 - Default levels: headers/metadata/budget=EXISTENCE, user/assistant=FULL, tools/system=SUMMARY
 
-## Issue Tracking
-
-Uses `bd` (beads) CLI. Always pass `--json` flag. Issues in `.beads/issues.jsonl` — commit with code changes.
-
-```bash
-bd ready --json          # find unblocked work
-bd update <id> --status in_progress --json
-bd close <id> --reason "done" --json
-```
-
 

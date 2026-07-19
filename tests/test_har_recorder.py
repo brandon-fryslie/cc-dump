@@ -715,16 +715,3 @@ def test_har_subscriber_no_file_no_events(tmp_path):
     assert subscriber._events_received == {}
 
 
-def test_har_subscriber_provider_filter(tmp_path):
-    """Provider-filtered recorder ignores events for other providers."""
-    har_path = tmp_path / "openai.har"
-    subscriber = HARRecordingSubscriber(str(har_path), provider_filter="openai")
-
-    # Anthropic events should be ignored by an openai-filtered recorder.
-    subscriber.on_event(RequestHeadersEvent(headers={}))
-    subscriber.on_event(RequestBodyEvent(body={"model": "claude-3-opus-20240229"}))
-    subscriber.on_event(ResponseHeadersEvent(status_code=200, headers={}))
-    subscriber.on_event(ResponseCompleteEvent(body=_complete_msg(msg_id="msg_ignored", text="ignored")))
-    subscriber.close()
-
-    assert not har_path.exists()

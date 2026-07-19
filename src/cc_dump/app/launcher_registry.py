@@ -47,6 +47,15 @@ _LAUNCHERS: dict[str, LauncherSpec] = {
         supports_model_flag=False,
         supports_resume_flag=False,
     ),
+    "codex": LauncherSpec(
+        key="codex",
+        display_name="Codex",
+        default_command="codex",
+        process_names=("codex",),
+        provider_key="openai",
+        supports_model_flag=False,
+        supports_resume_flag=False,
+    ),
 }
 
 
