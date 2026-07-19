@@ -1,5 +1,6 @@
 """Tests for ConversationView public seam methods used by search."""
 
+from types import SimpleNamespace
 
 import cc_dump.core.formatting
 from cc_dump.tui.widget_factory import ConversationView, ScrollAnchor, TurnData
@@ -177,6 +178,38 @@ def test_iter_blocks_with_descendants_preserves_turn_order():
     ordered = list(conv._iter_blocks_with_descendants())
 
     assert ordered == [first, second]
+
+
+def test_reveal_search_match_sets_temporary_reveal_state(monkeypatch):
+    """reveal_search_match applies the reveal contract: block vis_override =
+    ALWAYS_VISIBLE, the matched region is expanded, and the view scrolls to the
+    matched turn."""
+    conv = ConversationView()
+    block = cc_dump.core.formatting.TextContentBlock(content="needle")
+    conv._turns = [
+        TurnData(
+            turn_index=0,
+            blocks=[block],
+            strips=[],
+            block_strip_map={0: 0},
+            _flat_blocks=[block],
+        )
+    ]
+    scrolled_turns: list[int] = []
+    monkeypatch.setattr(conv, "ensure_turn_rendered", lambda _idx: None)
+    monkeypatch.setattr(
+        conv,
+        "scroll_to_block",
+        lambda turn_index, scroll_key: scrolled_turns.append(turn_index),
+    )
+
+    match = SimpleNamespace(turn_index=0, block_index=0, block=block, region_index=0)
+
+    assert conv.reveal_search_match(match, rerender=False) is True
+    block_vs = conv._view_overrides.block_state(block.block_id)
+    assert block_vs.vis_override == cc_dump.core.formatting.ALWAYS_VISIBLE
+    assert conv._view_overrides.get_region(block.block_id, 0).expanded is True
+    assert scrolled_turns == [0]
 
 
 def test_clear_search_reveal_clears_temporary_state():

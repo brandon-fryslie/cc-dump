@@ -253,7 +253,10 @@ def sync_group(app, specs: tuple[PanelSpec, ...], visible_flags: tuple[bool, ...
     focus_conv = False
     focus_show_target: tuple[object, PanelSpec] | None = None
 
-    for spec, will_visible in zip(specs, visible_flags):
+    # [LAW:no-silent-failure] specs (spec table) and visible_flags (reactive
+    # projection) are independent sources; strict=True turns a cardinality drift
+    # into a loud ValueError instead of a silently unsynced panel.
+    for spec, will_visible in zip(specs, visible_flags, strict=True):
         existing = _query_existing(app, spec)
         was_visible = bool(existing.display) if existing is not None else False
 

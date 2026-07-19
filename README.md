@@ -49,7 +49,7 @@ Each **category** of content (your messages, the assistant's, tool calls, etc.) 
 | Summary | `◐` | A short preview |
 | Full | `●` | Everything |
 
-You can also **click any block** marked `▶`/`▼` to expand or collapse just that one block.
+Searching automatically expands whichever block contains a match, even if its category is collapsed.
 
 ### Category keys
 

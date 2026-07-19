@@ -146,15 +146,14 @@ Note: F3 is skipped in the cycle.
 
 ## Click Behavior
 
-Clicking a block toggles its expansion **within the current level**:
+**Double-click** a block to select its text (for copying). Single clicks position the cursor for that selection.
 
-| Current State | After Click | Effect |
-|---------------|-------------|--------|
-| Collapsed | Expanded | Show more lines |
-| Expanded | Collapsed | Show fewer lines |
-| No arrow | No change | Block fits within current limit |
+Per-block expansion is driven by the view itself, not by clicking:
 
-**Important:** Clicking does NOT change the visibility or detail level. Use keyboard keys for that.
+- **Category detail keys** (`Shift`+number / `Q W E R T Y`, lowercase `q w e r t y`) change how much each category shows.
+- **Search reveal** automatically expands the block containing a match.
+
+Clicking does NOT change visibility, detail level, or per-block expansion. Use the keyboard keys above.
 
 ## Footer Legend
 
