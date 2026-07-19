@@ -9,6 +9,7 @@
 
 import importlib
 import logging
+import operator
 import os
 import queue
 import sys
@@ -17,7 +18,7 @@ import time
 import tracemalloc
 import traceback
 from functools import lru_cache
-from typing import Callable, Optional, Protocol, TypedDict, cast
+from typing import Callable, Optional, Protocol, cast
 
 import textual
 import textual.filter as _textual_filter
@@ -42,6 +43,11 @@ import cc_dump.tui.input_modes
 import cc_dump.tui.info_panel
 import cc_dump.tui.custom_footer
 import cc_dump.tui.session_panel
+import cc_dump.tui.session_registry
+import cc_dump.tui.provider_registry
+import cc_dump.tui.panel_sync
+import cc_dump.tui.request_registry
+import cc_dump.tui.stream_registry
 # Extracted controller modules (module-object imports — safe for hot-reload)
 from cc_dump.tui import action_handlers as _actions
 import cc_dump.tui.panel_registry
@@ -132,19 +138,93 @@ def _resolve_factory(dotted_path: str):
     return getattr(mod, func_name)
 
 
-class TurnUsage(TypedDict, total=False):
-    input_tokens: int
-    output_tokens: int
-    cache_read_tokens: int
-    cache_creation_tokens: int
+# [LAW:dataflow-not-control-flow] Pure 1-line delegates are a table, not 40 methods.
+# [LAW:one-source-of-truth] Adding an action is one row here, not a new method body.
+#
+# Each lambda is late-binding: it references the module object (_theme, _actions, ...)
+# which remains stable across hot-reloads; attribute lookup at call time always hits
+# the current reloaded function.
+_DELEGATE_TABLE: dict[str, Callable] = {
+    # Theme
+    "action_next_theme": lambda self: _theme.cycle_theme(self, 1),
+    "action_prev_theme": lambda self: _theme.cycle_theme(self, -1),
+    "_apply_markdown_theme": lambda self: _theme.apply_markdown_theme(self),
+    # Session navigation
+    "action_next_session": lambda self: _actions.next_session(self),
+    "action_prev_session": lambda self: _actions.prev_session(self),
+    # Dump / export
+    "action_dump_conversation": lambda self: _dump.dump_conversation(self),
+    "_write_block_text": lambda self, f, block, block_idx: _dump.write_block_text(
+        f, block, block_idx, log_fn=self._app_log
+    ),
+    # Visibility
+    "action_toggle_vis": lambda self, category: _actions.toggle_vis(self, category),
+    "action_toggle_detail": lambda self, category: _actions.toggle_detail(self, category),
+    "action_toggle_analytics": lambda self, category: _actions.toggle_analytics(self, category),
+    "action_toggle_expand": lambda self, category: _actions.toggle_analytics(self, category),
+    "action_cycle_vis": lambda self, category: _actions.cycle_vis(self, category),
+    "_clear_overrides": lambda self, category_name: _actions.clear_overrides(self, category_name),
+    # Filtersets
+    "action_apply_filterset": lambda self, slot: _actions.apply_filterset(self, slot),
+    "action_next_filterset": lambda self: _actions.next_filterset(self),
+    "action_prev_filterset": lambda self: _actions.prev_filterset(self),
+    # Panels
+    "action_cycle_panel": lambda self: _actions.cycle_panel(self),
+    "action_cycle_panel_mode": lambda self: _actions.cycle_panel_mode(self),
+    "action_toggle_logs": lambda self: _actions.toggle_logs(self),
+    "action_toggle_info": lambda self: _actions.toggle_info(self),
+    "action_toggle_keys": lambda self: _actions.toggle_keys(self),
+    "action_show_help_panel": lambda self: _actions.toggle_keys(self),
+    "action_hide_help_panel": lambda self: _actions.toggle_keys(self),
+    "action_toggle_settings": lambda self: _actions.toggle_settings(self),
+    "action_toggle_debug_settings": lambda self: _actions.toggle_debug_settings(self),
+    "action_toggle_launch_config": lambda self: _actions.toggle_launch_config(self),
+    "_open_settings": lambda self: _settings_launch.open_settings(self),
+    "_close_settings": lambda self: _settings_launch.close_settings(self),
+    "_open_launch_config": lambda self: _settings_launch.open_launch_config(self),
+    "_close_launch_config": lambda self: _settings_launch.close_launch_config(self),
+    "_launch_with_config": lambda self, config, log_label="launch_with_config": _settings_launch.launch_with_config(
+        self, config, log_label=log_label
+    ),
+    # Navigation
+    "action_toggle_follow": lambda self: _actions.toggle_follow(self),
+    "action_next_special": lambda self, marker_key="all": _actions.next_special(self, marker_key),
+    "action_prev_special": lambda self, marker_key="all": _actions.prev_special(self, marker_key),
+    "action_next_region_tag": lambda self, tag="all": _actions.next_region_tag(self, tag),
+    "action_prev_region_tag": lambda self, tag="all": _actions.prev_region_tag(self, tag),
+    "action_go_top": lambda self: _actions.go_top(self),
+    "action_go_bottom": lambda self: _actions.go_bottom(self),
+    "action_scroll_down_line": lambda self: _actions.scroll_down_line(self),
+    "action_scroll_up_line": lambda self: _actions.scroll_up_line(self),
+    "action_scroll_left_col": lambda self: _actions.scroll_left_col(self),
+    "action_scroll_right_col": lambda self: _actions.scroll_right_col(self),
+    "action_page_down": lambda self: _actions.page_down(self),
+    "action_page_up": lambda self: _actions.page_up(self),
+    "action_half_page_down": lambda self: _actions.half_page_down(self),
+    "action_half_page_up": lambda self: _actions.half_page_up(self),
+    # Search
+    "_start_search": lambda self: _search.start_search(self),
+    "_handle_search_editing_key": lambda self, event: _search.handle_search_editing_key(self, event),
+    "_handle_search_nav_special_keys": lambda self, event: _search.handle_search_nav_special_keys(self, event),
+}
 
 
-class AppState(TypedDict, total=False):
-    current_turn_usage_by_request: dict[str, TurnUsage]
-    pending_request_headers: dict[str, dict[str, str]]
-    recent_messages: list[dict]
-    last_message_time_by_session: dict[str, float]
-    stream_registry: object
+def _install_delegates(cls):
+    """// [LAW:single-enforcer] All glue delegates generated from one table.
+
+    Creates real class attributes (not __getattr__ magic) so inherited-method
+    overrides like action_show_help_panel work and dir()/hasattr introspection
+    behaves identically to hand-written methods.
+    """
+    for name, fn in _DELEGATE_TABLE.items():
+        def _make(f, n):
+            def method(self, *args, **kwargs):
+                return f(self, *args, **kwargs)
+            method.__name__ = n
+            method.__qualname__ = f"{cls.__name__}.{n}"
+            return method
+        setattr(cls, name, _make(fn, name))
+    return cls
 
 
 class NewSession(Message):
@@ -163,6 +243,7 @@ class _ProxyEvent(Message, bubble=False):
         super().__init__()
 
 
+@_install_delegates
 class CcDumpApp(App):
     """TUI application for cc-dump."""
 
@@ -192,34 +273,33 @@ class CcDumpApp(App):
     ):
         super().__init__()
         self._event_queue = event_queue
-        # [LAW:one-source-of-truth] Default-provider state is an alias into canonical per-provider state.
-        self._provider_states = dict(provider_states or {})
-        self._provider_states.setdefault(cc_dump.providers.DEFAULT_PROVIDER_KEY, state)
-        self._state = self._provider_states[cc_dump.providers.DEFAULT_PROVIDER_KEY]
+        # [LAW:single-enforcer] Provider runtime state + endpoint + per-provider
+        # session tracking all live on Provider records in the registry.
+        self._providers = cc_dump.tui.provider_registry.build_registry(
+            provider_states=provider_states,
+            default_state=state,
+            provider_endpoints=provider_endpoints,
+            host=host,
+            port=port,
+            target=target,
+        )
         self._router = router
         self._analytics_store = analytics_store
-        self._session_id: str | None = None
         self._host = host
         self._port = port
         self._target = target
-        # // [LAW:one-source-of-truth] Active provider endpoints are owned here.
-        if provider_endpoints is None:
-            provider_endpoints = {
-                cc_dump.providers.DEFAULT_PROVIDER_KEY: cc_dump.providers.default_provider_endpoint(
-                    host,
-                    port,
-                    target or "",
-                )
-            }
-        # // [LAW:single-enforcer] Provider endpoint normalization is centralized in cc_dump.providers.
-        self._provider_endpoints = dict(provider_endpoints)
         self._replay_data = replay_data
         self._recording_path = recording_path
         self._replay_file = replay_file
         self._tmux_controller = tmux_controller
         self._settings_store = settings_store
         self._view_store = view_store
-        self._domain_store = domain_store if domain_store is not None else cc_dump.app.domain_store.DomainStore()
+        # [LAW:one-source-of-truth] The default session's domain_store is owned
+        # by the SessionRegistry; the constructor param seeds it directly.
+        default_domain_store = (
+            domain_store if domain_store is not None
+            else cc_dump.app.domain_store.DomainStore()
+        )
         self._store_context = store_context
         # // [LAW:one-source-of-truth] App owns render runtime state for theme/render coupling.
         self._render_runtime = cc_dump.tui.rendering.create_render_runtime()
@@ -239,11 +319,13 @@ class CcDumpApp(App):
         if not replay_data:
             self._replay_complete.set()
 
-        self._app_state: AppState = {
-            "current_turn_usage_by_request": {},
-            "pending_request_headers": {},
-            "last_message_time_by_session": {},
-        }
+        # [LAW:single-enforcer] Per-request ephemeral state lives in the RequestRegistry.
+        # [LAW:one-source-of-truth] StreamRegistry is owned eagerly (not lazily created
+        # inside event_handlers); navigation cursors are explicit typed fields.
+        self._requests = cc_dump.tui.request_registry.RequestRegistry()
+        self._stream_registry = cc_dump.tui.stream_registry.StreamRegistry()
+        self._special_nav_cursor: dict[str, int] = {}
+        self._region_nav_cursor: dict[str, int] = {}
 
         self._launch_configs_cache: list | None = None
         self._search_state = cc_dump.tui.search.SearchState(self._view_store)
@@ -255,20 +337,17 @@ class CcDumpApp(App):
         self._conv_tabs_id = "conversation-tabs"
         self._conv_tab_main_id = "conversation-tab-main"
         self._search_bar_id = "search-bar"
-        self._default_session_key = "__default__"
-        # // [LAW:one-source-of-truth] Request/session routing ownership lives in app state.
-        self._request_session_keys: dict[str, str] = {}
-        self._session_domain_stores: dict[str, cc_dump.app.domain_store.DomainStore] = {
-            self._default_session_key: self._domain_store
-        }
-        self._session_conv_ids: dict[str, str] = {
-            self._default_session_key: self._conv_id
-        }
-        self._session_tab_ids: dict[str, str] = {
-            self._default_session_key: self._conv_tab_main_id
-        }
-        self._active_session_key = self._default_session_key
-        self._last_primary_session_key = self._default_session_key
+        # [LAW:single-enforcer] Session identity ownership lives in the registry.
+        # [LAW:one-source-of-truth] No more parallel dicts; one Session per tab.
+        default_session = cc_dump.tui.session_registry.Session(
+            key=cc_dump.providers.DEFAULT_SESSION_KEY,
+            tab_id=self._conv_tab_main_id,
+            conv_id=self._conv_id,
+            domain_store=default_domain_store,
+            provider=cc_dump.providers.DEFAULT_PROVIDER_KEY,
+            is_default=True,
+        )
+        self._sessions = cc_dump.tui.session_registry.SessionRegistry(default_session)
         # [LAW:one-source-of-truth] Panel IDs derived from registry
         self._panel_ids = dict(cc_dump.tui.panel_registry.PANEL_CSS_IDS)
         self._logs_id = "logs-panel"
@@ -323,105 +402,82 @@ class CcDumpApp(App):
     def _get_conv_tabs(self):
         return self._query_safe("#" + self._conv_tabs_id)
 
-    def _normalize_session_key(self, session_id: str) -> str:
-        return session_id if session_id else self._default_session_key
+    def _sync_active_from_tabs(self) -> "cc_dump.tui.session_registry.Session":
+        """Pull the active session from the tabs widget into the registry.
 
-    def _context_session_key(self, session_key: str) -> str:
-        """Resolve canonical conversation context for session tabs.
-
-        // [LAW:one-source-of-truth] Context/session linkage is normalized here.
+        // [LAW:single-enforcer] Tabs widget → registry is the only direction.
         """
-        return self._normalize_session_key(session_key)
-
-    def _active_context_session_key(self) -> str:
-        """Return the active conversation context key, even on derived tabs."""
-        return self._context_session_key(self._active_session_key_from_tabs())
-
-    def _active_session_key_from_tabs(self) -> str:
         tabs = self._get_conv_tabs()
         if tabs is None:
-            return self._active_session_key
+            return self._sessions.active()
         active_tab_id = str(getattr(tabs, "active", "") or "")
-        for session_key, tab_id in self._session_tab_ids.items():
-            if tab_id == active_tab_id:
-                self._active_session_key = session_key
-                self._last_primary_session_key = session_key
-                break
-        return self._active_session_key
-
-    def _get_domain_store(self, session_key: str | None = None):
-        key = session_key if session_key is not None else self._active_session_key_from_tabs()
-        return self._session_domain_stores.get(key, self._domain_store)
-
-    def _get_active_domain_store(self):
-        return self._get_domain_store(self._active_session_key_from_tabs())
+        return self._sessions.sync_from_tab_id(active_tab_id)
 
     def _iter_domain_stores(self):
-        return tuple(self._session_domain_stores.values())
+        # // [LAW:dataflow-not-control-flow] attrgetter keeps the projection
+        # //   as data, not a generator expression.
+        return tuple(map(operator.attrgetter("domain_store"), self._sessions.all()))
 
     def _provider_state(self, provider: str) -> cc_dump.core.formatting_impl.ProviderRuntimeState:
-        return self._provider_states.get(provider, self._state)
+        return self._providers.get(provider).runtime_state
 
     def _total_request_count(self) -> int:
-        return sum(state.request_counter for state in self._provider_states.values())
+        return self._providers.total_request_count()
 
-    def _session_tab_title(self, session_key: str) -> str:
-        if session_key == self._default_session_key:
-            return cc_dump.providers.get_provider_spec(
-                cc_dump.providers.DEFAULT_PROVIDER_KEY
-            ).tab_title
-        # Provider-prefixed session keys: "<provider>:__default__" → provider tab title.
-        provider = cc_dump.providers.session_provider(session_key)
-        if provider != cc_dump.providers.DEFAULT_PROVIDER_KEY:
-            spec = cc_dump.providers.get_provider_spec(provider)
-            _, _, suffix = session_key.partition(":")
-            if suffix == "__default__":
-                return spec.tab_title
-            return f"{spec.tab_short_prefix} {suffix[:8]}"
-        return session_key[:8]
+    def _build_session(self, key: str) -> "cc_dump.tui.session_registry.Session":
+        """Factory for new Sessions. Called by SessionRegistry.ensure.
 
-    def _ensure_session_surface(self, session_key: str) -> None:
-        """Ensure one DomainStore + TabPane + ConversationView exists for session key.
-
-        // [LAW:one-source-of-truth] session_key owns DomainStore + ConversationView identity.
-        // [LAW:locality-or-seam] Dynamic tab/session creation is isolated here.
+        // [LAW:single-enforcer] The only place a non-default Session is constructed.
         """
-        key = self._normalize_session_key(session_key)
-        if key in self._session_conv_ids and key in self._session_domain_stores:
-            return
-
-        tab_index = len(self._session_tab_ids)
-        conv_id = f"{self._conv_id}-{tab_index}"
-        tab_id = f"{self._conv_tab_main_id}-{tab_index}"
+        tab_index = len(self._sessions.all())
         domain_store = cc_dump.app.domain_store.DomainStore()
+        return cc_dump.tui.session_registry.Session(
+            key=key,
+            tab_id=f"{self._conv_tab_main_id}-{tab_index}",
+            conv_id=f"{self._conv_id}-{tab_index}",
+            domain_store=domain_store,
+            provider=cc_dump.providers.session_provider(key),
+            is_default=False,
+        )
+
+    def _ensure_session(self, raw_key: str | None) -> "cc_dump.tui.session_registry.Session":
+        """Ensure one TabPane + ConversationView exists for session key.
+
+        // [LAW:single-enforcer] All raw → Session conversion funnels through here.
+        // [LAW:locality-or-seam] Dynamic tab creation is isolated here.
+        """
+        existing = self._sessions.get(cc_dump.tui.session_registry.normalize_session_key(raw_key))
+        session = self._sessions.ensure(raw_key, factory=self._build_session)
+        if existing is not None:
+            return session
+
+        # New session — mount its conversation view + tab pane.
         conv = cc_dump.tui.widget_factory.create_conversation_view(
             view_store=self._view_store,
-            domain_store=domain_store,
+            domain_store=session.domain_store,
             runtime=self._render_runtime,
         )
-        conv.id = conv_id
-
-        self._session_domain_stores[key] = domain_store
-        self._session_conv_ids[key] = conv_id
-        self._session_tab_ids[key] = tab_id
+        conv.id = session.conv_id
 
         tabs = self._get_conv_tabs()
         if tabs is None:
-            return
+            return session
 
-        pane = TabPane(self._session_tab_title(key), conv, id=tab_id)
+        pane = TabPane(session.tab_title(), conv, id=session.tab_id)
         tabs.add_pane(pane)
 
         # // [LAW:dataflow-not-control-flow] Default tab always exists; first real
         # session auto-focuses only when default has no data.
-        default_store = self._session_domain_stores[self._default_session_key]
+        default_store = self._sessions.default().domain_store
+        active = self._sessions.active()
         if (
-            self._active_session_key == self._default_session_key
-            and key != self._default_session_key
+            active.is_default
+            and not session.is_default
             and default_store.completed_count == 0
             and not default_store.get_active_stream_ids()
         ):
-            tabs.active = tab_id
+            tabs.active = session.tab_id
+        return session
 
     def _extract_session_id_from_body(self, body: object) -> str:
         """Extract session_id from request body metadata.user_id."""
@@ -439,24 +495,21 @@ class CcDumpApp(App):
         session_id = parsed.get("session_id", "")
         return session_id if isinstance(session_id, str) else ""
 
-    def _bind_request_session(self, request_id: str, session_key: str) -> None:
-        if not request_id:
-            return
-        self._request_session_keys[request_id] = self._normalize_session_key(session_key)
+    def _session_for_request_id(self, request_id: str) -> "cc_dump.tui.session_registry.Session":
+        """Resolve a request_id to its Session.
 
-    def _session_key_for_request_id(self, request_id: str) -> str:
-        key = self._request_session_keys.get(request_id)
-        if key:
-            return key
-        stream_registry = self._app_state.get("stream_registry")
-        if stream_registry is None:
-            return self._default_session_key
-        ctx = stream_registry.get(request_id)
-        if ctx is None:
-            return self._default_session_key
-        key = self._normalize_session_key(str(ctx.session_id or ""))
-        self._bind_request_session(request_id, key)
-        return key
+        // [LAW:dataflow-not-control-flow] Always returns a Session — never None,
+        //   never a raw key.
+        """
+        if request_id and request_id in self._sessions._request_bindings:
+            return self._sessions.session_for_request(request_id)
+        # Not yet bound — try the stream registry as a backstop.
+        ctx = self._stream_registry.get(request_id)
+        if ctx is not None:
+            session = self._ensure_session(str(ctx.session_id or ""))
+            self._sessions.bind_request(request_id, session.key)
+            return session
+        return self._sessions.default()
 
     def _resolve_event_provider(self, event: cc_dump.pipeline.event_types.PipelineEvent) -> str:
         """Extract provider from event. Empty provider is a hard error.
@@ -480,35 +533,33 @@ class CcDumpApp(App):
             provider,
         )
 
-    def _resolve_default_provider_session_key(self, event) -> str:
+    def _resolve_default_provider_session(self, event) -> "cc_dump.tui.session_registry.Session":
         request_id = str(getattr(event, "request_id", "") or "")
-        session_key = self._default_session_key
-        if request_id:
-            session_key = self._request_session_keys.get(request_id, session_key)
-        self._bind_request_session(request_id, session_key)
-        self._ensure_session_surface(session_key)
-        return session_key
+        bound_key = self._sessions._request_bindings.get(request_id) if request_id else None
+        session = self._ensure_session(bound_key)
+        self._sessions.bind_request(request_id, session.key)
+        return session
 
     def _track_request_activity(self, request_id: str) -> None:
         if not request_id:
             return
-        resolved_key = self._session_key_for_request_id(request_id)
-        self._ensure_session_surface(resolved_key)
-        per_session = self._app_state.get("last_message_time_by_session", {})
-        if not isinstance(per_session, dict):
-            per_session = {}
-        per_session[resolved_key] = time.monotonic()
-        self._app_state["last_message_time_by_session"] = per_session
+        session = self._session_for_request_id(request_id)
+        # // [LAW:one-source-of-truth] last_message_time lives on the Session.
+        session.last_message_time = time.monotonic()
         self._publish_session_panel_state()
 
-    def _sync_detected_session(self, state: cc_dump.core.formatting_impl.ProviderRuntimeState) -> None:
-        # // [LAW:one-source-of-truth] Session ID comes from formatting state,
-        # not from blocks or app_state side-channels.
-        current_session = state.current_session or ""
-        if not current_session or current_session == self._session_id:
+    def _sync_detected_session(
+        self, provider: "cc_dump.tui.provider_registry.Provider"
+    ) -> None:
+        """Notify once when a provider's runtime state reports a new session.
+
+        // [LAW:single-enforcer] Notification dedup is the Provider's concern.
+        """
+        current_session = provider.runtime_state.current_session or ""
+        if not current_session or current_session == provider.last_notified_session:
             return
         self._app_log("INFO", f"Session detected: {current_session}")
-        self._session_id = current_session
+        provider.last_notified_session = current_session
         self._publish_session_panel_state()
         self.post_message(NewSession(current_session))
         self.notify(f"New session: {current_session[:8]}...")
@@ -516,34 +567,30 @@ class CcDumpApp(App):
         if info is not None:
             info.update_info(self._build_server_info())
 
-    def _resolve_event_session_key(self, event, *, provider: str | None = None) -> str:
-        """Resolve session key for event routing.
+    def _resolve_event_session(
+        self, event, *, provider: str | None = None
+    ) -> "cc_dump.tui.session_registry.Session":
+        """Resolve Session for event routing.
 
-        // [LAW:one-source-of-truth] request_id -> session routing is resolved once here.
-        // Provider determines the tab. One tab per provider instance.
-        // Session identity preserved on blocks (block.session_id) and in
-        // formatting state (state["current_session"]), not in tab routing.
+        // [LAW:one-source-of-truth] request_id -> session routing resolved once here.
+        // [LAW:dataflow-not-control-flow] Returns a typed Session, not a key string.
         """
         resolved_provider = provider or self._resolve_event_provider(event)
-        provider_key = self._provider_tab_key(resolved_provider)
         if resolved_provider != cc_dump.providers.DEFAULT_PROVIDER_KEY:
-            self._bind_request_session(event.request_id, provider_key)
-            self._ensure_session_surface(provider_key)
-            return provider_key
-        return self._resolve_default_provider_session_key(event)
+            provider_key = self._provider_tab_key(resolved_provider)
+            session = self._ensure_session(provider_key)
+            self._sessions.bind_request(event.request_id, session.key)
+            return session
+        return self._resolve_default_provider_session(event)
 
     def _get_active_session_panel_state(self) -> tuple[str | None, float | None]:
         """Return session panel identity + last activity for active tab context."""
-        active_key = self._active_session_key_from_tabs()
-        per_session = self._app_state.get("last_message_time_by_session", {})
-        last_message_time = None
-        if isinstance(per_session, dict):
-            raw_time = per_session.get(active_key)
-            if isinstance(raw_time, (int, float)):
-                last_message_time = float(raw_time)
-        if active_key != self._default_session_key:
-            return active_key, last_message_time
-        return self._session_id, last_message_time
+        active = self._sync_active_from_tabs()
+        # [LAW:dataflow-not-control-flow] last_message_time is a typed field on
+        # the Session; is_default decided at construction.
+        if not active.is_default:
+            return active.key, active.last_message_time
+        return self._providers.default().last_notified_session, active.last_message_time
 
     def _publish_session_panel_state(self) -> None:
         """Publish canonical session panel projection to the view store.
@@ -562,15 +609,18 @@ class CcDumpApp(App):
 
     def _active_resume_session_id(self) -> str:
         """Resolve session_id used for launch auto-resume from active tab context."""
-        active_key = self._active_context_session_key()
-        if active_key and active_key != self._default_session_key:
-            return active_key
-        return str(self._session_id or "")
+        active = self._sync_active_from_tabs()
+        # [LAW:dataflow-not-control-flow] is_default already decided.
+        if not active.is_default:
+            return active.key
+        return str(self._providers.default().last_notified_session or "")
 
     def _get_conv(self, session_key: str | None = None):
-        key = session_key if session_key is not None else self._active_session_key_from_tabs()
-        conv_id = self._session_conv_ids.get(key, self._conv_id)
-        return self._query_safe("#" + conv_id)
+        if session_key is None:
+            session = self._sync_active_from_tabs()
+        else:
+            session = self._sessions.get_or_default(session_key)
+        return self._query_safe("#" + session.conv_id)
 
     def _get_panel(self, name: str):
         """// [LAW:one-source-of-truth] Generic panel accessor using registry IDs."""
@@ -712,13 +762,14 @@ class CcDumpApp(App):
             yield widget
 
         with TabbedContent(id=self._conv_tabs_id):
-            with TabPane("Claude", id=self._conv_tab_main_id):
+            default = self._sessions.default()
+            with TabPane("Claude", id=default.tab_id):
                 conv = cc_dump.tui.widget_factory.create_conversation_view(
                     view_store=self._view_store,
-                    domain_store=self._domain_store,
+                    domain_store=default.domain_store,
                     runtime=self._render_runtime,
                 )
-                conv.id = self._conv_id
+                conv.id = default.conv_id
                 yield conv
 
         logs = cc_dump.tui.widget_factory.create_logs_panel()
@@ -878,35 +929,26 @@ class CcDumpApp(App):
         )
 
     def _build_server_info(self) -> dict:
-        """// [LAW:one-source-of-truth] All server info derived from constructor params."""
-        default_endpoint = self._provider_endpoints.get(
-            cc_dump.providers.DEFAULT_PROVIDER_KEY
-        )
-        proxy_url = (
-            default_endpoint.proxy_url
-            if default_endpoint is not None and default_endpoint.proxy_url
-            else "http://{}:{}".format(self._host, self._port)
-        )
-        primary_target = default_endpoint.target if default_endpoint is not None else None
-        provider_modes: list[str] = []
+        """// [LAW:dataflow-not-control-flow] Straight pipe over the provider registry."""
+        default = self._providers.default()
+        proxy_url = default.endpoint.proxy_url or "http://{}:{}".format(self._host, self._port)
+        primary_target = default.endpoint.target
 
         provider_rows: list[dict[str, str]] = []
-        for spec in cc_dump.providers.all_provider_specs():
-            endpoint = self._provider_endpoints.get(spec.key)
-            if endpoint is None:
-                continue
-            provider_modes.append(endpoint.proxy_mode)
+        for provider in self._providers.all():
+            spec = cc_dump.providers.get_provider_spec(provider.key)
             provider_rows.append(
                 {
-                    "key": spec.key,
+                    "key": provider.key,
                     "name": spec.display_name,
-                    "proxy_url": endpoint.proxy_url,
-                    "target": endpoint.target or "",
-                    "proxy_mode": endpoint.proxy_mode,
+                    "proxy_url": provider.endpoint.proxy_url,
+                    "target": provider.endpoint.target or "",
+                    "proxy_mode": provider.endpoint.proxy_mode,
                     "base_url_env": spec.base_url_env,
                     "client_hint": spec.client_hint,
                 }
             )
+        provider_modes = [p.endpoint.proxy_mode for p in self._providers.all()]
         unique_modes = set(provider_modes)
         proxy_mode = provider_modes[0] if len(unique_modes) == 1 and provider_modes else "mixed"
 
@@ -915,7 +957,7 @@ class CcDumpApp(App):
             "proxy_mode": proxy_mode,
             "target": primary_target,
             "providers": provider_rows,
-            "session_id": self._session_id,
+            "session_id": default.last_notified_session,
             "recording_path": self._recording_path,
             "recording_dir": cc_dump.io.sessions.get_recordings_dir(),
             "replay_file": self._replay_file,
@@ -963,20 +1005,10 @@ class CcDumpApp(App):
         self._app_log("INFO", f"Processing {len(self._replay_data)} request/response pairs")
 
         try:
-            for (
-                req_headers,
-                req_body,
-                resp_status,
-                resp_headers,
-                complete_message,
-                provider,
-            ) in self._replay_data:
+            for pair in self._replay_data:
                 try:
                     # // [LAW:one-source-of-truth] Replay uses the same event pipeline as live.
-                    events = cc_dump.pipeline.har_replayer.convert_to_events(
-                        req_headers, req_body, resp_status, resp_headers, complete_message,
-                        provider=provider,
-                    )
+                    events = cc_dump.pipeline.har_replayer.convert_to_events(pair)
                     for event in events:
                         self._handle_event(event)
                 except Exception as e:
@@ -1033,30 +1065,31 @@ class CcDumpApp(App):
             return
 
         kind = event.kind
-        provider = self._resolve_event_provider(event)
-        state = self._provider_state(provider)
-        session_key = self._resolve_event_session_key(event, provider=provider)
-        conv = self._get_conv(session_key=session_key)
+        provider_key = self._resolve_event_provider(event)
+        provider = self._providers.get(provider_key)
+        state = provider.runtime_state
+        session = self._resolve_event_session(event, provider=provider_key)
+        conv = self._query_safe("#" + session.conv_id)
         if conv is None:
-            conv = self._query_safe("#" + self._conv_id)
+            conv = self._query_safe("#" + self._sessions.default().conv_id)
         if conv is None:
             return
-        domain_store = self._get_domain_store(session_key)
-        active_session_key = self._active_session_key_from_tabs()
-        # [LAW:single-enforcer] Active-session gating for stats snapshot writes is enforced here.
+        active_session = self._sync_active_from_tabs()
+        # [LAW:single-enforcer] Active-session gating for stats snapshot writes.
         event_view_store = (
-            self._view_store
-            if session_key == active_session_key
-            else None
+            self._view_store if session.key == active_session.key else None
         )
 
-        # [LAW:dataflow-not-control-flow] Unified context dict
-        widgets = {
+        # [LAW:dataflow-not-control-flow] Unified context dict carrying widgets
+        # + both registries; handlers mutate records, no app_state dict passthrough.
+        context = {
             "conv": conv,
             "filters": self.active_filters,
             "view_store": event_view_store,
-            "domain_store": domain_store,
+            "domain_store": session.domain_store,
             "analytics_store": self._analytics_store,
+            "request_registry": self._requests,
+            "stream_registry": self._stream_registry,
         }
 
         # [LAW:dataflow-not-control-flow] Always call handler, use no-op for unknown
@@ -1066,110 +1099,31 @@ class CcDumpApp(App):
                 kind, cc_dump.tui.event_handlers._noop
             ),
         )
-        self._app_state = cast(
-            AppState,
-            handler(event, state, widgets, self._app_state, self._app_log),
-        )
+        handler(event, state, context, self._app_log)
         self._track_request_activity(str(getattr(event, "request_id", "") or ""))
-        self._sync_detected_session(state)
+        self._sync_detected_session(provider)
 
     def on_tabbed_content_tab_activated(
         self, event: TabbedContent.TabActivated
     ) -> None:
-        """Sync active session context when conversation tab changes."""
+        """Sync active session context when conversation tab changes.
+
+        // [LAW:single-enforcer] Tabs widget → registry sync happens exactly here.
+        """
         if event.tabbed_content.id != self._conv_tabs_id:
             return
         pane_id = str(getattr(event.pane, "id", "") or "")
-        for session_key, tab_id in self._session_tab_ids.items():
-            if tab_id == pane_id:
-                self._active_session_key = session_key
-                break
+        self._sessions.sync_from_tab_id(pane_id)
         self._publish_session_panel_state()
-        # // [LAW:one-source-of-truth] _domain_store mirrors the active session store.
-        self._domain_store = self._get_active_domain_store()
 
     # ─── Delegates to extracted modules ────────────────────────────────
-    # Textual requires action_* and watch_* as methods on the App class.
+    # Pure 1-line delegates are generated from _DELEGATE_TABLE via the
+    # @_install_delegates decorator on the class. Only methods with real
+    # logic remain as hand-written definitions.
 
-    # Hot-reload
+    # Hot-reload (async — not in table; only async entry)
     async def _start_file_watcher(self):
         await _hot_reload.start_file_watcher(self)
-
-    # Theme
-    def _apply_markdown_theme(self):
-        _theme.apply_markdown_theme(self)
-
-    def action_next_theme(self):
-        _theme.cycle_theme(self, 1)
-
-    def action_prev_theme(self):
-        _theme.cycle_theme(self, -1)
-
-    # Session navigation
-    def action_next_session(self):
-        _actions.next_session(self)
-
-    def action_prev_session(self):
-        _actions.prev_session(self)
-
-    # Dump/export
-    def action_dump_conversation(self):
-        _dump.dump_conversation(self)
-
-    def _write_block_text(self, f, block, block_idx: int):
-        _dump.write_block_text(f, block, block_idx, log_fn=self._app_log)
-
-    # Visibility actions
-    def action_toggle_vis(self, category: str):
-        _actions.toggle_vis(self, category)
-
-    def action_toggle_detail(self, category: str):
-        _actions.toggle_detail(self, category)
-
-    def action_toggle_analytics(self, category: str):
-        _actions.toggle_analytics(self, category)
-
-    def action_toggle_expand(self, category: str):
-        self.action_toggle_analytics(category)
-
-    def action_cycle_vis(self, category: str):
-        _actions.cycle_vis(self, category)
-
-    def _clear_overrides(self, category_name: str):
-        _actions.clear_overrides(self, category_name)
-
-    # Filterset actions
-    def action_apply_filterset(self, slot: str):
-        _actions.apply_filterset(self, slot)
-
-    def action_next_filterset(self):
-        _actions.next_filterset(self)
-
-    def action_prev_filterset(self):
-        _actions.prev_filterset(self)
-
-    # Panel cycling
-    def action_cycle_panel(self):
-        _actions.cycle_panel(self)
-
-    def action_cycle_panel_mode(self):
-        _actions.cycle_panel_mode(self)
-
-    def action_toggle_logs(self):
-        _actions.toggle_logs(self)
-
-    def action_toggle_info(self):
-        _actions.toggle_info(self)
-
-    def action_toggle_keys(self):
-        _actions.toggle_keys(self)
-
-    # Override Textual's built-in help panel to use ours
-    def action_show_help_panel(self):
-        _actions.toggle_keys(self)
-
-    def action_hide_help_panel(self):
-        _actions.toggle_keys(self)
 
     # Tmux integration
     def action_launch_tool(self):
@@ -1202,19 +1156,6 @@ class CcDumpApp(App):
         self.copy_to_clipboard(log_path)
         self.notify(f"Copied: {log_path}")
 
-    # Settings
-    def action_toggle_settings(self):
-        _actions.toggle_settings(self)
-
-    def action_toggle_debug_settings(self):
-        _actions.toggle_debug_settings(self)
-
-    def _open_settings(self):
-        _settings_launch.open_settings(self)
-
-    def _close_settings(self) -> None:
-        _settings_launch.close_settings(self)
-
     def on_settings_panel_saved(self, msg) -> None:
         """Handle SettingsPanel.Saved — update store (reactions handle persistence + side effects)."""
         if self._settings_store is not None:
@@ -1225,16 +1166,6 @@ class CcDumpApp(App):
     def on_settings_panel_cancelled(self, msg) -> None:
         """Handle SettingsPanel.Cancelled — close without saving."""
         self._close_settings()
-
-    # Launch configs
-    def action_toggle_launch_config(self):
-        _actions.toggle_launch_config(self)
-
-    def _open_launch_config(self):
-        _settings_launch.open_launch_config(self)
-
-    def _close_launch_config(self) -> None:
-        _settings_launch.close_launch_config(self)
 
     def _execute_auto_launch(self) -> None:
         """Execute auto-launch from the CLI 'run' subcommand.
@@ -1263,10 +1194,6 @@ class CcDumpApp(App):
         extra_desc = " + {}".format(" ".join(self._auto_launch_extra_args)) if self._auto_launch_extra_args else ""
         self._app_log("INFO", "auto-launching '{}'{}".format(config_name, extra_desc))
         self._launch_with_config(merged, log_label="auto_launch:{}".format(config_name))
-
-    def _launch_with_config(self, config, log_label: str = "launch_with_config") -> None:
-        """Build args from config + session_id, launch via tmux."""
-        _settings_launch.launch_with_config(self, config, log_label=log_label)
 
     def _save_launch_configs(self, configs: list, active_name: str) -> None:
         """Persist configs and active name, invalidating the command palette cache."""
@@ -1303,62 +1230,6 @@ class CcDumpApp(App):
         self._sync_active_launch_config_state()
         self.notify("Active: {}".format(msg.name))
 
-    # Navigation
-    def action_toggle_follow(self):
-        _actions.toggle_follow(self)
-
-    def action_next_special(self, marker_key: str = "all"):
-        _actions.next_special(self, marker_key)
-
-    def action_prev_special(self, marker_key: str = "all"):
-        _actions.prev_special(self, marker_key)
-
-    def action_next_region_tag(self, tag: str = "all"):
-        _actions.next_region_tag(self, tag)
-
-    def action_prev_region_tag(self, tag: str = "all"):
-        _actions.prev_region_tag(self, tag)
-
-    def action_go_top(self):
-        _actions.go_top(self)
-
-    def action_go_bottom(self):
-        _actions.go_bottom(self)
-
-    def action_scroll_down_line(self):
-        _actions.scroll_down_line(self)
-
-    def action_scroll_up_line(self):
-        _actions.scroll_up_line(self)
-
-    def action_scroll_left_col(self):
-        _actions.scroll_left_col(self)
-
-    def action_scroll_right_col(self):
-        _actions.scroll_right_col(self)
-
-    def action_page_down(self):
-        _actions.page_down(self)
-
-    def action_page_up(self):
-        _actions.page_up(self)
-
-    def action_half_page_down(self):
-        _actions.half_page_down(self)
-
-    def action_half_page_up(self):
-        _actions.half_page_up(self)
-
-    # Search
-    def _start_search(self):
-        _search.start_search(self)
-
-    def _handle_search_editing_key(self, event):
-        _search.handle_search_editing_key(self, event)
-
-    def _handle_search_nav_special_keys(self, event) -> bool:
-        return _search.handle_search_nav_special_keys(self, event)
-
     # ─── Reactive watchers ─────────────────────────────────────────────
 
     def _sync_panel_display(self, active: str):
@@ -1369,114 +1240,22 @@ class CcDumpApp(App):
                 widget.display = (name == active)
 
     def _sync_chrome_panels(self, state: tuple[bool, bool]) -> None:
-        """Sync logs/info visibility from canonical view-store projection."""
-        logs_visible, info_visible = state
-        logs = self._get_logs()
-        if logs is not None:
-            logs.display = bool(logs_visible)
-        info = self._get_info()
-        if info is not None:
-            info.display = bool(info_visible)
+        """// [LAW:dataflow-not-control-flow] Driven by panel_sync spec table."""
+        cc_dump.tui.panel_sync.sync_group(
+            self, cc_dump.tui.panel_sync.specs_for_group("chrome"), state
+        )
 
     def _sync_sidebar_panels(self, state: tuple[bool, bool]) -> None:
-        """Single enforcer for sidebar visibility + focus.
-
-        Creates panels on-demand when the store says visible but no widget
-        exists — this makes sidebar panels survive hot-reload (matching the
-        aux-panel create-on-demand pattern).
-        """
-        settings_open, launch_open = state
-
-        def _first_or_none(panel_type):
-            try:
-                return self.screen.query(panel_type).first()
-            except NoMatches:
-                return None
-
-        # [LAW:dataflow-not-control-flow] Each panel always resolves to a
-        # (widget-or-None, visible) pair; creation is a data-driven side effect.
-        settings_panel = _first_or_none(cc_dump.tui.settings_panel.SettingsPanel)
-        if settings_panel is None and settings_open:
-            settings_panel = _settings_launch._ensure_settings_panel(self)
-        if settings_panel is not None:
-            settings_panel.display = settings_open
-
-        launch_panel = _first_or_none(cc_dump.tui.launch_config_panel.LaunchConfigPanel)
-        if launch_panel is None and launch_open:
-            configs = cc_dump.app.launch_config.load_configs()
-            active_name = cc_dump.app.launch_config.load_active_name()
-            launch_panel = _settings_launch._ensure_launch_config_panel(
-                self, configs, active_name
-            )
-        if launch_panel is not None:
-            launch_panel.display = launch_open
-
-        focus_target = None
-        if launch_open:
-            focus_target = launch_panel
-        elif settings_open:
-            focus_target = settings_panel
-        if focus_target is not None:
-            focus_default = getattr(focus_target, "focus_default_control", None)
-            if callable(focus_default):
-                self.call_after_refresh(focus_default)
-        else:
-            conv = self._get_conv()
-            if conv is not None:
-                self.call_after_refresh(conv.focus)
+        """// [LAW:dataflow-not-control-flow] Driven by panel_sync spec table."""
+        cc_dump.tui.panel_sync.sync_group(
+            self, cc_dump.tui.panel_sync.specs_for_group("sidebar"), state
+        )
 
     def _sync_aux_panels(self, state: tuple[bool, bool]) -> None:
-        """Mount/unmount keys + debug overlays from canonical store flags."""
-        keys_visible, debug_visible = state
-        self._ensure_panel_mounted(
-            panel_type=cc_dump.tui.keys_panel.KeysPanel,
-            create_panel=cc_dump.tui.keys_panel.create_keys_panel,
+        """// [LAW:dataflow-not-control-flow] Driven by panel_sync spec table."""
+        cc_dump.tui.panel_sync.sync_group(
+            self, cc_dump.tui.panel_sync.specs_for_group("aux"), state
         )
-        keys_panels: list[Widget] = list(self.screen.query(cc_dump.tui.keys_panel.KeysPanel))
-        for panel in keys_panels:
-            panel.display = bool(keys_visible)
-        self._sync_optional_panel(
-            panel_type=cc_dump.tui.debug_settings_panel.DebugSettingsPanel,
-            visible=debug_visible,
-            create_panel=lambda: cc_dump.tui.debug_settings_panel.create_debug_settings_panel(app_ref=self),
-            on_hidden=self._focus_active_conversation,
-        )
-
-    def _ensure_panel_mounted(
-        self,
-        *,
-        panel_type: type[Widget],
-        create_panel: Callable[[], Widget],
-    ) -> None:
-        """Mount a panel if missing, without changing display state."""
-        panels: list[Widget] = list(self.screen.query(panel_type))
-        if not panels:
-            self.screen.mount(create_panel())
-
-    def _sync_optional_panel(
-        self,
-        *,
-        panel_type: type[Widget],
-        visible: bool,
-        create_panel: Callable[[], Widget],
-        on_hidden: Callable[[], None] | None = None,
-    ) -> None:
-        """Sync optional overlay panel presence to a boolean visibility flag."""
-        panels: list[Widget] = list(self.screen.query(panel_type))
-        if visible:
-            if not panels:
-                self.screen.mount(create_panel())
-            return
-        if panels:
-            for panel in panels:
-                panel.remove()
-            if on_hidden is not None:
-                on_hidden()
-
-    def _focus_active_conversation(self) -> None:
-        conv = self._get_conv()
-        if conv is not None:
-            conv.focus()
 
     def _sync_error_items(self, items: list[cc_dump.app.error_models.ErrorItem]) -> None:
         """Project canonical error items to the active conversation indicator."""
@@ -1514,17 +1293,8 @@ class CcDumpApp(App):
     # ─── Key dispatch ──────────────────────────────────────────────────
 
     def _close_topmost_panel(self) -> bool:
-        """Close the topmost open panel. Returns True if a panel was closed.
-
-        Checks store booleans in priority order (launch_config → settings).
-        """
-        if self._view_store.get("panel:launch_config"):
-            self._close_launch_config()
-            return True
-        if self._view_store.get("panel:settings"):
-            self._close_settings()
-            return True
-        return False
+        """// [LAW:dataflow-not-control-flow] Priority order is spec data."""
+        return cc_dump.tui.panel_sync.close_topmost(self)
 
     def _handle_pre_keymap_event(self, event, mode) -> bool:
         InputMode = cc_dump.tui.input_modes.InputMode

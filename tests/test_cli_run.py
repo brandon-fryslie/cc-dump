@@ -10,7 +10,7 @@ from cc_dump.cli import (
     _detect_run_subcommand,
     _resolve_auto_launch_config_name,
     _recordings_output_dir,
-    _recording_path_for_provider,
+    _recording_path,
 )
 from cc_dump.cli_presentation import render_recordings_list
 
@@ -83,6 +83,30 @@ class TestDetectRunSubcommand:
         assert flags == []
         assert extra == ["-a", "-b", "--flag", "val"]
 
+    def test_flags_before_run(self):
+        name, flags, extra = _detect_run_subcommand(
+            ["--upstream", "copilot", "run", "claude"]
+        )
+        assert name == "claude"
+        assert flags == ["--upstream", "copilot"]
+        assert extra == []
+
+    def test_flags_before_and_after_run(self):
+        name, flags, extra = _detect_run_subcommand(
+            ["--upstream", "copilot", "run", "claude", "--port", "5000"]
+        )
+        assert name == "claude"
+        assert flags == ["--upstream", "copilot", "--port", "5000"]
+        assert extra == []
+
+    def test_flags_before_run_with_extra_args(self):
+        name, flags, extra = _detect_run_subcommand(
+            ["--upstream", "copilot", "run", "claude", "--", "--dangerously-bypass-permissions"]
+        )
+        assert name == "claude"
+        assert flags == ["--upstream", "copilot"]
+        assert extra == ["--dangerously-bypass-permissions"]
+
 
 class TestResolveAutoLaunchConfigName:
     def test_none_passthrough(self):
@@ -120,10 +144,10 @@ class TestRecordingPathHelpers:
         output = _recordings_output_dir(str(directory))
         assert output == directory
 
-    def test_recording_path_for_provider_uses_provider_first_format(self):
+    def test_recording_path_uses_timestamp_format(self):
         timestamp = "20260304-231500Z"
-        path = _recording_path_for_provider(Path("/tmp/recordings"), "anthropic", timestamp)
-        assert path.startswith("/tmp/recordings/ccdump-anthropic-20260304-231500Z-")
+        path = _recording_path(Path("/tmp/recordings"), timestamp)
+        assert path.startswith("/tmp/recordings/ccdump-20260304-231500Z-")
         assert path.endswith(".har")
         short_id = Path(path).stem.rsplit("-", 1)[-1]
         assert re.fullmatch(r"[0-9a-f]{8}", short_id) is not None

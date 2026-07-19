@@ -12,6 +12,7 @@ from typing import Literal, TypeAlias
 
 ProtocolFamily: TypeAlias = Literal["anthropic", "openai"]
 ProxyMode: TypeAlias = Literal["reverse", "forward"]
+UpstreamFormat: TypeAlias = Literal["anthropic", "openai-chat", "openai-responses"]
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,9 @@ class ProviderSpec:
     url_markers: tuple[str, ...]
     forward_proxy_hosts: tuple[str, ...] = ()
     client_hint: str = "<your-tool>"
+    # // [LAW:one-source-of-truth] upstream_format describes the shape the upstream
+    # API expects. When it differs from protocol_family, the proxy translates.
+    upstream_format: UpstreamFormat = "anthropic"
 
 
 @dataclass(frozen=True)
@@ -76,6 +80,7 @@ _PROVIDERS: dict[str, ProviderSpec] = {
         optional_proxy=False,
         url_markers=("api.anthropic.com",),
         client_hint="claude",
+        upstream_format="anthropic",
     ),
     "openai": ProviderSpec(
         key="openai",
@@ -83,7 +88,7 @@ _PROVIDERS: dict[str, ProviderSpec] = {
         tab_title="OpenAI",
         tab_short_prefix="OAI",
         protocol_family="openai",
-        api_paths=("/v1/chat/completions", "/chat/completions"),
+        api_paths=("/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses"),
         har_request_url="https://api.openai.com/v1/chat/completions",
         base_url_env="OPENAI_BASE_URL",
         proxy_type="reverse",
@@ -91,6 +96,7 @@ _PROVIDERS: dict[str, ProviderSpec] = {
         optional_proxy=True,
         url_markers=("api.openai.com",),
         client_hint="openai-api",
+        upstream_format="openai-chat",
     ),
     "copilot": ProviderSpec(
         key="copilot",
@@ -106,6 +112,7 @@ _PROVIDERS: dict[str, ProviderSpec] = {
         optional_proxy=True,
         url_markers=("api.githubcopilot.com", "githubcopilot.com"),
         forward_proxy_hosts=("api.githubcopilot.com",),
+        upstream_format="openai-chat",
     ),
 }
 
@@ -203,6 +210,14 @@ def is_known_provider(provider: str) -> bool:
 def get_provider_spec(provider: str) -> ProviderSpec:
     """Return provider spec from the canonical registry."""
     return _PROVIDERS[normalize_provider(provider)]
+
+
+def update_provider_spec(spec: ProviderSpec) -> None:
+    """Replace a provider spec in the registry.
+
+    // [LAW:single-enforcer] Runtime overrides (e.g., --upstream preset) go through here.
+    """
+    _PROVIDERS[normalize_provider(spec.key)] = spec
 
 
 def all_provider_specs() -> tuple[ProviderSpec, ...]:
