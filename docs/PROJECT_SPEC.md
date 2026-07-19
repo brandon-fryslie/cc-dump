@@ -46,7 +46,7 @@ cc-dump should work out of the box with a single command. Point Claude Code at i
 
 **Virtual rendering:** The conversation view uses Textual's Line API rather than appending widgets. This gives O(log n) line lookup and O(viewport) rendering cost, so performance doesn't degrade over long sessions.
 
-(no longer true, I nixed this) **Database as source of truth for aggregates:** Token counts and tool statistics come from SQLite queries, not in-memory accumulation. This avoids drift between what's displayed and what was actually captured.
+**Database as derived index:** SQLite stores token counts and tool statistics as a queryable index, but HAR files remain the source of truth for events.
 
 **Filter-based progressive disclosure:** The default view shows a compact summary. Keybindings progressively reveal more detail (headers, tool I/O, system prompts, expanded content, metadata). Each filter has a colored indicator so users can see at a glance what's shown.
 

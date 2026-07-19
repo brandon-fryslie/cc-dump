@@ -1,5 +1,10 @@
 """Event handling logic - pure functions for processing proxy events.
 
+// [LAW:single-enforcer] Per-request state lives on Request records in the
+//   RequestRegistry, not in a stringly-typed app_state bag.
+// [LAW:dataflow-not-control-flow] Handlers read/write typed Request fields
+//   instead of branching on `isinstance(app_state["key"], dict)`.
+
 This module is RELOADABLE. It contains all the logic for what to do when
 events arrive from the proxy. The app.py module calls into these functions
 but the actual behavior can be hot-swapped.
@@ -10,10 +15,11 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import cc_dump.core.analysis
 import cc_dump.core.formatting
-import cc_dump.tui.stream_registry
+import cc_dump.tui.request_registry
 from cc_dump.pipeline.event_types import (
     PipelineEventKind,
     RequestHeadersEvent,
@@ -33,78 +39,13 @@ from cc_dump.pipeline.event_types import (
 from cc_dump.core.formatting_impl import ProviderRuntimeState
 
 EventHandler = Callable[
-    [object, dict[str, object], dict[str, object], dict[str, object], Callable[[str, str], None]],
-    dict[str, object],
+    [object, ProviderRuntimeState, dict[str, object], Callable[[str, str], None]],
+    None,
 ]
 
 _CAPACITY_ENV_VAR = "CC_DUMP_TOKEN_CAPACITY"
 _CACHED_CAPACITY_RAW: str | None = None
 _CACHED_CAPACITY_TOTAL: int | None = None
-
-
-def _get_stream_registry(app_state):
-    """Get or create the stream registry in app_state."""
-    reg = app_state.get("stream_registry")
-    if reg is None:
-        reg = cc_dump.tui.stream_registry.StreamRegistry()
-        app_state["stream_registry"] = reg
-    return reg
-
-
-
-def _store_response_meta(app_state, request_id: str, status_code: int, headers: dict) -> None:
-    """Store response headers/status by request_id for complete-response finalization."""
-    by_request = app_state.get("response_meta_by_request", {})
-    if not isinstance(by_request, dict):
-        by_request = {}
-    by_request[request_id] = {
-        "status_code": status_code,
-        "headers": dict(headers) if isinstance(headers, dict) else {},
-    }
-    app_state["response_meta_by_request"] = by_request
-
-
-def _pop_response_meta(app_state, request_id: str) -> tuple[int, dict]:
-    """Pop response headers/status for request_id."""
-    by_request = app_state.get("response_meta_by_request", {})
-    if not isinstance(by_request, dict):
-        by_request = {}
-    payload = by_request.pop(request_id, None)
-    app_state["response_meta_by_request"] = by_request
-
-    if not isinstance(payload, dict):
-        return 0, {}
-    status_code = payload.get("status_code", 0)
-    if not isinstance(status_code, int):
-        status_code = 0
-    headers = payload.get("headers", {})
-    if not isinstance(headers, dict):
-        headers = {}
-    return status_code, headers
-
-
-def _clear_current_turn_usage(app_state, request_id: str) -> None:
-    """Clear per-request streaming usage tracking."""
-    usage_by_request = app_state.get("current_turn_usage_by_request", {})
-    if isinstance(usage_by_request, dict):
-        usage_by_request.pop(request_id, None)
-        app_state["current_turn_usage_by_request"] = usage_by_request
-
-
-def _focused_current_turn_usage(app_state, domain_store) -> dict | None:
-    """Resolve in-progress usage for the currently focused stream in domain_store.
-
-    // [LAW:one-source-of-truth] Focused request_id resolves once from DomainStore.
-    """
-    usage_by_request = app_state.get("current_turn_usage_by_request", {})
-    if not isinstance(usage_by_request, dict):
-        return None
-    focused_getter = getattr(domain_store, "get_focused_stream_id", None)
-    focused_request_id = focused_getter() if callable(focused_getter) else None
-    if not focused_request_id:
-        return None
-    current_turn = usage_by_request.get(focused_request_id)
-    return current_turn if isinstance(current_turn, dict) else None
 
 
 def _get_capacity_total() -> int:
@@ -147,22 +88,37 @@ def _with_capacity_summary(snapshot: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _refresh_stats_snapshot(widgets, app_state) -> None:
+def _focused_stream_id(domain_store) -> str | None:
+    """// [LAW:dataflow-not-control-flow] Absent domain store → no focused id."""
+    if domain_store is None:
+        return None
+    return domain_store.get_focused_stream_id()
+
+
+def _ensure_dict(value) -> dict:
+    """// [LAW:single-enforcer] Single place that normalizes unknown-shape headers."""
+    if isinstance(value, dict):
+        return dict(value)
+    return {}
+
+
+def _refresh_stats_snapshot(context) -> None:
     """Recompute and publish canonical stats panel snapshot.
 
     // [LAW:single-enforcer] This is the sole writer for panel:stats_snapshot.
     """
-    view_store = widgets.get("view_store")
+    view_store = context.get("view_store")
     if view_store is None:
         return
-    analytics_store = widgets.get("analytics_store")
+    analytics_store = context.get("analytics_store")
     if analytics_store is None:
         view_store.set("panel:stats_snapshot", {"summary": {}, "timeline": [], "models": []})
         return
 
-    domain_store = widgets.get("domain_store")
+    request_registry = context["request_registry"]
+    focused_id = _focused_stream_id(context.get("domain_store"))
     snapshot = analytics_store.get_dashboard_snapshot(
-        current_turn=_focused_current_turn_usage(app_state, domain_store)
+        current_turn=request_registry.focused_usage(focused_id)
     )
     view_store.set("panel:stats_snapshot", _with_capacity_summary(snapshot))
 
@@ -171,26 +127,26 @@ _last_stats_refresh_ns: int = 0
 _STATS_REFRESH_INTERVAL_NS = 1_000_000_000  # 1 second
 
 
-def _refresh_stats_snapshot_throttled(widgets, app_state) -> None:
+def _refresh_stats_snapshot_throttled(context) -> None:
     """Throttled variant for streaming hot path — at most once per second."""
     global _last_stats_refresh_ns
     now = time.monotonic_ns()
     if now - _last_stats_refresh_ns < _STATS_REFRESH_INTERVAL_NS:
         return
     _last_stats_refresh_ns = now
-    _refresh_stats_snapshot(widgets, app_state)
+    _refresh_stats_snapshot(context)
 
 
-def _refresh_post_response(state, widgets, app_state, *, rerender_budget: bool = True) -> None:
+def _refresh_post_response(state, context, *, rerender_budget: bool = True) -> None:
     """Refresh derived UI state after a response completion path."""
-    conv = widgets["conv"]
-    filters = widgets["filters"]
+    conv = context["conv"]
+    filters = context["filters"]
 
     if rerender_budget:
         budget_vis = filters.get("metadata", cc_dump.core.formatting.HIDDEN)
         if budget_vis.visible:
             conv.rerender(filters)
-    _refresh_stats_snapshot(widgets, app_state)
+    _refresh_stats_snapshot(context)
 
 
 def _annotate_cache_zones(blocks: list, cache_zones: dict[str, object]) -> list:
@@ -199,7 +155,6 @@ def _annotate_cache_zones(blocks: list, cache_zones: dict[str, object]) -> list:
     // [LAW:dataflow-not-control-flow] Zones are data annotations on existing blocks,
     // not control flow that rebuilds the block tree.
     """
-    # Section key → block type + field for matching
     for block in blocks:
         block_type = type(block).__name__
         zone_key: str | None = None
@@ -217,7 +172,7 @@ def _annotate_cache_zones(blocks: list, cache_zones: dict[str, object]) -> list:
 
 
 def _get_request_blocks_with_zones(
-    provisional: dict,
+    req: "cc_dump.tui.request_registry.Request",
     complete_body: dict,
     domain_store,
 ) -> list:
@@ -226,13 +181,13 @@ def _get_request_blocks_with_zones(
     Returns the original turn blocks, annotated in-place with cache zones.
     No state mutation — overlap-safe for concurrent requests.
     """
-    blocks = list(domain_store.get_turn_blocks(provisional["turn_index"]))
+    blocks = list(domain_store.get_turn_blocks(req.turn_index))
     # // [LAW:single-enforcer] Coerce None → {} at boundary.
     usage = complete_body.get("usage") or {}
     if not usage:
         return blocks
     cache_zones = cc_dump.core.analysis.compute_cache_zones(
-        provisional["body"],
+        req.body,
         cache_read=usage.get("cache_read_input_tokens", 0),
         cache_creation=usage.get("cache_creation_input_tokens", 0),
         input_tokens=usage.get("input_tokens", 0),
@@ -260,78 +215,110 @@ def _commit_combined_turn(
         domain_store.replace_turn(turn_index, combined)
 
 
+@dataclass
+class _CompletionFrame:
+    """Typed snapshot of the pending Request state at complete-response time.
+
+    // [LAW:dataflow-not-control-flow] Callers read named fields; they never
+    //   ask "is the request record present?".
+    """
+
+    turn_index: int
+    status_code: int
+    headers_dict: dict
+
+
+def _completion_frame(req) -> _CompletionFrame:
+    if req is None:
+        return _CompletionFrame(turn_index=-1, status_code=0, headers_dict={})
+    return _CompletionFrame(
+        turn_index=req.turn_index,
+        status_code=req.response_status,
+        headers_dict=req.response_headers,
+    )
+
+
+def _build_response_blocks(frame: _CompletionFrame, provider: str, complete_body: dict) -> list:
+    blocks: list = []
+    if frame.status_code > 0 or frame.headers_dict:
+        blocks.extend(
+            cc_dump.core.formatting.format_response_headers(
+                frame.status_code or 200, frame.headers_dict
+            )
+        )
+    blocks.extend(
+        cc_dump.core.formatting.format_complete_response_for_provider(provider, complete_body)
+    )
+    return blocks
+
+
+def _commit_or_fallback(
+    request_id: str,
+    frame: _CompletionFrame,
+    request_blocks: list,
+    response_blocks: list,
+    domain_store,
+) -> None:
+    """Single enforcer for "reuse provisional turn or fall back to a new turn"."""
+    if 0 <= frame.turn_index < domain_store.completed_count:
+        _commit_combined_turn(
+            request_id, frame.turn_index, request_blocks, response_blocks, domain_store
+        )
+        return
+    if domain_store.get_stream_blocks(request_id):
+        domain_store.finalize_stream_with_blocks(request_id, response_blocks)
+        return
+    domain_store.add_turn(response_blocks)
+
+
 def _handle_complete_response_payload(
     *,
     request_id: str,
     complete_body: dict,
     state: ProviderRuntimeState,
-    widgets,
-    app_state,
+    context,
     seq: int = 0,
     recv_ns: int = 0,
     provider: str = "anthropic",
-) -> dict[str, object]:
+) -> None:
     """Canonical response finalization path for both streaming and non-streaming transport."""
-    stream_registry = _get_stream_registry(app_state)
+    stream_registry = context["stream_registry"]
     stream_registry.mark_done(request_id, seq=seq, recv_ns=recv_ns)
 
-    domain_store = widgets["domain_store"]
+    domain_store = context["domain_store"]
+    request_registry = context["request_registry"]
 
-    # // [LAW:one-source-of-truth] Popping provisional data stored in handle_request.
-    provisional = app_state.get("provisional_requests", {}).pop(request_id, None)
+    # // [LAW:single-enforcer] Registry owns the Request record; we pop it on complete.
+    req = request_registry.pop(request_id)
+    frame = _completion_frame(req)
 
-    # ── Build request blocks (with cache zones if usage available) ──
     request_blocks: list = []
-    turn_index = provisional["turn_index"] if provisional else -1
-    if provisional:
-        request_blocks = _get_request_blocks_with_zones(provisional, complete_body, domain_store)
+    if req is not None and frame.turn_index >= 0:
+        request_blocks = _get_request_blocks_with_zones(req, complete_body, domain_store)
 
-    # ── Build response blocks ──
-    status_code, headers_dict = _pop_response_meta(app_state, request_id)
-    response_blocks: list = []
-    if status_code > 0 or headers_dict:
-        response_blocks.extend(
-            cc_dump.core.formatting.format_response_headers(status_code or 200, headers_dict)
-        )
-    response_blocks.extend(cc_dump.core.formatting.format_complete_response_for_provider(provider, complete_body))
+    response_blocks = _build_response_blocks(frame, provider, complete_body)
 
-    # ── Combine and replace, or fall back to separate turn ──
-    if provisional and 0 <= turn_index < domain_store.completed_count:
-        _commit_combined_turn(request_id, turn_index, request_blocks, response_blocks, domain_store)
-    else:
-        # No provisional data or stale index — graceful degradation
-        if domain_store.get_stream_blocks(request_id):
-            domain_store.finalize_stream_with_blocks(request_id, response_blocks)
-        else:
-            domain_store.add_turn(response_blocks)
+    _commit_or_fallback(request_id, frame, request_blocks, response_blocks, domain_store)
 
-    _clear_current_turn_usage(app_state, request_id)
-    _refresh_post_response(state, widgets, app_state, rerender_budget=True)
-    return app_state
+    _refresh_post_response(state, context, rerender_budget=True)
 
 
-def handle_request_headers(event: RequestHeadersEvent, state, widgets, app_state, log_fn):
+def handle_request_headers(event: RequestHeadersEvent, state, context, log_fn) -> None:
     """Handle request_headers event.
 
-    Stores request headers in app_state to be included with the request turn.
+    Stores headers on the Request record for the body handler to inject.
     """
-    headers_dict = event.headers
-    pending = app_state.get("pending_request_headers", {})
-    if not isinstance(pending, dict):
-        pending = {}
-    # // [LAW:one-source-of-truth] Headers are keyed by request_id to avoid cross-request races.
-    pending[event.request_id] = headers_dict
-    app_state["pending_request_headers"] = pending
-    log_fn("DEBUG", f"Stored request headers: {len(headers_dict)} headers")
-    return app_state
+    req = context["request_registry"].get_or_create(event.request_id)
+    req.pending_headers = event.headers
+    log_fn("DEBUG", f"Stored request headers: {len(event.headers)} headers")
 
 
-def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
+def handle_request(event: RequestBodyEvent, state, context, log_fn) -> None:
     """Handle a request event."""
     body = event.body
 
     try:
-        stream_registry = _get_stream_registry(app_state)
+        stream_registry = context["stream_registry"]
         stream_registry.register_request(
             event.request_id,
             body if isinstance(body, dict) else {},
@@ -340,45 +327,43 @@ def handle_request(event: RequestBodyEvent, state, widgets, app_state, log_fn):
             session_hint=state.current_session or "",
         )
 
-        # [LAW:one-source-of-truth] Header injection moved into format_request
-        pending_headers_all = app_state.get("pending_request_headers", {})
-        if not isinstance(pending_headers_all, dict):
-            pending_headers_all = {}
-        pending_headers = pending_headers_all.pop(event.request_id, None)
-        app_state["pending_request_headers"] = pending_headers_all
-        provider = event.provider
-        blocks = cc_dump.core.formatting.format_request_for_provider(provider, body, state, request_headers=pending_headers)
+        # // [LAW:single-enforcer] Pending headers live on the Request record.
+        req = context["request_registry"].get_or_create(event.request_id)
+        pending_headers = req.pending_headers
+        req.pending_headers = None  # consumed
 
-        domain_store = widgets["domain_store"]
-        # Non-streaming: add turn to domain store (fires callback to ConversationView)
+        provider = event.provider
+        blocks = cc_dump.core.formatting.format_request_for_provider(
+            provider, body, state, request_headers=pending_headers
+        )
+
+        domain_store = context["domain_store"]
         turn_index = domain_store.add_turn(blocks)
-        # Store provisional request data for cache zone reconstruction on response.
-        # // [LAW:one-source-of-truth] Popped in _handle_complete_response_payload.
-        provisional = app_state.setdefault("provisional_requests", {})
-        provisional[event.request_id] = {
-            "turn_index": turn_index,
-            "body": body,
-            "provider": provider,
-            "request_headers": pending_headers,
-        }
-        _refresh_stats_snapshot(widgets, app_state)
+
+        # // [LAW:one-source-of-truth] Provisional request state lives on Request,
+        # consumed in _handle_complete_response_payload.
+        req.turn_index = turn_index
+        req.body = body
+        req.provider = provider
+
+        _refresh_stats_snapshot(context)
 
         log_fn("DEBUG", f"Request #{state.request_counter} processed")
     except Exception as e:
         log_fn("ERROR", f"Error handling request: {e}")
         raise
 
-    return app_state
 
-
-def handle_response_headers(event: ResponseHeadersEvent, state, widgets, app_state, log_fn):
+def handle_response_headers(event: ResponseHeadersEvent, state, context, log_fn) -> None:
     """Handle response_headers event."""
     status_code = event.status_code
     headers_dict = event.headers
 
     try:
-        stream_registry = _get_stream_registry(app_state)
-        _store_response_meta(app_state, event.request_id, status_code, headers_dict)
+        stream_registry = context["stream_registry"]
+        req = context["request_registry"].get_or_create(event.request_id)
+        req.response_status = status_code
+        req.response_headers = _ensure_dict(headers_dict)
         stream_registry.mark_streaming(
             event.request_id,
             seq=event.seq,
@@ -387,15 +372,14 @@ def handle_response_headers(event: ResponseHeadersEvent, state, widgets, app_sta
 
         blocks = cc_dump.core.formatting.format_response_headers(status_code, headers_dict)
 
-        domain_store = widgets["domain_store"]
+        domain_store = context["domain_store"]
 
         domain_store.begin_stream(event.request_id)
 
-        # Append response header blocks (empty list is safe)
         for block in blocks:
             domain_store.append_stream_block(event.request_id, block)
 
-        if blocks:  # Only log if blocks were actually produced
+        if blocks:
             log_fn(
                 "DEBUG",
                 f"Displayed response headers: HTTP {status_code}, {len(headers_dict)} headers",
@@ -404,17 +388,10 @@ def handle_response_headers(event: ResponseHeadersEvent, state, widgets, app_sta
         log_fn("ERROR", f"Error handling response headers: {e}")
         raise
 
-    return app_state
 
-
-def _upsert_current_turn_usage(app_state, request_id: str, progress: ResponseProgressEvent) -> None:
-    """Merge progress usage/model data into current_turn_usage_by_request."""
-    usage_by_request = app_state.get("current_turn_usage_by_request", {})
-    if not isinstance(usage_by_request, dict):
-        usage_by_request = {}
-    current_turn = usage_by_request.get(request_id, {})
-    if not isinstance(current_turn, dict):
-        current_turn = {}
+def _upsert_current_turn_usage(req, progress: ResponseProgressEvent) -> None:
+    """Merge progress usage/model data into Request.current_turn_usage."""
+    current_turn = req.current_turn_usage if isinstance(req.current_turn_usage, dict) else {}
 
     if progress.model:
         current_turn["model"] = progress.model
@@ -427,21 +404,20 @@ def _upsert_current_turn_usage(app_state, request_id: str, progress: ResponsePro
     if progress.output_tokens is not None:
         current_turn["output_tokens"] = progress.output_tokens
 
-    usage_by_request[request_id] = current_turn
-    app_state["current_turn_usage_by_request"] = usage_by_request
+    req.current_turn_usage = current_turn
 
 
-def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_state, log_fn):
+def handle_response_progress(event: ResponseProgressEvent, state, context, log_fn) -> None:
     """Handle transport-normalized streaming progress hints."""
     try:
-        stream_registry = _get_stream_registry(app_state)
+        stream_registry = context["stream_registry"]
         stream_registry.mark_streaming(
             event.request_id,
             seq=event.seq,
             recv_ns=event.recv_ns,
         )
 
-        domain_store = widgets["domain_store"]
+        domain_store = context["domain_store"]
         domain_store.begin_stream(event.request_id)
 
         if event.delta_text:
@@ -451,16 +427,15 @@ def handle_response_progress(event: ResponseProgressEvent, state, widgets, app_s
             )
             domain_store.append_stream_block(event.request_id, block)
 
-        _upsert_current_turn_usage(app_state, event.request_id, event)
-        _refresh_stats_snapshot_throttled(widgets, app_state)
+        req = context["request_registry"].get_or_create(event.request_id)
+        _upsert_current_turn_usage(req, event)
+        _refresh_stats_snapshot_throttled(context)
     except Exception as e:
         log_fn("ERROR", f"Error handling response progress: {e}")
         raise
 
-    return app_state
 
-
-def handle_response_event(event: ResponseSSEEvent, state, widgets, app_state, log_fn):
+def handle_response_event(event: ResponseSSEEvent, state, context, log_fn) -> None:
     """Compatibility shim for legacy SSE events.
 
     // [LAW:locality-or-seam] Legacy SSE transport is translated at this seam
@@ -468,52 +443,46 @@ def handle_response_event(event: ResponseSSEEvent, state, widgets, app_state, lo
     """
     payload = sse_progress_payload(event.sse_event)
     if payload is None:
-        return app_state
+        return
     progress = ResponseProgressEvent(
         request_id=event.request_id,
         seq=event.seq,
         recv_ns=event.recv_ns,
         **payload,
     )
-    return handle_response_progress(progress, state, widgets, app_state, log_fn)
+    handle_response_progress(progress, state, context, log_fn)
 
 
-def handle_response_done(event: ResponseDoneEvent, state, widgets, app_state, log_fn):
+def handle_response_done(event: ResponseDoneEvent, state, context, log_fn) -> None:
     """Handle response_done event."""
     try:
-        stream_registry = _get_stream_registry(app_state)
+        stream_registry = context["stream_registry"]
         stream_registry.mark_done(
             event.request_id,
             seq=event.seq,
             recv_ns=event.recv_ns,
         )
-        domain_store = widgets["domain_store"]
-
-        # Clean up provisional request data so it doesn't leak.
-        _ = app_state.get("provisional_requests", {}).pop(event.request_id, None)
+        domain_store = context["domain_store"]
+        request_registry = context["request_registry"]
 
         # [LAW:single-enforcer] RESPONSE_COMPLETE is canonical finalization path.
         # RESPONSE_DONE only handles rare fallback where complete payload never arrived.
         if domain_store.get_stream_blocks(event.request_id):
-            _ = _pop_response_meta(app_state, event.request_id)
-            _ = domain_store.finalize_stream(event.request_id)
-            _clear_current_turn_usage(app_state, event.request_id)
-            _refresh_post_response(state, widgets, app_state, rerender_budget=True)
+            request_registry.pop(event.request_id)
+            domain_store.finalize_stream(event.request_id)
+            _refresh_post_response(state, context, rerender_budget=True)
             log_fn("DEBUG", "Response done fallback finalized active stream")
-            return app_state
+            return
 
-        _ = _pop_response_meta(app_state, event.request_id)
-        _clear_current_turn_usage(app_state, event.request_id)
-        _refresh_stats_snapshot(widgets, app_state)
+        request_registry.pop(event.request_id)
+        _refresh_stats_snapshot(context)
         log_fn("DEBUG", "Response done acknowledged")
     except Exception as e:
         log_fn("ERROR", f"Error handling response done: {e}")
         raise
 
-    return app_state
 
-
-def handle_error(event: ErrorEvent, state, widgets, app_state, log_fn):
+def handle_error(event: ErrorEvent, state, context, log_fn) -> None:
     """Handle an error event."""
     code, reason = event.code, event.reason
 
@@ -521,15 +490,12 @@ def handle_error(event: ErrorEvent, state, widgets, app_state, log_fn):
 
     block = cc_dump.core.formatting.ErrorBlock(code=code, reason=reason)
 
-    domain_store = widgets["domain_store"]
+    domain_store = context["domain_store"]
 
-    # Single block, non-streaming: add directly
     domain_store.add_turn([block])
 
-    return app_state
 
-
-def handle_proxy_error(event: ProxyErrorEvent, state, widgets, app_state, log_fn):
+def handle_proxy_error(event: ProxyErrorEvent, state, context, log_fn) -> None:
     """Handle a proxy_error event."""
     err = event.error
 
@@ -537,30 +503,27 @@ def handle_proxy_error(event: ProxyErrorEvent, state, widgets, app_state, log_fn
 
     block = cc_dump.core.formatting.ProxyErrorBlock(error=err)
 
-    domain_store = widgets["domain_store"]
+    domain_store = context["domain_store"]
 
-    # Single block, non-streaming: add directly
     domain_store.add_turn([block])
 
-    return app_state
 
-
-def handle_log(event: LogEvent, state, widgets, app_state, log_fn):
+def handle_log(event: LogEvent, state, context, log_fn) -> None:
     """Handle a log event."""
     log_fn("DEBUG", f"HTTP {event.method} {event.path} -> {event.status}")
-    return app_state
 
 
-def handle_response_non_streaming(event: ResponseNonStreamingEvent, state, widgets, app_state, log_fn):
+def handle_response_non_streaming(event: ResponseNonStreamingEvent, state, context, log_fn) -> None:
     """Normalize non-streaming transport into canonical complete-response path."""
     try:
-        _store_response_meta(app_state, event.request_id, event.status_code, event.headers)
+        req = context["request_registry"].get_or_create(event.request_id)
+        req.response_status = event.status_code
+        req.response_headers = _ensure_dict(event.headers)
         _handle_complete_response_payload(
             request_id=event.request_id,
             complete_body=event.body,
             state=state,
-            widgets=widgets,
-            app_state=app_state,
+            context=context,
             seq=event.seq,
             recv_ns=event.recv_ns,
             provider=event.provider,
@@ -570,28 +533,24 @@ def handle_response_non_streaming(event: ResponseNonStreamingEvent, state, widge
         log_fn("ERROR", f"Error handling complete response: {e}")
         raise
 
-    return app_state
 
-
-def handle_response_complete(event: ResponseCompleteEvent, state, widgets, app_state, log_fn):
+def handle_response_complete(event: ResponseCompleteEvent, state, context, log_fn) -> None:
     """Handle reconstructed complete response event as the canonical UI path."""
-    _ = _handle_complete_response_payload(
+    _handle_complete_response_payload(
         request_id=event.request_id,
         complete_body=event.body,
         state=state,
-        widgets=widgets,
-        app_state=app_state,
+        context=context,
         seq=event.seq,
         recv_ns=event.recv_ns,
         provider=event.provider,
     )
     log_fn("DEBUG", "Complete response finalized")
-    return app_state
 
 
-def _noop(event, state, widgets, app_state, log_fn) -> dict:
+def _noop(event, state, context, log_fn) -> None:
     """No-op handler for events that need no action."""
-    return app_state
+    return None
 
 
 # [LAW:dataflow-not-control-flow] Event dispatch table keyed by PipelineEventKind

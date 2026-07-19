@@ -7,13 +7,13 @@ This path is offline-only and optional.
 ## Run
 
 ```bash
-uv run python -m cc_dump.subagent_enrichment /path/to/recording.har
+uv run python -m cc_dump.experiments.subagent_enrichment /path/to/recording.har
 ```
 
 Optional custom logs root:
 
 ```bash
-uv run python -m cc_dump.subagent_enrichment /path/to/recording.har \
+uv run python -m cc_dump.experiments.subagent_enrichment /path/to/recording.har \
   --claude-projects-root /path/to/.claude/projects
 ```
 

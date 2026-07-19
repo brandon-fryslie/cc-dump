@@ -31,6 +31,7 @@ import cc_dump.app.settings_store
 import cc_dump.app.launch_config
 import cc_dump.pipeline.sentinel
 from cc_dump.pipeline.proxy import RequestPipeline
+from cc_dump.pipeline.har_replayer import ReplayPair
 import cc_dump.app.view_store
 import cc_dump.app.hot_reload
 import cc_dump.app.domain_store
@@ -49,29 +50,39 @@ def _detect_run_subcommand(
     Returns (config_name_or_None, cc_dump_flags, tool_extra_args).
     When no 'run' subcommand, returns (None, original_argv, []).
 
-    Usage: cc-dump run <config-name> [cc-dump-flags...] [-- tool-extra-args...]
+    The 'run' token may appear anywhere in argv — flags before and after
+    it are collected as cc_dump_flags.  The first positional after 'run'
+    is the config name.  Everything after '--' becomes tool_extra_args.
+
+    Usage: cc-dump [flags...] run <config-name> [flags...] [-- tool-extra-args...]
     """
-    if not argv or argv[0] != "run":
+    # // [LAW:dataflow-not-control-flow] Locate 'run' by scanning — no early return for argv[0].
+    try:
+        run_idx = argv.index("run")
+    except ValueError:
         return None, argv, []
-    rest = argv[1:]
+
+    rest = argv[run_idx + 1 :]
     if not rest or rest[0] in ("-h", "--help"):
         print(
-            "Usage: cc-dump run <config-name> [cc-dump-flags...] [-- tool-extra-args...]"
+            "Usage: cc-dump [flags...] run <config-name> [flags...] [-- tool-extra-args...]"
             "\n\nStart cc-dump and immediately auto-launch the named config."
             "\nLaunch settings come from the saved launch config."
             "\nArguments after '--' are appended to the config's extra args."
             "\n\nExamples:"
             "\n  cc-dump run claude"
             "\n  cc-dump run claude --port 5000"
-            "\n  cc-dump run claude -- --dangerously-bypass-permissions"
+            "\n  cc-dump --upstream copilot run claude"
             "\n  cc-dump run haiku --port 5000 -- --continue"
         )
         sys.exit(0)
     config_name = rest[0]
-    remaining = rest[1:]
-    separator_idx = remaining.index("--") if "--" in remaining else len(remaining)
-    cc_dump_flags = remaining[:separator_idx]
-    tool_extra_args = remaining[separator_idx + 1 :] if separator_idx < len(remaining) else []
+    after_name = rest[1:]
+    separator_idx = after_name.index("--") if "--" in after_name else len(after_name)
+    flags_before = argv[:run_idx]
+    flags_after = after_name[:separator_idx]
+    cc_dump_flags = flags_before + flags_after
+    tool_extra_args = after_name[separator_idx + 1 :] if separator_idx < len(after_name) else []
     return config_name, cc_dump_flags, tool_extra_args
 
 
@@ -102,14 +113,14 @@ def _recordings_output_dir(record_arg: str | None) -> Path:
     return candidate.parent if candidate.suffix.lower() == ".har" else candidate
 
 
-def _short_recording_hash(provider: str, timestamp: str) -> str:
-    payload = f"{provider}:{timestamp}:{os.getpid()}:{uuid.uuid4().hex}"
+def _short_recording_hash(timestamp: str) -> str:
+    payload = f"{timestamp}:{os.getpid()}:{uuid.uuid4().hex}"
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:8]
 
 
-def _recording_path_for_provider(recordings_dir: Path, provider: str, timestamp: str) -> str:
-    # [LAW:one-source-of-truth] HAR filename is derived from provider + timestamp + short hash.
-    filename = f"ccdump-{provider}-{timestamp}-{_short_recording_hash(provider, timestamp)}.har"
+def _recording_path(recordings_dir: Path, timestamp: str) -> str:
+    # [LAW:one-source-of-truth] HAR filename is derived from timestamp + short hash.
+    filename = f"ccdump-{timestamp}-{_short_recording_hash(timestamp)}.har"
     return str(recordings_dir / filename)
 
 
@@ -408,7 +419,41 @@ def _build_cli_parser(
             default=False,
             help=f"Disable the {spec.display_name} proxy server",
         )
+    # Convenience alias: --upstream copilot sets target + upstream_format on the default provider
+    parser.add_argument(
+        "--upstream",
+        type=str,
+        default=None,
+        choices=list(_UPSTREAM_PRESETS.keys()),
+        help="Convenience preset for upstream target + format (e.g., --upstream copilot)",
+    )
     return parser
+
+
+# // [LAW:one-source-of-truth] Upstream presets live here, not scattered across argparse.
+_UPSTREAM_PRESETS: dict[str, tuple[str, str]] = {
+    # name → (target_url, upstream_format)
+    "copilot": ("https://api.individual.githubcopilot.com", "openai-chat"),
+}
+
+
+def _apply_upstream_preset(
+    args: argparse.Namespace,
+    default_provider_spec: "cc_dump.providers.ProviderSpec",
+) -> "cc_dump.providers.ProviderSpec":
+    """Apply --upstream preset (if any) to args.target + default provider spec.
+
+    // [LAW:single-enforcer] One place decides how a preset name maps onto
+    //   (target, upstream_format). Callers never branch on the preset shape.
+    """
+    if args.upstream is None:
+        return default_provider_spec
+    from dataclasses import replace
+    preset_target, preset_format = _UPSTREAM_PRESETS[args.upstream]
+    args.target = preset_target
+    updated = replace(default_provider_spec, upstream_format=preset_format)
+    cc_dump.providers.update_provider_spec(updated)
+    return updated
 
 
 def _handle_recording_admin_commands(args: argparse.Namespace) -> bool:
@@ -466,7 +511,7 @@ def _apply_continue_argument(args: argparse.Namespace) -> bool:
     return True
 
 
-ReplayData = list[tuple[dict, dict, int, dict, dict, str]]
+ReplayData = list[ReplayPair]
 
 
 def _load_replay_data(replay_path: str | None) -> tuple[ReplayData | None, bool]:
@@ -486,39 +531,21 @@ def _configure_har_recording_subscribers(
     *,
     args: argparse.Namespace,
     router: EventRouter,
-    bindings: tuple[ProviderProxyBinding, ...],
 ) -> tuple[list[cc_dump.pipeline.har_recorder.HARRecordingSubscriber], str | None]:
-    har_recorders: list[cc_dump.pipeline.har_recorder.HARRecordingSubscriber] = []
-    recording_paths: dict[str, str] = {}
     if args.no_record:
         print("   Recording: disabled (--no-record)")
-        return har_recorders, None
+        return [], None
 
     # [LAW:one-source-of-truth] Recording output directory is centralized in one resolver.
     recordings_dir = _recordings_output_dir(args.record)
     recordings_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
-    active_providers = [binding.spec.key for binding in bindings]
 
-    for provider in active_providers:
-        record_path = _recording_path_for_provider(recordings_dir, provider, timestamp)
-        recording_paths[provider] = record_path
-        recorder = cc_dump.pipeline.har_recorder.HARRecordingSubscriber(
-            record_path,
-            provider_filter=provider,
-        )
-        har_recorders.append(recorder)
-        router.add_subscriber(DirectSubscriber(recorder.on_event))
-        print(f"   Recording ({provider}): {record_path} (created on first API call)")
-    primary_record_path = next(
-        (
-            recording_paths.get(binding.spec.key)
-            for binding in bindings
-            if recording_paths.get(binding.spec.key)
-        ),
-        None,
-    )
-    return har_recorders, primary_record_path
+    record_path = _recording_path(recordings_dir, timestamp)
+    recorder = cc_dump.pipeline.har_recorder.HARRecordingSubscriber(record_path)
+    router.add_subscriber(DirectSubscriber(recorder.on_event))
+    print(f"   Recording: {record_path} (created on first API call)")
+    return [recorder], record_path
 
 
 def _build_tmux_controller(provider_endpoints):
@@ -602,6 +629,10 @@ def main():
     default_provider_spec = cc_dump.providers.get_provider_spec(default_provider_key)
     parser = _build_cli_parser(default_provider_spec)
     args = parser.parse_args(_argv)
+
+    # Apply upstream preset — overrides target + upstream_format on default provider
+    default_provider_spec = _apply_upstream_preset(args, default_provider_spec)
+
     auto_launch_config = _resolve_auto_launch_config_name(auto_launch_config)
 
     # Install stderr tee before anything else writes to stderr
@@ -668,7 +699,6 @@ def main():
     har_recorders, primary_record_path = _configure_har_recording_subscribers(
         args=args,
         router=router,
-        bindings=bindings,
     )
 
     # Tmux integration (optional — no-op when not in tmux or libtmux missing)

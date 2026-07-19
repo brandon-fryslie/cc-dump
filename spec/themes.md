@@ -1,0 +1,295 @@
+# Themes and Color System
+
+## Overview
+
+cc-dump displays a high volume of heterogeneous content: user messages, assistant responses, tool calls, system prompts, metadata, thinking blocks. Without a principled color system, this content collapses into visual noise. The theme system exists so that every piece of content has a distinguishable, semantically meaningful color assignment regardless of which terminal theme the user prefers, and so that colors remain accessible (readable contrast) across the full range of dark, light, and ANSI terminal environments.
+
+From the user's perspective: content types are color-coded with consistent hues, gutter bars and footer chips identify categories at a glance, and pressing `[` or `]` cycles through 18 built-in themes. Colors adapt automatically to each theme's palette. No configuration is required beyond choosing a theme.
+
+## Concepts
+
+### Color Roles
+
+Colors in the system serve four distinct roles:
+
+1. **Theme semantic colors** -- directly from the Textual theme: `primary`, `secondary`, `accent`, `warning`, `error`, `success`, `foreground`, `background`, `surface`. These are the foundation.
+
+2. **Content-type role colors** -- map API message roles to theme semantics:
+   - User messages: `primary`
+   - Assistant messages: `secondary`
+   - System messages: `accent`
+   - Info: `primary`
+
+3. **Filter indicator colors** -- per-category hues for gutter bars and footer chips (tools, system, metadata, user, assistant, thinking). These are *generated* from theme colors, not hardcoded, and placed in the hue space where the theme is least busy.
+
+4. **Palette colors** -- a golden-angle-spaced set of 38 hues used for tag styling and message differentiation. These provide variety for content that needs many distinct colors (e.g., distinguishing multiple tool calls or conversation messages by index).
+
+### ThemeColors
+
+A frozen dataclass (`@dataclass(frozen=True)`) that captures every color the rendering pipeline needs, derived from a single Textual theme. Defined in `rendering_impl.py`. Fields:
+
+| Field | Type | Source |
+|-------|------|--------|
+| `primary` | hex string | theme primary (normalized) |
+| `secondary` | hex string | theme secondary (normalized) |
+| `accent` | hex string | theme accent (normalized) |
+| `warning` | hex string | theme warning (normalized) |
+| `error` | hex string | theme error (normalized) |
+| `success` | hex string | theme success (normalized) |
+| `foreground` | hex string | theme foreground (normalized) |
+| `background` | hex string | theme background (normalized) |
+| `surface` | hex string | theme surface (normalized) |
+| `dark` | bool | theme dark mode flag |
+| `user` | hex string | alias for `primary` |
+| `assistant` | hex string | alias for `secondary` |
+| `system` | hex string | alias for `accent` |
+| `info` | hex string | alias for `primary` |
+| `code_theme` | string | `"github-dark"` (dark) or `"friendly"` (light) |
+| `search_all_bg` | hex string | `surface` |
+| `search_current_style` | Rich style string | bold, black (dark) or white (light) text on accent |
+| `follow_active_style` | Rich style string | bold, background on foreground (inverted) |
+| `follow_engaged_style` | Rich style string | bold, foreground on background |
+| `search_prompt_style` | Rich style string | bold primary |
+| `search_active_style` | Rich style string | bold success |
+| `search_error_style` | Rich style string | bold error |
+| `search_keys_style` | Rich style string | bold warning |
+| `markdown_theme_dict` | dict | Rich Theme entries for markdown rendering |
+| `filter_colors` | dict | name to (gutter_fg, chip_bg, chip_fg) hex triples |
+| `action_colors` | list | pool of 6 theme semantic hex colors: accent, warning, success, error, primary, secondary |
+
+### RenderRuntime
+
+A mutable dataclass holding theme-derived state that changes when the user switches themes. Defined in `rendering_impl.py`. Fields:
+
+- **theme_colors**: `ThemeColors | None` -- the current frozen theme snapshot
+- **role_styles**: `dict[str, str]` -- `{"user": "bold <primary>", "assistant": "bold <secondary>", "system": "bold <accent>"}`
+- **tag_styles**: `list[tuple[str, str]]` -- 12 (fg, bg) hex pairs from the palette, mode-adjusted
+- **msg_colors**: `list[str]` -- 6 foreground hex colors from the palette, mode-adjusted
+- **filter_indicators**: `dict[str, tuple[str, str]]` -- mapping filter name to (symbol, fg_color) used for gutter rendering, where fg_color is the chip_bg value (element [1] of filter_colors)
+
+## Runtime Resolution
+
+Rendering functions need access to theme-derived state but do not always have a direct reference to the app. The `RenderRuntime` is resolved through a layered lookup:
+
+1. **Context variable override** (`_active_runtime_override`): temporarily bound via the `use_render_runtime()` context manager for nested rendering calls that need a specific runtime.
+2. **Owner lookup** (`get_runtime_from_owner()`): checks `owner._render_runtime`, then `owner.app._render_runtime`. The app stores its runtime as `_render_runtime`.
+3. **Module default** (`_default_render_runtime`): a module-level singleton used when no override or owner is available.
+
+Public accessor functions (`get_theme_colors()`, `get_role_styles()`, `get_tag_styles()`, `get_msg_colors()`, `get_filter_indicators()`) accept an optional `runtime` parameter. When provided, they use it via `use_render_runtime()`. When omitted, they fall back to the active runtime (context override or module default). All return snapshot copies (dicts/lists), not references to mutable internal state.
+
+## Theme Switching
+
+The user cycles themes with `[` (previous) and `]` (next). The `cycle_theme()` function in `theme_controller.py` sorts available theme names alphabetically and wraps cyclically. The selected theme name is persisted to the settings store.
+
+When a theme changes (via Textual's `watch_theme` reactive watcher in `app.py`), the following happens in order:
+
+1. `set_theme()` in `rendering_impl.py` delegates to `_configure_runtime_theme()`, which:
+   - Calls `build_theme_colors()` to create a frozen `ThemeColors` snapshot
+   - Sets `role_styles` from ThemeColors role aliases (`"bold <user>"`, `"bold <assistant>"`, `"bold <system>"`)
+   - Generates `tag_styles` as 12 mode-adjusted (fg, bg) pairs from the global `PALETTE` singleton
+   - Generates `msg_colors` as 6 mode-adjusted foreground hex strings from `PALETTE`
+   - Builds `filter_indicators` from `ThemeColors.filter_colors` via `_build_filter_indicators()`
+2. `apply_markdown_theme()` in `theme_controller.py` pops the old Rich theme and pushes a new one from `ThemeColors.markdown_theme_dict`
+3. A theme generation counter in the view store is incremented (`theme:generation`), triggering reactive UI updates
+4. The conversation view's block strip cache and line cache are cleared
+5. The conversation is re-rendered with `force=True` (because gutter colors changed even though filter state did not)
+6. A notification toast shows the new theme name (from `cycle_theme()`)
+
+### Available Themes (18)
+
+`atom-one-dark`, `atom-one-light`, `catppuccin-latte`, `catppuccin-mocha`, `dracula`, `flexoki`, `gruvbox`, `monokai`, `nord`, `rose-pine`, `rose-pine-dawn`, `rose-pine-moon`, `solarized-dark`, `solarized-light`, `textual-ansi`, `textual-dark`, `textual-light`, `tokyo-night`
+
+## Filter Indicator Color Generation
+
+### Problem
+
+Filter indicators (colored gutter bars and footer chips) must be visually distinct from each other, distinct from the theme's own UI colors, and maintain readable contrast -- across all 18 themes. Hardcoded colors fail because:
+
+- Fixed hues can collide with a theme's primary/accent, making indicators invisible
+- A fixed lightness value readable on one dark theme produces unreadable text on another (solarized-dark has a much narrower luminance range than textual-dark)
+- Chip backgrounds can blend into the theme's footer surface
+
+### Algorithm
+
+The generation is a pure function in `palette.py:generate_filter_colors()`: six theme hex colors in, a dictionary of (gutter_fg, chip_bg, chip_fg) triples out.
+
+**Step 1: Extract theme hues.** Parse primary, secondary, and accent to HSL. Discard near-achromatic colors (saturation < 0.05).
+
+**Step 2: Find the largest hue gap.** Treat the color wheel as circular, find the widest angular gap between theme hues. Place the indicator seed hue at the center of this gap. This ensures indicator hues occupy the least-used region of the color wheel. Example: a purple/pink/cyan theme (Dracula) gets indicators in the orange/yellow/green range. If no chromatic colors exist, the seed defaults to 30 degrees (warm orange). If only one chromatic color exists, the seed is placed 180 degrees opposite.
+
+**Step 3: Generate hues via golden-angle spacing.** From the seed, generate N hues (where N = number of filter categories, currently 6) at 137.508-degree increments. The golden angle maximizes perceptual distance between consecutively indexed colors.
+
+**Step 4: Derive lightness from theme luminance range.** Extract HSL lightness from background, surface, and foreground. Dark mode is detected as `bg_L < fg_L`. Compute:
+- Gutter foreground: midpoint of bg-to-fg range (`lerp(bg_L, fg_L, 0.50)`), at least 0.20 L-distance from background, clamped to [0.05, 0.95]
+- Chip background: surface +/- 0.20 (pushed toward foreground), clamped to [0.05, 0.95]
+- Chip foreground: chip_bg +/- 0.45 (toward foreground), floored at L >= 0.80 (dark themes) or <= 0.20 (light themes), clamped to [0.05, 0.95]
+
+**Step 5: Derive saturation from theme.** Saturations decrease from gutter (most vivid) to chip bg (muted) to chip fg (near-neutral):
+- Gutter fg: `primary_S * 0.90`, clamped to [0.45, 0.85]
+- Chip bg: `gutter_S * 0.55`, clamped to [0.25, 0.60]
+- Chip fg: `gutter_S * 0.25`, clamped to [0.10, 0.35]
+
+**Step 6: Per-hue WCAG contrast enforcement.** For each hue, verify chip fg vs chip bg meets WCAG AA (target 4.6:1, slightly above the 4.5:1 threshold for rounding margin). If not, apply corrections in escalating phases:
+
+1. Push chip fg lightness toward extreme (6 steps of 0.03)
+2. Desaturate chip fg (8 steps of 0.04) -- achromatic maximizes luminance-to-lightness ratio
+3. Darken/lighten chip bg (10 steps of 0.02) -- with a floor: must stay >= 0.10 L-distance from surface
+4. Desaturate chip bg (10 steps of 0.03) -- reduces green-channel WCAG luminance inflation
+
+This multi-phase approach is necessary because HSL lightness is a poor predictor of WCAG luminance. Green hues at the same HSL lightness as blue hues have ~10x higher WCAG luminance due to the 0.7152 green coefficient in the WCAG formula.
+
+### Category Index Assignment
+
+Each filter category has a fixed indicator index, defined in `filter_registry.py` via `FilterSpec.indicator_index`:
+
+| Category | Indicator Index |
+|----------|----------------|
+| tools | 0 |
+| system | 1 |
+| metadata | 2 |
+| user | 3 |
+| assistant | 4 |
+| thinking | 5 |
+
+The six categories use consecutive indices 0-5. This matters because the golden angle's minimum-separation guarantee only holds for consecutive indices. Non-consecutive indices can produce hue clusters (e.g., index 0 at 0 degrees and index 8 at 20.1 degrees would be nearly indistinguishable).
+
+### Where Colors Appear
+
+| Component | Color Used | Tuple Index |
+|-----------|-----------|-------------|
+| Footer chip background | chip_bg | [1] |
+| Footer chip foreground (text) | chip_fg | [2] |
+| Gutter bars (left edge of content lines) | chip_bg | [1] |
+
+Gutter bars use the `chip_bg` color (element [1]) for their foreground styling, via `_build_filter_indicators()` in `rendering_impl.py`. The `gutter_fg` value (element [0]) is generated by the algorithm but is not consumed by the gutter rendering path.
+
+## Palette
+
+A secondary color source independent of theme-relative filter colors. Provides 38 maximally-distinct hues for tag styling and message differentiation. Defined as the `Palette` class in `palette.py`.
+
+### Initialization
+
+The palette is a module-level singleton (`PALETTE`) in `palette.py`, initialized at import time from the environment. `init_palette()` can reinitialize it (e.g., after environment changes). The global singleton is consumed by `_configure_runtime_theme()` when rebuilding tag styles and message colors on theme change.
+
+### Construction
+
+- Seed hue: 190 degrees (cyan) by default, configurable via `CC_DUMP_SEED_HUE` environment variable
+- Count: 38 colors
+- Each hue is offset from seed by `i * 137.508` degrees (golden angle)
+- Two lightness levels per hue:
+  - Foreground: S=0.75, L=0.70 (text on dark backgrounds)
+  - Dark background: S=0.60, L=0.25 (background highlights)
+- Mode-aware variants for light themes: fg S=0.75/L=0.35, bg S=0.45/L=0.88 (via `fg_on_bg_for_mode`)
+- Mode-aware message colors: dark L=0.70, light L=0.40 (via `msg_color_for_mode`)
+
+### Semantic Named Colors
+
+The palette provides named colors by mapping to specific hue indices:
+
+**Role colors** (indices 0-2, the first three golden-angle hues, maximally distinct):
+- `user` -- palette index 0
+- `assistant` -- palette index 1
+- `system` -- palette index 2
+
+Only role indices (0-2) are reserved. Positions 3-10 are unreserved (no longer consumed by filter indicators, which use a separate theme-relative system).
+
+**Semantic colors** (mapped to closest unreserved hue matching target):
+- `error` -- target hue 0 degrees (red)
+- `warning` -- target hue 50 degrees (yellow)
+- `success` -- target hue 130 degrees (green)
+- `info` -- target hue 190 degrees (cyan)
+
+Each semantic role has both foreground and dark-background variants (e.g., `palette.error` and `palette.error_bg`).
+
+**Accent** -- palette index 11, tends toward warm/orange tones.
+
+### Tag Colors
+
+12 palette positions (indices 0-11, constant `TAG_COLOR_COUNT`) are used for tag styling. Each provides a (fg, bg) pair adjusted for the current theme's dark/light mode via `fg_on_bg_for_mode()`.
+
+### Message Colors
+
+6 palette positions starting at index 12 (after the tag color range) provide foreground colors for message differentiation via `msg_color_for_mode()`.
+
+## ANSI Theme Handling
+
+Textual's `textual-ansi` theme uses terminal ANSI color names (`ansi_blue`, `ansi_default`) instead of hex values. These require special handling:
+
+- `ansi_default` is unknowable at runtime (the terminal decides the actual color)
+- ANSI color names crash Rich's style parser if used directly
+- The `dark` flag is unreliable for ANSI themes
+
+**Normalization**: Every theme color passes through `_normalize_color()` in `rendering_impl.py` that:
+1. Converts `ansi_default` and `None` to a fallback hex value
+2. Passes `#RRGGBB` strings through unchanged
+3. Converts named ANSI colors (e.g., `ansi_blue`) to their hex equivalents via Textual's `Color.parse().rgb`
+
+**Fallback values** used when normalization applies:
+
+Mode-dependent (dark/light):
+- foreground: `#e0e0e0` / `#1e1e1e`
+- background: `#1e1e1e` / `#e0e0e0`
+- surface: `#2b2b2b` / `#d0d0d0`
+
+Mode-independent (same regardless of dark/light):
+- primary: `#0178D4`
+- secondary: falls back to resolved primary
+- accent: falls back to resolved primary
+- warning: `#ffa62b`
+- error: `#ba3c5b`
+- success: `#4EBF71`
+
+**Dark mode detection for ANSI**: When background, foreground, and surface are all `ansi_default` (detected by `_is_ansi_default()`), the system assumes dark mode (`assume_dark = dark or all(...)`) . This avoids pastel indicator colors (appropriate for light themes) appearing on what is almost certainly a dark terminal.
+
+**Markdown theme**: ANSI themes skip the Rich markdown theme push entirely (in `apply_markdown_theme()`), since the color names are incompatible with Rich's style parser. If a markdown theme was previously pushed, it is popped.
+
+## Markdown Theme
+
+When a non-ANSI theme is active, `apply_markdown_theme()` in `theme_controller.py` pushes a Rich `Theme` onto the app console to style markdown content. Styles are derived from `ThemeColors.markdown_theme_dict`, built in `build_theme_colors()`:
+
+| Markdown Element | Style |
+|-----------------|-------|
+| text, paragraph, item | foreground |
+| strong | bold foreground |
+| em | italic foreground |
+| code | foreground on surface |
+| code_block | on surface |
+| h1 | bold underline primary |
+| h2 | bold primary |
+| h3 | bold secondary |
+| h4 | italic secondary |
+| h5 | italic foreground |
+| h6 | dim italic |
+| link | underline primary |
+| link_url | dim underline primary |
+| block_quote | italic foreground |
+| table border | dim foreground |
+| table header | bold primary |
+| hr | dim foreground |
+
+The markdown theme is popped and re-pushed on every theme change.
+
+## Action Colors
+
+A pool of 6 theme semantic colors used for non-filter UI items (panels, toggles, etc.): accent, warning, success, error, primary, secondary (in that order). These are naturally distinct from filter indicator colors because the filter hues are placed in the gaps *between* these theme colors.
+
+## Textual Theme Variables
+
+All 18 themes share a common set of 163 CSS variables (111 after collapsing numeric suffix families). Key variable families:
+
+- **Core**: `primary`, `secondary`, `accent`, `warning`, `error`, `success` -- each with `-darken-[1-3]`, `-lighten-[1-3]`, `-muted` variants
+- **Surfaces**: `background`, `surface`, `panel`, `boost` -- each with darken/lighten variants
+- **Text**: `foreground`, `text`, `text-muted`, `text-disabled`, `text-accent`, `text-primary`, `text-secondary`, `text-success`, `text-warning`, `text-error`
+- **Footer**: `footer-background`, `footer-foreground`, `footer-key-background`, `footer-key-foreground`, `footer-description-background`, `footer-description-foreground`, `footer-item-background`
+- **Scrollbar**: `scrollbar`, `scrollbar-hover`, `scrollbar-active`, `scrollbar-background`, `scrollbar-background-hover`, `scrollbar-background-active`, `scrollbar-corner-color`
+- **Markdown**: `markdown-h[1-6]-background`, `markdown-h[1-6]-color`, `markdown-h[1-6]-text-style`
+
+cc-dump uses these variables via Textual's theme object, not directly as CSS tokens. The rendering pipeline reads `theme.primary`, `theme.surface`, etc. and normalizes them to hex for use in Rich styles.
+
+## Cross-References
+
+- **Filter categories** that receive indicator colors are defined in `filter_registry.py` (see `spec/filters.md`)
+- **Gutter bars** that consume filter indicator colors are part of the rendering pipeline (see `spec/rendering.md`)
+- **Footer chips** that display filter colors are documented in the navigation spec (see `spec/navigation.md`)
+- **Theme cycling keybindings** (`[` and `]`) are documented in the navigation spec (see `spec/navigation.md`)
+- **Settings persistence** for theme selection is part of the session system (see `spec/sessions.md`)

@@ -1,19 +1,43 @@
-"""HAR replay module - loads HAR files and converts to pipeline events.
+"""HAR replay module — loads HAR files and converts them to pipeline events.
 
-Converts complete request/response pairs from HAR files into the same
-typed events the live pipeline produces.
+This module is the single enforcer for HAR shape validation. The raw nested
+JSON of a HAR 1.2 file enters at one boundary (`load_har`) and is parsed into
+typed `_HarFile` / `_HarEntry` Pydantic models, then projected into a public
+`ReplayPair` dataclass that downstream code consumes by name. No code outside
+this module asks "does this HAR entry have a request body?" — the type already
+encodes the answer.
+
+// [LAW:single-enforcer] All HAR-shape validation lives here. The 12+ scattered
+//   "if 'X' not in dict" checks the legacy parser had are absorbed into the
+//   private Pydantic models below.
+// // [LAW:dataflow-not-control-flow] load_har is a straight pipe over typed
+//   entries. The only branching is the load-bearing "skip vs raise" decision
+//   that distinguishes per-entry recoverable failures from file-level fatal
+//   structure errors, and the final "no valid entries" rule.
+// // [LAW:one-source-of-truth] ReplayPair is the canonical "HAR pair" shape
+//   for the codebase. cli.py, tui/app.py, experiments/subagent_enrichment.py
+//   and the test suites all consume the same dataclass.
+// // [LAW:no-defensive-null-guards] Headers without name+value cannot exist
+//   in a parsed _HarEntry — the entry containing them is rejected at the
+//   single boundary, not silently dropped at the consumer.
 """
+
+from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
+from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 import cc_dump.providers
 from cc_dump.pipeline.event_types import (
     PipelineEvent,
     RequestBodyEvent,
     RequestHeadersEvent,
-    ResponseHeadersEvent,
     ResponseCompleteEvent,
+    ResponseHeadersEvent,
     event_envelope,
     new_request_id,
 )
@@ -21,195 +45,229 @@ from cc_dump.pipeline.event_types import (
 logger = logging.getLogger(__name__)
 
 
-def _load_json_object(text: str, *, entry_index: int, field_name: str) -> dict[str, object]:
-    """Decode a JSON object payload or raise a boundary-localized ValueError.
+# ─── ReplayPair: the public canonical type ───────────────────────────────────
 
-    // [LAW:single-enforcer] HAR replay owns JSON-object validation at the file boundary.
+
+@dataclass(frozen=True)
+class ReplayPair:
+    """One fully-validated HAR request/response pair, ready for replay.
+
+    Constructed only by `load_har` after the per-entry parser has accepted the
+    raw HAR entry. Downstream consumers read fields by name; positional
+    unpacking is forbidden because there is no positional contract.
     """
-    payload = json.loads(text)
-    if not isinstance(payload, dict):
-        raise ValueError(f"Entry {entry_index}: {field_name} must decode to a JSON object")
-    return payload
+    request_headers: dict[str, str]
+    request_body: dict[str, object]
+    response_status: int
+    response_headers: dict[str, str]
+    complete_message: dict[str, object]
+    provider: str
 
-def load_har(path: str) -> list[tuple[dict, dict, int, dict, dict, str]]:
-    """Load HAR file and extract request/response pairs.
 
-    Args:
-        path: Path to HAR file
+# ─── Private Pydantic models for HAR 1.2 shape ───────────────────────────────
+# These collapse 12+ nested-dict-key checks into one `model_validate` call.
+# All `extra="ignore"` so unrelated HAR fields don't fail parsing. _HarEntry
+# uses `extra="allow"` so the existing `_cc_dump` provider metadata stays
+# accessible to `infer_provider_from_har_entry`.
 
-    Returns:
-        List of (request_headers, request_body, response_status, response_headers, complete_message, provider) tuples
+
+# `extra="allow"` everywhere so unrelated HAR fields round-trip through
+# model_dump() — `infer_provider_from_har_entry` reads `request.url` and the
+# entry-level `_cc_dump` metadata, neither of which we model explicitly.
+
+
+# // [LAW:single-enforcer] Every pydantic BaseModel subclass trips
+# //   `disallow_any_explicit` (pydantic's BaseModel carries Any in its
+# //   metaclass machinery). One `# type: ignore[explicit-any]` per class
+# //   is the minimum-site suppression — the alternative (disabling the
+# //   rule globally) would weaken type safety everywhere else.
+class _HarHeader(BaseModel):  # type: ignore[explicit-any]
+    model_config = ConfigDict(extra="allow")
+    name: str
+    value: str
+
+
+class _HarPostData(BaseModel):  # type: ignore[explicit-any]
+    model_config = ConfigDict(extra="allow")
+    text: str
+
+
+class _HarRequest(BaseModel):  # type: ignore[explicit-any]
+    model_config = ConfigDict(extra="allow")
+    headers: list[_HarHeader] = Field(default_factory=list)
+    postData: _HarPostData
+
+
+class _HarContent(BaseModel):  # type: ignore[explicit-any]
+    model_config = ConfigDict(extra="allow")
+    text: str
+
+
+class _HarResponse(BaseModel):  # type: ignore[explicit-any]
+    model_config = ConfigDict(extra="allow")
+    status: int = 200
+    headers: list[_HarHeader] = Field(default_factory=list)
+    content: _HarContent
+
+
+class _HarEntry(BaseModel):  # type: ignore[explicit-any]
+    model_config = ConfigDict(extra="allow")
+    request: _HarRequest
+    response: _HarResponse
+
+
+class _HarLog(BaseModel):  # type: ignore[explicit-any]
+    # // [LAW:dataflow-not-control-flow] entries is `list[dict]`, NOT
+    # //   `list[_HarEntry]`, so per-entry validation happens in the loop
+    # //   inside load_har (wrapped in _SkipEntry). One bad entry must not
+    # //   reject the whole file — that's load-bearing replay behavior.
+    model_config = ConfigDict(extra="allow")
+    entries: list[dict]
+
+
+class _HarFile(BaseModel):  # type: ignore[explicit-any]
+    model_config = ConfigDict(extra="allow")
+    log: _HarLog
+
+
+# ─── _SkipEntry: per-entry recoverable failure ───────────────────────────────
+
+
+class _SkipEntry(Exception):
+    """Raised by per-entry parsing when one entry is unrecoverable but the
+    overall file should continue. Replaces the legacy 3-type catch
+    `(KeyError, JSONDecodeError, ValueError)`: there is now exactly one
+    exception type per failure mode.
+    """
+
+
+# ─── load_har: SINGLE ENFORCER ───────────────────────────────────────────────
+
+
+def load_har(path: str) -> list[ReplayPair]:
+    """Load a HAR file and return a list of ReplayPair records.
 
     Raises:
-        ValueError: If HAR structure is invalid
-        FileNotFoundError: If file doesn't exist
-        json.JSONDecodeError: If file is not valid JSON
+        FileNotFoundError: file does not exist
+        json.JSONDecodeError: file is not valid JSON
+        ValidationError: HAR top-level structure is invalid (missing log,
+            missing log.entries, entries not a list, etc.)
+        ValueError: HAR file contained no valid entries
+
+    Per-entry failures (missing required fields, malformed inner JSON, header
+    objects without name+value, response not recognized as a complete message)
+    are logged and skipped — the function returns whatever entries did parse.
     """
-    with open(path, "r", encoding="utf-8") as f:
-        har = json.load(f)
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    har_file = _HarFile.model_validate(raw)
 
-    # Validate HAR structure
-    if "log" not in har:
-        raise ValueError("Invalid HAR: missing 'log' key")
-
-    log = har["log"]
-    if "entries" not in log:
-        raise ValueError("Invalid HAR: missing 'log.entries' key")
-
-    entries = log["entries"]
-    if not isinstance(entries, list):
-        raise ValueError("Invalid HAR: log.entries must be a list")
-
-    pairs = []
-    for i, entry in enumerate(entries):
+    pairs: list[ReplayPair] = []
+    for index, raw_entry in enumerate(har_file.log.entries):
         try:
-            # Extract request body
-            if "request" not in entry:
-                raise ValueError(f"Entry {i}: missing 'request' key")
-            request = entry["request"]
-
-            if "postData" not in request:
-                raise ValueError(f"Entry {i}: missing 'request.postData' key")
-
-            post_data = request["postData"]
-            if "text" not in post_data:
-                raise ValueError(f"Entry {i}: missing 'request.postData.text' key")
-
-            request_body = _load_json_object(
-                post_data["text"],
-                entry_index=i,
-                field_name="request.postData.text",
-            )
-
-            # Extract response body
-            if "response" not in entry:
-                raise ValueError(f"Entry {i}: missing 'response' key")
-            response = entry["response"]
-
-            if "content" not in response:
-                raise ValueError(f"Entry {i}: missing 'response.content' key")
-
-            content = response["content"]
-            if "text" not in content:
-                raise ValueError(f"Entry {i}: missing 'response.content.text' key")
-
-            complete_message = _load_json_object(
-                content["text"],
-                entry_index=i,
-                field_name="response.content.text",
-            )
-
-            # Extract request headers
-            request_headers = {}
-            if "headers" in request:
-                for header in request["headers"]:
-                    if (
-                        isinstance(header, dict)
-                        and "name" in header
-                        and "value" in header
-                    ):
-                        request_headers[header["name"]] = header["value"]
-
-            # Extract response status and headers
-            response_status = response.get("status", 200)
-            response_headers = {}
-            if "headers" in response:
-                for header in response["headers"]:
-                    if (
-                        isinstance(header, dict)
-                        and "name" in header
-                        and "value" in header
-                    ):
-                        response_headers[header["name"]] = header["value"]
-
-            # // [LAW:one-source-of-truth] HAR provider inference precedence is centralized.
-            provider = cc_dump.providers.infer_provider_from_har_entry(
-                entry,
-                complete_message=complete_message,
-            )
-
-            if not cc_dump.providers.is_complete_response_for_provider(provider, complete_message):
-                raise ValueError(
-                    f"Entry {i}: response is not a recognized complete message "
-                    f"for provider={provider!r}"
-                )
-
-            pairs.append(
-                (
-                    request_headers,
-                    request_body,
-                    response_status,
-                    response_headers,
-                    complete_message,
-                    provider,
-                )
-            )
-
-        except (KeyError, json.JSONDecodeError, ValueError) as e:
-            logger.warning("skipping HAR entry %s: %s", i, e)
-            continue
+            pairs.append(_pair_from_raw_entry(raw_entry))
+        except _SkipEntry as exc:
+            logger.warning("skipping HAR entry %s: %s", index, exc)
 
     if not pairs:
         raise ValueError("HAR file contains no valid entries")
-
     return pairs
 
 
-def convert_to_events(
-    request_headers: dict,
-    request_body: dict,
-    response_status: int,
-    response_headers: dict,
-    complete_message: dict,
-    provider: str = "anthropic",
-) -> list[PipelineEvent]:
-    """Convert a complete request/response pair to typed pipeline events.
+def _pair_from_raw_entry(raw_entry: dict) -> ReplayPair:
+    """Validate one HAR entry and project it into a ReplayPair.
 
-    Args:
-        request_headers: Request headers dict
-        request_body: Request body dict
-        response_status: HTTP status code
-        response_headers: Response headers dict
-        complete_message: Complete message dict (Anthropic or OpenAI format)
-        provider: API provider identifier
+    Raises _SkipEntry on any per-entry recoverable failure:
+      * structural validation failure (missing required fields, wrong types,
+        malformed header objects);
+      * malformed inner JSON in request/response body text;
+      * response shape not recognized for the inferred provider.
+    """
+    try:
+        entry = _HarEntry.model_validate(raw_entry)
+    except ValidationError as exc:
+        raise _SkipEntry(str(exc)) from exc
 
-    Returns:
-        List of typed PipelineEvent objects
+    request_body = _decode_inner_json_object(
+        entry.request.postData.text, field_name="request.postData.text",
+    )
+    complete_message = _decode_inner_json_object(
+        entry.response.content.text, field_name="response.content.text",
+    )
+
+    request_headers = {h.name: h.value for h in entry.request.headers}
+    response_headers = {h.name: h.value for h in entry.response.headers}
+
+    # // [LAW:one-source-of-truth] HAR provider inference precedence is
+    # //   centralized in providers.infer_provider_from_har_entry, which still
+    # //   takes a raw dict — pass the original raw entry so the _cc_dump
+    # //   metadata and request.url remain visible.
+    provider = cc_dump.providers.infer_provider_from_har_entry(
+        raw_entry,
+        complete_message=complete_message,
+    )
+
+    if not cc_dump.providers.is_complete_response_for_provider(provider, complete_message):
+        raise _SkipEntry(
+            f"response is not a recognized complete message for provider={provider!r}"
+        )
+
+    return ReplayPair(
+        request_headers=request_headers,
+        request_body=request_body,
+        response_status=entry.response.status,
+        response_headers=response_headers,
+        complete_message=complete_message,
+        provider=provider,
+    )
+
+
+def _decode_inner_json_object(text: str, *, field_name: str) -> dict[str, object]:
+    """Decode the inner JSON-object payload from a HAR `text` field.
+
+    HAR stores request/response bodies as opaque text blobs; we still need to
+    parse and shape-check them. This is the boundary parser for that inner
+    layer. Failures collapse into one _SkipEntry — the per-entry try/except
+    in load_har catches it.
+    """
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise _SkipEntry(f"{field_name}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise _SkipEntry(f"{field_name} must decode to a JSON object")
+    return payload
+
+
+# ─── convert_to_events: ReplayPair -> typed pipeline events ──────────────────
+
+
+def convert_to_events(pair: ReplayPair) -> list[PipelineEvent]:
+    """Convert a validated ReplayPair into the typed pipeline event sequence
+    that the live proxy emits for one request/response cycle.
+
+    // [LAW:one-source-of-truth] Replay events use the exact same envelope
+    //   shape as live-proxy events.
     """
     request_id = new_request_id()
     return [
-        # // [LAW:one-source-of-truth] Replay uses same request envelope shape as live proxy.
         RequestHeadersEvent(
-            headers=request_headers,
-            **event_envelope(
-                request_id=request_id,
-                seq=0,
-                provider=provider,
-            ),
+            headers=pair.request_headers,
+            **event_envelope(request_id=request_id, seq=0, provider=pair.provider),
         ),
         RequestBodyEvent(
-            body=request_body,
-            **event_envelope(
-                request_id=request_id,
-                seq=1,
-                provider=provider,
-            ),
+            body=pair.request_body,
+            **event_envelope(request_id=request_id, seq=1, provider=pair.provider),
         ),
         ResponseHeadersEvent(
-            status_code=response_status,
-            headers=response_headers,
-            **event_envelope(
-                request_id=request_id,
-                seq=2,
-                provider=provider,
-            ),
+            status_code=pair.response_status,
+            headers=pair.response_headers,
+            **event_envelope(request_id=request_id, seq=2, provider=pair.provider),
         ),
         ResponseCompleteEvent(
-            body=complete_message,
-            **event_envelope(
-                request_id=request_id,
-                seq=3,
-                provider=provider,
-            ),
+            body=pair.complete_message,
+            **event_envelope(request_id=request_id, seq=3, provider=pair.provider),
         ),
     ]
+
+
+__all__ = ["ReplayPair", "load_har", "convert_to_events"]

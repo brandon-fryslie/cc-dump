@@ -24,8 +24,42 @@ For detailed documentation, see the corresponding files in this directory.
 - Widget composition patterns
 
 ### Events (`core/events.xml`)
-- Click events - For expand/collapse interaction
 - Mount/unmount lifecycle
+
+#### Mouse Events — available fields on `Click` (and all `MouseEvent` subclasses)
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `event.button` | `int` | `1`=left, `2`=middle, `3`=right |
+| `event.shift` | `bool` | Shift held |
+| `event.ctrl` | `bool` | Ctrl held |
+| `event.meta` | `bool` | Meta/Option held — unreliable, avoid |
+| `event.chain` | `int` | `1`=single, `2`=double, `3`=triple |
+| `event.x` / `event.y` | `int` | Widget-relative coordinates |
+| `event.screen_x` / `event.screen_y` | `int` | Screen-absolute coordinates |
+
+Usage pattern in `on_click`:
+```python
+def on_click(self, event: Click) -> None:
+    if event.button == 3:       # right-click
+        ...
+    if event.shift:             # shift+click
+        ...
+    if event.ctrl:              # ctrl+click
+        ...
+    if event.chain == 2:        # double-click
+        ...
+```
+
+**Terminal reliability:**
+- `shift`, `ctrl`, `chain` (double-click): reliable across terminals
+- `button` (right-click): works in most modern terminals
+- `meta`: often intercepted by OS/terminal — avoid
+
+**Other mouse event types** (all share the same fields above):
+- `MouseDown` / `MouseUp` — press/release before `Click` fires
+- `MouseMove` — hover, with same modifier fields
+- `MouseScrollDown` / `MouseScrollUp` — scroll wheel
 
 ### Geometry (`support/geometry.xml`)
 - `Size` - Width/height dimensions

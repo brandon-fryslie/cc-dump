@@ -32,3 +32,12 @@ When opening or updating a PR, descriptions must be concrete and auditable:
 2. Explicitly list removed features/endpoints/prompts when code deletes functionality.
 3. Include a dedicated `Non-product files` section for local/config/tracker files (for example `.mcp.json`) so reviewers can quickly assess relevance.
 4. Include exact validation commands run.
+
+<!-- BEGIN LINKS INTEGRATION -->
+## links Agent-Native Workflow
+
+This repository is configured for agent-native issue tracking with `lit`.
+
+Run `lit quickstart` to get instructions.
+
+<!-- END LINKS INTEGRATION -->

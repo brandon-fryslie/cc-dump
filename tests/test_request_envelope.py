@@ -225,15 +225,16 @@ class TestReplayMetadata:
     """Replay events carry metadata."""
 
     def test_convert_to_events_has_metadata(self):
-        from cc_dump.pipeline.har_replayer import convert_to_events
+        from cc_dump.pipeline.har_replayer import convert_to_events, ReplayPair
 
-        events = convert_to_events(
+        events = convert_to_events(ReplayPair(
             request_headers={"x-test": "1"},
             request_body={"model": "test"},
             response_status=200,
             response_headers={},
             complete_message={"type": "message", "id": "msg_1", "content": []},
-        )
+            provider="anthropic",
+        ))
 
         resp_headers = [e for e in events if isinstance(e, ResponseHeadersEvent)]
         complete = [e for e in events if isinstance(e, ResponseCompleteEvent)]
@@ -251,15 +252,16 @@ class TestReplayMetadata:
         assert complete_evt.recv_ns > 0
 
     def test_request_events_have_envelope_metadata(self):
-        from cc_dump.pipeline.har_replayer import convert_to_events
+        from cc_dump.pipeline.har_replayer import convert_to_events, ReplayPair
 
-        events = convert_to_events(
+        events = convert_to_events(ReplayPair(
             request_headers={},
             request_body={"model": "test"},
             response_status=200,
             response_headers={},
             complete_message={"type": "message", "id": "msg_1", "content": []},
-        )
+            provider="anthropic",
+        ))
 
         req_events = [e for e in events if isinstance(e, (RequestHeadersEvent, RequestBodyEvent))]
         assert len(req_events) == 2

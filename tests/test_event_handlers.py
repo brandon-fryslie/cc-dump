@@ -77,7 +77,14 @@ class _FakeAnalyticsStore:
         return snapshot
 
 
-def _mk_widgets(conv, view_store, domain_store=None):
+def _mk_context(conv, view_store, domain_store=None):
+    """Build the context dict handlers receive.
+
+    // [LAW:dataflow-not-control-flow] Registries carried in context; handlers
+    //   mutate typed Request records rather than an app_state dict.
+    """
+    import cc_dump.tui.request_registry
+    import cc_dump.tui.stream_registry
     return {
         "conv": conv,
         "filters": {},
@@ -85,6 +92,8 @@ def _mk_widgets(conv, view_store, domain_store=None):
         "analytics_store": _FakeAnalyticsStore(),
         "view_store": view_store,
         "domain_store": domain_store or DomainStore(),
+        "request_registry": cc_dump.tui.request_registry.RequestRegistry(),
+        "stream_registry": cc_dump.tui.stream_registry.StreamRegistry(),
     }
 
 
@@ -135,11 +144,10 @@ def _noop_log(*_args, **_kwargs) -> None:
 class TestEventHandlersRequestScopedStreaming:
     def test_interleaved_stream_events_are_partitioned_by_request_id(self):
         state = ProviderRuntimeState()
-        app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
         conv = _FakeConv()
         view_store = _FakeViewStore()
         domain_store = DomainStore()
-        widgets = _mk_widgets(conv, view_store, domain_store)
+        context = _mk_context(conv, view_store, domain_store)
         log_fn = _noop_log
 
         r1 = "req-111"
@@ -148,29 +156,25 @@ class TestEventHandlersRequestScopedStreaming:
         event_handlers.handle_request_headers(
             RequestHeadersEvent(headers={"content-type": "application/json"}, request_id=r1, seq=0, recv_ns=1),
             state,
-            widgets,
-            app_state,
+            context,
             log_fn,
         )
         event_handlers.handle_request(
             RequestBodyEvent(body=_req_body("11111111-2222-3333-4444-555555555555"), request_id=r1, seq=1, recv_ns=2),
             state,
-            widgets,
-            app_state,
+            context,
             log_fn,
         )
         event_handlers.handle_request_headers(
             RequestHeadersEvent(headers={"content-type": "application/json"}, request_id=r2, seq=0, recv_ns=3),
             state,
-            widgets,
-            app_state,
+            context,
             log_fn,
         )
         event_handlers.handle_request(
             RequestBodyEvent(body=_req_body("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), request_id=r2, seq=1, recv_ns=4),
             state,
-            widgets,
-            app_state,
+            context,
             log_fn,
         )
 
@@ -178,8 +182,7 @@ class TestEventHandlersRequestScopedStreaming:
             event_handlers.handle_response_headers(
                 ResponseHeadersEvent(status_code=200, headers={"content-type": "text/event-stream"}, request_id=rid, seq=2, recv_ns=5),
                 state,
-                widgets,
-                app_state,
+                context,
                 log_fn,
             )
             event_handlers.handle_response_event(
@@ -197,8 +200,7 @@ class TestEventHandlersRequestScopedStreaming:
                     recv_ns=6,
                 ),
                 state,
-                widgets,
-                app_state,
+                context,
                 log_fn,
             )
 
@@ -211,8 +213,7 @@ class TestEventHandlersRequestScopedStreaming:
                 recv_ns=7,
             ),
             state,
-            widgets,
-            app_state,
+            context,
             log_fn,
         )
         event_handlers.handle_response_event(
@@ -223,8 +224,7 @@ class TestEventHandlersRequestScopedStreaming:
                 recv_ns=8,
             ),
             state,
-            widgets,
-            app_state,
+            context,
             log_fn,
         )
         event_handlers.handle_response_event(
@@ -235,8 +235,7 @@ class TestEventHandlersRequestScopedStreaming:
                 recv_ns=9,
             ),
             state,
-            widgets,
-            app_state,
+            context,
             log_fn,
         )
         event_handlers.handle_response_event(
@@ -247,8 +246,7 @@ class TestEventHandlersRequestScopedStreaming:
                 recv_ns=10,
             ),
             state,
-            widgets,
-            app_state,
+            context,
             log_fn,
         )
 
@@ -260,8 +258,7 @@ class TestEventHandlersRequestScopedStreaming:
         event_handlers.handle_response_done(
             ResponseDoneEvent(request_id=r1, seq=6, recv_ns=11),
             state,
-            widgets,
-            app_state,
+            context,
             log_fn,
         )
         assert r1 not in domain_store._stream_turns
@@ -272,8 +269,7 @@ class TestEventHandlersRequestScopedStreaming:
         event_handlers.handle_response_done(
             ResponseDoneEvent(request_id=r2, seq=6, recv_ns=12),
             state,
-            widgets,
-            app_state,
+            context,
             log_fn,
         )
         assert domain_store._stream_turns == {}
@@ -281,8 +277,7 @@ class TestEventHandlersRequestScopedStreaming:
 
     def test_response_complete_finalizes_stream_before_done(self):
         state = ProviderRuntimeState()
-        app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
-        widgets = _mk_widgets(_FakeConv(), _FakeViewStore(), DomainStore())
+        context = _mk_context(_FakeConv(), _FakeViewStore(), DomainStore())
         log_fn = _noop_log
 
         rid = "req-1"
@@ -294,15 +289,13 @@ class TestEventHandlersRequestScopedStreaming:
                 recv_ns=1,
             ),
             state,
-            widgets,
-            app_state,
+            context,
             log_fn,
         )
         event_handlers.handle_response_headers(
             ResponseHeadersEvent(status_code=200, headers={"content-type": "text/event-stream"}, request_id=rid, seq=2, recv_ns=2),
             state,
-            widgets,
-            app_state,
+            context,
             log_fn,
         )
         event_handlers.handle_response_event(
@@ -313,12 +306,11 @@ class TestEventHandlersRequestScopedStreaming:
                 recv_ns=3,
             ),
             state,
-            widgets,
-            app_state,
+            context,
             log_fn,
         )
 
-        completed_before = widgets["domain_store"].completed_count
+        completed_before = context["domain_store"].completed_count
         event_handlers.handle_response_complete(
             ResponseCompleteEvent(
                 body={
@@ -335,12 +327,11 @@ class TestEventHandlersRequestScopedStreaming:
                 recv_ns=4,
             ),
             state,
-            widgets,
-            app_state,
+            context,
             log_fn,
         )
 
-        ds = widgets["domain_store"]
+        ds = context["domain_store"]
         assert rid not in ds._stream_turns
         # Combined turn: request turn replaced in place, no new turn added.
         assert ds.completed_count == completed_before
@@ -354,17 +345,15 @@ class TestEventHandlersRequestScopedStreaming:
         event_handlers.handle_response_done(
             ResponseDoneEvent(request_id=rid, seq=5, recv_ns=5),
             state,
-            widgets,
-            app_state,
+            context,
             log_fn,
         )
         assert ds.completed_count == completed_before
 
     def test_three_interleaved_streams_finalize_out_of_order_without_cross_talk(self):
         state = ProviderRuntimeState()
-        app_state = {"current_turn_usage_by_request": {}, "pending_request_headers": {}}
-        widgets = _mk_widgets(_FakeConv(), _FakeViewStore(), DomainStore())
-        domain_store = widgets["domain_store"]
+        context = _mk_context(_FakeConv(), _FakeViewStore(), DomainStore())
+        domain_store = context["domain_store"]
         log_fn = _noop_log
 
         requests = [
@@ -381,8 +370,7 @@ class TestEventHandlersRequestScopedStreaming:
                     recv_ns=idx,
                 ),
                 state,
-                widgets,
-                app_state,
+                context,
                 log_fn,
             )
             event_handlers.handle_request(
@@ -393,8 +381,7 @@ class TestEventHandlersRequestScopedStreaming:
                     recv_ns=idx + 10,
                 ),
                 state,
-                widgets,
-                app_state,
+                context,
                 log_fn,
             )
             event_handlers.handle_response_headers(
@@ -406,8 +393,7 @@ class TestEventHandlersRequestScopedStreaming:
                     recv_ns=idx + 20,
                 ),
                 state,
-                widgets,
-                app_state,
+                context,
                 log_fn,
             )
             event_handlers.handle_response_event(
@@ -425,8 +411,7 @@ class TestEventHandlersRequestScopedStreaming:
                     recv_ns=idx + 30,
                 ),
                 state,
-                widgets,
-                app_state,
+                context,
                 log_fn,
             )
             event_handlers.handle_response_event(
@@ -437,8 +422,7 @@ class TestEventHandlersRequestScopedStreaming:
                     recv_ns=idx + 40,
                 ),
                 state,
-                widgets,
-                app_state,
+                context,
                 log_fn,
             )
 
@@ -455,8 +439,7 @@ class TestEventHandlersRequestScopedStreaming:
                     recv_ns=100 + idx,
                 ),
                 state,
-                widgets,
-                app_state,
+                context,
                 log_fn,
             )
             remaining = {"req-a", "req-b", "req-c"} - {item[0] for item in completion_order[:idx]}

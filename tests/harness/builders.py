@@ -1,5 +1,9 @@
 """Shared builders for replay data in Textual tests."""
 
+from dataclasses import replace
+
+from cc_dump.pipeline.har_replayer import ReplayPair
+
 
 def make_replay_entry(
     content="Hello world",
@@ -7,8 +11,8 @@ def make_replay_entry(
     system_prompt=None,
     model="claude-sonnet-4-5-20250929",
     provider="anthropic",
-):
-    """Create a single replay entry.
+) -> ReplayPair:
+    """Create a single ReplayPair for use in tests.
 
     Args:
         content: User message content
@@ -16,9 +20,6 @@ def make_replay_entry(
         system_prompt: Optional system prompt text (or list of text blocks)
         model: Model identifier
         provider: API provider identifier
-
-    Returns:
-        Tuple: (req_headers, req_body, resp_status, resp_headers, complete_message, provider)
     """
     req_body = {
         "model": model,
@@ -43,41 +44,34 @@ def make_replay_entry(
         "usage": {"input_tokens": 100, "output_tokens": 50},
     }
 
-    return (
-        {"content-type": "application/json"},  # req_headers
-        req_body,
-        200,  # resp_status
-        {"content-type": "application/json"},  # resp_headers
-        complete_message,
-        provider,
+    return ReplayPair(
+        request_headers={"content-type": "application/json"},
+        request_body=req_body,
+        response_status=200,
+        response_headers={"content-type": "application/json"},
+        complete_message=complete_message,
+        provider=provider,
     )
 
 
-def make_replay_data(n=1, **kwargs):
-    """Create a list of N replay entries with numbered messages.
+def make_replay_data(n=1, **kwargs) -> list[ReplayPair]:
+    """Create a list of N ReplayPair entries with numbered messages.
 
     Args:
         n: Number of replay entries to create
         **kwargs: Arguments passed to make_replay_entry() for customization
-
-    Returns:
-        List of replay entry tuples
     """
-    entries = []
+    entries: list[ReplayPair] = []
     for i in range(n):
-        # Override content/response_text with numbered versions if not provided
         entry_kwargs = kwargs.copy()
         if "content" not in entry_kwargs:
             entry_kwargs["content"] = f"Message {i}"
         if "response_text" not in entry_kwargs:
             entry_kwargs["response_text"] = f"Response {i}"
 
-        # Create entry with unique message ID
-        entry = make_replay_entry(**entry_kwargs)
-        # Update message ID to be unique
-        req_headers, req_body, resp_status, resp_headers, complete_message, prov = entry
-        complete_message = complete_message.copy()
-        complete_message["id"] = f"msg_{i}"
-        entries.append((req_headers, req_body, resp_status, resp_headers, complete_message, prov))
+        pair = make_replay_entry(**entry_kwargs)
+        # Stamp a unique message id per entry.
+        unique_message = {**pair.complete_message, "id": f"msg_{i}"}
+        entries.append(replace(pair, complete_message=unique_message))
 
     return entries

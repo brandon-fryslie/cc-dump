@@ -49,7 +49,7 @@ Each **category** of content (your messages, the assistant's, tool calls, etc.) 
 | Summary | `◐` | A short preview |
 | Full | `●` | Everything |
 
-You can also **click any block** marked `▶`/`▼` to expand or collapse just that one block.
+Searching automatically expands whichever block contains a match, even if its category is collapsed.
 
 ### Category keys
 
@@ -59,11 +59,10 @@ You can also **click any block** marked `▶`/`▼` to expand or collapse just t
 | `2` | Assistant | Full |
 | `3` | Tool calls & results | Summary |
 | `4` | System prompt | Summary |
-| `5` | Token budget | Hidden |
-| `6` | Metadata | Hidden |
-| `7` | HTTP headers | Hidden |
+| `5` | Metadata | Hidden |
+| `6` | Thinking | Summary |
 
-Hold **Shift** with a number to toggle its detail axis; the matching lowercase letter (`q w e r t y u` → categories 1–7) toggles expansion.
+Hold **Shift** with a number to toggle its detail axis; the matching lowercase letter (`q w e r t y` → categories 1–6) toggles expansion.
 
 ### Navigation
 

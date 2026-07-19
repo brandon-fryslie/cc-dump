@@ -345,21 +345,15 @@ def test_list_recordings_no_timestamp(recordings_dir):
     assert recordings[0]["created"] is not None
 
 
-def test_list_recordings_provider_layout(recordings_dir):
-    """Flat ccdump filenames carry provider identity for list output."""
-    har_a = recordings_dir / "ccdump-anthropic-20260304-101530Z-a1b2c3d4.har"
-    har_o = recordings_dir / "ccdump-openai-20260304-101530Z-a5b6c7d8.har"
-    har_c = recordings_dir / "ccdump-copilot-20260304-101530Z-a9b0c1d2.har"
-    create_har_file(har_a, entry_count=1)
-    create_har_file(har_o, entry_count=2)
-    create_har_file(har_c, entry_count=3)
+def test_list_recordings_provider_from_entries(recordings_dir):
+    """Provider identity is always derived from HAR entry content, not filename."""
+    har = recordings_dir / "ccdump-20260304-101530Z-a1b2c3d4.har"
+    create_har_file(har, entry_count=1)
 
     recordings = list_recordings(str(recordings_dir))
-    assert len(recordings) == 3
-    by_name = {rec["filename"]: rec for rec in recordings}
-    assert by_name["ccdump-anthropic-20260304-101530Z-a1b2c3d4.har"]["provider"] == "anthropic"
-    assert by_name["ccdump-openai-20260304-101530Z-a5b6c7d8.har"]["provider"] == "openai"
-    assert by_name["ccdump-copilot-20260304-101530Z-a9b0c1d2.har"]["provider"] == "copilot"
+    assert len(recordings) == 1
+    # create_har_file uses api.anthropic.com URL and type=message response shape
+    assert recordings[0]["provider"] == "anthropic"
 
 
 def test_list_recordings_provider_inferred_from_openai_url(recordings_dir):
