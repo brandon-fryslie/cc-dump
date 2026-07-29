@@ -330,24 +330,27 @@ class TestHotReloadMultiSessionTabs:
             app._ensure_session(providers.provider_session_key("openai"))
             await pilot.pause()
 
-            # Two distinct tabs, two distinct conv ids, both mounted.
-            before = {c.id for c in app.screen.query(ConversationView)}
-            assert before == {"conversation-view", "conversation-view-1"}
+            # Two conversation views, each with a distinct id, both mounted. (A
+            # collision would already have raised DuplicateIds at mount above.)
+            convs_before = list(app.screen.query(ConversationView))
+            ids_before = {c.id for c in convs_before}
+            assert len(convs_before) == 2
+            assert len(ids_before) == len(convs_before)  # no duplicate id
 
-            old_ids = {id(c) for c in app.screen.query(ConversationView)}
+            old_instances = {id(c) for c in convs_before}
 
             # Would raise textual DuplicateIds if any conv_id collided.
             await hr.replace_all_widgets(app)
             await pilot.pause()
 
-            convs = list(app.screen.query(ConversationView))
-            after = {c.id for c in convs}
-            assert after == {"conversation-view", "conversation-view-1"}
-            # No id appears twice — query already flattens the DOM, so equal-length
-            # id set and widget list means every id is unique.
-            assert len(convs) == len(after)
+            convs_after = list(app.screen.query(ConversationView))
+            ids_after = {c.id for c in convs_after}
+            # Reload preserves exactly the same distinct ids — none lost, added, or
+            # duplicated — so no conversation was dropped and none collided.
+            assert len(ids_after) == len(convs_after)
+            assert ids_after == ids_before
             # Fresh instances after the swap.
-            assert {id(c) for c in convs}.isdisjoint(old_ids)
+            assert {id(c) for c in convs_after}.isdisjoint(old_instances)
 
     async def test_session_widget_ids_do_not_depend_on_session_count(self):
         """conv_id/tab_id uniqueness comes from a monotonic counter, not len(sessions).
@@ -363,7 +366,12 @@ class TestHotReloadMultiSessionTabs:
         from cc_dump import providers
         from tests.harness import run_app
 
+        def _index(widget_id: str) -> int:
+            """Trailing counter suffix of a non-default session's widget id."""
+            return int(widget_id.rsplit("-", 1)[1])
+
         async with run_app() as (_pilot, app):
+            default = app._sessions.default()
             count_before = len(app._sessions.all())
 
             # _build_session is the id-minting factory; call it directly so no session
@@ -372,13 +380,16 @@ class TestHotReloadMultiSessionTabs:
             second = app._build_session(providers.provider_session_key("copilot"))
 
             assert len(app._sessions.all()) == count_before  # nothing registered
-            assert first.conv_id == "conversation-view-1"
-            assert second.conv_id == "conversation-view-2"
-            assert first.tab_id == "conversation-tab-main-1"
-            assert second.tab_id == "conversation-tab-main-2"
-            # The two never collide — a len()-based index would hand both the same id.
-            assert first.conv_id != second.conv_id
-            assert first.tab_id != second.tab_id
+
+            # Non-colliding: both mints differ from each other AND from the default
+            # session, so no two widgets can ever claim the same id.
+            assert len({first.conv_id, second.conv_id, default.conv_id}) == 3
+            assert len({first.tab_id, second.tab_id, default.tab_id}) == 3
+            # Monotonic and count-independent: the second mint gets a strictly higher
+            # index than the first even though len(sessions) never changed. A
+            # len()-based index would hand both the same value.
+            assert _index(second.conv_id) > _index(first.conv_id)
+            assert _index(second.tab_id) > _index(first.tab_id)
 
 
 # ============================================================================
