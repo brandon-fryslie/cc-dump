@@ -362,6 +362,14 @@ class TestHotReloadMultiSessionTabs:
         monotonic indices even though neither is added to the registry (so
         len(sessions) stays constant across both calls). Regression for
         lit-9ccff100-f42bde59.
+
+        Deliberately white-box: it calls the private `_build_session` factory (the
+        single enforcer of session identity) rather than the public `_ensure_session`.
+        The count-independence property only manifests when the session set is not
+        append-only, and that has no public surface — no session-removal path exists,
+        and `_ensure_session` registers each session so `len()` tracks the index and
+        would not expose the bug. Minting without registering is the only way to
+        isolate it.
         """
         from cc_dump import providers
         from tests.harness import run_app
