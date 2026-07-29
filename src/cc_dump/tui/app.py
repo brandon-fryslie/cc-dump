@@ -337,6 +337,14 @@ class CcDumpApp(App):
         self._conv_tabs_id = "conversation-tabs"
         self._conv_tab_main_id = "conversation-tab-main"
         self._search_bar_id = "search-bar"
+        # [LAW:one-source-of-truth] Per-session widget-id index comes from this owned,
+        # monotonic counter — never from len(sessions). A count-derived index only
+        # stays collision-free while the session set is append-only; that invariant is
+        # unstated and unenforced, so a duplicate conv_id/tab_id (which detonates as a
+        # DuplicateIds crash when hot-reload re-mounts every conversation at once) is
+        # made unrepresentable here instead. Index 1 = first non-default session,
+        # preserving the existing "conversation-view-1" id scheme.
+        self._next_session_index = 1
         # [LAW:single-enforcer] Session identity ownership lives in the registry.
         # [LAW:one-source-of-truth] No more parallel dicts; one Session per tab.
         default_session = cc_dump.tui.session_registry.Session(
@@ -428,8 +436,13 @@ class CcDumpApp(App):
         """Factory for new Sessions. Called by SessionRegistry.ensure.
 
         // [LAW:single-enforcer] The only place a non-default Session is constructed.
+        // [LAW:one-source-of-truth] Widget-id index comes from the owned monotonic
+        //   counter, so conv_id/tab_id are unique by construction regardless of
+        //   whether sessions are ever removed. `ensure` only calls this factory for
+        //   genuinely new keys, so the counter advances exactly once per session.
         """
-        tab_index = len(self._sessions.all())
+        tab_index = self._next_session_index
+        self._next_session_index += 1
         domain_store = cc_dump.app.domain_store.DomainStore()
         return cc_dump.tui.session_registry.Session(
             key=key,

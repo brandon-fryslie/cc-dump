@@ -312,6 +312,74 @@ class TestHotReloadMultiSessionTabs:
             assert tabs.active == default.tab_id
             assert app._sessions.active().domain_store is default.domain_store
 
+    async def test_hot_reload_preserves_distinct_provider_tab_ids(self):
+        """Multi-provider tabs survive hot-reload without a duplicate widget id.
+
+        A non-default provider (openai) gets its own tab + ConversationView with a
+        distinct id ("conversation-view-1"). Hot-reload re-mounts every conversation
+        at once, so any two sessions sharing a conv_id would crash here with
+        Textual's DuplicateIds. This asserts the reachable multi-tab path stays
+        collision-free. Regression for lit-9ccff100-f42bde59.
+        """
+        from cc_dump import providers
+        from cc_dump.tui import hot_reload_controller as hr
+        from cc_dump.tui.widget_factory import ConversationView
+        from tests.harness import run_app
+
+        async with run_app() as (pilot, app):
+            app._ensure_session(providers.provider_session_key("openai"))
+            await pilot.pause()
+
+            # Two distinct tabs, two distinct conv ids, both mounted.
+            before = {c.id for c in app.screen.query(ConversationView)}
+            assert before == {"conversation-view", "conversation-view-1"}
+
+            old_ids = {id(c) for c in app.screen.query(ConversationView)}
+
+            # Would raise textual DuplicateIds if any conv_id collided.
+            await hr.replace_all_widgets(app)
+            await pilot.pause()
+
+            convs = list(app.screen.query(ConversationView))
+            after = {c.id for c in convs}
+            assert after == {"conversation-view", "conversation-view-1"}
+            # No id appears twice — query already flattens the DOM, so equal-length
+            # id set and widget list means every id is unique.
+            assert len(convs) == len(after)
+            # Fresh instances after the swap.
+            assert {id(c) for c in convs}.isdisjoint(old_ids)
+
+    async def test_session_widget_ids_do_not_depend_on_session_count(self):
+        """conv_id/tab_id uniqueness comes from a monotonic counter, not len(sessions).
+
+        A count-derived index reuses a retired id the moment the session set is not
+        append-only (a future "close tab"), and that duplicate conv_id detonates as a
+        DuplicateIds crash when hot-reload re-mounts every conversation at once. This
+        pins the index to the owned counter: minting two sessions yields two distinct,
+        monotonic indices even though neither is added to the registry (so
+        len(sessions) stays constant across both calls). Regression for
+        lit-9ccff100-f42bde59.
+        """
+        from cc_dump import providers
+        from tests.harness import run_app
+
+        async with run_app() as (_pilot, app):
+            count_before = len(app._sessions.all())
+
+            # _build_session is the id-minting factory; call it directly so no session
+            # is registered — len(sessions) is identical for both calls.
+            first = app._build_session(providers.provider_session_key("openai"))
+            second = app._build_session(providers.provider_session_key("copilot"))
+
+            assert len(app._sessions.all()) == count_before  # nothing registered
+            assert first.conv_id == "conversation-view-1"
+            assert second.conv_id == "conversation-view-2"
+            assert first.tab_id == "conversation-tab-main-1"
+            assert second.tab_id == "conversation-tab-main-2"
+            # The two never collide — a len()-based index would hand both the same id.
+            assert first.conv_id != second.conv_id
+            assert first.tab_id != second.tab_id
+
 
 # ============================================================================
 # UNIT TESTS — import validation, widget protocols, state, module structure
