@@ -513,7 +513,7 @@ class LaunchConfigPanel(VerticalScroll):
             active_widget = self.query_one("#lc-active", Static)
         except NoMatches:
             return
-        active_widget.update("Active preset: {}".format(self._active_name or "(none)"))
+        active_widget.update(f"Active preset: {self._active_name or '(none)'}")
 
     def _sync_preset_selector(self, names: tuple[str, ...], selected_name: str) -> None:
         try:

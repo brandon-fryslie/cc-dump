@@ -187,11 +187,10 @@ class SettingsPanel(VerticalScroll):
         """Read current widget values into a dict keyed by field key."""
         result = {}
         for field in SETTINGS_FIELDS:
+            # [LAW:dataflow-not-control-flow] Every field kind (text, bool, select)
+            # exposes .value; the read is unconditional, not branched on kind.
             widget = self.query_one(f"#field-{field.key}")
-            if field.kind == "text" or field.kind == "bool":
-                result[field.key] = widget.value
-            else:  # select
-                result[field.key] = widget.value
+            result[field.key] = widget.value
         return result
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
