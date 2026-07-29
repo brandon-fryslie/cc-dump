@@ -5,8 +5,8 @@ State isolation: every call creates fresh queue, router, state dict, and app.
 """
 
 import queue
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Callable
 
 from textual.pilot import Pilot
 

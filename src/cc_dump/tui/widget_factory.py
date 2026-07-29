@@ -8,37 +8,39 @@ import datetime
 import logging
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
+
+from rich.segment import Segment
+from rich.text import Text
 from snarfx import Observable, reaction
 from snarfx import textual as stx
+from textual.cache import LRUCache
 from textual.dom import NoScreen
-from textual.widgets import RichLog, Static
+from textual.geometry import Offset, Size
 from textual.scroll_view import ScrollView
 from textual.selection import Selection
 from textual.strip import Strip
-from textual.cache import LRUCache
-from textual.geometry import Size, Offset
-from rich.segment import Segment
-from rich.text import Text
+from textual.widgets import RichLog, Static
+
+import cc_dump.app.domain_store
+import cc_dump.app.error_models
+import cc_dump.core.analysis
 
 # Use module-level imports for hot-reload
 import cc_dump.core.formatting
 import cc_dump.core.palette
-import cc_dump.core.analysis
-import cc_dump.tui.rendering
-import cc_dump.tui.panel_renderers
 import cc_dump.tui.error_indicator
+import cc_dump.tui.panel_renderers
+import cc_dump.tui.rendering
 import cc_dump.tui.search
 import cc_dump.tui.view_overrides
-import cc_dump.app.error_models
-import cc_dump.app.domain_store
+from cc_dump.io.perf_logging import monitor_complexity
 from cc_dump.tui.follow_mode import (
-    FollowState,
     FollowEvent,
     FollowModeStore,
+    FollowState,
     FollowTransition,
 )
-from cc_dump.io.perf_logging import monitor_complexity
 from cc_dump.tui.prefix_sum_tree import FenwickTree, MaxTracker
 
 logger = logging.getLogger(__name__)
@@ -55,8 +57,7 @@ def _compute_widest(strips: list) -> int:
     widest = 0
     for s in strips:
         w = s.cell_length
-        if w > widest:
-            widest = w
+        widest = max(widest, w)
     return widest
 
 
@@ -233,7 +234,7 @@ class ConversationView(ScrollView):
         self._view_store = view_store
         # Auto-create domain store for tests that don't provide one
         self._domain_store = domain_store if domain_store is not None else cc_dump.app.domain_store.DomainStore()
-        self._render_runtime: "RenderRuntime | None" = runtime
+        self._render_runtime: RenderRuntime | None = runtime
         self._turns: list[TurnData] = []
         self._total_lines: int = 0
         self._widest_line: int = 0
@@ -491,8 +492,7 @@ class ConversationView(ScrollView):
             block = stack.pop()
             yield block
             children = getattr(block, "children", []) or []
-            for child in reversed(children):
-                stack.append(child)
+            stack.extend(reversed(children))
 
     def _unindex_blocks(self, blocks) -> None:
         """Remove blocks and their descendants from the block_id index."""
@@ -1068,7 +1068,7 @@ class ConversationView(ScrollView):
 
     # // [LAW:single-enforcer] _invalidate is the single entry point for all render invalidation.
     # // [LAW:dataflow-not-control-flow] Dispatch table drives behavior, not branches.
-    _INVALIDATION_DISPATCH = {
+    _INVALIDATION_DISPATCH: ClassVar[dict[str, str]] = {
         "new_turn":          "_render_new_turn",
         "stream_started":    "_render_stream_started",
         "stream_delta":      "_render_stream_delta",
@@ -1107,9 +1107,8 @@ class ConversationView(ScrollView):
             if self._is_following:
                 with self._programmatic_scroll():
                     self.scroll_end(animate=False, immediate=False, x_axis=False)
-        elif reason in self._ANCHOR_REASONS:
-            if not self._is_following:
-                self._resolve_anchor()
+        elif reason in self._ANCHOR_REASONS and not self._is_following:
+            self._resolve_anchor()
 
     def _clear_line_cache(self) -> None:
         """Clear line cache and its turn-key index together."""
@@ -2013,7 +2012,7 @@ class ConversationView(ScrollView):
 
         # Find next block start
         next_start = len(turn.strips)  # default to turn end
-        for idx, start in turn.block_strip_map.items():
+        for start in turn.block_strip_map.values():
             if start > block_start and start < next_start:
                 next_start = start
 
@@ -2386,7 +2385,7 @@ class LogsPanel(RichLog):
             level: Log level (DEBUG, INFO, WARNING, ERROR)
             message: Log message
         """
-        timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        timestamp = datetime.datetime.now().astimezone().strftime("%H:%M:%S.%f")[:-3]
 
         log_text = Text()
         log_text.append(f"[{timestamp}] ", style="dim")
@@ -2405,7 +2404,7 @@ class LogsPanel(RichLog):
 
     def restore_state(self, state: dict):
         """Restore state from a previous instance."""
-        pass  # Nothing to restore
+        # Nothing to restore
 
 
 # Factory functions for creating widgets

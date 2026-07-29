@@ -4,12 +4,12 @@
 from textual.theme import BUILTIN_THEMES
 
 from cc_dump.core.formatting import (
+    ALWAYS_VISIBLE,
+    Category,
+    ErrorBlock,
+    HeaderBlock,
     TextContentBlock,
     ToolUseBlock,
-    HeaderBlock,
-    ErrorBlock,
-    Category,
-    ALWAYS_VISIBLE,
     VisState,
     populate_content_regions,
 )
@@ -127,6 +127,7 @@ def test_blocks_not_mutated_by_render():
     and expandable is written to overrides instead of monkey-patched onto the block.
     """
     from rich.console import Console
+
     from cc_dump.tui.rendering import render_turn_to_strips
 
     _setup_theme()
@@ -229,6 +230,7 @@ def test_search_reveal_clears_previous_reveal():
 
 def test_search_reveal_region_forces_region_expanded():
     from rich.console import Console
+
     from cc_dump.tui.rendering import render_turn_to_strips
 
     _setup_theme()

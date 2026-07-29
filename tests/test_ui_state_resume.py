@@ -8,8 +8,8 @@ import cc_dump.app.view_store
 import cc_dump.tui.app
 import cc_dump.tui.event_handlers
 import cc_dump.tui.session_registry
-from cc_dump.pipeline.event_types import RequestHeadersEvent
 from cc_dump.core.formatting_impl import ProviderRuntimeState
+from cc_dump.pipeline.event_types import RequestHeadersEvent
 from cc_dump.tui.app import CcDumpApp
 
 

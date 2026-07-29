@@ -1,6 +1,6 @@
 """Tests for provider registry and provider-family helpers."""
 
-import cc_dump.providers as providers
+from cc_dump import providers
 
 
 def test_copilot_provider_spec_registered():

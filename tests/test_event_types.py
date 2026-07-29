@@ -3,33 +3,33 @@
 import pytest
 
 from cc_dump.pipeline.event_types import (
-    # Enums
-    PipelineEventKind,
-    StopReason,
-    MessageRole,
-    # Value types
-    Usage,
+    ContentBlockStopEvent,
+    ErrorEvent,
+    InputJsonDeltaEvent,
+    LogEvent,
+    MessageDeltaEvent,
     MessageInfo,
+    MessageRole,
     # SSE events
     MessageStartEvent,
-    TextBlockStartEvent,
-    ToolUseBlockStartEvent,
-    TextDeltaEvent,
-    InputJsonDeltaEvent,
-    ContentBlockStopEvent,
-    MessageDeltaEvent,
     MessageStopEvent,
     # Pipeline events
     PipelineEvent,
-    RequestHeadersEvent,
-    RequestBodyEvent,
-    ResponseHeadersEvent,
-    ResponseSSEEvent,
-    ResponseProgressEvent,
-    ResponseDoneEvent,
-    ErrorEvent,
+    # Enums
+    PipelineEventKind,
     ProxyErrorEvent,
-    LogEvent,
+    RequestBodyEvent,
+    RequestHeadersEvent,
+    ResponseDoneEvent,
+    ResponseHeadersEvent,
+    ResponseProgressEvent,
+    ResponseSSEEvent,
+    StopReason,
+    TextBlockStartEvent,
+    TextDeltaEvent,
+    ToolUseBlockStartEvent,
+    # Value types
+    Usage,
     # Parse boundary
     parse_sse_event,
 )

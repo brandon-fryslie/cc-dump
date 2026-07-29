@@ -5,7 +5,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, TypedDict
+from typing import TypedDict
 
 import cc_dump.providers
 
@@ -84,7 +84,7 @@ def _load_recording_info(path: Path) -> RecordingInfo:
     }
 
 
-def list_recordings(recordings_dir: Optional[str] = None) -> list[RecordingInfo]:
+def list_recordings(recordings_dir: str | None = None) -> list[RecordingInfo]:
     """List available recordings with metadata.
 
     Args:
@@ -130,7 +130,7 @@ def list_recordings(recordings_dir: Optional[str] = None) -> list[RecordingInfo]
     return recordings
 
 
-def get_latest_recording(recordings_dir: Optional[str] = None) -> Optional[str]:
+def get_latest_recording(recordings_dir: str | None = None) -> str | None:
     """Get the path to the most recent recording.
 
     Args:
@@ -149,7 +149,7 @@ def get_latest_recording(recordings_dir: Optional[str] = None) -> Optional[str]:
 
 
 def cleanup_recordings(
-    recordings_dir: Optional[str] = None,
+    recordings_dir: str | None = None,
     *,
     keep: int = 20,
     dry_run: bool = False,
@@ -161,8 +161,7 @@ def cleanup_recordings(
         keep: Number of newest recordings to keep
         dry_run: When True, report only (no filesystem changes)
     """
-    if keep < 0:
-        keep = 0
+    keep = max(keep, 0)
     if recordings_dir is None:
         recordings_dir = get_recordings_dir()
 

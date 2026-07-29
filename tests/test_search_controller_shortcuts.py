@@ -7,10 +7,10 @@ from cc_dump.tui.search import SearchMode
 
 
 class _State:
-    def __init__(self, query: str, cursor_pos: int, modes: SearchMode = SearchMode(0)):
+    def __init__(self, query: str, cursor_pos: int, modes: SearchMode | None = None):
         self.query = query
         self.cursor_pos = cursor_pos
-        self.modes = modes
+        self.modes = modes if modes is not None else SearchMode(0)
         self.phase = None
         self.matches = []
         self.current_index = 0

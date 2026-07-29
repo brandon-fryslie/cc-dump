@@ -10,7 +10,6 @@ This file is named with `test_0_` so it runs first.
 import ast
 import os
 
-
 _SRC_ROOT = os.path.join(os.path.dirname(__file__), "..", "src", "cc_dump")
 
 # Intentional hot-reload imports in reloadable modules where the function

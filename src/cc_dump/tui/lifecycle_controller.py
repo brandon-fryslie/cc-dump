@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import threading
 
-from cc_dump.io.stderr_tee import get_tee as _get_tee
-import cc_dump.providers
-import cc_dump.tui.rendering
 import snarfx
 from snarfx import textual as stx
+
+import cc_dump.providers
+import cc_dump.tui.rendering
+from cc_dump.io.stderr_tee import get_tee as _get_tee
 
 
 def on_mount(app) -> None:

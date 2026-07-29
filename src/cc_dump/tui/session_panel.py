@@ -5,8 +5,8 @@ This module is RELOADABLE. Uses module-level imports for hot-reload.
 // [LAW:one-source-of-truth] Connection state derived from last_message_time.
 """
 
-from dataclasses import dataclass
 import time
+from dataclasses import dataclass
 
 from snarfx import Observable, reaction
 from snarfx import textual as stx

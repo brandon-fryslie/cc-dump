@@ -2,7 +2,11 @@
 
 from types import SimpleNamespace
 
-from cc_dump.tui.location_navigation import BlockLocation, go_to_location, resolve_scroll_key
+from cc_dump.tui.location_navigation import (
+    BlockLocation,
+    go_to_location,
+    resolve_scroll_key,
+)
 
 
 class _Turn:

@@ -4,12 +4,12 @@ import pytest
 
 from cc_dump.core.formatting import VisState
 from tests.harness import (
-    run_app,
-    press_and_settle,
+    all_turns_text,
     get_turn_count,
     get_vis_state,
-    all_turns_text,
     make_replay_entry,
+    press_and_settle,
+    run_app,
 )
 
 pytestmark = pytest.mark.textual
@@ -31,7 +31,7 @@ _REPLAY_DATA = [
 
 async def test_replay_populates_turns():
     """Loading replay data creates turns in the conversation view."""
-    async with run_app(replay_data=_REPLAY_DATA) as (pilot, app):
+    async with run_app(replay_data=_REPLAY_DATA) as (_pilot, app):
         count = get_turn_count(app)
         # Combined turns: 1 request-response pair = 1 turn.
         assert count == 1, f"Expected 1 combined turn, got {count}"
@@ -39,7 +39,7 @@ async def test_replay_populates_turns():
 
 async def test_replay_content_visible():
     """Replay turns contain expected text content."""
-    async with run_app(replay_data=_REPLAY_DATA) as (pilot, app):
+    async with run_app(replay_data=_REPLAY_DATA) as (_pilot, app):
         text = all_turns_text(app)
         # User message content should appear (user defaults to FULL)
         assert "Hello world test message" in text

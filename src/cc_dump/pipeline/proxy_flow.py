@@ -5,13 +5,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from pydantic import TypeAdapter, ValidationError
-
 
 _JSON_OBJECT = TypeAdapter(dict[str, object])
 
@@ -34,7 +33,7 @@ def resolve_proxy_target_for_origin(
 
     // [LAW:single-enforcer] Absolute-form target confinement for CONNECT tunnels lives here.
     """
-    if path.startswith("http://") or path.startswith("https://"):
+    if path.startswith(("http://", "https://")):
         parsed = urlparse(path)
         request_path = parsed.path or "/"
         if parsed.query:

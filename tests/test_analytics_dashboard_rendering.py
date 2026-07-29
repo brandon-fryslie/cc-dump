@@ -1,10 +1,10 @@
 """Tests for unified analytics dashboard rendering."""
 
 from cc_dump.tui.panel_renderers import (
+    render_analytics_models,
     render_analytics_panel,
     render_analytics_summary,
     render_analytics_timeline,
-    render_analytics_models,
 )
 
 

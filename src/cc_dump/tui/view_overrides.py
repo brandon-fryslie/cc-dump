@@ -164,10 +164,12 @@ class ViewOverrides:
                 rvs.expanded = None
 
         # If active reveal was in this category, clear tracking
-        if self._active_reveal_block_id is not None:
-            if self._block_categories.get(self._active_reveal_block_id) == category:
-                self._active_reveal_block_id = None
-                self._active_reveal_region = None
+        if (
+            self._active_reveal_block_id is not None
+            and self._block_categories.get(self._active_reveal_block_id) == category
+        ):
+            self._active_reveal_block_id = None
+            self._active_reveal_region = None
 
     # ─── Serialization ───────────────────────────────────────────────────
 

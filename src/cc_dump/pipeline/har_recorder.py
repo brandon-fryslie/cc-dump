@@ -12,15 +12,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TextIO
 
+import cc_dump.providers
 from cc_dump.pipeline.event_types import (
     PipelineEvent,
     PipelineEventKind,
-    ResponseCompleteEvent,
-    RequestHeadersEvent,
     RequestBodyEvent,
+    RequestHeadersEvent,
+    ResponseCompleteEvent,
     ResponseHeadersEvent,
 )
-import cc_dump.providers
 
 logger = logging.getLogger(__name__)
 
@@ -324,9 +324,9 @@ class HARRecordingSubscriber:
 
             self._entry_count += 1
 
-        except Exception as e:
+        except Exception:
             # Skip bad entries without corrupting file
-            logger.exception("error serializing HAR entry: %s", e)
+            logger.exception("error serializing HAR entry")
 
         # Clear state for this request.
         self._pending_by_request.pop(request_key, None)
@@ -351,8 +351,8 @@ class HARRecordingSubscriber:
 
         try:
             self._file.close()
-        except Exception as e:
-            logger.exception("error closing HAR file: %s", e)
+        except Exception:
+            logger.exception("error closing HAR file")
 
         # Belt-and-suspenders: if file was opened but has 0 entries, something
         # is broken — the lazy init should prevent this. Delete and scream.
@@ -366,6 +366,6 @@ class HARRecordingSubscriber:
             try:
                 os.unlink(self.path)
                 logger.warning("deleted empty HAR file: %s", self.path)
-            except OSError as e:
-                logger.exception("failed to delete empty HAR file %s: %s", self.path, e)
+            except OSError:
+                logger.exception("failed to delete empty HAR file %s", self.path)
             return

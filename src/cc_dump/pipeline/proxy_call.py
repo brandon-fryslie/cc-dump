@@ -291,11 +291,11 @@ class ResponseEventEmitter:
     ) -> tuple[PipelineEvent, ...]:
         return ()
 
-    def streaming_extra_sinks(self, event_queue) -> list["StreamSink"]:
+    def streaming_extra_sinks(self, event_queue) -> list[StreamSink]:
         return []
 
     def streaming_finalize(
-        self, sinks: list["StreamSink"]
+        self, sinks: list[StreamSink]
     ) -> tuple[PipelineEvent, ...]:
         return ()
 
@@ -384,7 +384,7 @@ class TracedResponseEventEmitter(ResponseEventEmitter):
             ),
         )
 
-    def streaming_extra_sinks(self, event_queue) -> list["StreamSink"]:
+    def streaming_extra_sinks(self, event_queue) -> list[StreamSink]:
         # Imported lazily to avoid a circular import with proxy.py.
         from cc_dump.pipeline.proxy import EventQueueSink
         from cc_dump.pipeline.response_assembler import OpenAiChatResponseAssembler
@@ -413,7 +413,7 @@ class TracedResponseEventEmitter(ResponseEventEmitter):
         ]
 
     def streaming_finalize(
-        self, sinks: list["StreamSink"]
+        self, sinks: list[StreamSink]
     ) -> tuple[PipelineEvent, ...]:
         from cc_dump.pipeline.proxy import EventQueueSink
 

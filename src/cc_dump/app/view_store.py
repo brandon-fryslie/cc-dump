@@ -5,15 +5,14 @@
 // [LAW:one-way-deps] No widget imports; widgets subscribe directly to canonical store keys/computeds.
 """
 
-from cc_dump.core.formatting import VisState
+from snarfx import ObservableList, computed
+from snarfx import textual as stx
+from snarfx.hot_reload import HotReloadStore
+
 from cc_dump.app.error_models import ErrorItem
 from cc_dump.core.coerce import coerce_int
-
+from cc_dump.core.formatting import VisState
 from cc_dump.tui.category_config import CATEGORY_CONFIG
-from snarfx.hot_reload import HotReloadStore
-from snarfx import computed, ObservableList
-from snarfx import textual as stx
-
 
 # [LAW:one-source-of-truth] Schema built programmatically from CATEGORY_CONFIG + panel/follow
 SCHEMA: dict[str, object] = {}

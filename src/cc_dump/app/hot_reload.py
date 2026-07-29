@@ -13,9 +13,9 @@ import importlib
 import logging
 import os
 import sys
-from types import ModuleType
 from collections.abc import Iterator
 from pathlib import Path
+from types import ModuleType
 
 # Modules to reload in dependency order (leaves first, dependents after)
 _RELOAD_ORDER = [

@@ -27,6 +27,19 @@ def format_conversation_text(conv, log_fn=None) -> str:
     return buffer.getvalue()
 
 
+def _dump_block_tree(f, blocks, counter: list[int], log_fn=None) -> None:
+    """Recursively write a block subtree, advancing the shared block counter.
+
+    Defined at module scope (not nested in the turn loop) so it captures no loop
+    variables — the counter and file are passed explicitly.
+    """
+    for block in blocks:
+        write_block_text(f, block, counter[0], log_fn=log_fn)
+        f.write("\n")
+        counter[0] += 1
+        _dump_block_tree(f, getattr(block, "children", []), counter, log_fn=log_fn)
+
+
 def _write_conversation_dump(f, conv, log_fn=None) -> None:
     """Write conversation dump text to a file-like object."""
     f.write("=" * 80 + "\n")
@@ -39,15 +52,7 @@ def _write_conversation_dump(f, conv, log_fn=None) -> None:
         f.write(f"{'─' * 80}\n\n")
 
         block_counter = [0]  # mutable counter for nested blocks
-
-        def _dump_blocks(blocks):
-            for block in blocks:
-                write_block_text(f, block, block_counter[0], log_fn=log_fn)
-                f.write("\n")
-                block_counter[0] += 1
-                _dump_blocks(getattr(block, "children", []))
-
-        _dump_blocks(turn_data.blocks)
+        _dump_block_tree(f, turn_data.blocks, block_counter, log_fn=log_fn)
 
 
 def dump_conversation(app) -> None:
@@ -79,7 +84,8 @@ def dump_conversation(app) -> None:
 
             try:
                 result = subprocess.run(
-                    [editor, tmp_path], timeout=20, capture_output=True, text=True
+                    [editor, tmp_path], timeout=20, capture_output=True, text=True,
+                    check=False,  # returncode is inspected below; do not raise
                 )
                 if result.returncode == 0:
                     app._app_log("INFO", "Editor opened successfully")

@@ -11,13 +11,11 @@ This module is RELOADABLE. Stable boundary modules import it as a module object.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
 
+import cc_dump.app.domain_store
 import cc_dump.providers
-
-if TYPE_CHECKING:
-    import cc_dump.app.domain_store
 
 
 @dataclass
@@ -32,7 +30,7 @@ class Session:
     key: str
     tab_id: str
     conv_id: str
-    domain_store: "cc_dump.app.domain_store.DomainStore"
+    domain_store: cc_dump.app.domain_store.DomainStore
     provider: str
     is_default: bool
     last_message_time: float | None = None

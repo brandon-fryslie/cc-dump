@@ -9,41 +9,39 @@ import json
 from unittest.mock import MagicMock
 
 from cc_dump.app.domain_store import DomainStore
-from cc_dump.core.formatting_impl import ProviderRuntimeState
-
 from cc_dump.core.formatting import (
     FormattedBlock,
     HttpHeadersBlock,
-    StreamInfoBlock,
     StopReasonBlock,
-    TextContentBlock,
+    StreamInfoBlock,
     StreamToolUseBlock,
+    TextContentBlock,
     ThinkingBlock,
     format_complete_response,
     format_request_for_provider,
 )
-from cc_dump.pipeline.har_replayer import load_har, convert_to_events, ReplayPair
-from cc_dump.tui.event_handlers import (
-    handle_request_headers,
-    handle_request,
-    handle_response_progress,
-    handle_response_event,
-    handle_response_headers,
-    handle_response_complete,
-    handle_response_non_streaming,
-)
-from cc_dump.pipeline.response_assembler import ResponseAssembler
+from cc_dump.core.formatting_impl import ProviderRuntimeState
 from cc_dump.pipeline.event_types import (
-    RequestHeadersEvent,
-    RequestBodyEvent,
-    ResponseHeadersEvent,
-    ResponseSSEEvent,
-    ResponseCompleteEvent,
-    ResponseNonStreamingEvent,
     PipelineEventKind,
+    RequestBodyEvent,
+    RequestHeadersEvent,
+    ResponseCompleteEvent,
+    ResponseHeadersEvent,
+    ResponseNonStreamingEvent,
+    ResponseSSEEvent,
     parse_sse_event,
 )
-
+from cc_dump.pipeline.har_replayer import ReplayPair, convert_to_events, load_har
+from cc_dump.pipeline.response_assembler import ResponseAssembler
+from cc_dump.tui.event_handlers import (
+    handle_request,
+    handle_request_headers,
+    handle_response_complete,
+    handle_response_event,
+    handle_response_headers,
+    handle_response_non_streaming,
+    handle_response_progress,
+)
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 

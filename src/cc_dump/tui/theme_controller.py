@@ -6,8 +6,12 @@
 Hot-reloadable — imported as module object in app.py, stateless.
 """
 
-import cc_dump.tui.rendering
+import contextlib
+
 from rich.theme import Theme as RichTheme
+from rich.theme import ThemeStackError
+
+import cc_dump.tui.rendering
 
 
 def cycle_theme(app, direction: int) -> None:
@@ -36,10 +40,10 @@ def apply_markdown_theme(app) -> None:
     # Skip markdown theme for ANSI-based Textual themes
     if "ansi" in app.theme.lower():
         if app._markdown_theme_pushed:
-            try:
+            # pop_theme() raises ThemeStackError if the stack is already at its base
+            # (e.g. hot-reload state desync); that is a benign no-op here.
+            with contextlib.suppress(ThemeStackError):
                 app.console.pop_theme()
-            except Exception:
-                pass
             app._markdown_theme_pushed = False
         return
 
@@ -48,9 +52,8 @@ def apply_markdown_theme(app) -> None:
 
     # Pop old markdown theme if we pushed one before
     if app._markdown_theme_pushed:
-        try:
+        # No theme to pop on first call (or after a hot-reload state desync).
+        with contextlib.suppress(ThemeStackError):
             app.console.pop_theme()
-        except Exception:
-            pass  # No theme to pop on first call
     app.console.push_theme(RichTheme(tc.markdown_theme_dict))
     app._markdown_theme_pushed = True

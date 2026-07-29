@@ -8,6 +8,7 @@ Tests that action_dump_conversation:
 5. Optionally opens in $VISUAL on macOS
 """
 
+import io
 import os
 import tempfile
 from pathlib import Path
@@ -15,10 +16,9 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from tests.harness import run_app, make_replay_entry
 import cc_dump.core.formatting as fmt
 from cc_dump.core.analysis import TurnBudget
-
+from tests.harness import make_replay_entry, run_app
 
 pytestmark = pytest.mark.textual
 
@@ -95,7 +95,7 @@ async def test_dump_all_block_types():
         )
     ]
 
-    async with run_app(replay_data=replay_data) as (pilot, app):
+    async with run_app(replay_data=replay_data) as (_pilot, app):
         conv = app._get_conv()
 
         # Manually inject additional blocks to cover all 21 types
@@ -185,7 +185,9 @@ async def test_dump_all_block_types():
             conv = app._get_conv()
             turn = conv._turns[0]
 
-            with open(tmp_path, 'w') as f:
+            # Build the dump in memory (StringIO), then write the file via Path — avoids
+            # a blocking open() inside this async test (ASYNC230).
+            with io.StringIO() as f:
                 f.write("=" * 80 + "\n")
                 f.write("CC-DUMP CONVERSATION EXPORT\n")
                 f.write("=" * 80 + "\n\n")
@@ -201,6 +203,7 @@ async def test_dump_all_block_types():
                         counter[0] += 1
                         _write_all(getattr(block, "children", []))
                 _write_all(turn.blocks)
+                Path(tmp_path).write_text(f.getvalue())
 
             # Read back and verify
             content = Path(tmp_path).read_text()
@@ -353,7 +356,7 @@ async def test_dump_handles_blocks_without_optional_fields():
     """Blocks with None/missing optional fields don't crash."""
     replay_data = [make_replay_entry()]
 
-    async with run_app(replay_data=replay_data) as (pilot, app):
+    async with run_app(replay_data=replay_data) as (_pilot, app):
         conv = app._get_conv()
 
         # Add blocks with minimal fields
@@ -383,10 +386,12 @@ async def test_dump_handles_blocks_without_optional_fields():
             conv = app._get_conv()
             turn = conv._turns[0]
 
-            with open(tmp_path, 'w') as f:
+            # In-memory build then Path.write_text — avoids blocking open() in async test.
+            with io.StringIO() as f:
                 for idx, block in enumerate(turn.blocks):
                     app._write_block_text(f, block, idx)
                     f.write("\n")
+                Path(tmp_path).write_text(f.getvalue())
 
             # Just verify it doesn't crash and creates content
             content = Path(tmp_path).read_text()

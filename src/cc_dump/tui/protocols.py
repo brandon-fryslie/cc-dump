@@ -15,7 +15,6 @@ This guarantees that code changes take effect immediately without proxy restart.
 
 from typing import Protocol, runtime_checkable
 
-
 _Leaf = str | int | float | bool | None
 WidgetStateValue = _Leaf | list | dict | set
 WidgetState = dict[str, WidgetStateValue]
