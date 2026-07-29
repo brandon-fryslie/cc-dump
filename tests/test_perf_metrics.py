@@ -208,23 +208,11 @@ class TestBenchmarkSmoke:
         from benchmarks.bench_streaming import generate_sse_stream
         from cc_dump.pipeline.event_types import (
             ContentBlockStopEvent as CBStop,
-        )
-        from cc_dump.pipeline.event_types import (
             MessageDeltaEvent as MDelta,
-        )
-        from cc_dump.pipeline.event_types import (
             MessageStartEvent as MStart,
-        )
-        from cc_dump.pipeline.event_types import (
             MessageStopEvent as MStop,
-        )
-        from cc_dump.pipeline.event_types import (
             ResponseSSEEvent,
-        )
-        from cc_dump.pipeline.event_types import (
             TextBlockStartEvent as TBStart,
-        )
-        from cc_dump.pipeline.event_types import (
             TextDeltaEvent as TDelta,
         )
         events = generate_sse_stream(5)

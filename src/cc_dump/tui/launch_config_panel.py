@@ -15,8 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Literal
 
-from snarfx import Observable, reaction
-from snarfx import textual as stx
+from snarfx import Observable, reaction, textual as stx
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches

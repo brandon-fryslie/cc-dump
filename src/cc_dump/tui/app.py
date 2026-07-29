@@ -72,13 +72,15 @@ import cc_dump.tui.widget_factory
 from cc_dump.io.stderr_tee import get_tee as _get_tee
 
 # Extracted controller modules (module-object imports — safe for hot-reload)
-from cc_dump.tui import action_handlers as _actions
-from cc_dump.tui import dump_export as _dump
-from cc_dump.tui import hot_reload_controller as _hot_reload
-from cc_dump.tui import lifecycle_controller as _lifecycle
-from cc_dump.tui import search_controller as _search
-from cc_dump.tui import settings_launch_controller as _settings_launch
-from cc_dump.tui import theme_controller as _theme
+from cc_dump.tui import (
+    action_handlers as _actions,
+    dump_export as _dump,
+    hot_reload_controller as _hot_reload,
+    lifecycle_controller as _lifecycle,
+    search_controller as _search,
+    settings_launch_controller as _settings_launch,
+    theme_controller as _theme,
+)
 
 logger = logging.getLogger(__name__)
 

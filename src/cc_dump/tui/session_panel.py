@@ -8,8 +8,7 @@ This module is RELOADABLE. Uses module-level imports for hot-reload.
 import time
 from dataclasses import dataclass
 
-from snarfx import Observable, reaction
-from snarfx import textual as stx
+from snarfx import Observable, reaction, textual as stx
 from textual.widgets import Static
 
 import cc_dump.tui.panel_renderers

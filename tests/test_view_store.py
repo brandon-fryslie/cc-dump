@@ -2,8 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from snarfx import autorun, transaction
-from snarfx import textual as stx
+from snarfx import autorun, textual as stx, transaction
 
 import cc_dump.app.view_store
 from cc_dump.core.formatting import VisState

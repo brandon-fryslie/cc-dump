@@ -8,8 +8,7 @@ Hot-reloadable — imported as module object in app.py, stateless.
 
 import contextlib
 
-from rich.theme import Theme as RichTheme
-from rich.theme import ThemeStackError
+from rich.theme import Theme as RichTheme, ThemeStackError
 
 import cc_dump.tui.rendering
 

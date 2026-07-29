@@ -6,8 +6,7 @@ InfoPanel instances and swap them in via hot-reload.
 All field values are click-to-copy.
 """
 
-from snarfx import Observable, reaction
-from snarfx import textual as stx
+from snarfx import Observable, reaction, textual as stx
 from textual.widgets import Static
 
 # Use module-level imports for hot-reload

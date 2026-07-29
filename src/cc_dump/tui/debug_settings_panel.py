@@ -8,8 +8,7 @@ from __future__ import annotations
 import logging
 import tracemalloc
 
-from snarfx import Observable, reaction
-from snarfx import textual as stx
+from snarfx import Observable, reaction, textual as stx
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Label, Select, Static

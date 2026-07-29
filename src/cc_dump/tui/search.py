@@ -16,8 +16,7 @@ from dataclasses import dataclass
 from enum import Enum, IntFlag
 
 from rich.text import Text
-from snarfx import Observable, reaction
-from snarfx import textual as stx
+from snarfx import Observable, reaction, textual as stx
 from textual.widgets import Static
 
 import cc_dump.core.palette

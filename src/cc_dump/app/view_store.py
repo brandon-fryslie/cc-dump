@@ -5,8 +5,7 @@
 // [LAW:one-way-deps] No widget imports; widgets subscribe directly to canonical store keys/computeds.
 """
 
-from snarfx import ObservableList, computed
-from snarfx import textual as stx
+from snarfx import ObservableList, computed, textual as stx
 from snarfx.hot_reload import HotReloadStore
 
 from cc_dump.app.error_models import ErrorItem

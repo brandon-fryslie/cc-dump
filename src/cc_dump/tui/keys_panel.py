@@ -7,8 +7,7 @@ removed during hot-reload (stateless, user can re-open with ?).
 from dataclasses import dataclass
 
 from rich.text import Text
-from snarfx import Observable, reaction
-from snarfx import textual as stx
+from snarfx import Observable, reaction, textual as stx
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Static

@@ -85,6 +85,12 @@ target-version = "py310"
 # the boundary-isolation design.
 ignore = ["BLE001"]
 
+[tool.ruff.lint.isort]
+# Combine multiple `from X import ...` (including aliased imports) into one statement.
+# Without this, isort's default splits each aliased import onto its own `from X import
+# (y as z)` line — fragmenting a single clean import into many. [LAW:decomposition]
+combine-as-imports = true
+
 [tool.ruff.lint.per-file-ignores]
 # HarRecorder owns a single streaming file handle for its whole lifetime (opened in
 # lazy-init, written across many events, closed in close()). SIM115 ("use a context

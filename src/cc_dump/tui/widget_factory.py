@@ -12,8 +12,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from rich.segment import Segment
 from rich.text import Text
-from snarfx import Observable, reaction
-from snarfx import textual as stx
+from snarfx import Observable, reaction, textual as stx
 from textual.cache import LRUCache
 from textual.dom import NoScreen
 from textual.geometry import Offset, Size
