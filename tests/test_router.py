@@ -7,15 +7,14 @@ import time
 
 import pytest
 
-from cc_dump.pipeline.router import DirectSubscriber, EventRouter, QueueSubscriber
 from cc_dump.pipeline.event_types import (
+    ErrorEvent,
+    LogEvent,
     PipelineEvent,
     RequestBodyEvent,
     ResponseDoneEvent,
-    ErrorEvent,
-    LogEvent,
 )
-
+from cc_dump.pipeline.router import DirectSubscriber, EventRouter, QueueSubscriber
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -187,7 +186,7 @@ def test_router_error_isolation(router, source_queue):
     received_good = []
 
     def failing_subscriber(event):
-        raise Exception("Subscriber error")
+        raise RuntimeError("Subscriber error")
 
     def good_subscriber(event):
         received_good.append(event)

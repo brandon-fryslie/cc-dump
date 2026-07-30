@@ -12,6 +12,7 @@ import time
 from unittest.mock import MagicMock, patch
 
 from cc_dump.app.analytics_store import AnalyticsStore
+from cc_dump.app.tmux_controller import TmuxController, TmuxState
 from cc_dump.pipeline.event_types import (
     RequestBodyEvent,
     RequestHeadersEvent,
@@ -21,9 +22,12 @@ from cc_dump.pipeline.event_types import (
 )
 from cc_dump.pipeline.har_recorder import HARRecordingSubscriber
 from cc_dump.pipeline.har_replayer import convert_to_events
-from cc_dump.pipeline.proxy import EventQueueSink, _build_synthetic_sse_bytes, _fan_out_sse
+from cc_dump.pipeline.proxy import (
+    EventQueueSink,
+    _build_synthetic_sse_bytes,
+    _fan_out_sse,
+)
 from cc_dump.pipeline.response_assembler import ResponseAssembler
-from cc_dump.app.tmux_controller import TmuxController, TmuxState
 
 
 def _build_live_stream_events(

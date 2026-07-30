@@ -73,12 +73,13 @@ def collect_lint_counts() -> dict[str, int]:
 
     // [LAW:one-source-of-truth] Lint regression identity is file+code count.
     """
+    # [LAW:one-source-of-truth] Use the ruff pinned in the locked project env, never
+    # `--with ruff` (which re-resolves the latest PyPI ruff and makes the gate verdict
+    # depend on release timing rather than on the code).
     data = _run_json_command(
         [
             "uv",
             "run",
-            "--with",
-            "ruff",
             "ruff",
             "check",
             "src",
@@ -113,12 +114,13 @@ def collect_complexity_scores() -> dict[str, int]:
     // [LAW:behavior-not-structure] Gate tracks externally visible complexity metric,
     // not source layout details like line numbers.
     """
+    # [LAW:one-source-of-truth] Same as ruff: use the pinned radon from the locked env
+    # so complexity scores are reproducible. This gate is a required check; an unpinned
+    # scorer would let a radon release turn it red on unchanged code.
     data = _run_json_command(
         [
             "uv",
             "run",
-            "--with",
-            "radon",
             "radon",
             "cc",
             "-j",

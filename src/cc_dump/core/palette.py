@@ -35,11 +35,7 @@ def _hsl_to_hex(h: float, s: float, lightness: float) -> str:
     """Convert HSL (h in 0-360, s/lightness in 0-1) to #RRGGBB hex string."""
     # colorsys uses h in 0-1
     r, g, b = colorsys.hls_to_rgb(h / 360.0, lightness, s)
-    return "#{:02X}{:02X}{:02X}".format(
-        int(round(r * 255)),
-        int(round(g * 255)),
-        int(round(b * 255)),
-    )
+    return f"#{round(r * 255):02X}{round(g * 255):02X}{round(b * 255):02X}"
 
 
 def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
@@ -94,7 +90,7 @@ def _find_indicator_seed(theme_hues: list[float]) -> float:
         return 30.0  # warm fallback when no theme colors
 
     # Deduplicate and sort
-    sorted_hues = sorted(set(h % 360 for h in theme_hues))
+    sorted_hues = sorted({h % 360 for h in theme_hues})
     if len(sorted_hues) < 2:
         return (sorted_hues[0] + 180.0) % 360
 

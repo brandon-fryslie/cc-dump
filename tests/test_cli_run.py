@@ -1,16 +1,16 @@
 """Tests for `run` subcommand parsing in cli.py."""
 
-from pathlib import Path
 import re
+from pathlib import Path
 
 import pytest
 
 from cc_dump.app.launch_config import LaunchConfig
 from cc_dump.cli import (
     _detect_run_subcommand,
-    _resolve_auto_launch_config_name,
-    _recordings_output_dir,
     _recording_path,
+    _recordings_output_dir,
+    _resolve_auto_launch_config_name,
 )
 from cc_dump.cli_presentation import render_recordings_list
 

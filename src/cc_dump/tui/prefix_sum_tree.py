@@ -17,7 +17,7 @@ class FenwickTree:
     A shadow ``_values`` array keeps element values for O(1) ``get``.
     """
 
-    __slots__ = ("_tree", "_values", "_n")
+    __slots__ = ("_n", "_tree", "_values")
 
     def __init__(self, size: int = 0) -> None:
         self._n = size
@@ -169,8 +169,7 @@ class MaxTracker:
     def add(self, value: int) -> None:
         """Add a value. O(1)."""
         self._counts[value] = self._counts.get(value, 0) + 1
-        if value > self._max_value:
-            self._max_value = value
+        self._max_value = max(self._max_value, value)
 
     def remove(self, value: int) -> None:
         """Remove one occurrence of *value*. O(1) amortized.
@@ -206,8 +205,7 @@ class MaxTracker:
         self._max_value = 0
         for v in values:
             self._counts[v] = self._counts.get(v, 0) + 1
-            if v > self._max_value:
-                self._max_value = v
+            self._max_value = max(self._max_value, v)
 
     def clear(self) -> None:
         """Reset. O(1)."""

@@ -9,7 +9,8 @@ Tests the new widget architecture components:
 """
 
 import contextlib
-from unittest.mock import patch, PropertyMock, MagicMock
+from unittest.mock import MagicMock, PropertyMock, patch
+
 from rich.console import Console
 from rich.style import Style
 from textual.geometry import Offset
@@ -17,23 +18,23 @@ from textual.strip import Strip
 
 import cc_dump.tui.rendering
 from cc_dump.core.formatting import (
-    SeparatorBlock,
+    ALWAYS_VISIBLE,
+    HIDDEN,
+    Category,
     HeaderBlock,
     MetadataBlock,
+    SeparatorBlock,
     SystemSection,
     TextContentBlock,
-    ToolUseBlock,
     TextDeltaBlock,
-    Category,
-    HIDDEN,
-    ALWAYS_VISIBLE,
+    ToolUseBlock,
 )
-from cc_dump.tui.rendering import BLOCK_RENDERERS, BLOCK_CATEGORY, render_turn_to_strips
+from cc_dump.tui.rendering import BLOCK_CATEGORY, BLOCK_RENDERERS, render_turn_to_strips
 from cc_dump.tui.widget_factory import (
-    TurnData,
     ConversationView,
     FollowState,
     ScrollAnchor,
+    TurnData,
     _next_strip_version,
 )
 
@@ -539,8 +540,9 @@ class TestScrollPreservation:
 
     def test_no_cross_toggle_state(self):
         """Toggle A then B: B should not jump to A's pre-toggle position."""
-        from cc_dump.tui.rendering import set_theme
         from textual.theme import BUILTIN_THEMES
+
+        from cc_dump.tui.rendering import set_theme
 
         # Initialize theme for SystemSection rendering
         set_theme(BUILTIN_THEMES["textual-dark"])
@@ -655,8 +657,9 @@ class TestScrollPreservation:
 
     def test_anchor_turn_shrinks_but_visible(self):
         """When anchor turn shrinks but remains visible, scroll adjusts."""
-        from cc_dump.tui.rendering import set_theme
         from textual.theme import BUILTIN_THEMES
+
+        from cc_dump.tui.rendering import set_theme
 
         # Initialize theme for SystemSection rendering
         set_theme(BUILTIN_THEMES["textual-dark"])

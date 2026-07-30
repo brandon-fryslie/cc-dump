@@ -25,7 +25,6 @@ from cc_dump.pipeline.event_types import (
     ToolUseBlockStartEvent,
 )
 
-
 # ─── Types ───────────────────────────────────────────────────────────────────
 
 
@@ -121,13 +120,14 @@ def _handle_content_block_delta(event: dict, state: _ReconstructionState) -> Non
     if delta_type == "text_delta" and state.current_text_block:
         state.current_text_block["text"] += delta.get("text", "")
 
-    elif delta_type == "input_json_delta":
-        if state.content_blocks and state.content_blocks[-1].get("type") == "tool_use":
-            if "_input_json_str" not in state.content_blocks[-1]:
-                state.content_blocks[-1]["_input_json_str"] = ""
-            state.content_blocks[-1]["_input_json_str"] += delta.get(
-                "partial_json", ""
-            )
+    elif (
+        delta_type == "input_json_delta"
+        and state.content_blocks
+        and state.content_blocks[-1].get("type") == "tool_use"
+    ):
+        if "_input_json_str" not in state.content_blocks[-1]:
+            state.content_blocks[-1]["_input_json_str"] = ""
+        state.content_blocks[-1]["_input_json_str"] += delta.get("partial_json", "")
 
 
 def _handle_content_block_stop(_event: dict, state: _ReconstructionState) -> None:

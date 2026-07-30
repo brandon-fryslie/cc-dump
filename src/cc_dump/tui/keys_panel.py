@@ -6,11 +6,10 @@ removed during hot-reload (stateless, user can re-open with ?).
 
 from dataclasses import dataclass
 
-from snarfx import Observable, reaction
-from snarfx import textual as stx
 from rich.text import Text
-from textual.containers import VerticalScroll
+from snarfx import Observable, reaction, textual as stx
 from textual.app import ComposeResult
+from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 # Use module-level imports for hot-reload

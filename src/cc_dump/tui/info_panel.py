@@ -6,8 +6,7 @@ InfoPanel instances and swap them in via hot-reload.
 All field values are click-to-copy.
 """
 
-from snarfx import Observable, reaction
-from snarfx import textual as stx
+from snarfx import Observable, reaction, textual as stx
 from textual.widgets import Static
 
 # Use module-level imports for hot-reload
@@ -79,7 +78,7 @@ class InfoPanel(Static):
         # Row 0 is the "Server Info" title, rows 1+ are data rows.
         clicked_row = int(event.y) - 1  # subtract title row
         if 0 <= clicked_row < len(self._rows):
-            label, _display, copy_value = self._rows[clicked_row]
+            _label, _display, copy_value = self._rows[clicked_row]
             if copy_value:
                 self.app.copy_to_clipboard(copy_value)
                 self.app.notify(f"Copied: {copy_value}", severity="information")

@@ -17,7 +17,6 @@ from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
-
 _enabled = True
 
 
@@ -94,25 +93,26 @@ def monitor_slow_path(
     finally:
         elapsed_ms = (time.perf_counter_ns() - started_ns) / 1_000_000
         threshold = _threshold_for(stage) if threshold_ms is None else float(threshold_ms)
-        if elapsed_ms < threshold:
-            return
+        # [LAW:no-silent-failure] Guard the log with a positive condition, never `return`
+        # inside finally — a jump statement here would swallow an exception raised by the
+        # monitored block whenever it happened to run fast (B012).
+        if elapsed_ms >= threshold:
+            resolved_context = _resolve_context(context)
+            context_text = _format_context(resolved_context)
+            stack = "".join(traceback.format_stack(limit=_STACK_LIMIT))
 
-        resolved_context = _resolve_context(context)
-        context_text = _format_context(resolved_context)
-        stack = "".join(traceback.format_stack(limit=_STACK_LIMIT))
-
-        # Collect full thread dump only for severe threshold breaches.
-        extra_threads = _thread_dump() if elapsed_ms >= (threshold * 2.0) else ""
-        logger.warning(
-            "perf threshold exceeded stage=%s elapsed_ms=%.2f threshold_ms=%.2f context=%s\n"
-            "stacktrace:\n%s%s",
-            stage,
-            elapsed_ms,
-            threshold,
-            context_text,
-            stack,
-            f"\nthread_dump:{extra_threads}" if extra_threads else "",
-        )
+            # Collect full thread dump only for severe threshold breaches.
+            extra_threads = _thread_dump() if elapsed_ms >= (threshold * 2.0) else ""
+            logger.warning(
+                "perf threshold exceeded stage=%s elapsed_ms=%.2f threshold_ms=%.2f context=%s\n"
+                "stacktrace:\n%s%s",
+                stage,
+                elapsed_ms,
+                threshold,
+                context_text,
+                stack,
+                f"\nthread_dump:{extra_threads}" if extra_threads else "",
+            )
 
 
 # ─── Complexity-aware monitoring ──────────────────────────────────────

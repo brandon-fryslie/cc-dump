@@ -13,12 +13,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-
-import re
 
 logger = logging.getLogger(__name__)
 

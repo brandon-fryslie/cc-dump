@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import cc_dump.providers
 import cc_dump.core.formatting_impl
+import cc_dump.providers
 
 
 @dataclass
@@ -26,8 +26,8 @@ class Provider:
     """
 
     key: str
-    runtime_state: "cc_dump.core.formatting_impl.ProviderRuntimeState"
-    endpoint: "cc_dump.providers.ProviderEndpoint"
+    runtime_state: cc_dump.core.formatting_impl.ProviderRuntimeState
+    endpoint: cc_dump.providers.ProviderEndpoint
     is_default: bool
     last_notified_session: str | None = None
 
@@ -69,9 +69,9 @@ class ProviderRegistry:
 
 def build_registry(
     *,
-    provider_states: dict[str, "cc_dump.core.formatting_impl.ProviderRuntimeState"] | None,
-    default_state: "cc_dump.core.formatting_impl.ProviderRuntimeState",
-    provider_endpoints: "cc_dump.providers.ProviderEndpointMap | None",
+    provider_states: dict[str, cc_dump.core.formatting_impl.ProviderRuntimeState] | None,
+    default_state: cc_dump.core.formatting_impl.ProviderRuntimeState,
+    provider_endpoints: cc_dump.providers.ProviderEndpointMap | None,
     host: str,
     port: int,
     target: str | None,

@@ -20,23 +20,22 @@ from dataclasses import dataclass
 import cc_dump.core.analysis
 import cc_dump.core.formatting
 import cc_dump.tui.request_registry
+from cc_dump.core.formatting_impl import ProviderRuntimeState
 from cc_dump.pipeline.event_types import (
+    ErrorEvent,
+    LogEvent,
     PipelineEventKind,
-    RequestHeadersEvent,
+    ProxyErrorEvent,
     RequestBodyEvent,
-    ResponseHeadersEvent,
-    ResponseSSEEvent,
-    ResponseProgressEvent,
-    ResponseNonStreamingEvent,
+    RequestHeadersEvent,
     ResponseCompleteEvent,
     ResponseDoneEvent,
-    ErrorEvent,
-    ProxyErrorEvent,
-    LogEvent,
+    ResponseHeadersEvent,
+    ResponseNonStreamingEvent,
+    ResponseProgressEvent,
+    ResponseSSEEvent,
     sse_progress_payload,
 )
-
-from cc_dump.core.formatting_impl import ProviderRuntimeState
 
 EventHandler = Callable[
     [object, ProviderRuntimeState, dict[str, object], Callable[[str, str], None]],
@@ -172,7 +171,7 @@ def _annotate_cache_zones(blocks: list, cache_zones: dict[str, object]) -> list:
 
 
 def _get_request_blocks_with_zones(
-    req: "cc_dump.tui.request_registry.Request",
+    req: cc_dump.tui.request_registry.Request,
     complete_body: dict,
     domain_store,
 ) -> list:
@@ -550,7 +549,7 @@ def handle_response_complete(event: ResponseCompleteEvent, state, context, log_f
 
 def _noop(event, state, context, log_fn) -> None:
     """No-op handler for events that need no action."""
-    return None
+    return
 
 
 # [LAW:dataflow-not-control-flow] Event dispatch table keyed by PipelineEventKind

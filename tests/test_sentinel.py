@@ -8,7 +8,6 @@ import pytest
 from cc_dump.pipeline.proxy import RequestPipeline, _build_synthetic_sse_bytes
 from cc_dump.pipeline.sentinel import extract_sentinel_command, make_interceptor
 
-
 # ─── extract_sentinel_command ────────────────────────────────────────────────
 
 
@@ -197,7 +196,7 @@ class TestRequestPipeline:
             return body, "http://other.com/v1/messages"
 
         pipeline = RequestPipeline(transforms=[swap_url])
-        body, url, response = pipeline.process({}, "http://original.com")
+        _body, url, response = pipeline.process({}, "http://original.com")
         assert url == "http://other.com/v1/messages"
         assert response is None
 
@@ -207,7 +206,7 @@ class TestRequestPipeline:
             return body, url
 
         pipeline = RequestPipeline(transforms=[add_field])
-        body, url, response = pipeline.process({}, "http://x.com")
+        body, _url, _response = pipeline.process({}, "http://x.com")
         assert body["extra"] is True
 
     def test_transforms_chain(self):
@@ -230,7 +229,7 @@ class TestRequestPipeline:
             return "intercepted!"
 
         pipeline = RequestPipeline(interceptors=[always_intercept])
-        body, url, response = pipeline.process({}, "http://x.com")
+        _body, _url, response = pipeline.process({}, "http://x.com")
         assert response == "intercepted!"
 
     def test_interceptor_none_passes_through(self):

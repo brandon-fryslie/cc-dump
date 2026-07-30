@@ -7,11 +7,11 @@ from pathlib import Path
 import pytest
 
 from cc_dump.io.sessions import (
-    list_recordings,
-    get_latest_recording,
     cleanup_recordings,
     format_size,
+    get_latest_recording,
     get_recordings_dir,
+    list_recordings,
 )
 
 

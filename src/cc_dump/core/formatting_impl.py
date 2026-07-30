@@ -6,28 +6,32 @@ Returns FormattedBlock dataclasses that can be rendered by different backends
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from collections.abc import Callable
 from typing import NamedTuple
 
+import cc_dump.core.segmentation
+import cc_dump.providers
+from cc_dump.core.analysis import (
+    TurnBudget,
+    compute_turn_budget,
+    estimate_tokens,
+    tool_result_breakdown,
+)
 from cc_dump.pipeline.event_types import (
+    ContentBlockStopEvent,
     InputJsonDeltaEvent,
     MessageDeltaEvent,
     MessageStartEvent,
     MessageStopEvent,
     SSEEvent,
-    ContentBlockStopEvent,
     StopReason,
     TextBlockStartEvent,
     TextDeltaEvent,
     ToolUseBlockStartEvent,
 )
-
-from cc_dump.core.analysis import TurnBudget, compute_turn_budget, estimate_tokens, tool_result_breakdown
-import cc_dump.core.segmentation
-import cc_dump.providers
 
 # Type alias for content block dicts from the API response
 _ContentBlockDict = dict[str, str | int | dict | list | None]
@@ -474,7 +478,6 @@ class TurnBudgetBlock(FormattedBlock):
 class NewlineBlock(FormattedBlock):
     """An explicit newline/blank."""
 
-    pass
 
 
 # ─── Hierarchical container blocks ───────────────────────────────────────────
@@ -634,7 +637,9 @@ def _make_system_prompt_children(system: object) -> list[FormattedBlock]:
 
 
 def _get_timestamp():
-    return datetime.now().strftime("%-I:%M:%S %p")
+    # astimezone() attaches the local zone so the datetime is tz-aware (DTZ005); the
+    # rendered wall-clock string is unchanged.
+    return datetime.now().astimezone().strftime("%-I:%M:%S %p")
 
 
 def _front_ellipse_path(path: str, max_len: int = 40) -> str:
@@ -668,14 +673,17 @@ _TOOL_DETAIL_EXTRACTORS = {
         _front_ellipse_path(inp.get("file_path", ""), max_len=40)
     ),
     "Skill": lambda inp: inp.get("skill", ""),
-    "Bash": lambda inp: (
-        (lambda cmd: cmd[:57] + "..." if len(cmd) > 60 else cmd)(
-            inp.get("command", "").split("\n", 1)[0]
-        )
-        if inp.get("command")
-        else ""
-    ),
+    "Bash": lambda inp: _bash_detail(inp),
 }
+
+
+def _bash_detail(inp: dict) -> str:
+    """First line of a Bash command, truncated to ~60 chars for the summary label."""
+    command = inp.get("command", "")
+    if not command:
+        return ""
+    first_line = command.split("\n", 1)[0]
+    return first_line[:57] + "..." if len(first_line) > 60 else first_line
 
 
 def _tool_detail(name: str, tool_input: dict) -> str:
@@ -1005,7 +1013,7 @@ def format_request(body, state: ProviderRuntimeState, request_headers: dict | No
     blocks.append(SeparatorBlock(style="heavy"))
     blocks.append(
         HeaderBlock(
-            label="REQUEST #{}".format(request_num),
+            label=f"REQUEST #{request_num}",
             request_num=request_num,
             timestamp=_get_timestamp(),
             header_type="request",
@@ -1389,7 +1397,7 @@ def format_openai_request(
     blocks.append(NewlineBlock())
     blocks.append(SeparatorBlock(style="heavy"))
     blocks.append(HeaderBlock(
-        label="REQUEST #{} ({})".format(request_num, provider_label),
+        label=f"REQUEST #{request_num} ({provider_label})",
         request_num=request_num,
         timestamp=_get_timestamp(),
         header_type="request",

@@ -1,24 +1,25 @@
 """Tests for collapsible XML sub-blocks within TextContentBlock."""
 
+from rich.console import Console
+from textual.theme import BUILTIN_THEMES
+
 from cc_dump.core.formatting import (
-    TextContentBlock,
-    Category,
     ALWAYS_VISIBLE,
+    Category,
+    TextContentBlock,
     VisState,
     populate_content_regions,
 )
+from cc_dump.core.segmentation import SubBlockKind, segment
 from cc_dump.tui.rendering import (
-    render_turn_to_strips,
-    set_theme,
-    _render_xml_collapsed,
+    COLLAPSIBLE_REGION_KINDS,
     _render_code_fence_collapsed,
     _render_region_parts,
-    COLLAPSIBLE_REGION_KINDS,
+    _render_xml_collapsed,
+    render_turn_to_strips,
+    set_theme,
 )
 from cc_dump.tui.view_overrides import ViewOverrides
-from cc_dump.core.segmentation import segment, SubBlockKind
-from rich.console import Console
-from textual.theme import BUILTIN_THEMES
 
 
 def _setup_theme():
@@ -323,7 +324,7 @@ def test_region_parts_no_xml():
     populate_content_regions(block)
     parts = _render_region_parts(block)
     assert len(parts) == 1
-    renderable, idx = parts[0]
+    _renderable, idx = parts[0]
     # MD region gets index 0 (not None — all segments have region_idx)
     assert idx == 0
 
@@ -335,7 +336,7 @@ def test_region_parts_no_regions_fallback():
     block.content_regions = []  # explicitly empty
     parts = _render_region_parts(block)
     assert len(parts) == 1
-    renderable, idx = parts[0]
+    _renderable, idx = parts[0]
     assert idx is None  # fallback path
 
 
@@ -819,7 +820,7 @@ def test_form_a_renders_as_xml_block():
     console = Console()
     filters = {"assistant": ALWAYS_VISIBLE}
 
-    strips, _, _ = render_turn_to_strips(
+    _strips, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters,
         console=console,
@@ -841,7 +842,7 @@ def test_form_c_renders_as_xml_block():
     console = Console()
     filters = {"assistant": ALWAYS_VISIBLE}
 
-    strips, _, _ = render_turn_to_strips(
+    _strips, _, _ = render_turn_to_strips(
         blocks=[block],
         filters=filters,
         console=console,

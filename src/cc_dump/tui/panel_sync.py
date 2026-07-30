@@ -12,9 +12,9 @@ This module is RELOADABLE. Stable boundary modules import it as a module object.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable
 
 import cc_dump.app.launch_config
 import cc_dump.tui.debug_settings_panel
@@ -43,7 +43,7 @@ class PanelSpec:
     store_key: str                      # "panel:logs", etc.
     presence: PanelPresence
     query_selector: str                 # "#logs-panel" or "SettingsPanel" (class name)
-    factory: Callable[["object"], "object"]  # (app) -> widget
+    factory: Callable[[object], object]  # (app) -> widget
     focus_on_show: bool = False
     focus_conv_on_hide: bool = False
     close_priority: int = 0             # higher = closed first; 0 = not escape-closable

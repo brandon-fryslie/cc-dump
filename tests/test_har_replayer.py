@@ -2,16 +2,16 @@
 
 import json
 import logging
+
 import pytest
 
-from cc_dump.pipeline.har_replayer import load_har, convert_to_events, ReplayPair
 from cc_dump.pipeline.event_types import (
-    RequestHeadersEvent,
     RequestBodyEvent,
-    ResponseHeadersEvent,
+    RequestHeadersEvent,
     ResponseCompleteEvent,
+    ResponseHeadersEvent,
 )
-
+from cc_dump.pipeline.har_replayer import ReplayPair, convert_to_events, load_har
 
 # ─── HAR Loading Tests ────────────────────────────────────────────────────────
 
@@ -266,9 +266,8 @@ def test_load_har_non_object_response_skipped(tmp_path, caplog):
     with open(har_path, "w") as f:
         json.dump(har, f)
 
-    with caplog.at_level(logging.WARNING, logger="cc_dump.pipeline.har_replayer"):
-        with pytest.raises(ValueError, match="no valid entries"):
-            load_har(str(har_path))
+    with caplog.at_level(logging.WARNING, logger="cc_dump.pipeline.har_replayer"), pytest.raises(ValueError, match="no valid entries"):
+        load_har(str(har_path))
 
     assert "response.content.text must decode to a JSON object" in caplog.text
 

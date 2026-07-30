@@ -28,7 +28,7 @@ _BG_STYLE_BOLD = Style(color="black", bgcolor="white", bold=True)
 class IndicatorState:
     """Mutable state for the error indicator overlay."""
 
-    __slots__ = ("items", "expanded")
+    __slots__ = ("expanded", "items")
 
     def __init__(self):
         self.items: list[ErrorItem] = []
@@ -113,8 +113,7 @@ def composite_overlay(strip: Strip, viewport_y: int, width: int, indicator: Indi
 
     # Crop conversation content to make room, then append overlay
     content_width = width - ind_width
-    if content_width < 0:
-        content_width = 0
+    content_width = max(content_width, 0)
 
     cropped = strip.crop_extend(0, content_width, Style())
     # Combine: cropped conversation + overlay

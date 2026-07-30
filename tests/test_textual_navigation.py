@@ -2,17 +2,17 @@
 
 import pytest
 
-from tests.harness import (
-    run_app,
-    press_and_settle,
-    is_follow_mode,
-    get_turn_count,
-    make_replay_data,
-)
 from cc_dump.core.formatting import (
+    Category,
     HeaderBlock,
     TextContentBlock,
-    Category,
+)
+from tests.harness import (
+    get_turn_count,
+    is_follow_mode,
+    make_replay_data,
+    press_and_settle,
+    run_app,
 )
 
 pytestmark = pytest.mark.textual
@@ -51,5 +51,5 @@ async def test_go_bottom_enables_follow():
 
 async def test_follow_mode_default_on():
     """Follow mode starts enabled."""
-    async with run_app() as (pilot, app):
+    async with run_app() as (_pilot, app):
         assert is_follow_mode(app)

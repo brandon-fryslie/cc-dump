@@ -8,7 +8,6 @@ import pytest
 
 from cc_dump.tui.prefix_sum_tree import FenwickTree, MaxTracker
 
-
 # ─── FenwickTree ──────────────────────────────────────────────────────
 
 

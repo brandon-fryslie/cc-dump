@@ -11,7 +11,6 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 from cc_dump.core.formatting import VisState
 
@@ -100,7 +99,7 @@ DEFAULT_FILTERSETS: dict[str, dict[str, VisState]] = {
 }
 
 
-def get_filterset(slot: str) -> Optional[dict[str, VisState]]:
+def get_filterset(slot: str) -> dict[str, VisState] | None:
     """Return the built-in filterset for a slot."""
     # [LAW:one-source-of-truth] Filterset slots are defined only by built-in defaults.
     return DEFAULT_FILTERSETS.get(slot)

@@ -1,19 +1,20 @@
 """Tests for full-height gutter indicators in rendering.py."""
 
-from cc_dump.core.formatting import (
-    TextContentBlock,
-    ToolResultBlock,
-    Category,
-)
-from cc_dump.tui.rendering import (
-    render_turn_to_strips,
-    GUTTER_WIDTH,
-    RIGHT_GUTTER_WIDTH,
-    MIN_WIDTH_FOR_RIGHT_GUTTER,
-    set_theme,
-)
 from rich.console import Console
 from textual.theme import BUILTIN_THEMES
+
+from cc_dump.core.formatting import (
+    Category,
+    TextContentBlock,
+    ToolResultBlock,
+)
+from cc_dump.tui.rendering import (
+    GUTTER_WIDTH,
+    MIN_WIDTH_FOR_RIGHT_GUTTER,
+    RIGHT_GUTTER_WIDTH,
+    render_turn_to_strips,
+    set_theme,
+)
 
 
 def test_gutter_width_constant():
@@ -361,7 +362,7 @@ def test_summary_level_arrows():
 
 def test_neutral_gutter_for_newline_and_error():
     """NewlineBlock and ErrorBlock should have dim neutral gutters (not category color)."""
-    from cc_dump.core.formatting import NewlineBlock, ErrorBlock
+    from cc_dump.core.formatting import ErrorBlock, NewlineBlock
     theme = BUILTIN_THEMES["textual-dark"]
     set_theme(theme)
 

@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
-
 ProtocolFamily: TypeAlias = Literal["anthropic", "openai"]
 ProxyMode: TypeAlias = Literal["reverse", "forward"]
 UpstreamFormat: TypeAlias = Literal["anthropic", "openai-chat", "openai-responses"]
@@ -192,10 +191,10 @@ def resolve_forward_proxy_connect_route(
     normalized_host = _normalize_connect_host(host)
     if normalized_host not in spec.forward_proxy_hosts:
         return None
-    authority_host = "[{}]".format(host) if ":" in host and not host.startswith("[") else host
+    authority_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
     return ForwardProxyConnectRoute(
         provider_key=spec.key,
-        upstream_origin="https://{}".format(authority_host) + (":{}".format(port) if port != 443 else ""),
+        upstream_origin=f"https://{authority_host}" + (f":{port}" if port != 443 else ""),
     )
 
 

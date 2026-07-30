@@ -1,9 +1,9 @@
 """Unit tests for analysis.py - token estimation, budgets, tool correlation."""
 
 from cc_dump.core.analysis import (
+    MODEL_PRICING,
     CacheZone,
     TurnBudget,
-    MODEL_PRICING,
     classify_model,
     compute_cache_zones,
     compute_turn_budget,
@@ -12,7 +12,6 @@ from cc_dump.core.analysis import (
     fmt_tokens,
     tool_result_breakdown,
 )
-
 
 # ─── Token Estimation Tests ──────────────────────────────────────────────────
 
@@ -492,7 +491,7 @@ def test_classify_model_openai():
 
 
 def test_classify_model_empty():
-    key, pricing = classify_model("")
+    key, _pricing = classify_model("")
     assert key == "unknown"
 
 

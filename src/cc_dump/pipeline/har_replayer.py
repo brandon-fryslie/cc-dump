@@ -270,4 +270,4 @@ def convert_to_events(pair: ReplayPair) -> list[PipelineEvent]:
     ]
 
 
-__all__ = ["ReplayPair", "load_har", "convert_to_events"]
+__all__ = ["ReplayPair", "convert_to_events", "load_har"]

@@ -5,9 +5,10 @@ error indicator without crashing the proxy server.
 """
 
 import pytest
+
+import cc_dump.tui.error_indicator
 from tests.harness.app_runner import run_app
 from tests.harness.builders import make_replay_data
-import cc_dump.tui.error_indicator
 
 
 class TestExceptionHandling:

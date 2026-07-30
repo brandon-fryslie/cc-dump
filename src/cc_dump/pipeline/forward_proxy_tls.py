@@ -129,8 +129,8 @@ class ForwardProxyCertificateAuthority:
 
         # ssl.SSLContext.load_cert_chain requires file paths.
         cert_stem = _host_cert_stem(normalized_hostname)
-        cert_path = self._artifact_dir / "{}.crt".format(cert_stem)
-        key_path = self._artifact_dir / "{}.key".format(cert_stem)
+        cert_path = self._artifact_dir / f"{cert_stem}.crt"
+        key_path = self._artifact_dir / f"{cert_stem}.key"
         cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
         key_path.write_bytes(
             key.private_bytes(
@@ -170,7 +170,7 @@ def _host_cert_stem(hostname: str) -> str:
     visible = re.sub(r"[^A-Za-z0-9_.-]", "_", normalized).strip("._-")
     visible = visible[:48] if visible else "host"
     digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
-    return "{}-{}".format(visible, digest)
+    return f"{visible}-{digest}"
 
 
 def _subject_alt_name(hostname: str):

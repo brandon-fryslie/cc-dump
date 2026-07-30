@@ -8,15 +8,15 @@ Tests the scroll components:
 Turn selection (j/k/n/N/g/G) was removed as part of the 3-Level visibility system.
 """
 
-from unittest.mock import patch, PropertyMock, MagicMock
+from unittest.mock import MagicMock, PropertyMock, patch
 
-from cc_dump.tui.widget_factory import (
-    ConversationView,
-    FollowState,
-)
 from cc_dump.tui.follow_mode import (
     FollowEvent,
     transition_follow_state,
+)
+from cc_dump.tui.widget_factory import (
+    ConversationView,
+    FollowState,
 )
 
 

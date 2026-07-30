@@ -6,9 +6,10 @@
 
 import logging
 
-from cc_dump.io.settings import load_settings, save_settings
-from snarfx.hot_reload import HotReloadStore
 from snarfx import reaction
+from snarfx.hot_reload import HotReloadStore
+
+from cc_dump.io.settings import load_settings, save_settings
 
 logger = logging.getLogger(__name__)
 

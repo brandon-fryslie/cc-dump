@@ -6,9 +6,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
-
+from dataclasses import dataclass
 
 MARKER_CLAUDE_MD = "claude_md"
 MARKER_HOOK = "hook"

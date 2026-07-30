@@ -10,7 +10,6 @@ from cc_dump.core.formatting_impl import ProviderRuntimeState
 from cc_dump.tui.app import CcDumpApp
 from tests.harness import all_turns_text, make_replay_entry
 
-
 pytestmark = pytest.mark.textual
 
 

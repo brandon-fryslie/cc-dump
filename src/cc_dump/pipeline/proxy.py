@@ -5,6 +5,7 @@
 //   that drives the planner and writes its outputs to the wire.
 """
 
+import contextlib
 import http.server
 import json
 import logging
@@ -14,6 +15,7 @@ import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+import cc_dump.providers
 from cc_dump.pipeline.event_types import (
     LogEvent,
     PipelineEvent,
@@ -38,8 +40,6 @@ from cc_dump.pipeline.proxy_call import (
     plan_proxy_call,
 )
 from cc_dump.pipeline.response_assembler import ResponseAssembler
-import cc_dump.pipeline.proxy_flow
-import cc_dump.providers
 
 # Re-export RequestPipeline so existing imports (`from cc_dump.pipeline.proxy
 # import RequestPipeline` in cli.py) keep working.
@@ -398,13 +398,20 @@ def _fan_out_sse(resp, sinks):
             _safe_sink_call("on_done", sink, "on_done")
 
 
+# [LAW:one-source-of-truth] One shared identity (no-op) pipeline is the default
+# everywhere. It is read-only by contract — pipeline lists are replaced wholesale, never
+# mutated — so a single shared instance is safe. Using a module constant (not an inline
+# `RequestPipeline()` default) also keeps the never-None contract without a null-guard.
+_IDENTITY_REQUEST_PIPELINE = RequestPipeline()
+
+
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
     target_host: str | None = None  # set by cli.py or factory before server starts
     event_queue: queue.Queue[PipelineEvent] = queue.Queue()  # set by cli.py or factory before server starts
     # // [LAW:dataflow-not-control-flow] Default is the empty (identity)
     # //   pipeline, NOT None. The proxy never asks "if request_pipeline is
     # //   not None"; the absence of work is encoded as empty lists.
-    request_pipeline: RequestPipeline = RequestPipeline()
+    request_pipeline: RequestPipeline = _IDENTITY_REQUEST_PIPELINE
     provider: str = "anthropic"  # set by factory for multi-provider support
     forward_proxy_ca: "ForwardProxyCertificateAuthority | None" = None  # set by factory when forward proxy CONNECT interception is enabled
 
@@ -463,10 +470,10 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             self.send_header(k, v)
         self.end_headers()
         self.wfile.write(refused.response_body_bytes)
-        try:
+        # [LAW:no-silent-failure] Client may have already disconnected; a failed final
+        # flush is a genuine no-op here. Narrow to OSError so an unexpected error still surfaces.
+        with contextlib.suppress(OSError):
             self.wfile.flush()
-        except Exception:
-            pass
         self._emit_events(refused.events)
 
     def _deliver_upstream(
@@ -575,14 +582,16 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                         except Exception as exc:
                             logger.warning("ResponseAssembler failure: %s", exc)
         finally:
+            # [LAW:no-silent-failure] Isolate sink finalizers from each other, but report
+            # failures — a swallowed on_done() error previously vanished without a trace.
             try:
                 event_sink.on_done()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("EventQueueSink on_done failure: %s", exc)
             try:
                 assembler.on_done()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("ResponseAssembler on_done failure: %s", exc)
 
         seq = event_sink.seq
         if assembler.result is not None:
@@ -717,18 +726,15 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 port,
             )
         finally:
-            try:
+            # [LAW:no-silent-failure] Best-effort teardown of a torn-down tunnel; a close()
+            # on an already-broken socket raises OSError and is a genuine no-op. Anything
+            # other than OSError is unexpected and still propagates.
+            with contextlib.suppress(OSError):
                 self.wfile.close()
-            except Exception:
-                pass
-            try:
+            with contextlib.suppress(OSError):
                 self.rfile.close()
-            except Exception:
-                pass
-            try:
+            with contextlib.suppress(OSError):
                 client_ssl.close()
-            except Exception:
-                pass
 
     def do_POST(self):
         self._proxy()
@@ -748,7 +754,7 @@ def make_handler_class(
     provider: str,
     target_host: str | None,
     event_queue: queue.Queue[PipelineEvent],
-    request_pipeline: RequestPipeline = RequestPipeline(),
+    request_pipeline: RequestPipeline = _IDENTITY_REQUEST_PIPELINE,
     forward_proxy_ca: "ForwardProxyCertificateAuthority | None" = None,
 ) -> type[ProxyHandler]:
     """Create a configured ProxyHandler subclass for a specific provider.

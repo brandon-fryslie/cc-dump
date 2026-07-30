@@ -4,12 +4,11 @@ import os
 import re
 import shutil
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 import pytest
 from ptydriver import PtyProcess
-
 
 # ---------------------------------------------------------------------------
 # Theme initialization — configure default render runtime before tests run
@@ -19,6 +18,7 @@ from ptydriver import PtyProcess
 def _init_theme():
     """Initialize default render runtime theme for tests."""
     from textual.theme import BUILTIN_THEMES
+
     from cc_dump.tui.rendering import set_theme
     set_theme(BUILTIN_THEMES["textual-dark"])
 
@@ -30,7 +30,7 @@ def isolated_render_runtime():
     // [LAW:behavior-not-structure] Tests needing fail-fast theme behavior use
     // explicit runtime setup/reset APIs instead of mutating module internals.
     """
-    import cc_dump.tui.rendering as rendering
+    from cc_dump.tui import rendering
 
     previous = rendering.reset_render_runtime_for_tests()
     try:
@@ -202,13 +202,13 @@ def _launch_cc_dump(port=0, timeout=10):
 def _teardown_proc(proc):
     """Gracefully quit a cc-dump process."""
     if proc.is_alive():
-        try:
+        # Best-effort teardown: the process may exit between the checks, so a send/
+        # terminate failure here is an expected no-op during cleanup.
+        with suppress(Exception):
             proc.send("q", press_enter=False)
             time.sleep(0.1)
             if proc.is_alive():
                 proc.terminate()
-        except Exception:
-            pass
 
 
 # ---------------------------------------------------------------------------

@@ -4,48 +4,47 @@ import re
 
 import pytest
 
-from cc_dump.tui.search import (
-    SearchMode,
-    SearchPhase,
-    SearchMatch,
-    SearchContext,
-    SearchState,
-    SearchTextCache,
-    SearchBar,
-    get_searchable_text,
-    compile_search_pattern,
-    find_all_matches,
-)
+from cc_dump.core.analysis import TurnBudget, fmt_tokens
 from cc_dump.core.formatting import (
+    ConfigContentBlock,
+    ErrorBlock,
     HeaderBlock,
     HttpHeadersBlock,
-    MetadataBlock,
-    SystemSection,
-    TextContentBlock,
-    ToolUseBlock,
-    ToolResultBlock,
-    ToolUseSummaryBlock,
     ImageBlock,
-    UnknownTypeBlock,
+    MessageBlock,
+    MetadataBlock,
+    NewlineBlock,
+    ProxyErrorBlock,
+    SeparatorBlock,
+    SkillDefChild,
+    StopReasonBlock,
     StreamInfoBlock,
     StreamToolUseBlock,
+    SystemSection,
+    TextContentBlock,
     TextDeltaBlock,
-    StopReasonBlock,
-    ErrorBlock,
-    ProxyErrorBlock,
-    NewlineBlock,
-    TurnBudgetBlock,
-    SeparatorBlock,
-    MessageBlock,
-    ToolDefsSection,
-    ToolDefBlock,
-    SkillDefChild,
-    ConfigContentBlock,
     ThinkingBlock,
+    ToolDefBlock,
+    ToolDefsSection,
+    ToolResultBlock,
+    ToolUseBlock,
+    ToolUseSummaryBlock,
+    TurnBudgetBlock,
+    UnknownTypeBlock,
     populate_content_regions,
 )
-from cc_dump.core.analysis import TurnBudget, fmt_tokens
-
+from cc_dump.tui.search import (
+    SearchBar,
+    SearchContext,
+    SearchMatch,
+    SearchMode,
+    SearchPhase,
+    SearchState,
+    SearchTextCache,
+    compile_search_pattern,
+    find_all_matches,
+    get_searchable_text,
+)
 
 # ─── Text extraction ─────────────────────────────────────────────────────────
 

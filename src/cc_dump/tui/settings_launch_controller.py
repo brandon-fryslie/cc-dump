@@ -86,9 +86,9 @@ def _resume_session_id(app, config) -> str:
 def _notify_launch_result(app, result) -> None:
     if result.success:
         detail = result.command or result.detail
-        app.notify("{}: {}".format(result.action.value, detail))
+        app.notify(f"{result.action.value}: {detail}")
         return
-    app.notify("Launch failed: {}".format(result.detail), severity="error")
+    app.notify(f"Launch failed: {result.detail}", severity="error")
 
 
 def launch_with_config(app, config, *, log_label: str = "launch_with_config") -> None:
@@ -111,7 +111,7 @@ def launch_with_config(app, config, *, log_label: str = "launch_with_config") ->
         launcher_label=profile.launcher_label,
     )
     result = tmux.launch_tool(command=profile.command)
-    app._app_log("INFO", "{}: {}".format(log_label, result))
+    app._app_log("INFO", f"{log_label}: {result}")
     _notify_launch_result(app, result)
     app._view_store.update(
         {

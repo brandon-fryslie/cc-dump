@@ -1,15 +1,17 @@
 """Custom Footer widget with composed Textual widgets."""
 
+from typing import ClassVar
+
 from snarfx import textual as stx
 from textual.color import Color
 from textual.containers import Horizontal
 
-import cc_dump.tui.rendering
-import cc_dump.io.logging_setup
 import cc_dump.core.filter_registry
-from cc_dump.core.formatting import VisState, HIDDEN
-from cc_dump.tui.follow_mode import FollowState
+import cc_dump.io.logging_setup
+import cc_dump.tui.rendering
+from cc_dump.core.formatting import HIDDEN, VisState
 from cc_dump.tui.chip import Chip
+from cc_dump.tui.follow_mode import FollowState
 from cc_dump.tui.store_widget import StoreWidget
 
 
@@ -81,7 +83,7 @@ class StatusFooter(StoreWidget):
     """
 
     # Icon encodes visibility state (5 states)
-    _VIS_ICONS: dict[VisState, str] = {
+    _VIS_ICONS: ClassVar[dict[VisState, str]] = {
         # Hidden states
         VisState(False, False, False): "\u00b7",  # ·  Hidden
         VisState(False, False, True):  "\u00b7",  # ·  Hidden

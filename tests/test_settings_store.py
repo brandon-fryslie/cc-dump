@@ -3,9 +3,9 @@
 import json
 
 import pytest
+from snarfx import autorun
 
 import cc_dump.app.settings_store
-from snarfx import autorun
 
 
 @pytest.fixture
