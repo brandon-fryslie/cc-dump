@@ -15,7 +15,6 @@ import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-import cc_dump.pipeline.proxy_flow
 import cc_dump.providers
 from cc_dump.pipeline.event_types import (
     LogEvent,
