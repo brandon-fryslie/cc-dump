@@ -11,21 +11,18 @@ from __future__ import annotations
 
 import re
 from collections import OrderedDict
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from enum import Enum, IntFlag
-from typing import Callable
 
-from snarfx import Observable, reaction
-from snarfx import textual as stx
 from rich.text import Text
+from snarfx import Observable, reaction, textual as stx
 from textual.widgets import Static
 
 import cc_dump.core.palette
 import cc_dump.core.segmentation
-from cc_dump.core.analysis import fmt_tokens
 import cc_dump.tui.rendering
-
+from cc_dump.core.analysis import fmt_tokens
 
 # ─── Data types ──────────────────────────────────────────────────────────────
 

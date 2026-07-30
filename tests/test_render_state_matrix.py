@@ -8,7 +8,9 @@ from io import StringIO
 from rich.console import Console
 from textual.theme import BUILTIN_THEMES
 
+from cc_dump.core.analysis import TurnBudget
 from cc_dump.core.formatting import (
+    AgentDefChild,
     Category,
     ConfigContentBlock,
     ErrorBlock,
@@ -21,6 +23,7 @@ from cc_dump.core.formatting import (
     MetadataSection,
     NewlineBlock,
     NewSessionBlock,
+    ProxyErrorBlock,
     ResponseMetadataSection,
     ResponseUsageBlock,
     SeparatorBlock,
@@ -33,17 +36,14 @@ from cc_dump.core.formatting import (
     TextDeltaBlock,
     ThinkingBlock,
     ToolDefBlock,
-    TurnBudgetBlock,
     ToolDefsSection,
     ToolResultBlock,
-    ToolUseSummaryBlock,
     ToolUseBlock,
+    ToolUseSummaryBlock,
+    TurnBudgetBlock,
     UnknownTypeBlock,
-    ProxyErrorBlock,
-    AgentDefChild,
     VisState,
 )
-from cc_dump.core.analysis import TurnBudget
 from cc_dump.tui.rendering import (
     BLOCK_RENDERERS,
     BLOCK_STATE_RENDERERS,
@@ -52,7 +52,6 @@ from cc_dump.tui.rendering import (
     render_turn_to_strips,
     set_theme,
 )
-
 
 SUMMARY_COLLAPSED = VisState(True, False, False)
 SUMMARY_EXPANDED = VisState(True, False, True)
@@ -570,7 +569,7 @@ def test_text_content_state_matrix_is_distinct():
     content = f"```text\n{code_lines}\n```"
     block = TextContentBlock(content=content, category=Category.ASSISTANT)
 
-    sc_text, sc_lines = _render_plain(block, "assistant", SUMMARY_COLLAPSED)
+    sc_text, _sc_lines = _render_plain(block, "assistant", SUMMARY_COLLAPSED)
     se_text, se_lines = _render_plain(block, "assistant", SUMMARY_EXPANDED)
     fc_text, fc_lines = _render_plain(block, "assistant", FULL_COLLAPSED)
     fe_text, fe_lines = _render_plain(block, "assistant", FULL_EXPANDED)

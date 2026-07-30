@@ -9,6 +9,8 @@ Hot-reloadable — imported as module object in app.py, all functions take app a
 
 from dataclasses import dataclass
 
+from snarfx import transaction
+
 import cc_dump.core.formatting
 import cc_dump.core.special_content
 import cc_dump.io.settings
@@ -18,8 +20,6 @@ import cc_dump.tui.rendering
 
 # [LAW:one-source-of-truth] Panel order derived from registry
 from cc_dump.tui.panel_registry import PANEL_ORDER
-from snarfx import transaction
-
 
 # ─── Visibility actions ────────────────────────────────────────────────
 

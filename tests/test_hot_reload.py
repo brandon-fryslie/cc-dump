@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-
 # ============================================================================
 # UNIT TESTS — error resilience via mocked importlib.reload
 # ============================================================================
@@ -162,7 +161,7 @@ class TestHotReloadMountSeam:
 class TestHotReloadPanelIdentity:
     def test_assign_replacement_identity_reconciles_panel_ids(self, monkeypatch):
         import cc_dump.tui.hot_reload_controller as controller
-        import cc_dump.tui.panel_registry as panel_registry
+        from cc_dump.tui import panel_registry
 
         monkeypatch.setattr(
             panel_registry,
@@ -249,8 +248,8 @@ class TestHotReloadPanelIdentity:
 @pytest.mark.textual
 class TestHotReloadMultiSessionTabs:
     async def test_replace_all_widgets_preserves_all_session_tabs(self):
-        from tests.harness import run_app
         from cc_dump.tui import hot_reload_controller as hr
+        from tests.harness import run_app
 
         account_id = "11111111-2222-3333-4444-555555555555"
         session_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -438,18 +437,16 @@ class TestImportValidation:
                 consumer_name: consumer,
             },
             clear=False,
-        ):
-            with patch.object(hr, "_RELOAD_ORDER", [provider_name]):
-                with patch.object(importlib, "reload") as mock_reload:
-                    def _reload_module(mod):
-                        def _new_func() -> str:
-                            return "new"
-                        _new_func.__module__ = provider_name
-                        mod.some_func = _new_func
-                        return mod
+        ), patch.object(hr, "_RELOAD_ORDER", [provider_name]), patch.object(importlib, "reload") as mock_reload:
+            def _reload_module(mod):
+                def _new_func() -> str:
+                    return "new"
+                _new_func.__module__ = provider_name
+                mod.some_func = _new_func
+                return mod
 
-                    mock_reload.side_effect = _reload_module
-                    reloaded = hr.check_and_get_reloaded()
+            mock_reload.side_effect = _reload_module
+            reloaded = hr.check_and_get_reloaded()
 
         assert reloaded == [provider_name]
         assert consumer.some_func is provider.some_func
@@ -481,13 +478,11 @@ class TestImportValidation:
                 unrelated_name: unrelated,
             },
             clear=False,
-        ):
-            with patch.object(hr, "_RELOAD_ORDER", [provider_name]):
-                with patch.object(importlib, "reload") as mock_reload:
-                    mock_reload.side_effect = (
-                        lambda mod: setattr(mod, "count", replacement_token) or mod
-                    )
-                    reloaded = hr.check_and_get_reloaded()
+        ), patch.object(hr, "_RELOAD_ORDER", [provider_name]), patch.object(importlib, "reload") as mock_reload:
+            mock_reload.side_effect = (
+                lambda mod: setattr(mod, "count", replacement_token) or mod
+            )
+            reloaded = hr.check_and_get_reloaded()
 
         assert reloaded == [provider_name]
         # Primitive exports are intentionally excluded from alias refresh.
@@ -519,11 +514,9 @@ class TestImportValidation:
                 consumer_name: consumer,
             },
             clear=False,
-        ):
-            with patch.object(hr, "_RELOAD_ORDER", [provider_name]):
-                with patch.object(importlib, "reload") as mock_reload:
-                    mock_reload.side_effect = lambda mod: setattr(mod, "some_func", None) or mod
-                    reloaded = hr.check_and_get_reloaded()
+        ), patch.object(hr, "_RELOAD_ORDER", [provider_name]), patch.object(importlib, "reload") as mock_reload:
+            mock_reload.side_effect = lambda mod: setattr(mod, "some_func", None) or mod
+            reloaded = hr.check_and_get_reloaded()
 
         assert reloaded == [provider_name]
         assert provider.some_func is None
@@ -570,12 +563,12 @@ class TestWidgetProtocolValidation:
         assert isinstance(ValidWidget(), HotSwappableWidget)
 
     def test_validate_all_widgets_implement_protocol(self):
+        from cc_dump.tui.protocols import validate_widget_protocol
+        from cc_dump.tui.session_panel import SessionPanel
         from cc_dump.tui.widget_factory import (
             ConversationView,
             StatsPanel,
         )
-        from cc_dump.tui.session_panel import SessionPanel
-        from cc_dump.tui.protocols import validate_widget_protocol
 
         widgets = [
             ConversationView(),
@@ -767,7 +760,7 @@ class TestWidgetStatePreservation:
         // [LAW:one-source-of-truth] Block lists live in DomainStore.
         // ConversationView.get_state() returns only view state (follow, anchor, overrides).
         """
-        from cc_dump.core.formatting import TextContentBlock, ContentRegion
+        from cc_dump.core.formatting import ContentRegion, TextContentBlock
         from cc_dump.tui.widget_factory import ConversationView
 
         block = TextContentBlock(content="test")
@@ -945,7 +938,7 @@ class TestSearchStateHotReload:
     def test_search_identity_survives_via_store(self):
         """Identity fields survive creating a new SearchState on the same store."""
         import cc_dump.app.view_store
-        from cc_dump.tui.search import SearchState, SearchPhase, SearchMode
+        from cc_dump.tui.search import SearchMode, SearchPhase, SearchState
 
         store = cc_dump.app.view_store.create()
         old_state = SearchState(store)
@@ -965,7 +958,7 @@ class TestSearchStateHotReload:
     def test_transient_fields_reset_on_new_state(self):
         """Transient fields reset to defaults on new SearchState."""
         import cc_dump.app.view_store
-        from cc_dump.tui.search import SearchState, SearchPhase, SearchMatch
+        from cc_dump.tui.search import SearchMatch, SearchPhase, SearchState
 
         store = cc_dump.app.view_store.create()
         old_state = SearchState(store)

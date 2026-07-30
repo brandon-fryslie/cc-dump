@@ -3,12 +3,12 @@
 import pytest
 
 from tests.harness import (
-    run_app,
-    press_and_settle,
     choose_from_select,
-    settle,
-    is_panel_visible,
     is_follow_mode,
+    is_panel_visible,
+    press_and_settle,
+    run_app,
+    settle,
 )
 
 pytestmark = pytest.mark.textual
@@ -115,7 +115,7 @@ async def test_panels_initial_state():
     """First cycling panel starts visible, rest hidden, logs hidden."""
     from cc_dump.tui.panel_registry import PANEL_ORDER
 
-    async with run_app() as (pilot, app):
+    async with run_app() as (_pilot, app):
         assert is_panel_visible(app, PANEL_ORDER[0])
         for name in PANEL_ORDER[1:]:
             assert not is_panel_visible(app, name)
@@ -129,7 +129,7 @@ async def test_on_mount_seeds_footer_state():
     module-level `cc_dump` binding, causing UnboundLocalError on earlier lines
     that use cc_dump.tui.rendering etc.
     """
-    async with run_app() as (pilot, app):
+    async with run_app() as (_pilot, app):
         # App started successfully (no UnboundLocalError in on_mount)
         assert app.is_running
 
@@ -193,8 +193,9 @@ async def test_launch_config_preset_select_stays_stable_after_layout_change():
 
 async def test_launch_config_launcher_select_handles_standard_keys_without_panel_shortcuts():
     """Focused select should own enter and arrow keys instead of triggering panel actions."""
-    import cc_dump.app.launcher_registry
     from textual.widgets import Select
+
+    import cc_dump.app.launcher_registry
 
     async with run_app() as (pilot, app):
         panel = await _open_launch_config_panel(app, pilot)
@@ -236,8 +237,9 @@ async def test_launch_config_select_allows_unclaimed_app_shortcuts():
 
 async def test_launch_config_launcher_select_round_trips_and_reopens_stably():
     """Launcher select should switch away, switch back, and reopen without oscillating."""
-    import cc_dump.app.launcher_registry
     from textual.widgets import Select
+
+    import cc_dump.app.launcher_registry
     import cc_dump.tui.launch_config_panel
 
     async with run_app() as (pilot, app):
@@ -272,6 +274,7 @@ async def test_launch_config_launcher_select_round_trips_and_reopens_stably():
 async def test_launch_config_hidden_mount_hydrates_from_store(monkeypatch):
     """Fresh hidden mount should hydrate selector/form state before first show."""
     from textual.widgets import Select
+
     import cc_dump.app.launch_config
 
     configs = cc_dump.app.launch_config.default_configs()
@@ -361,8 +364,8 @@ async def test_settings_toggle_reopens_hidden_panel():
 
 async def test_sidebars_are_exclusive_and_reused():
     """Opening one sidebar closes the other while reusing mounted widgets."""
-    import cc_dump.tui.settings_panel
     import cc_dump.tui.launch_config_panel
+    import cc_dump.tui.settings_panel
 
     async with run_app() as (pilot, app):
         settings = app.screen.query_one(cc_dump.tui.settings_panel.SettingsPanel)

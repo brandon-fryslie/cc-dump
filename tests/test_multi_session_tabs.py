@@ -4,9 +4,7 @@ import pytest
 
 import cc_dump.providers
 from cc_dump.pipeline.har_replayer import ReplayPair
-
 from tests.harness import run_app, strips_to_text
-
 
 pytestmark = pytest.mark.textual
 

@@ -15,69 +15,72 @@ import queue
 import sys
 import threading
 import time
-import tracemalloc
 import traceback
+import tracemalloc
+from collections.abc import Callable
 from functools import lru_cache
-from typing import Callable, Optional, Protocol, cast
+from typing import Protocol, cast
 
 import textual
 import textual.filter as _textual_filter
+from rich.style import Style
+from snarfx import textual as stx
 from textual.app import App, ComposeResult, SystemCommand
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Header, TabbedContent, TabPane
-from rich.style import Style
 
+import cc_dump.app.domain_store
+import cc_dump.app.error_models
+import cc_dump.app.launch_config
+import cc_dump.app.memory_stats
+import cc_dump.app.tmux_controller
+import cc_dump.app.view_store
 
 # Module-level imports for hot-reload (never use `from` for these)
 import cc_dump.core.formatting
 import cc_dump.core.formatting_impl
-import cc_dump.io.settings
-import cc_dump.io.logging_setup
-import cc_dump.tui.rendering
-import cc_dump.tui.widget_factory
-import cc_dump.tui.event_handlers
-import cc_dump.tui.search
-import cc_dump.tui.input_modes
-import cc_dump.tui.info_panel
-import cc_dump.tui.custom_footer
-import cc_dump.tui.session_panel
-import cc_dump.tui.session_registry
-import cc_dump.tui.provider_registry
-import cc_dump.tui.panel_sync
-import cc_dump.tui.request_registry
-import cc_dump.tui.stream_registry
-# Extracted controller modules (module-object imports — safe for hot-reload)
-from cc_dump.tui import action_handlers as _actions
-import cc_dump.tui.panel_registry
-from cc_dump.tui import search_controller as _search
-from cc_dump.tui import dump_export as _dump
-from cc_dump.tui import theme_controller as _theme
-from cc_dump.tui import hot_reload_controller as _hot_reload
-from cc_dump.tui import lifecycle_controller as _lifecycle
-from cc_dump.tui import settings_launch_controller as _settings_launch
 
 # Additional module-level imports
 import cc_dump.core.palette
-import cc_dump.app.error_models
-import cc_dump.app.launch_config
-import cc_dump.app.tmux_controller
-import cc_dump.tui.settings_panel
-import cc_dump.tui.launch_config_panel
-import cc_dump.tui.keys_panel
+import cc_dump.io.logging_setup
+import cc_dump.io.sessions
+import cc_dump.io.settings
+import cc_dump.pipeline.event_types
+import cc_dump.pipeline.har_replayer
+import cc_dump.providers
+import cc_dump.tui.custom_footer
 import cc_dump.tui.debug_settings_panel
 import cc_dump.tui.error_indicator
-import cc_dump.pipeline.har_replayer
-import cc_dump.io.sessions
-import cc_dump.app.memory_stats
-import cc_dump.pipeline.event_types
-import cc_dump.app.view_store
-import cc_dump.providers
-
+import cc_dump.tui.event_handlers
+import cc_dump.tui.info_panel
+import cc_dump.tui.input_modes
+import cc_dump.tui.keys_panel
+import cc_dump.tui.launch_config_panel
+import cc_dump.tui.panel_registry
+import cc_dump.tui.panel_sync
+import cc_dump.tui.provider_registry
+import cc_dump.tui.rendering
+import cc_dump.tui.request_registry
+import cc_dump.tui.search
+import cc_dump.tui.session_panel
+import cc_dump.tui.session_registry
+import cc_dump.tui.settings_panel
+import cc_dump.tui.stream_registry
+import cc_dump.tui.widget_factory
 from cc_dump.io.stderr_tee import get_tee as _get_tee
-import cc_dump.app.domain_store
-from snarfx import textual as stx
+
+# Extracted controller modules (module-object imports — safe for hot-reload)
+from cc_dump.tui import (
+    action_handlers as _actions,
+    dump_export as _dump,
+    hot_reload_controller as _hot_reload,
+    lifecycle_controller as _lifecycle,
+    search_controller as _search,
+    settings_launch_controller as _settings_launch,
+    theme_controller as _theme,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,8 +122,8 @@ def _patch_textual_monochrome_style() -> None:
     def _safe_monochrome_style(style: Style | None) -> Style:
         return original(style or Style.null())
 
-    setattr(_textual_filter, "monochrome_style", _safe_monochrome_style)
-    setattr(_textual_filter, "_cc_dump_monochrome_patch", True)
+    _textual_filter.monochrome_style = _safe_monochrome_style
+    _textual_filter._cc_dump_monochrome_patch = True
 
 
 _patch_textual_monochrome_style()
@@ -258,18 +261,18 @@ class CcDumpApp(App):
         analytics_store=None,
         host: str = "127.0.0.1",
         port: int = 3344,
-        target: Optional[str] = None,
-        replay_data: Optional[list] = None,
-        recording_path: Optional[str] = None,
-        replay_file: Optional[str] = None,
+        target: str | None = None,
+        replay_data: list | None = None,
+        recording_path: str | None = None,
+        replay_file: str | None = None,
         tmux_controller=None,
         settings_store=None,
         view_store=None,
         domain_store=None,
         store_context=None,
         provider_endpoints: cc_dump.providers.ProviderEndpointMap | None = None,
-        auto_launch_config: Optional[str] = None,
-        auto_launch_extra_args: Optional[list[str]] = None,
+        auto_launch_config: str | None = None,
+        auto_launch_extra_args: list[str] | None = None,
     ):
         super().__init__()
         self._event_queue = event_queue
@@ -755,13 +758,13 @@ class CcDumpApp(App):
             self._launch_configs_cache = cc_dump.app.launch_config.load_configs()
         for config in self._launch_configs_cache:
             # [LAW:one-source-of-truth] Preset list comes from persisted launch configs.
-            title = "Launch preset: {}".format(config.name)
-            description = "{} via {}".format(config.launcher, config.resolved_command)
+            title = f"Launch preset: {config.name}"
+            description = f"{config.launcher} via {config.resolved_command}"
             yield SystemCommand(
                 title,
                 description,
                 lambda c=config: self._launch_with_config(
-                    c, log_label="palette_launch:{}".format(c.name)
+                    c, log_label=f"palette_launch:{c.name}"
                 ),
             )
 
@@ -843,16 +846,18 @@ class CcDumpApp(App):
         for handle in disposers:
             disposer = getattr(handle, "dispose", None)
             if callable(disposer):
+                # [LAW:no-silent-failure] Isolate teardown of each handle, but record
+                # failures at debug rather than swallowing them without a trace.
                 try:
                     disposer()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("reaction disposer failed: %s", exc)
                 continue
             if callable(handle):
                 try:
                     handle()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("reaction handle teardown failed: %s", exc)
 
     async def action_quit(self) -> None:
         now = time.monotonic()
@@ -944,7 +949,7 @@ class CcDumpApp(App):
     def _build_server_info(self) -> dict:
         """// [LAW:dataflow-not-control-flow] Straight pipe over the provider registry."""
         default = self._providers.default()
-        proxy_url = default.endpoint.proxy_url or "http://{}:{}".format(self._host, self._port)
+        proxy_url = default.endpoint.proxy_url or f"http://{self._host}:{self._port}"
         primary_target = default.endpoint.target
 
         provider_rows: list[dict[str, str]] = []
@@ -1154,11 +1159,11 @@ class CcDumpApp(App):
             self.notify("Runtime log file unavailable", severity="error")
             return
         result = tmux.open_log_tail(log_file)
-        self._app_log("INFO", "open_log_tail: {}".format(result))
+        self._app_log("INFO", f"open_log_tail: {result}")
         if result.success:
-            self.notify("{}: {}".format(result.action.value, result.detail))
+            self.notify(f"{result.action.value}: {result.detail}")
         else:
-            self.notify("Tail failed: {}".format(result.detail), severity="error")
+            self.notify(f"Tail failed: {result.detail}", severity="error")
 
     def action_copy_log_path(self):
         runtime_log = cc_dump.io.logging_setup.get_runtime()
@@ -1195,18 +1200,18 @@ class CcDumpApp(App):
         if config is None:
             available = ", ".join(c.name for c in configs)
             self.notify(
-                "Unknown config '{}'. Available: {}".format(config_name, available),
+                f"Unknown config '{config_name}'. Available: {available}",
                 severity="error",
                 timeout=10,
             )
-            self._app_log("ERROR", "auto-launch: config '{}' not found".format(config_name))
+            self._app_log("ERROR", f"auto-launch: config '{config_name}' not found")
             return
         merged = cc_dump.app.launch_config.config_with_extra_args(
             config, self._auto_launch_extra_args
         )
         extra_desc = " + {}".format(" ".join(self._auto_launch_extra_args)) if self._auto_launch_extra_args else ""
-        self._app_log("INFO", "auto-launching '{}'{}".format(config_name, extra_desc))
-        self._launch_with_config(merged, log_label="auto_launch:{}".format(config_name))
+        self._app_log("INFO", f"auto-launching '{config_name}'{extra_desc}")
+        self._launch_with_config(merged, log_label=f"auto_launch:{config_name}")
 
     def _save_launch_configs(self, configs: list, active_name: str) -> None:
         """Persist configs and active name, invalidating the command palette cache."""
@@ -1241,7 +1246,7 @@ class CcDumpApp(App):
         """Handle LaunchConfigPanel.Activated — save active name, notify."""
         self._save_launch_configs(msg.configs, msg.name)
         self._sync_active_launch_config_state()
-        self.notify("Active: {}".format(msg.name))
+        self.notify(f"Active: {msg.name}")
 
     # ─── Reactive watchers ─────────────────────────────────────────────
 

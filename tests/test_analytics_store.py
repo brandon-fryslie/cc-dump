@@ -3,10 +3,10 @@
 import pytest
 
 import cc_dump.app.analytics_store as analytics_store_mod
-from cc_dump.app.analytics_store import AnalyticsStore, TurnRecord, ToolInvocationRecord
+from cc_dump.app.analytics_store import AnalyticsStore, ToolInvocationRecord, TurnRecord
 from cc_dump.pipeline.event_types import (
-    RequestHeadersEvent,
     RequestBodyEvent,
+    RequestHeadersEvent,
     ResponseCompleteEvent,
 )
 

@@ -15,8 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Literal
 
-from snarfx import Observable, reaction
-from snarfx import textual as stx
+from snarfx import Observable, reaction, textual as stx
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
@@ -151,7 +150,7 @@ def _common_tool_option_defs() -> tuple[cc_dump.app.launch_config.LaunchOptionDe
     launcher_keys = tuple(_TOOL_OPTION_DEFS_BY_LAUNCHER)
     if not launcher_keys:
         return ()
-    common_keys = set(option.key for option in _TOOL_OPTION_DEFS_BY_LAUNCHER[launcher_keys[0]])
+    common_keys = {option.key for option in _TOOL_OPTION_DEFS_BY_LAUNCHER[launcher_keys[0]]}
     for launcher in launcher_keys[1:]:
         common_keys &= {
             option.key for option in _TOOL_OPTION_DEFS_BY_LAUNCHER[launcher]
@@ -196,27 +195,27 @@ def _compose_tool_option_widgets(
         if option.kind == "bool":
             with Horizontal(
                 classes="field-row",
-                id="lc-option-row-{}".format(option.key),
+                id=f"lc-option-row-{option.key}",
             ):
                 yield ToggleChip(
                     option.label,
                     value=bool(option.default),
-                    id="lc-option-{}".format(option.key),
+                    id=f"lc-option-{option.key}",
                 )
         else:
             with Horizontal(
                 classes="field-row",
-                id="lc-option-row-{}".format(option.key),
+                id=f"lc-option-row-{option.key}",
             ):
                 yield Label(option.label, classes="field-label")
                 yield Input(
                     value=str(option.default or ""),
-                    id="lc-option-{}".format(option.key),
+                    id=f"lc-option-{option.key}",
                 )
         yield Static(
             option.description,
             classes="field-desc",
-            id="lc-option-desc-{}".format(option.key),
+            id=f"lc-option-desc-{option.key}",
         )
 
 
@@ -232,9 +231,9 @@ def _compose_tool_option_sets() -> ComposeResult:
         yield Static(
             title,
             classes="field-desc",
-            id="lc-toolset-title-{}".format(launcher),
+            id=f"lc-toolset-title-{launcher}",
         )
-        with Vertical(id="lc-toolset-{}".format(launcher)):
+        with Vertical(id=f"lc-toolset-{launcher}"):
             yield from _compose_tool_option_widgets(option_defs)
 
 def _select_widget(options: Sequence[str], selected: str, widget_id: str) -> Select[str]:
@@ -249,7 +248,7 @@ def _select_widget(options: Sequence[str], selected: str, widget_id: str) -> Sel
 
 
 def _make_base_widget(field: BaseFieldDef, value: object) -> Input | Select[str]:
-    widget_id = "lc-field-{}".format(field.key)
+    widget_id = f"lc-field-{field.key}"
     if field.kind == "text":
         return Input(value=str(value or ""), id=widget_id)
 
@@ -290,7 +289,7 @@ def _action_chip(
     return Chip(
         label,
         on_activate=_activate,
-        id="lc-action-{}".format(action_key),
+        id=f"lc-action-{action_key}",
         classes="action-chip",
     )
 
@@ -445,10 +444,8 @@ class LaunchConfigPanel(VerticalScroll):
                 yield from _compose_tool_option_sets()
 
         yield Static(
-            "[bold {info}]Tab[/] next  [bold {info}]Shift+Tab[/] prev\n"
-            "[bold {info}]Enter[/]/[bold {info}]Space[/] activate focused control  [bold {info}]Esc[/] close".format(
-                info=p.info
-            ),
+            f"[bold {p.info}]Tab[/] next  [bold {p.info}]Shift+Tab[/] prev\n"
+            f"[bold {p.info}]Enter[/]/[bold {p.info}]Space[/] activate focused control  [bold {p.info}]Esc[/] close",
             classes="panel-footer",
         )
 
@@ -515,7 +512,7 @@ class LaunchConfigPanel(VerticalScroll):
             active_widget = self.query_one("#lc-active", Static)
         except NoMatches:
             return
-        active_widget.update("Active preset: {}".format(self._active_name or "(none)"))
+        active_widget.update(f"Active preset: {self._active_name or '(none)'}")
 
     def _sync_preset_selector(self, names: tuple[str, ...], selected_name: str) -> None:
         try:
@@ -525,7 +522,7 @@ class LaunchConfigPanel(VerticalScroll):
         self._sync_select_widget(selector, options=names, value=selected_name)
 
     def _sync_base_field_widget(self, field: BaseFieldDef, value: str) -> None:
-        widget_id = "#lc-field-{}".format(field.key)
+        widget_id = f"#lc-field-{field.key}"
         try:
             widget = self.query_one(widget_id)
         except NoMatches:
@@ -576,7 +573,7 @@ class LaunchConfigPanel(VerticalScroll):
     def _apply_tool_option_values_state(self, state: ToolOptionValuesViewState) -> None:
         # [LAW:dataflow-not-control-flow] Stable tool option widgets always receive value hydration.
         for field_state in state.values:
-            widget_id = "#lc-option-{}".format(field_state.key)
+            widget_id = f"#lc-option-{field_state.key}"
             try:
                 widget = self.query_one(widget_id)
             except NoMatches:
@@ -598,8 +595,8 @@ class LaunchConfigPanel(VerticalScroll):
         for launcher, option_defs in _TOOL_SPECIFIC_OPTION_DEFS_BY_LAUNCHER.items():
             visible = launcher == active_launcher and bool(option_defs)
             try:
-                title = self.query_one("#lc-toolset-title-{}".format(launcher), Static)
-                toolset = self.query_one("#lc-toolset-{}".format(launcher))
+                title = self.query_one(f"#lc-toolset-title-{launcher}", Static)
+                toolset = self.query_one(f"#lc-toolset-{launcher}")
             except NoMatches:
                 continue
             title.display = visible
@@ -643,7 +640,7 @@ class LaunchConfigPanel(VerticalScroll):
     def _collect_option_values(self, launcher: str) -> dict[str, str | bool]:
         values: dict[str, str | bool] = {}
         for option in cc_dump.app.launch_config.launcher_option_defs(launcher):
-            widget_id = "#lc-option-{}".format(option.key)
+            widget_id = f"#lc-option-{option.key}"
             try:
                 widget = self.query_one(widget_id)
             except NoMatches:
@@ -747,7 +744,7 @@ class LaunchConfigPanel(VerticalScroll):
         candidate = base_name
         suffix = 2
         while candidate in taken:
-            candidate = "{}-{}".format(base_name, suffix)
+            candidate = f"{base_name}-{suffix}"
             suffix += 1
         return candidate
 

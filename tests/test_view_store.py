@@ -2,12 +2,11 @@
 
 from unittest.mock import MagicMock
 
+from snarfx import autorun, textual as stx, transaction
 
 import cc_dump.app.view_store
 from cc_dump.core.formatting import VisState
 from cc_dump.tui.category_config import CATEGORY_CONFIG
-from snarfx import autorun, transaction
-from snarfx import textual as stx
 
 
 class TestSchema:

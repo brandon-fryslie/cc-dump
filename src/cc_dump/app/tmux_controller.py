@@ -51,7 +51,7 @@ class LaunchResult:
     // [LAW:dataflow-not-control-flow] The decision is a value, not hidden in branches.
     """
 
-    __slots__ = ("action", "detail", "success", "command")
+    __slots__ = ("action", "command", "detail", "success")
 
     def __init__(self, action: LaunchAction, detail: str, success: bool, command: str = ""):
         self.action = action
@@ -60,12 +60,10 @@ class LaunchResult:
         self.command = command  # the shell command, if launched
 
     def __repr__(self) -> str:
-        parts = "action={}, detail={!r}, success={}".format(
-            self.action.value, self.detail, self.success
-        )
+        parts = f"action={self.action.value}, detail={self.detail!r}, success={self.success}"
         if self.command:
-            parts += ", command={!r}".format(self.command)
-        return "LaunchResult({})".format(parts)
+            parts += f", command={self.command!r}"
+        return f"LaunchResult({parts})"
 
 
 class LogTailAction(Enum):
@@ -83,7 +81,7 @@ class LogTailResult:
     // [LAW:dataflow-not-control-flow] Pane-routing choice is represented as a value.
     """
 
-    __slots__ = ("action", "detail", "success", "command")
+    __slots__ = ("action", "command", "detail", "success")
 
     def __init__(self, action: LogTailAction, detail: str, success: bool, command: str = ""):
         self.action = action
@@ -92,12 +90,10 @@ class LogTailResult:
         self.command = command
 
     def __repr__(self) -> str:
-        parts = "action={}, detail={!r}, success={}".format(
-            self.action.value, self.detail, self.success
-        )
+        parts = f"action={self.action.value}, detail={self.detail!r}, success={self.success}"
         if self.command:
-            parts += ", command={!r}".format(self.command)
-        return "LogTailResult({})".format(parts)
+            parts += f", command={self.command!r}"
+        return f"LogTailResult({parts})"
 
 
 def is_available() -> bool:
@@ -164,7 +160,7 @@ class TmuxController:
                             self._session = session
 
             if self._our_pane is None:
-                _log("could not find pane with id {}".format(pane_id))
+                _log(f"could not find pane with id {pane_id}")
                 self.state = TmuxState.NOT_IN_TMUX
                 return
 
@@ -174,7 +170,7 @@ class TmuxController:
         except ImportError:
             self.state = TmuxState.NO_LIBTMUX
         except Exception as e:
-            _log("init error: {}".format(e))
+            _log(f"init error: {e}")
             self.state = TmuxState.NOT_IN_TMUX
 
     def configure_launcher(
@@ -247,7 +243,7 @@ class TmuxController:
             self.state = TmuxState.READY
             return False
 
-    def _find_tool_pane(self) -> "libtmux.Pane | None":
+    def _find_tool_pane(self) -> libtmux.Pane | None:
         """Scan sibling panes for a running configured tool process."""
         if self._our_pane is None:
             return None
@@ -263,7 +259,7 @@ class TmuxController:
                 if os.path.basename(current_cmd) in targets:
                     return pane
         except Exception as e:
-            _log("_find_tool_pane error: {}".format(e))
+            _log(f"_find_tool_pane error: {e}")
         return None
 
     def _try_adopt_existing(self) -> None:
@@ -304,16 +300,16 @@ class TmuxController:
         action: LaunchAction
         detail: str
         if not state_ok:
-            action, detail = LaunchAction.BLOCKED, "state={}".format(self.state)
+            action, detail = LaunchAction.BLOCKED, f"state={self.state}"
         elif pane_alive:
             pane_id = getattr(self._tool_pane, "pane_id", "?")
-            action, detail = LaunchAction.FOCUSED, "existing pane {}".format(pane_id)
+            action, detail = LaunchAction.FOCUSED, f"existing pane {pane_id}"
         elif not launch_target_ok:
             action, detail = LaunchAction.BLOCKED, "launch env not configured"
         else:
             action, detail = LaunchAction.LAUNCHED, resolved_command
 
-        _log("launch_tool: {} ({})".format(action.value, detail))
+        _log(f"launch_tool: {action.value} ({detail})")
 
         # ── Execute ──
         if action == LaunchAction.FOCUSED:
@@ -325,7 +321,7 @@ class TmuxController:
 
         return LaunchResult(action, detail, success=False)
 
-    def _resolve_tail_split_direction(self, pane_a: "libtmux.Pane", pane_b: "libtmux.Pane"):
+    def _resolve_tail_split_direction(self, pane_a: libtmux.Pane, pane_b: libtmux.Pane):
         """Pick opposite split direction from a 2-pane layout.
 
         // [LAW:dataflow-not-control-flow] Direction derives from pane coordinates.
@@ -344,7 +340,7 @@ class TmuxController:
             else libtmux.constants.PaneDirection.Below
         )
 
-    def _resolve_tool_for_tail(self) -> "libtmux.Pane | None":
+    def _resolve_tool_for_tail(self) -> libtmux.Pane | None:
         """Return a live tool pane when one exists in our window."""
         pane_alive = self._validate_tool_pane() if self._tool_pane is not None else False
         if not pane_alive:
@@ -364,16 +360,16 @@ class TmuxController:
         has_session = self._session is not None
         has_log_file = bool(str(log_file or "").strip())
         blocked_reasons = []
-        blocked_reasons.extend(["state={}".format(self.state)] if not state_ok else [])
+        blocked_reasons.extend([f"state={self.state}"] if not state_ok else [])
         blocked_reasons.extend(["our pane missing"] if not has_our_pane else [])
         blocked_reasons.extend(["session missing"] if not has_session else [])
         blocked_reasons.extend(["log_file missing"] if not has_log_file else [])
         if blocked_reasons:
             detail = ", ".join(blocked_reasons)
-            _log("open_log_tail blocked: {}".format(detail))
+            _log(f"open_log_tail blocked: {detail}")
             return LogTailResult(LogTailAction.BLOCKED, detail, success=False)
 
-        shell = "tail -f -- {}".format(shlex.quote(log_file))
+        shell = f"tail -f -- {shlex.quote(log_file)}"
         try:
             import libtmux
 
@@ -407,7 +403,7 @@ class TmuxController:
             self._session.cmd("new-window", "-n", "cc-dump-logs", shell)
             return LogTailResult(LogTailAction.NEW_WINDOW, "opened cc-dump-logs window", True, shell)
         except Exception as e:
-            _log("open_log_tail error: {}".format(e))
+            _log(f"open_log_tail error: {e}")
             return LogTailResult(LogTailAction.BLOCKED, str(e), success=False, command=shell)
 
     def _resolved_launch_env(self) -> dict[str, str]:
@@ -422,11 +418,11 @@ class TmuxController:
             window = self._our_pane.window
             env = self._resolved_launch_env()
             env_prefix = " ".join(
-                "{}={}".format(key, shlex.quote(value))
+                f"{key}={shlex.quote(value)}"
                 for key, value in sorted(env.items())
             )
-            shell = "{} {}".format(env_prefix, command).strip()
-            _log("exec: {}".format(shell))
+            shell = f"{env_prefix} {command}".strip()
+            _log(f"exec: {shell}")
             self._tool_pane = window.split(
                 direction=libtmux.constants.PaneDirection.Below,
                 shell=shell,
@@ -436,7 +432,7 @@ class TmuxController:
             self._monitor_exit()
             return LaunchResult(LaunchAction.LAUNCHED, command, success=True, command=shell)
         except Exception as e:
-            _log("launch error: {}".format(e))
+            _log(f"launch error: {e}")
             return LaunchResult(LaunchAction.BLOCKED, str(e), success=False)
 
     def _monitor_exit(self) -> None:
@@ -462,7 +458,7 @@ class TmuxController:
             self._our_pane.select()
             return True
         except Exception as e:
-            _log("focus_self error: {}".format(e))
+            _log(f"focus_self error: {e}")
             return False
 
     def focus_tool(self) -> bool:
@@ -473,7 +469,7 @@ class TmuxController:
             self._tool_pane.select()
             return True
         except Exception as e:
-            _log("focus_tool error: {}".format(e))
+            _log(f"focus_tool error: {e}")
             return False
 
     def on_event(self, event: PipelineEvent) -> None:

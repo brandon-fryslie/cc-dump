@@ -8,13 +8,18 @@ import os
 import tracemalloc
 from dataclasses import asdict, dataclass
 
+from textual.strip import Strip
+
 import cc_dump.core.formatting
 from cc_dump.app.analytics_store import AnalyticsStore
 from cc_dump.app.domain_store import DomainStore
-from cc_dump.pipeline.event_types import RequestBodyEvent, RequestHeadersEvent, ResponseCompleteEvent
+from cc_dump.pipeline.event_types import (
+    RequestBodyEvent,
+    RequestHeadersEvent,
+    ResponseCompleteEvent,
+)
 from cc_dump.pipeline.har_recorder import HARRecordingSubscriber
 from cc_dump.tui.widget_factory import ConversationView
-from textual.strip import Strip
 
 
 @dataclass(frozen=True)

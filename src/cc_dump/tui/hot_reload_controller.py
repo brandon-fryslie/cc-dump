@@ -8,24 +8,24 @@ Not hot-reloadable (mutates app widget tree).
 """
 
 from dataclasses import dataclass
-from textual.widgets import Header
 from typing import Protocol, cast
 
+from snarfx import EventStream
+from textual.widgets import Header
+
 import cc_dump.app.hot_reload
-import cc_dump.tui.rendering
-import cc_dump.tui.search
-import cc_dump.tui.widget_factory
-import cc_dump.tui.info_panel
-import cc_dump.tui.custom_footer
 import cc_dump.app.settings_store
 import cc_dump.app.view_store
+import cc_dump.tui.category_config
+import cc_dump.tui.custom_footer
+import cc_dump.tui.info_panel
+import cc_dump.tui.panel_registry
+import cc_dump.tui.protocols
+import cc_dump.tui.rendering
+import cc_dump.tui.search
 import cc_dump.tui.search_controller
 import cc_dump.tui.theme_controller
-import cc_dump.tui.protocols
-import cc_dump.tui.category_config
-import cc_dump.tui.panel_registry
-
-from snarfx import EventStream
+import cc_dump.tui.widget_factory
 
 _DEBOUNCE_S = 2.0  # Quiet period before reload fires
 

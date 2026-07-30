@@ -10,15 +10,14 @@ This module is RELOADABLE — pure data + persistence, no widget deps.
 
 from __future__ import annotations
 
-import shlex
 import os
-from dataclasses import dataclass, asdict, field, replace
+import shlex
+from dataclasses import asdict, dataclass, field, replace
 from typing import Literal
 
 import cc_dump.app.launcher_registry
 import cc_dump.io.settings
 import cc_dump.providers
-
 
 SHELL_OPTIONS = ("", "bash", "zsh")
 """Valid values for LaunchConfig.shell. Empty string = no shell wrapper."""
@@ -230,10 +229,10 @@ def _dedupe_config_names(configs: list[LaunchConfig]) -> list[LaunchConfig]:
     seen: dict[str, int] = {}
     deduped: list[LaunchConfig] = []
     for idx, config in enumerate(configs, start=1):
-        base_name = str(config.name or "").strip() or "config-{}".format(idx)
+        base_name = str(config.name or "").strip() or f"config-{idx}"
         count = seen.get(base_name, 0) + 1
         seen[base_name] = count
-        name = base_name if count == 1 else "{}-{}".format(base_name, count)
+        name = base_name if count == 1 else f"{base_name}-{count}"
         deduped.append(
             LaunchConfig(
                 name=name,
@@ -368,9 +367,9 @@ def _wrap_with_shell(shell: str, inner_command: str) -> str:
     """Wrap command in shell startup script when shell is configured."""
     if not shell:
         return inner_command
-    rc_file = "~/.{}rc".format(shell)
-    inner_script = "source {}; {}".format(rc_file, inner_command)
-    return "{} -c {}".format(shell, shlex.quote(inner_script))
+    rc_file = f"~/.{shell}rc"
+    inner_script = f"source {rc_file}; {inner_command}"
+    return f"{shell} -c {shlex.quote(inner_script)}"
 
 
 def build_full_command(config: LaunchConfig, session_id: str = "") -> str:

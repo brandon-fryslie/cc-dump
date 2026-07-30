@@ -1,9 +1,9 @@
 """Tests for pure proxy planning/parsing helpers."""
 
 from cc_dump.pipeline.proxy_flow import (
-    resolve_proxy_target_for_origin,
-    parse_request_json,
     decode_json_response_body,
+    parse_request_json,
+    resolve_proxy_target_for_origin,
 )
 
 

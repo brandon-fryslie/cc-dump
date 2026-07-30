@@ -8,29 +8,29 @@ for hot-reload preservation.
 // This store is runtime-only — derived data for analytics panels.
 """
 
+import hashlib
 import json
 import logging
-import hashlib
 from dataclasses import dataclass, field
 from typing import TypedDict
 
-from cc_dump.pipeline.event_types import (
-    PipelineEvent,
-    PipelineEventKind,
-    RequestHeadersEvent,
-    RequestBodyEvent,
-    ResponseCompleteEvent,
-)
 from cc_dump.core.analysis import (
-    correlate_tools,
-    classify_model,
-    compute_session_cost,
-    format_model_short,
     HAIKU_BASE_UNIT,
     ToolEconomicsRow,
+    classify_model,
+    compute_session_cost,
+    correlate_tools,
+    format_model_short,
 )
 from cc_dump.core.formatting import parse_user_id
 from cc_dump.core.token_counter import count_tokens
+from cc_dump.pipeline.event_types import (
+    PipelineEvent,
+    PipelineEventKind,
+    RequestBodyEvent,
+    RequestHeadersEvent,
+    ResponseCompleteEvent,
+)
 
 logger = logging.getLogger(__name__)
 

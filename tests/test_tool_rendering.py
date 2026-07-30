@@ -1,22 +1,35 @@
 """Unit tests for tool use rendering with detail field."""
 
 import pytest
+from textual.theme import BUILTIN_THEMES
 
 from cc_dump.core.formatting import (
-    ToolUseBlock, ToolResultBlock, ToolUseSummaryBlock, TextContentBlock,
-    MessageBlock, NewlineBlock, VisState, HIDDEN, ALWAYS_VISIBLE,
+    ALWAYS_VISIBLE,
+    HIDDEN,
+    MessageBlock,
+    NewlineBlock,
+    TextContentBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+    ToolUseSummaryBlock,
+    VisState,
 )
 from cc_dump.tui.rendering import (
-    _render_tool_use_oneliner, _render_tool_use_full, _render_tool_result_full,
-    _render_tool_result_summary, _render_tool_use_summary,
-    _render_read_content, _render_confirm_content,
-    _render_tool_use_bash_full, _render_tool_use_edit_full,
-    _infer_lang_from_path,
-    _collapse_children, render_turn_to_strips,
     RENDERERS,
+    _collapse_children,
+    _infer_lang_from_path,
+    _render_confirm_content,
+    _render_read_content,
+    _render_tool_result_full,
+    _render_tool_result_summary,
+    _render_tool_use_bash_full,
+    _render_tool_use_edit_full,
+    _render_tool_use_full,
+    _render_tool_use_oneliner,
+    _render_tool_use_summary,
+    render_turn_to_strips,
     set_theme,
 )
-from textual.theme import BUILTIN_THEMES
 
 
 @pytest.fixture(autouse=True)
@@ -403,7 +416,7 @@ class TestRenderTurnToStripsToolSummary:
         console = Console(width=80, force_terminal=True)
         filters = {"tools": HIDDEN, "system": ALWAYS_VISIBLE, "metadata": HIDDEN}
 
-        strips, block_strip_map, _ = render_turn_to_strips(
+        strips, _block_strip_map, _ = render_turn_to_strips(
             blocks, filters, console, width=80,
         )
 
@@ -426,7 +439,7 @@ class TestRenderTurnToStripsToolSummary:
         console = Console(width=80, force_terminal=True)
         filters = {"tools": ALWAYS_VISIBLE, "system": ALWAYS_VISIBLE, "metadata": HIDDEN}
 
-        strips, block_strip_map, _ = render_turn_to_strips(
+        strips, _block_strip_map, _ = render_turn_to_strips(
             blocks, filters, console, width=80,
         )
 

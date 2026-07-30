@@ -4,11 +4,13 @@ This module contains all the display formatting logic for panels. It's separated
 so it can be hot-reloaded without affecting the live widget instances.
 """
 
+from collections.abc import Callable
+
+from rich.text import Text
+
 import cc_dump.core.analysis
 import cc_dump.core.palette
 import cc_dump.tui.input_modes
-from collections.abc import Callable
-from rich.text import Text
 
 # [LAW:one-source-of-truth] Shared compact token formatter lives in analysis.py.
 _fmt_tokens = cc_dump.core.analysis.fmt_tokens
@@ -53,32 +55,12 @@ def render_analytics_summary(snapshot: dict) -> str:
     lines = [
         _dashboard_tabs("summary"),
         "Summary:",
-        "  Turns: {}  Total: {}  Cost: ${:.4f}".format(
-            turn_count, _fmt_tokens(total_tokens), cost_usd
-        ),
-        "  Input: {} fresh + {} cached = {}  |  Output: {}".format(
-            _fmt_tokens(fresh_tokens),
-            _fmt_tokens(cache_read_tokens),
-            _fmt_tokens(input_total),
-            _fmt_tokens(output_tokens),
-        ),
-        "  Cache: {:.0f}% hit  |  Writes: {}  |  Savings: ${:.4f}".format(
-            cache_pct, _fmt_tokens(cache_creation_tokens), cache_savings_usd
-        ),
-        "  Models: {} active  |  Latest: {}".format(
-            active_model_count,
-            latest_model_label,
-        ),
-        "  Lanes(active): {} main turns | {} subagent turns | {} active subagent streams".format(
-            main_turns,
-            subagent_turns,
-            active_subagent_streams,
-        ),
-        "  Lanes(all): {} main turns | {} subagent turns | {} active subagent streams".format(
-            all_main_turns,
-            all_subagent_turns,
-            all_active_subagent_streams,
-        ),
+        f"  Turns: {turn_count}  Total: {_fmt_tokens(total_tokens)}  Cost: ${cost_usd:.4f}",
+        f"  Input: {_fmt_tokens(fresh_tokens)} fresh + {_fmt_tokens(cache_read_tokens)} cached = {_fmt_tokens(input_total)}  |  Output: {_fmt_tokens(output_tokens)}",
+        f"  Cache: {cache_pct:.0f}% hit  |  Writes: {_fmt_tokens(cache_creation_tokens)}  |  Savings: ${cache_savings_usd:.4f}",
+        f"  Models: {active_model_count} active  |  Latest: {latest_model_label}",
+        f"  Lanes(active): {main_turns} main turns | {subagent_turns} subagent turns | {active_subagent_streams} active subagent streams",
+        f"  Lanes(all): {all_main_turns} main turns | {all_subagent_turns} subagent turns | {all_active_subagent_streams} active subagent streams",
     ]
 
     capacity_total = int(summary.get("capacity_total", 0) or 0)
@@ -206,12 +188,12 @@ def _format_age(age_s: float) -> str:
     - >=43200s: capped ("12+ hours ago")
     """
     if age_s < 60:
-        return "{:.0f}s ago".format(age_s)
+        return f"{age_s:.0f}s ago"
     if age_s < 3600:
-        return "~{:.0f} min ago".format(age_s / 60)
+        return f"~{age_s / 60:.0f} min ago"
     if age_s < 43200:
         hours = round(age_s / 1800) / 2
-        return "~{:g}hr ago".format(hours)
+        return f"~{hours:g}hr ago"
     return "12+ hours ago"
 
 
@@ -402,7 +384,7 @@ def render_keys_panel() -> Text:
         text.append("\n")
         for key_display, description in keys:
             text.append("  ")
-            text.append("{:>6}".format(key_display), style=f"bold {p.info}")
+            text.append(f"{key_display:>6}", style=f"bold {p.info}")
             text.append("  ")
             text.append(description, style="dim")
             text.append("\n")

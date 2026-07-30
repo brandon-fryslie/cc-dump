@@ -15,19 +15,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from snarfx import Observable, reaction
-from snarfx import textual as stx
+from snarfx import Observable, reaction, textual as stx
 from textual.app import ComposeResult
-from textual.css.query import NoMatches
 from textual.containers import Horizontal, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Input, Label, Select, Static
 
 import cc_dump.app.settings_store
-from cc_dump.tui.chip import ToggleChip
-
 import cc_dump.core.palette
-
+from cc_dump.tui.chip import ToggleChip
 
 # ─── Field definitions ───────────────────────────────────────────────────────
 # // [LAW:one-type-per-behavior] One type with kind discriminator.
@@ -60,7 +57,7 @@ SETTINGS_FIELDS: list[FieldDef] = [
 
 def _make_widget(field: FieldDef, value: object) -> Input | ToggleChip | Select:
     """Create the appropriate Textual widget for a FieldDef."""
-    widget_id = "field-{}".format(field.key)
+    widget_id = f"field-{field.key}"
     if field.kind == "text":
         return Input(value=str(value), id=widget_id)
     elif field.kind == "bool":
@@ -139,9 +136,7 @@ class SettingsPanel(VerticalScroll):
             yield Static(field.description, classes="field-desc")
 
         yield Static(
-            "[bold {info}]Tab[/] next  [bold {info}]Enter[/] save  [bold {info}]Esc[/] cancel".format(
-                info=p.info
-            ),
+            f"[bold {p.info}]Tab[/] next  [bold {p.info}]Enter[/] save  [bold {p.info}]Esc[/] cancel",
             classes="panel-footer",
         )
 
@@ -168,7 +163,7 @@ class SettingsPanel(VerticalScroll):
             return
         for field in SETTINGS_FIELDS:
             try:
-                widget = self.query_one("#field-{}".format(field.key))
+                widget = self.query_one(f"#field-{field.key}")
             except NoMatches:
                 continue
             value = view_state.values.get(field.key, field.default)
@@ -191,13 +186,10 @@ class SettingsPanel(VerticalScroll):
         """Read current widget values into a dict keyed by field key."""
         result = {}
         for field in SETTINGS_FIELDS:
-            widget = self.query_one("#field-{}".format(field.key))
-            if field.kind == "text":
-                result[field.key] = widget.value
-            elif field.kind == "bool":
-                result[field.key] = widget.value
-            else:  # select
-                result[field.key] = widget.value
+            # [LAW:dataflow-not-control-flow] Every field kind (text, bool, select)
+            # exposes .value; the read is unconditional, not branched on kind.
+            widget = self.query_one(f"#field-{field.key}")
+            result[field.key] = widget.value
         return result
 
     def on_input_submitted(self, event: Input.Submitted) -> None:

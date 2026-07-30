@@ -3,18 +3,17 @@
 import json
 
 from cc_dump.pipeline.copilot_translate import (
-    anthropic_to_copilot_request,
-    copilot_sse_to_anthropic_events,
+    ChatTranslationState,
     CopilotSSEParser,
     TranslationState,
-    copilot_upstream_url,
     anthropic_to_chat_completions_request,
+    anthropic_to_copilot_request,
     chat_chunk_to_anthropic_events,
-    ChatTranslationState,
     copilot_chat_completions_url,
     copilot_chat_headers,
+    copilot_sse_to_anthropic_events,
+    copilot_upstream_url,
 )
-
 
 # ─── Request Translation ───────────────────────────────────────────────────
 
@@ -157,7 +156,7 @@ class TestCopilotSSEToAnthropic:
             ("response.output_item.done", {"item": {"type": "message", "id": "i1"}}),
             ("response.completed", {"response": {"usage": {"input_tokens": 10, "output_tokens": 5}}}),
         ]
-        anth, state = self._run_events(events)
+        anth, _state = self._run_events(events)
         types = [e["type"] for e in anth]
         assert types == [
             "message_start",

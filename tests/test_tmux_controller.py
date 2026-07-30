@@ -8,15 +8,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cc_dump.pipeline.event_types import RequestBodyEvent
 from cc_dump.app.tmux_controller import (
-    LogTailAction,
     LaunchAction,
+    LogTailAction,
     TmuxController,
     TmuxState,
     is_available,
 )
-
+from cc_dump.pipeline.event_types import RequestBodyEvent
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -57,15 +56,13 @@ class TestIsAvailable:
             assert is_available() is False
 
     def test_tmux_set_no_libtmux(self):
-        with patch.dict(os.environ, {"TMUX": "/tmp/tmux-1000/default,123,0"}):
-            with patch.dict("sys.modules", {"libtmux": None}):
-                assert is_available() is False
+        with patch.dict(os.environ, {"TMUX": "/tmp/tmux-1000/default,123,0"}), patch.dict("sys.modules", {"libtmux": None}):
+            assert is_available() is False
 
     def test_tmux_set_with_libtmux(self):
         mock_libtmux = MagicMock()
-        with patch.dict(os.environ, {"TMUX": "/tmp/tmux-1000/default,123,0"}):
-            with patch.dict("sys.modules", {"libtmux": mock_libtmux}):
-                assert is_available() is True
+        with patch.dict(os.environ, {"TMUX": "/tmp/tmux-1000/default,123,0"}), patch.dict("sys.modules", {"libtmux": mock_libtmux}):
+            assert is_available() is True
 
 
 # ─── TmuxController state machine ───────────────────────────────────────────
@@ -503,7 +500,7 @@ class TestAutoResume:
 
         assert result.action == LaunchAction.LAUNCHED
         assert result.success
-        assert "--resume {}".format(session_id) in result.command
+        assert f"--resume {session_id}" in result.command
         assert "ANTHROPIC_BASE_URL" in result.command
 
     def test_no_resume_without_session_id(self, make_controller):
@@ -560,9 +557,9 @@ class TestAutoResume:
 
     def test_session_id_from_metadata_to_launch(self):
         """Full chain: metadata.user_id → format_request_for_provider → state → build_full_command."""
+        from cc_dump.app.launch_config import LaunchConfig, build_full_command
         from cc_dump.core.formatting import format_request_for_provider
         from cc_dump.core.formatting_impl import ProviderRuntimeState
-        from cc_dump.app.launch_config import LaunchConfig, build_full_command
 
         state = ProviderRuntimeState()
         body = {

@@ -5,8 +5,11 @@ import time
 
 import pytest
 
-from cc_dump.experiments.perf_metrics import MetricsCollector, StageStats, _compute_stats
-
+from cc_dump.experiments.perf_metrics import (
+    MetricsCollector,
+    StageStats,
+    _compute_stats,
+)
 
 # ─── MetricsCollector basics ────────────────────────────────────────────────
 
@@ -204,13 +207,13 @@ class TestBenchmarkSmoke:
         """Verify synthetic event stream structure."""
         from benchmarks.bench_streaming import generate_sse_stream
         from cc_dump.pipeline.event_types import (
-            ResponseSSEEvent,
-            MessageStartEvent as MStart,
-            TextBlockStartEvent as TBStart,
-            TextDeltaEvent as TDelta,
             ContentBlockStopEvent as CBStop,
             MessageDeltaEvent as MDelta,
+            MessageStartEvent as MStart,
             MessageStopEvent as MStop,
+            ResponseSSEEvent,
+            TextBlockStartEvent as TBStart,
+            TextDeltaEvent as TDelta,
         )
         events = generate_sse_stream(5)
         # Structure: msg_start, text_block_start, 5x text_delta,

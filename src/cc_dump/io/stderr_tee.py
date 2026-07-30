@@ -6,11 +6,13 @@
 Thread-safe: proxy, router, and HAR threads all write stderr.
 """
 
+import contextlib
 import re
 import sys
 import threading
 from collections import deque
-from typing import Callable, Optional, TextIO, cast
+from collections.abc import Callable
+from typing import TextIO, cast
 
 # Callback signature: (level: str, source: str, message: str)
 DrainFn = Callable[[str, str, str], None]
@@ -50,7 +52,7 @@ class StderrTee:
     def __init__(self, real_stderr):
         self._real = real_stderr
         self._lock = threading.RLock()  # RLock: drain callback may trigger stderr write
-        self._drain: Optional[DrainFn] = None
+        self._drain: DrainFn | None = None
         self._buffer = ""  # Partial line accumulator
         self._ring: deque[str] = deque(maxlen=500)  # Pre-TUI buffer
 
@@ -125,17 +127,18 @@ class StderrTee:
         drain = self._drain
         if drain is not None:
             level, source, message = _parse_line(line)
-            try:
+            # Intentional broad, silent containment: this IS the stderr path, so logging a
+            # drain failure would risk recursing back through the tee. A broken drain must
+            # never break stderr itself.
+            with contextlib.suppress(Exception):
                 drain(level, source, message)
-            except Exception:
-                pass  # Never let drain errors break stderr
         else:
             self._ring.append(line)
 
 
 # ── Module-level helpers ──────────────────────────────────────────────
 
-_tee: Optional[StderrTee] = None
+_tee: StderrTee | None = None
 
 
 def install() -> StderrTee:
@@ -148,6 +151,6 @@ def install() -> StderrTee:
     return _tee
 
 
-def get_tee() -> Optional[StderrTee]:
+def get_tee() -> StderrTee | None:
     """Return the installed tee, or None if not installed."""
     return _tee

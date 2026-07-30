@@ -20,15 +20,16 @@ class TestIndicatorHelperFunction:
     def test_filter_indicators_have_symbol_and_color(self):
         from cc_dump.tui import rendering
 
-        for filter_name, (symbol, color) in rendering.get_filter_indicators().items():
+        for (symbol, color) in rendering.get_filter_indicators().values():
             assert isinstance(symbol, str)
             assert len(symbol) > 0
             assert isinstance(color, str)
             assert len(color) > 0
 
     def test_add_filter_indicator_with_text(self):
-        from cc_dump.tui import rendering
         from rich.text import Text
+
+        from cc_dump.tui import rendering
 
         text = Text("Hello World")
         result = rendering._add_filter_indicator(text, "tools")
@@ -37,8 +38,9 @@ class TestIndicatorHelperFunction:
         assert "Hello" in str(result.plain)
 
     def test_add_filter_indicator_with_unknown_filter(self):
-        from cc_dump.tui.rendering import _add_filter_indicator
         from rich.text import Text
+
+        from cc_dump.tui.rendering import _add_filter_indicator
 
         text = Text("Test")
         result = _add_filter_indicator(text, "unknown_filter")
@@ -49,11 +51,15 @@ class TestRenderBlockFunction:
     """Test the render_block dispatcher function."""
 
     def test_render_block_handles_all_block_types(self):
-        from cc_dump.tui.rendering import render_block
         from cc_dump.core.formatting import (
-            SeparatorBlock, HeaderBlock, MetadataBlock, MessageBlock,
-            TextContentBlock, NewlineBlock
+            HeaderBlock,
+            MessageBlock,
+            MetadataBlock,
+            NewlineBlock,
+            SeparatorBlock,
+            TextContentBlock,
         )
+        from cc_dump.tui.rendering import render_block
 
         blocks = [
             SeparatorBlock(),
@@ -70,8 +76,8 @@ class TestRenderBlockFunction:
             assert result is not None
 
     def test_render_block_with_full_content(self):
-        from cc_dump.tui.rendering import render_block
         from cc_dump.core.formatting import HeaderBlock
+        from cc_dump.tui.rendering import render_block
 
         block = HeaderBlock(label="TEST", header_type="request")
         result = render_block(block)
@@ -84,6 +90,7 @@ class TestToolDefRendering:
 
     def _render_plain(self, renderable) -> str:
         from io import StringIO
+
         from rich.console import Console
 
         buf = StringIO()
@@ -92,8 +99,8 @@ class TestToolDefRendering:
         return buf.getvalue()
 
     def test_tool_def_full_renderer_includes_schema_and_required_markers(self):
-        from cc_dump.tui.rendering import render_block
         from cc_dump.core.formatting import ToolDefBlock
+        from cc_dump.tui.rendering import render_block
 
         block = ToolDefBlock(
             name="Read",
@@ -118,8 +125,8 @@ class TestToolDefRendering:
         assert "integer" in text
 
     def test_tool_def_summary_renderer_shows_compact_header(self):
-        from cc_dump.tui.rendering import RENDERERS
         from cc_dump.core.formatting import ToolDefBlock
+        from cc_dump.tui.rendering import RENDERERS
 
         block = ToolDefBlock(name="Bash", token_estimate=77)
         renderer = RENDERERS[("ToolDefBlock", True, False, False)]
@@ -133,6 +140,7 @@ class TestNamedDefinitionChildRendering:
 
     def _render_plain(self, renderable) -> str:
         from io import StringIO
+
         from rich.console import Console
 
         buf = StringIO()
@@ -141,8 +149,8 @@ class TestNamedDefinitionChildRendering:
         return buf.getvalue()
 
     def test_skill_def_child_renderer(self):
-        from cc_dump.tui.rendering import render_block
         from cc_dump.core.formatting import SkillDefChild
+        from cc_dump.tui.rendering import render_block
 
         block = SkillDefChild(name="review-pr", description="Review pull requests")
         text = self._render_plain(render_block(block))
@@ -150,8 +158,8 @@ class TestNamedDefinitionChildRendering:
         assert "Review pull requests" in text
 
     def test_agent_def_child_renderer(self):
-        from cc_dump.tui.rendering import render_block
         from cc_dump.core.formatting import AgentDefChild
+        from cc_dump.tui.rendering import render_block
 
         block = AgentDefChild(name="researcher", description="Gather context")
         text = self._render_plain(render_block(block))

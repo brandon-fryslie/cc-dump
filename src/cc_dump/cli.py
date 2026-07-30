@@ -14,29 +14,28 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from cc_dump.pipeline.proxy import ProxyHandler, make_handler_class
-from cc_dump.pipeline.router import EventRouter, QueueSubscriber, DirectSubscriber
-from cc_dump.app.analytics_store import AnalyticsStore
-import cc_dump.io.stderr_tee
-import cc_dump.core.palette
-import cc_dump.core.formatting_impl
-import cc_dump.io.sessions
-import cc_dump.cli_presentation
-from cc_dump.pipeline.event_types import PipelineEvent
-import cc_dump.pipeline.har_replayer
-import cc_dump.pipeline.har_recorder
-import cc_dump.io.settings
-import cc_dump.app.tmux_controller
-import cc_dump.app.settings_store
-import cc_dump.app.launch_config
-import cc_dump.pipeline.sentinel
-from cc_dump.pipeline.proxy import RequestPipeline
-from cc_dump.pipeline.har_replayer import ReplayPair
-import cc_dump.app.view_store
-import cc_dump.app.hot_reload
 import cc_dump.app.domain_store
+import cc_dump.app.hot_reload
+import cc_dump.app.launch_config
+import cc_dump.app.settings_store
+import cc_dump.app.tmux_controller
+import cc_dump.app.view_store
+import cc_dump.cli_presentation
+import cc_dump.core.formatting_impl
+import cc_dump.core.palette
 import cc_dump.io.logging_setup
+import cc_dump.io.sessions
+import cc_dump.io.settings
+import cc_dump.io.stderr_tee
+import cc_dump.pipeline.har_recorder
+import cc_dump.pipeline.har_replayer
+import cc_dump.pipeline.sentinel
 import cc_dump.providers
+from cc_dump.app.analytics_store import AnalyticsStore
+from cc_dump.pipeline.event_types import PipelineEvent
+from cc_dump.pipeline.har_replayer import ReplayPair
+from cc_dump.pipeline.proxy import ProxyHandler, RequestPipeline, make_handler_class
+from cc_dump.pipeline.router import DirectSubscriber, EventRouter, QueueSubscriber
 from cc_dump.tui.app import CcDumpApp
 
 logger = logging.getLogger(__name__)
@@ -96,7 +95,7 @@ def _resolve_auto_launch_config_name(config_name: str | None) -> str | None:
         return config_name
     available = ", ".join(c.name for c in configs)
     print(
-        "Error: unknown launch config '{}'. Available: {}".format(config_name, available),
+        f"Error: unknown launch config '{config_name}'. Available: {available}",
         file=sys.stderr,
     )
     sys.exit(2)

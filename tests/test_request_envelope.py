@@ -22,15 +22,14 @@ from cc_dump.pipeline.event_types import (
     ProxyErrorEvent,
     RequestBodyEvent,
     RequestHeadersEvent,
+    ResponseCompleteEvent,
     ResponseDoneEvent,
     ResponseHeadersEvent,
-    ResponseCompleteEvent,
     ResponseNonStreamingEvent,
     ResponseProgressEvent,
     ResponseSSEEvent,
 )
 from cc_dump.pipeline.proxy import EventQueueSink
-
 
 # ─── Default metadata ────────────────────────────────────────────────────────
 
@@ -225,7 +224,7 @@ class TestReplayMetadata:
     """Replay events carry metadata."""
 
     def test_convert_to_events_has_metadata(self):
-        from cc_dump.pipeline.har_replayer import convert_to_events, ReplayPair
+        from cc_dump.pipeline.har_replayer import ReplayPair, convert_to_events
 
         events = convert_to_events(ReplayPair(
             request_headers={"x-test": "1"},
@@ -252,7 +251,7 @@ class TestReplayMetadata:
         assert complete_evt.recv_ns > 0
 
     def test_request_events_have_envelope_metadata(self):
-        from cc_dump.pipeline.har_replayer import convert_to_events, ReplayPair
+        from cc_dump.pipeline.har_replayer import ReplayPair, convert_to_events
 
         events = convert_to_events(ReplayPair(
             request_headers={},

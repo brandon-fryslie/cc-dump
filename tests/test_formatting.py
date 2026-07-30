@@ -3,6 +3,7 @@
 import pytest
 
 from cc_dump.core.formatting import (
+    AgentDefChild,
     Category,
     ConfigContentBlock,
     ErrorBlock,
@@ -18,29 +19,28 @@ from cc_dump.core.formatting import (
     ProxyErrorBlock,
     ResponseMetadataSection,
     SeparatorBlock,
+    SkillDefChild,
     StopReasonBlock,
     StreamInfoBlock,
     StreamToolUseBlock,
     SystemSection,
     TextContentBlock,
     TextDeltaBlock,
-    SkillDefChild,
-    AgentDefChild,
     ToolDefBlock,
     ToolDefsSection,
     ToolResultBlock,
     ToolUseBlock,
     TurnBudgetBlock,
     UnknownTypeBlock,
+    _front_ellipse_path,
+    _tool_detail,
+    format_openai_complete_response,
+    format_openai_request,
     format_request,
     format_request_for_provider,
     format_request_headers,
-    format_openai_request,
-    format_openai_complete_response,
     format_response_event,
     format_response_headers,
-    _tool_detail,
-    _front_ellipse_path,
 )
 from cc_dump.pipeline.event_types import parse_sse_event
 
@@ -1159,7 +1159,7 @@ class TestToolDefinitionsBlock:
         """ToolDefsSection children have per-tool token estimates."""
         body = _make_body_with_tools(SAMPLE_TOOLS)
         blocks = format_request(body, fresh_state)
-        tds = [b for b in blocks if isinstance(b, ToolDefsSection)][0]
+        tds = next(b for b in blocks if isinstance(b, ToolDefsSection))
         assert len(tds.children) == 2
         assert all(child.token_estimate > 0 for child in tds.children)
         assert tds.total_tokens == sum(child.token_estimate for child in tds.children)
@@ -1168,7 +1168,7 @@ class TestToolDefinitionsBlock:
         """ToolDefsSection children capture tool name and schema."""
         body = _make_body_with_tools(SAMPLE_TOOLS)
         blocks = format_request(body, fresh_state)
-        tds = [b for b in blocks if isinstance(b, ToolDefsSection)][0]
+        tds = next(b for b in blocks if isinstance(b, ToolDefsSection))
         assert len(tds.children) == 2
         assert tds.children[0].name == "Read"
         assert tds.children[1].name == "Write"
@@ -1187,7 +1187,7 @@ class TestToolDefinitionsBlock:
             ]
         )
         blocks = format_request(body, fresh_state)
-        tds = [b for b in blocks if isinstance(b, ToolDefsSection)][0]
+        tds = next(b for b in blocks if isinstance(b, ToolDefsSection))
         tool = tds.children[0]
         assert len(tool.children) == 2
         assert isinstance(tool.children[0], SkillDefChild)
@@ -1210,7 +1210,7 @@ class TestToolDefinitionsBlock:
             ]
         )
         blocks = format_request(body, fresh_state)
-        tds = [b for b in blocks if isinstance(b, ToolDefsSection)][0]
+        tds = next(b for b in blocks if isinstance(b, ToolDefsSection))
         tool = tds.children[0]
         assert len(tool.children) == 2
         assert isinstance(tool.children[0], AgentDefChild)

@@ -20,7 +20,6 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
-
 # ─── Data model ──────────────────────────────────────────────────────────────
 
 
@@ -212,11 +211,7 @@ def _try_xml_block(
 
     # Exclude comments, processing instructions, CDATA, closing tags, self-closing
     if (
-        stripped.startswith("<!--")
-        or stripped.startswith("<?")
-        or stripped.startswith("<!")
-        or stripped.startswith("</")
-        or stripped.rstrip().endswith("/>")
+        stripped.startswith(("<!--", "<?", "<!", "</")) or stripped.rstrip().endswith("/>")
     ):
         return None
 

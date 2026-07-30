@@ -15,58 +15,56 @@ Two-tier dispatch:
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+import os
+import re
+from collections import Counter
+from collections.abc import Callable, MutableMapping
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from collections.abc import MutableMapping
-from typing import Callable, cast
+from typing import cast
 
-from rich.text import Text
-from rich.markdown import Markdown
 from rich.console import ConsoleRenderable, Group
-from rich.syntax import Syntax
-from collections import Counter
-
-from cc_dump.core.analysis import fmt_tokens as _fmt_tokens
-from cc_dump.core.formatting import (
-    FormattedBlock,
-    SeparatorBlock,
-    HeaderBlock,
-    HttpHeadersBlock,
-    MetadataBlock,
-    NewSessionBlock,
-    TextContentBlock,
-    ToolUseBlock,
-    ToolResultBlock,
-    ToolUseSummaryBlock,
-    ImageBlock,
-    UnknownTypeBlock,
-    StreamInfoBlock,
-    StreamToolUseBlock,
-    TextDeltaBlock,
-    StopReasonBlock,
-    ResponseUsageBlock,
-    ErrorBlock,
-    ProxyErrorBlock,
-    NewlineBlock,
-    TurnBudgetBlock,
-    Category,
-    VisState,
-    ALWAYS_VISIBLE,
-)
-
-import cc_dump.core.analysis
-import cc_dump.core.palette
-import cc_dump.core.filter_registry
-import cc_dump.core.special_content
-
-import re
-import os
+from rich.markdown import Markdown
 from rich.segment import Segment
 from rich.style import Style
-from textual.strip import Strip
+from rich.syntax import Syntax
+from rich.text import Text
 from textual.color import Color
+from textual.strip import Strip
+
+import cc_dump.core.analysis
+import cc_dump.core.filter_registry
+import cc_dump.core.palette
 import cc_dump.core.segmentation
+import cc_dump.core.special_content
+from cc_dump.core.analysis import fmt_tokens as _fmt_tokens
+from cc_dump.core.formatting import (
+    ALWAYS_VISIBLE,
+    Category,
+    ErrorBlock,
+    FormattedBlock,
+    HeaderBlock,
+    HttpHeadersBlock,
+    ImageBlock,
+    MetadataBlock,
+    NewlineBlock,
+    NewSessionBlock,
+    ProxyErrorBlock,
+    ResponseUsageBlock,
+    SeparatorBlock,
+    StopReasonBlock,
+    StreamInfoBlock,
+    StreamToolUseBlock,
+    TextContentBlock,
+    TextDeltaBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+    ToolUseSummaryBlock,
+    TurnBudgetBlock,
+    UnknownTypeBlock,
+    VisState,
+)
 
 # Region kinds that support being collapsed/expanded via ViewOverrides.
 # FUTURE: consider md/other region kinds for collapse behavior
@@ -166,7 +164,7 @@ def _normalize_color(color: str | None, fallback: str) -> str:
     try:
         c = Color.parse(color)
         r, g, b = c.rgb
-        return "#{:02X}{:02X}{:02X}".format(r, g, b)
+        return f"#{r:02X}{g:02X}{b:02X}"
     except Exception:
         return fallback
 
@@ -689,8 +687,8 @@ def _header_label_and_style(block: HeaderBlock) -> tuple[str, str]:
 def _render_header(block: HeaderBlock) -> Text | None:
     label, style = _header_label_and_style(block)
     t = Text()
-    t.append(" {} ".format(label), style=style)
-    t.append(" ({})".format(block.timestamp), style="dim")
+    t.append(f" {label} ", style=style)
+    t.append(f" ({block.timestamp})", style="dim")
     return t
 
 
@@ -698,7 +696,7 @@ def _render_header_summary_collapsed(block: HeaderBlock) -> Text | None:
     """Summary-collapsed header renderer: compact label only."""
     label, style = _header_label_and_style(block)
     t = Text()
-    t.append(" {} ".format(label), style=style)
+    t.append(f" {label} ", style=style)
     return t
 
 
@@ -722,14 +720,14 @@ def _render_http_headers(block: HttpHeadersBlock) -> Text | None:
     t = Text()
     # [LAW:dataflow-not-control-flow] Label dispatch via dict
     labels = {
-        "response": "  Response HTTP {} ".format(block.status_code),
+        "response": f"  Response HTTP {block.status_code} ",
         "request": "  Request Headers ",
     }
     t.append(labels.get(block.header_type, "  Headers "), style=f"bold {tc.info}")
 
     for key in sorted(block.headers.keys()):
         value = block.headers[key]
-        t.append("\n    {}: ".format(key), style=f"dim {tc.info}")
+        t.append(f"\n    {key}: ", style=f"dim {tc.info}")
         t.append(value, style="dim")
 
     return t
@@ -742,7 +740,7 @@ def _render_http_headers_summary(block: HttpHeadersBlock) -> Text | None:
     n = len(block.headers)
     # [LAW:dataflow-not-control-flow] Label dispatch via dict
     labels = {
-        "response": ("HTTP {}".format(block.status_code), f"bold {tc.success}"),
+        "response": (f"HTTP {block.status_code}", f"bold {tc.success}"),
         "request": ("Request Headers", f"bold {tc.info}"),
     }
     label, style = labels.get(block.header_type, ("Headers", "bold"))
@@ -751,7 +749,7 @@ def _render_http_headers_summary(block: HttpHeadersBlock) -> Text | None:
     # Show content-type inline when present
     ct = block.headers.get("content-type", "")
     if ct:
-        t.append("  content-type: {}".format(ct), style="dim")
+        t.append(f"  content-type: {ct}", style="dim")
     return t
 
 
@@ -761,7 +759,7 @@ def _render_http_headers_summary_expanded(block: HttpHeadersBlock) -> Text | Non
     t = Text("  ")
     n = len(block.headers)
     labels = {
-        "response": ("HTTP {}".format(block.status_code), f"bold {tc.success}"),
+        "response": (f"HTTP {block.status_code}", f"bold {tc.success}"),
         "request": ("Request Headers", f"bold {tc.info}"),
     }
     label, style = labels.get(block.header_type, ("Headers", "bold"))
@@ -773,13 +771,13 @@ def _render_http_headers_summary_expanded(block: HttpHeadersBlock) -> Text | Non
         if shown >= 6:
             break
         value = block.headers[key]
-        t.append("\n    {}: ".format(key), style=f"dim {tc.info}")
+        t.append(f"\n    {key}: ", style=f"dim {tc.info}")
         t.append(value, style="dim")
         shown += 1
 
     if n > shown:
         t.append("\n    ")
-        t.append("··· {} more headers".format(n - shown), style="dim")
+        t.append(f"··· {n - shown} more headers", style="dim")
     return t
 
 
@@ -789,7 +787,7 @@ def _render_http_headers_full_collapsed(block: HttpHeadersBlock) -> Text | None:
     t = Text("  ")
     n = len(block.headers)
     labels = {
-        "response": ("HTTP {}".format(block.status_code), f"bold {tc.success}"),
+        "response": (f"HTTP {block.status_code}", f"bold {tc.success}"),
         "request": ("Request Headers", f"bold {tc.info}"),
     }
     label, style = labels.get(block.header_type, ("Headers", "bold"))
@@ -800,32 +798,32 @@ def _render_http_headers_full_collapsed(block: HttpHeadersBlock) -> Text | None:
     for key, value in block.headers.items():
         if shown >= 3:
             break
-        t.append("\n    {}: ".format(key), style=f"dim {tc.info}")
+        t.append(f"\n    {key}: ", style=f"dim {tc.info}")
         t.append(value, style="dim")
         shown += 1
 
     if n > shown:
         t.append("\n    ")
-        t.append("··· {} more headers [snippet]".format(n - shown), style="dim italic")
+        t.append(f"··· {n - shown} more headers [snippet]", style="dim italic")
     return t
 
 
 def _render_metadata(block: MetadataBlock) -> Text | None:
     parts = [
         "model: ",
-        ("{}".format(block.model), "bold"),
-        " | max_tokens: {}".format(block.max_tokens),
-        " | stream: {}".format(block.stream),
+        (f"{block.model}", "bold"),
+        f" | max_tokens: {block.max_tokens}",
+        f" | stream: {block.stream}",
     ]
     if block.tool_count:
-        parts.append(" | tools: {}".format(block.tool_count))
+        parts.append(f" | tools: {block.tool_count}")
     # API metadata from metadata.user_id field (truncate for readability)
     if block.user_hash:
-        parts.append(" | user: {}..".format(block.user_hash[:6]))
+        parts.append(f" | user: {block.user_hash[:6]}..")
     if block.account_id:
-        parts.append(" | account: {}".format(block.account_id[:8]))
+        parts.append(f" | account: {block.account_id[:8]}")
     if block.session_id:
-        parts.append(" | session: {}".format(block.session_id[:8]))
+        parts.append(f" | session: {block.session_id[:8]}")
 
     t = Text()
     t.append("  ", style="dim")
@@ -842,10 +840,10 @@ def _render_metadata_summary_collapsed(block: MetadataBlock) -> Text | None:
     """Summary-collapsed metadata renderer: key request identity only."""
     t = Text("  ", style="dim")
     t.append("model: ", style="dim")
-    t.append("{}".format(block.model), style="bold")
+    t.append(f"{block.model}", style="bold")
     if block.tool_count:
-        t.append(" | tools: {}".format(block.tool_count), style="dim")
-    t.append(" | stream: {}".format(block.stream), style="dim")
+        t.append(f" | tools: {block.tool_count}", style="dim")
+    t.append(f" | stream: {block.stream}", style="dim")
     return t
 
 
@@ -853,19 +851,19 @@ def _render_metadata_summary_expanded(block: MetadataBlock) -> Text | None:
     """Summary-expanded metadata renderer: compact details with optional identity line."""
     t = Text("  ", style="dim")
     t.append("model: ", style="dim")
-    t.append("{}".format(block.model), style="bold")
-    t.append(" | max_tokens: {}".format(block.max_tokens), style="dim")
-    t.append(" | stream: {}".format(block.stream), style="dim")
+    t.append(f"{block.model}", style="bold")
+    t.append(f" | max_tokens: {block.max_tokens}", style="dim")
+    t.append(f" | stream: {block.stream}", style="dim")
     if block.tool_count:
-        t.append(" | tools: {}".format(block.tool_count), style="dim")
+        t.append(f" | tools: {block.tool_count}", style="dim")
 
     id_parts: list[str] = []
     if block.user_hash:
-        id_parts.append("user: {}..".format(block.user_hash[:6]))
+        id_parts.append(f"user: {block.user_hash[:6]}..")
     if block.account_id:
-        id_parts.append("account: {}".format(block.account_id[:8]))
+        id_parts.append(f"account: {block.account_id[:8]}")
     if block.session_id:
-        id_parts.append("session: {}".format(block.session_id[:8]))
+        id_parts.append(f"session: {block.session_id[:8]}")
     if id_parts:
         t.append("\n    ", style="dim")
         t.append(" | ".join(id_parts), style="dim")
@@ -880,11 +878,11 @@ def _render_metadata_full_expanded(block: MetadataBlock) -> ConsoleRenderable | 
 
     id_parts: list[str] = []
     if block.user_hash:
-        id_parts.append("user_hash={}".format(block.user_hash))
+        id_parts.append(f"user_hash={block.user_hash}")
     if block.account_id:
-        id_parts.append("account_id={}".format(block.account_id))
+        id_parts.append(f"account_id={block.account_id}")
     if block.session_id:
-        id_parts.append("session_id={}".format(block.session_id))
+        id_parts.append(f"session_id={block.session_id}")
     if not id_parts:
         return base
 
@@ -1412,10 +1410,10 @@ def _tool_result_header(block: ToolResultBlock, color: str) -> Text:
     name_part = block.tool_name if block.tool_name else ""
     label = f"[Result: {name_part}{suffix}]" if name_part else f"[Result{suffix}]"
     t = Text("  ")
-    t.append(label, style="bold {}".format(color))
+    t.append(label, style=f"bold {color}")
     if block.detail:
-        t.append(" {}".format(block.detail), style="dim")
-    t.append(" ({} lines)".format(block.size))
+        t.append(f" {block.detail}", style="dim")
+    t.append(f" ({block.size} lines)")
     return t
 
 
@@ -1438,11 +1436,11 @@ def _render_tool_use_oneliner(block: ToolUseBlock) -> Text | None:
     """
     color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     t = Text("  ")
-    t.append("[Use: {}]".format(block.name), style="bold {}".format(color))
+    t.append(f"[Use: {block.name}]", style=f"bold {color}")
     if block.detail:
-        t.append(" {}".format(block.detail), style="dim")
+        t.append(f" {block.detail}", style="dim")
     _append_special_marker_badges(t, block)
-    t.append(" ({} lines)".format(block.input_size))
+    t.append(f" ({block.input_size} lines)")
     return t
 
 
@@ -1450,7 +1448,7 @@ def _render_tool_use_summary_collapsed(block: ToolUseBlock) -> Text | None:
     """Summary-collapsed ToolUse renderer: compact call identity only."""
     color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     t = Text("  ")
-    t.append("[Use: {}]".format(block.name), style="bold {}".format(color))
+    t.append(f"[Use: {block.name}]", style=f"bold {color}")
     _append_special_marker_badges(t, block)
     return t
 
@@ -1479,7 +1477,7 @@ def _tool_use_preview_edit(block: ToolUseBlock) -> str:
     new_str = str(block.tool_input.get("new_string", "") or "")
     old_lines = old_str.count("\n") + (1 if old_str else 0)
     new_lines = new_str.count("\n") + (1 if new_str else 0)
-    return "replace {} -> {} lines".format(old_lines, new_lines) if old_lines or new_lines else ""
+    return f"replace {old_lines} -> {new_lines} lines" if old_lines or new_lines else ""
 
 
 def _tool_use_preview_read(block: ToolUseBlock) -> str:
@@ -1501,7 +1499,7 @@ def _tool_use_preview_write(block: ToolUseBlock) -> str:
     first = content.splitlines()[0] if content.splitlines() else content
     preview = first[:80] + ("..." if len(first) > 80 else "")
     if file_path and preview:
-        return "{} + {}".format(file_path, preview)
+        return f"{file_path} + {preview}"
     return file_path or preview
 
 
@@ -1509,9 +1507,9 @@ def _tool_use_preview_grep(block: ToolUseBlock) -> str:
     pattern = str(block.tool_input.get("pattern", "") or "")
     path = str(block.tool_input.get("path", "") or "")
     if pattern and path:
-        return "/{}/ in {}".format(pattern, path)
+        return f"/{pattern}/ in {path}"
     if pattern:
-        return "/{}/".format(pattern)
+        return f"/{pattern}/"
     return path
 
 
@@ -1519,7 +1517,7 @@ def _tool_use_preview_glob(block: ToolUseBlock) -> str:
     pattern = str(block.tool_input.get("pattern", "") or "")
     path = str(block.tool_input.get("path", "") or "")
     if pattern and path:
-        return "{} @ {}".format(pattern, path)
+        return f"{pattern} @ {path}"
     return pattern or path
 
 
@@ -1565,9 +1563,9 @@ def _render_tool_use_bash_full(block: ToolUseBlock) -> ConsoleRenderable | None:
     tc = get_theme_colors()
     color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     header = Text("  ")
-    header.append("[Use: Bash]", style="bold {}".format(color))
+    header.append("[Use: Bash]", style=f"bold {color}")
     _append_special_marker_badges(header, block)
-    header.append(" ({} lines)".format(block.input_size))
+    header.append(f" ({block.input_size} lines)")
 
     command = block.tool_input.get("command", "")
     if not command:
@@ -1590,11 +1588,11 @@ def _render_tool_use_edit_full(block: ToolUseBlock) -> Text | None:
     """
     color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     t = Text("  ")
-    t.append("[Use: Edit]", style="bold {}".format(color))
+    t.append("[Use: Edit]", style=f"bold {color}")
     if block.detail:
-        t.append(" {}".format(block.detail), style="dim")
+        t.append(f" {block.detail}", style="dim")
     _append_special_marker_badges(t, block)
-    t.append(" ({} lines)".format(block.input_size))
+    t.append(f" ({block.input_size} lines)")
 
     old_str = block.tool_input.get("old_string", "")
     new_str = block.tool_input.get("new_string", "")
@@ -1603,9 +1601,9 @@ def _render_tool_use_edit_full(block: ToolUseBlock) -> Text | None:
 
     tc = get_theme_colors()
     t.append("\n    ")
-    t.append("- old ({} lines)".format(old_lines), style=tc.error)
+    t.append(f"- old ({old_lines} lines)", style=tc.error)
     t.append(" / ")
-    t.append("+ new ({} lines)".format(new_lines), style=tc.success)
+    t.append(f"+ new ({new_lines} lines)", style=tc.success)
     return t
 
 
@@ -1802,7 +1800,7 @@ def _render_tool_def_full_collapsed(block: FormattedBlock) -> ConsoleRenderable 
 
     stats = Text("    ")
     stats.append(
-        "params: {} ({} required)".format(total_params, required_params),
+        f"params: {total_params} ({required_params} required)",
         style="dim",
     )
     return Group(header, stats)
@@ -1825,9 +1823,9 @@ def _render_tool_result_summary_collapsed(block: ToolResultBlock) -> Text | None
     color = _msg_colors()[block.msg_color_idx % len(_msg_colors())]
     t = Text("  ")
     suffix = " ERROR" if block.is_error else ""
-    t.append("[Result{}]".format(suffix), style="bold {}".format(color))
+    t.append(f"[Result{suffix}]", style=f"bold {color}")
     if block.size:
-        t.append(" ({} lines)".format(block.size), style="dim")
+        t.append(f" ({block.size} lines)", style="dim")
     return t
 
 
@@ -2015,7 +2013,7 @@ def _render_tool_use_summary_block_collapsed(block: ToolUseSummaryBlock) -> Text
     )
     if entries:
         name, count = entries[0]
-        t.append(" top: {} {}x".format(name, count), style="dim")
+        t.append(f" top: {name} {count}x", style="dim")
     return t
 
 
@@ -2024,7 +2022,7 @@ def _render_tool_use_summary_block_expanded(block: ToolUseSummaryBlock) -> Text 
     entries = _sorted_tool_summary_counts(block)
     shown = entries[:3]
     hidden = max(len(entries) - len(shown), 0)
-    parts = ["{} {}x".format(name, count) for name, count in shown]
+    parts = [f"{name} {count}x" for name, count in shown]
 
     t = Text("  ")
     t.append(
@@ -2036,7 +2034,7 @@ def _render_tool_use_summary_block_expanded(block: ToolUseSummaryBlock) -> Text 
         style="dim",
     )
     if hidden > 0:
-        t.append(" (+{} more)".format(hidden), style="dim")
+        t.append(f" (+{hidden} more)", style="dim")
     return t
 
 
@@ -2051,11 +2049,11 @@ def _render_tool_use_summary_block_full_collapsed(block: ToolUseSummaryBlock) ->
     shown = entries[:3]
     for name, count in shown:
         t.append("\n    ")
-        t.append("- {}: {}x".format(name, count), style="dim")
+        t.append(f"- {name}: {count}x", style="dim")
     hidden = max(len(entries) - len(shown), 0)
     if hidden > 0:
         t.append("\n    ")
-        t.append("··· {} more tools".format(hidden), style="dim")
+        t.append(f"··· {hidden} more tools", style="dim")
     return t
 
 
@@ -2074,14 +2072,14 @@ def _render_tool_use_summary(block: ToolUseSummaryBlock) -> Text | None:
     )
     denom = block.total if block.total > 0 else 1
     for name, count in entries:
-        pct = int(round((count / denom) * 100))
+        pct = round((count / denom) * 100)
         t.append("\n    ")
-        t.append("- {}: {}x ({}%)".format(name, count, pct), style="dim")
+        t.append(f"- {name}: {count}x ({pct}%)", style="dim")
     return t
 
 
 def _render_image(block: ImageBlock) -> Text | None:
-    return Text("  [image: {}]".format(block.media_type), style="dim")
+    return Text(f"  [image: {block.media_type}]", style="dim")
 
 
 def _render_image_summary_collapsed(block: ImageBlock) -> Text | None:
@@ -2102,7 +2100,7 @@ def _render_image_full_collapsed(block: ImageBlock) -> Text | None:
 
 
 def _render_unknown_type(block: UnknownTypeBlock) -> Text | None:
-    return Text("  [{}]".format(block.block_type), style="dim")
+    return Text(f"  [{block.block_type}]", style="dim")
 
 
 def _render_unknown_type_summary_collapsed(block: UnknownTypeBlock) -> Text | None:
@@ -2275,7 +2273,7 @@ def _render_stop_reason_full_collapsed(block: StopReasonBlock) -> Text | None:
 def _render_error(block: ErrorBlock) -> Text | None:
     tc = get_theme_colors()
     return Text(
-        "\n  [HTTP {} {}]".format(block.code, block.reason),
+        f"\n  [HTTP {block.code} {block.reason}]",
         style=f"bold {tc.error}",
     )
 
@@ -2283,13 +2281,13 @@ def _render_error(block: ErrorBlock) -> Text | None:
 def _render_error_summary_collapsed(block: ErrorBlock) -> Text | None:
     """Summary-collapsed HTTP error renderer: compact status code only."""
     tc = get_theme_colors()
-    return Text("  [HTTP {}]".format(block.code), style=f"bold {tc.error}")
+    return Text(f"  [HTTP {block.code}]", style=f"bold {tc.error}")
 
 
 def _render_error_summary_expanded(block: ErrorBlock) -> Text | None:
     """Summary-expanded HTTP error renderer: status code with concise reason."""
     tc = get_theme_colors()
-    t = Text("  [HTTP {} {}]".format(block.code, block.reason), style=f"bold {tc.error}")
+    t = Text(f"  [HTTP {block.code} {block.reason}]", style=f"bold {tc.error}")
     t.append("\n    request failed", style="dim italic")
     return t
 
@@ -2297,7 +2295,7 @@ def _render_error_summary_expanded(block: ErrorBlock) -> Text | None:
 def _render_error_full_collapsed(block: ErrorBlock) -> Text | None:
     """Full-collapsed HTTP error renderer: compact failure marker."""
     tc = get_theme_colors()
-    t = Text("  [HTTP {} {}]".format(block.code, block.reason), style=f"bold {tc.error}")
+    t = Text(f"  [HTTP {block.code} {block.reason}]", style=f"bold {tc.error}")
     t.append(" [failed]", style="dim")
     return t
 
@@ -2305,7 +2303,7 @@ def _render_error_full_collapsed(block: ErrorBlock) -> Text | None:
 def _render_proxy_error(block: ProxyErrorBlock) -> Text | None:
     tc = get_theme_colors()
     return Text(
-        "\n  [PROXY ERROR: {}]".format(block.error),
+        f"\n  [PROXY ERROR: {block.error}]",
         style=f"bold {tc.error}",
     )
 
@@ -2319,7 +2317,7 @@ def _render_proxy_error_summary_collapsed(block: ProxyErrorBlock) -> Text | None
 def _render_proxy_error_summary_expanded(block: ProxyErrorBlock) -> Text | None:
     """Summary-expanded proxy-error renderer: include short proxy error text."""
     tc = get_theme_colors()
-    t = Text("  [PROXY ERROR: {}]".format(block.error), style=f"bold {tc.error}")
+    t = Text(f"  [PROXY ERROR: {block.error}]", style=f"bold {tc.error}")
     t.append("\n    upstream transport failed", style="dim italic")
     return t
 
@@ -2327,7 +2325,7 @@ def _render_proxy_error_summary_expanded(block: ProxyErrorBlock) -> Text | None:
 def _render_proxy_error_full_collapsed(block: ProxyErrorBlock) -> Text | None:
     """Full-collapsed proxy-error renderer: compact failure marker."""
     tc = get_theme_colors()
-    t = Text("  [PROXY ERROR: {}]".format(block.error), style=f"bold {tc.error}")
+    t = Text(f"  [PROXY ERROR: {block.error}]", style=f"bold {tc.error}")
     t.append(" [failed]", style="dim")
     return t
 
@@ -2366,17 +2364,17 @@ def _render_turn_budget(block: TurnBudgetBlock) -> Text | None:
 
     t = Text("  ")
     t.append("Context: ", style="bold")
-    t.append("{} tokens".format(_fmt_tokens(total)))
+    t.append(f"{_fmt_tokens(total)} tokens")
     t.append(
-        " | sys: {} ({})".format(_fmt_tokens(sys_tok), _pct(sys_tok, total)),
+        f" | sys: {_fmt_tokens(sys_tok)} ({_pct(sys_tok, total)})",
         style=f"dim {tc.info}",
     )
     t.append(
-        " | tools: {} ({})".format(_fmt_tokens(tool_tok), _pct(tool_tok, total)),
+        f" | tools: {_fmt_tokens(tool_tok)} ({_pct(tool_tok, total)})",
         style=f"dim {tc.warning}",
     )
     t.append(
-        " | conv: {} ({})".format(_fmt_tokens(conv_tok), _pct(conv_tok, total)),
+        f" | conv: {_fmt_tokens(conv_tok)} ({_pct(conv_tok, total)})",
         style=f"dim {tc.success}",
     )
 
@@ -2387,7 +2385,7 @@ def _render_turn_budget(block: TurnBudgetBlock) -> Text | None:
             block.tool_result_by_name.items(), key=lambda x: x[1], reverse=True
         )
         for name, tokens in sorted_tools[:5]:
-            parts.append("{}: {}".format(name, _fmt_tokens(tokens)))
+            parts.append(f"{name}: {_fmt_tokens(tokens)}")
         t.append(
             "\n    tool_use: {} | tool_results: {} ({})".format(
                 _fmt_tokens(b.tool_use_tokens_est),
@@ -2411,7 +2409,7 @@ def _render_turn_budget_oneliner(block: TurnBudgetBlock) -> Text | None:
     b = block.budget
     t = Text("  ")
     t.append("Context: ", style="bold")
-    t.append("{} tokens".format(_fmt_tokens(b.total_est)))
+    t.append(f"{_fmt_tokens(b.total_est)} tokens")
     return t
 
 
@@ -2426,17 +2424,17 @@ def _render_turn_budget_full_collapsed(block: TurnBudgetBlock) -> Text | None:
 
     t = Text("  ")
     t.append("Context: ", style="bold")
-    t.append("{} tokens".format(_fmt_tokens(total)))
+    t.append(f"{_fmt_tokens(total)} tokens")
     t.append(
-        " | sys: {} ({})".format(_fmt_tokens(sys_tok), _pct(sys_tok, total)),
+        f" | sys: {_fmt_tokens(sys_tok)} ({_pct(sys_tok, total)})",
         style=f"dim {tc.info}",
     )
     t.append(
-        " | tools: {} ({})".format(_fmt_tokens(tool_tok), _pct(tool_tok, total)),
+        f" | tools: {_fmt_tokens(tool_tok)} ({_pct(tool_tok, total)})",
         style=f"dim {tc.warning}",
     )
     t.append(
-        " | conv: {} ({})".format(_fmt_tokens(conv_tok), _pct(conv_tok, total)),
+        f" | conv: {_fmt_tokens(conv_tok)} ({_pct(conv_tok, total)})",
         style=f"dim {tc.success}",
     )
     return t
@@ -2453,20 +2451,20 @@ def _render_turn_budget_summary_expanded(block: TurnBudgetBlock) -> Text | None:
 
     t = Text("  ")
     t.append("Context: ", style="bold")
-    t.append("{} tokens".format(_fmt_tokens(total)))
+    t.append(f"{_fmt_tokens(total)} tokens")
     t.append("\n    ")
     t.append(
-        "sys: {} ({})".format(_fmt_tokens(sys_tok), _pct(sys_tok, total)),
+        f"sys: {_fmt_tokens(sys_tok)} ({_pct(sys_tok, total)})",
         style=f"dim {tc.info}",
     )
     t.append(" | ")
     t.append(
-        "tools: {} ({})".format(_fmt_tokens(tool_tok), _pct(tool_tok, total)),
+        f"tools: {_fmt_tokens(tool_tok)} ({_pct(tool_tok, total)})",
         style=f"dim {tc.warning}",
     )
     t.append(" | ")
     t.append(
-        "conv: {} ({})".format(_fmt_tokens(conv_tok), _pct(conv_tok, total)),
+        f"conv: {_fmt_tokens(conv_tok)} ({_pct(conv_tok, total)})",
         style=f"dim {tc.success}",
     )
 
@@ -2479,7 +2477,7 @@ def _render_turn_budget_summary_expanded(block: TurnBudgetBlock) -> Text | None:
         t.append("\n    ")
         t.append("top tools: ", style="bold dim")
         t.append(
-            ", ".join("{} {}".format(name, _fmt_tokens(tokens)) for name, tokens in top_tools),
+            ", ".join(f"{name} {_fmt_tokens(tokens)}" for name, tokens in top_tools),
             style="dim",
         )
 
@@ -2500,7 +2498,7 @@ def _render_response_usage(block: ResponseUsageBlock) -> Text | None:
     if total_in > 0 and block.cache_read_tokens > 0:
         t.append(" (", style="dim")
         t.append(
-            "{} cached".format(_pct(block.cache_read_tokens, total_in)),
+            f"{_pct(block.cache_read_tokens, total_in)} cached",
             style=f"{tc.success}",
         )
         t.append(")", style="dim")
@@ -2530,7 +2528,7 @@ def _render_response_usage(block: ResponseUsageBlock) -> Text | None:
         if cost > 0:
             t.append("\n    ")
             t.append("cost: ", style="dim")
-            t.append("${:.4f}".format(cost), style=f"dim {tc.info}")
+            t.append(f"${cost:.4f}", style=f"dim {tc.info}")
 
     return t
 
@@ -2546,7 +2544,7 @@ def _render_response_usage_oneliner(block: ResponseUsageBlock) -> Text | None:
     if total_in > 0 and block.cache_read_tokens > 0:
         t.append(" (", style="dim")
         t.append(
-            "{} cached".format(_pct(block.cache_read_tokens, total_in)),
+            f"{_pct(block.cache_read_tokens, total_in)} cached",
             style=f"{tc.success}",
         )
         t.append(")", style="dim")
@@ -2567,7 +2565,7 @@ def _render_response_usage_summary_expanded(block: ResponseUsageBlock) -> Text |
     if total_in > 0 and block.cache_read_tokens > 0:
         t.append(" (", style="dim")
         t.append(
-            "{} cached".format(_pct(block.cache_read_tokens, total_in)),
+            f"{_pct(block.cache_read_tokens, total_in)} cached",
             style=f"{tc.success}",
         )
         t.append(")", style="dim")
@@ -2578,10 +2576,10 @@ def _render_response_usage_summary_expanded(block: ResponseUsageBlock) -> Text |
     if block.cache_read_tokens > 0 or block.cache_creation_tokens > 0:
         t.append("\n    ")
         t.append("cache: ", style="bold dim")
-        t.append("{} read".format(_fmt_tokens(block.cache_read_tokens)), style=f"dim {tc.info}")
+        t.append(f"{_fmt_tokens(block.cache_read_tokens)} read", style=f"dim {tc.info}")
         if block.cache_creation_tokens > 0:
-            t.append(" | {} created".format(_fmt_tokens(block.cache_creation_tokens)), style=f"dim {tc.warning}")
-        t.append(" | {} fresh".format(_fmt_tokens(block.input_tokens)), style="dim")
+            t.append(f" | {_fmt_tokens(block.cache_creation_tokens)} created", style=f"dim {tc.warning}")
+        t.append(f" | {_fmt_tokens(block.input_tokens)} fresh", style="dim")
     return t
 
 
@@ -2597,7 +2595,7 @@ def _render_response_usage_full_collapsed(block: ResponseUsageBlock) -> Text | N
     t.append(" out", style="dim")
     if total_in > 0 and block.cache_read_tokens > 0:
         t.append(" (", style="dim")
-        t.append("{} cached".format(_pct(block.cache_read_tokens, total_in)), style=f"dim {tc.success}")
+        t.append(f"{_pct(block.cache_read_tokens, total_in)} cached", style=f"dim {tc.success}")
         t.append(")", style="dim")
     return t
 
@@ -2612,7 +2610,7 @@ def _render_metadata_line(block: FormattedBlock) -> Text:
     """
     if not block.metadata:
         return Text()
-    parts = ["{}: {}".format(k, v) for k, v in block.metadata.items()]
+    parts = [f"{k}: {v}" for k, v in block.metadata.items()]
     t = Text("    ")
     t.append(" | ".join(parts), style="dim italic")
     return t
@@ -3078,7 +3076,7 @@ def _render_tool_defs_section_full_collapsed(block: FormattedBlock) -> ConsoleRe
 
     detail = Text("    ")
     detail.append(
-        "avg: {} tokens/tool".format(_fmt_tokens(tokens // count)),
+        f"avg: {_fmt_tokens(tokens // count)} tokens/tool",
         style="dim",
     )
     return Group(header, detail)
@@ -3166,11 +3164,11 @@ def _named_def_child_attrs(block: FormattedBlock) -> tuple[str, str, list[str]]:
 
     plugin_source = getattr(block, "plugin_source", "")
     if isinstance(plugin_source, str) and plugin_source:
-        details.append("source: {}".format(plugin_source))
+        details.append(f"source: {plugin_source}")
 
     available_tools = getattr(block, "available_tools", "")
     if isinstance(available_tools, str) and available_tools:
-        details.append("tools: {}".format(available_tools))
+        details.append(f"tools: {available_tools}")
 
     return (name, description, details)
 
@@ -3258,7 +3256,7 @@ def _render_response_metadata_section_summary_expanded(
         and getattr(child, "status_code", 0)
     ]
     if status_codes:
-        t.append("  HTTP {}".format(status_codes[0]), style="dim")
+        t.append(f"  HTTP {status_codes[0]}", style="dim")
     return t
 
 
@@ -3291,9 +3289,9 @@ def _render_response_metadata_section_full_expanded(
     ]
     details: list[str] = []
     if model_names:
-        details.append("model: {}".format(model_names[0]))
+        details.append(f"model: {model_names[0]}")
     if header_counts:
-        details.append("headers: {}".format(header_counts[0]))
+        details.append(f"headers: {header_counts[0]}")
     if not details:
         return base
 
@@ -3498,7 +3496,7 @@ RENDERERS = _build_renderer_registry()
 def _make_collapse_indicator(hidden_lines: int, content_width: int):
     """Create a dim '... N more lines' strip at content width (gutter added separately)."""
 
-    text = "    \u00b7\u00b7\u00b7 {} more lines".format(hidden_lines)
+    text = f"    \u00b7\u00b7\u00b7 {hidden_lines} more lines"
     seg = Segment(text, style=Style(dim=True))
     # // [LAW:no-shared-mutable-globals] adjust_cell_length returns a NEW Strip
     return Strip([seg]).adjust_cell_length(content_width)
@@ -4224,8 +4222,10 @@ def _apply_search_highlights(
     if is_current_block:
         # Find the specific occurrence via pattern.finditer on plain text
         plain = text.plain
-        try:
-            for i, m in enumerate(search_ctx.pattern.finditer(plain)):
+        # Cosmetic highlight only: a Style/stylize failure on rendered text must never
+        # break the render, and there is nothing actionable to report, so contain it.
+        with suppress(Exception):
+            for m in search_ctx.pattern.finditer(plain):
                 # Find which occurrence in this block matches current_match's offset
                 # We use the text_offset from SearchMatch which was computed on
                 # the searchable text, not the rendered text. Since these may differ
@@ -4237,8 +4237,6 @@ def _apply_search_highlights(
                     m.end(),
                 )
                 break  # Highlight first match occurrence (most visible)
-        except Exception:
-            pass  # Silently handle regex errors on rendered text
 
 
 def combine_rendered_texts(texts: list[Text]) -> Text:
@@ -4270,4 +4268,4 @@ def _pct(part: int, total: int) -> str:
     """Format percentage."""
     if total == 0:
         return "0%"
-    return "{:.0f}%".format(100 * part / total)
+    return f"{100 * part / total:.0f}%"

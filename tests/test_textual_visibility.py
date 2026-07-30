@@ -2,12 +2,12 @@
 
 import pytest
 
-from cc_dump.core.formatting import VisState, HIDDEN, ALWAYS_VISIBLE
+from cc_dump.core.formatting import ALWAYS_VISIBLE, HIDDEN, VisState
 from tests.harness import (
-    run_app,
-    press_and_settle,
-    get_vis_state,
     get_all_vis_states,
+    get_vis_state,
+    press_and_settle,
+    run_app,
 )
 
 pytestmark = pytest.mark.textual
@@ -21,7 +21,7 @@ FULL_EXPANDED = VisState(True, True, True)
 
 async def test_default_visibility_levels():
     """All 6 categories start at expected default levels."""
-    async with run_app() as (pilot, app):
+    async with run_app() as (_pilot, app):
         states = get_all_vis_states(app)
         assert states["user"] == ALWAYS_VISIBLE
         assert states["assistant"] == ALWAYS_VISIBLE
@@ -127,7 +127,7 @@ async def test_category_toggle(key, category):
 
 async def test_cycle_vis_five_state_cycle():
     """Click-to-cycle progresses through 5 states: hidden → summary-collapsed → summary-expanded → full-collapsed → full-expanded → hidden."""
-    async with run_app() as (pilot, app):
+    async with run_app() as (_pilot, app):
         # Start with metadata hidden
         assert get_vis_state(app, "metadata") == HIDDEN
 
@@ -154,7 +154,7 @@ async def test_cycle_vis_five_state_cycle():
 
 async def test_cycle_vis_all_categories():
     """cycle_vis works for all 6 categories and doesn't affect keyboard toggle behavior."""
-    async with run_app() as (pilot, app):
+    async with run_app() as (_pilot, app):
         categories = ["user", "assistant", "tools", "system", "metadata", "thinking"]
 
         for cat in categories:
@@ -175,7 +175,7 @@ async def test_cycle_vis_all_categories():
 
 async def test_cycle_vis_clears_overrides_and_filterset():
     """cycle_vis clears per-block overrides and invalidates active filterset."""
-    async with run_app() as (pilot, app):
+    async with run_app() as (_pilot, app):
         # Set a filterset slot
         app._view_store.set("filter:active", "1")
 

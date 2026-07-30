@@ -12,7 +12,6 @@ from typing import TextIO
 import cc_dump.core.formatting as fmt
 from cc_dump.core.analysis import fmt_tokens
 
-
 BlockWriter = Callable[[TextIO, object], None]
 
 
@@ -32,8 +31,7 @@ def _write_http_headers_block(f: TextIO, block: fmt.HttpHeadersBlock) -> None:
     f.write(f"  {block.header_type.upper()} Headers\n")
     if block.status_code:
         f.write(f"  Status: {block.status_code}\n")
-    for key, value in block.headers.items():
-        f.write(f"  {key}: {value}\n")
+    f.writelines(f"  {key}: {value}\n" for key, value in block.headers.items())
 
 
 def _write_metadata_block(f: TextIO, block: fmt.MetadataBlock) -> None:
@@ -73,8 +71,7 @@ def _write_tool_result_block(f: TextIO, block: fmt.ToolResultBlock) -> None:
 
 def _write_tool_use_summary_block(f: TextIO, block: fmt.ToolUseSummaryBlock) -> None:
     f.write("  Tool counts:\n")
-    for tool_name, count in block.tool_counts.items():
-        f.write(f"    {tool_name}: {count}\n")
+    f.writelines(f"    {tool_name}: {count}\n" for tool_name, count in block.tool_counts.items())
     f.write(f"  Total: {block.total}\n")
 
 

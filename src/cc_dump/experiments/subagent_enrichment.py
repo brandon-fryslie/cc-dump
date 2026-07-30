@@ -163,7 +163,7 @@ def load_subagent_artifacts(claude_projects_root: str) -> tuple[SubagentArtifact
     """
     root = Path(os.path.expanduser(claude_projects_root))
     if not root.exists():
-        return tuple()
+        return ()
 
     artifacts: list[SubagentArtifact] = []
     for jsonl_path in sorted(root.rglob("subagents/*.jsonl")):
@@ -189,7 +189,7 @@ def load_subagent_artifacts(claude_projects_root: str) -> tuple[SubagentArtifact
         agent_id = _first_non_empty_string(events, "agentId")
         if not agent_id:
             stem = jsonl_path.stem
-            agent_id = stem[len("agent-"):] if stem.startswith("agent-") else stem
+            agent_id = stem.removeprefix("agent-")
 
         parent_tool_use_id = _first_non_empty_string(events, "parentToolUseID")
         root_uuid = ""

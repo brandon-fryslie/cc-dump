@@ -9,14 +9,13 @@ import re
 import pytest
 from textual.theme import BUILTIN_THEMES, Theme
 
+from cc_dump.tui import rendering
 from cc_dump.tui.rendering import (
     ThemeColors,
     build_theme_colors,
-    set_theme,
     get_theme_colors,
+    set_theme,
 )
-import cc_dump.tui.rendering as rendering
-
 
 _HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 

@@ -8,16 +8,14 @@ from __future__ import annotations
 import logging
 import tracemalloc
 
-from snarfx import Observable, reaction
-from snarfx import textual as stx
+from snarfx import Observable, reaction, textual as stx
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Label, Select, Static
 
-from cc_dump.tui.chip import ToggleChip
-
 import cc_dump.core.palette
 import cc_dump.io.perf_logging
+from cc_dump.tui.chip import ToggleChip
 
 
 def _initial_memory_snapshots_enabled(app_ref) -> bool:
@@ -93,7 +91,7 @@ class DebugSettingsPanel(VerticalScroll):
         yield Static("tracemalloc snapshots at startup/shutdown", classes="field-desc")
 
         yield Static(
-            "[bold {info}]Esc[/] close  (changes apply immediately)".format(info=p.info),
+            f"[bold {p.info}]Esc[/] close  (changes apply immediately)",
             classes="panel-footer",
         )
 

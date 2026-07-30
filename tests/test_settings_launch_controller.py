@@ -84,7 +84,7 @@ def test_launch_with_config_notifies_exact_executed_command(monkeypatch):
         app, config=SimpleNamespace(name="copilot", resolved_command="copilot")
     )
 
-    assert app.notifications[-1] == "launched: {}".format(shell_command)
+    assert app.notifications[-1] == f"launched: {shell_command}"
 
 
 def test_launch_with_config_falls_back_to_detail_when_command_missing(monkeypatch):
