@@ -1683,27 +1683,17 @@ class ConversationView(ScrollView):
 
         render_key = self._turn_render_key(width)
 
-        # Search highlighting still uses full-scan queueing to preserve existing behavior.
-        is_search = search_ctx is not None
-        if is_search:
-            self._rerender_affected_full_scan(
-                filters=filters,
-                search_ctx=search_ctx,
-                force=True,
-                width=width,
-                console=console,
-                target_revision=target_revision,
-                render_key=render_key,
-            )
-            return
-
+        # [LAW:dataflow-not-control-flow] One bounded render path; search vs filter
+        # differs only by the search_ctx value flowing through. Search forces a
+        # re-render because highlights change even when the filter snapshot doesn't.
         self._rerender_affected_bounded(
             filters=filters,
-            force=force,
+            force=force or search_ctx is not None,
             width=width,
             console=console,
             target_revision=target_revision,
             render_key=render_key,
+            search_ctx=search_ctx,
         )
 
     def _rerender_viewport_turn(
@@ -1716,16 +1706,19 @@ class ConversationView(ScrollView):
         force: bool,
         target_revision: int,
         render_key: tuple[int, int, int, int],
+        search_ctx=None,
     ) -> tuple[bool, bool]:
         if td.is_streaming:
             return (False, False)
+        # [LAW:dataflow-not-control-flow] search_ctx is a value flowing through the
+        # one render path — highlighting is data, not a separate code path.
         changed = td.re_render(
             filters,
             console,
             width,
             force=force,
             block_cache=self._block_strip_cache,
-            search_ctx=None,
+            search_ctx=search_ctx,
             overrides=self._view_overrides,
             render_key=render_key,
             runtime=self._render_runtime,
@@ -1742,10 +1735,13 @@ class ConversationView(ScrollView):
         console,
         target_revision: int,
         render_key: tuple[int, int, int, int],
+        search_ctx=None,
     ) -> None:
         """Re-render viewport turns immediately; off-viewport turns lazily re-render on scroll.
 
         Tree updates are O(log n) per changed turn — no trailing O(n) walk.
+        Search highlighting rides the same viewport-bounded path: `search_ctx` is
+        threaded through as a value rather than forked into a parallel method.
         // [LAW:dataflow-not-control-flow] Fixed operations; viewport bounds drive affected indices.
         """
         vp_start, vp_end = self._viewport_turn_range()
@@ -1755,6 +1751,7 @@ class ConversationView(ScrollView):
             logger=logger,
             total_items=len(self._turns),
         ) as cx:
+            cx.extra["search_active"] = search_ctx is not None
             any_changed = False
             any_geometry_changed = False
             actual_end = min(vp_end, len(self._turns))
@@ -1770,6 +1767,7 @@ class ConversationView(ScrollView):
                     force=force,
                     target_revision=target_revision,
                     render_key=render_key,
+                    search_ctx=search_ctx,
                 )
                 if not is_viewport_turn:
                     continue
@@ -1782,62 +1780,6 @@ class ConversationView(ScrollView):
                         self._sync_turn_in_tree(td)
                         self._width_tracker.replace(old_widest, td._widest_strip)
                         any_geometry_changed = True
-
-            if any_changed:
-                self._invalidate_cache_for_turns(vp_start, actual_end)
-                self.refresh()
-            if any_geometry_changed:
-                self._update_virtual_size()
-
-    def _rerender_affected_full_scan(
-        self,
-        *,
-        filters: dict,
-        search_ctx,
-        force: bool,
-        width: int,
-        console,
-        target_revision: int,
-        render_key: tuple[int, int, int, int],
-    ) -> None:
-        """Viewport-only rerender path with search context propagation."""
-        vp_start, vp_end = self._viewport_turn_range()
-
-        with monitor_complexity(
-            "conversation.rerender_affected",
-            logger=logger,
-            total_items=len(self._turns),
-        ) as cx:
-            cx.extra["search_active"] = True
-            any_changed = False
-            any_geometry_changed = False
-            actual_end = min(vp_end, len(self._turns))
-            for idx in range(vp_start, actual_end):
-                td = self._turns[idx]
-                if td.is_streaming:
-                    continue
-                cx.touch()
-                old_widest = td._widest_strip
-                old_line_count = td.line_count
-                if td.re_render(
-                    filters,
-                    console,
-                    width,
-                    force=force,
-                    block_cache=self._block_strip_cache,
-                    search_ctx=search_ctx,
-                    overrides=self._view_overrides,
-                    render_key=render_key,
-                    runtime=self._render_runtime,
-                ):
-                    any_changed = True
-                    # // [LAW:dataflow-not-control-flow] Geometry sync runs unconditionally;
-                    # values decide whether work is needed.
-                    if td.line_count != old_line_count or td._widest_strip != old_widest:
-                        self._sync_turn_in_tree(td)
-                        self._width_tracker.replace(old_widest, td._widest_strip)
-                        any_geometry_changed = True
-                td._filter_revision = target_revision
 
             if any_changed:
                 self._invalidate_cache_for_turns(vp_start, actual_end)
