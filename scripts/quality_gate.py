@@ -7,6 +7,7 @@ This gate is designed to allow pre-existing debt while preventing new debt.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import subprocess
 import sys
@@ -22,6 +23,14 @@ DEFAULT_BASELINE_DIR = REPO_ROOT / ".quality_gate"
 LINT_BASELINE_FILE = "lint_baseline.json"
 COMPLEXITY_BASELINE_FILE = "complexity_baseline.json"
 BASELINE_SCHEMA_VERSION = 1
+
+# TUI code must narrow types explicitly rather than lean on cc_dump.core.coerce
+# helpers, so illegal states are rejected at the seam instead of laundered downstream.
+# [LAW:types-are-the-program] The seam, not a coercion helper, is where narrowing belongs.
+TUI_DIR = REPO_ROOT / "src" / "cc_dump" / "tui"
+COERCE_MODULE = "cc_dump.core.coerce"
+COERCE_PARENT = "cc_dump.core"
+COERCE_NAME = "coerce"
 
 
 @dataclass(frozen=True)
@@ -223,6 +232,95 @@ def check_complexity_regressions(
     return increased, new_too_complex
 
 
+def _package_of(path: Path, repo_root: Path) -> str:
+    """Dotted package of a source file under ``repo_root/src``, or '' if outside it.
+
+    Needed to resolve relative imports (`from ..core.coerce import x`) to absolute
+    module names. Fixtures written outside a ``src`` root simply resolve to '' and
+    use absolute imports, which need no package context.
+    """
+    try:
+        rel = path.relative_to(repo_root / "src")
+    except ValueError:
+        return ""
+    return ".".join(rel.parent.parts)
+
+
+def _resolve_from_base(node: ast.ImportFrom, package: str) -> str:
+    """Absolute base module of a ``from ... import`` statement.
+
+    Absolute imports return their module verbatim; relative imports are resolved
+    against ``package`` — level 1 is the current package, each further level drops
+    one trailing component.
+    """
+    if not node.level:
+        return node.module or ""
+    parts = package.split(".") if package else []
+    prefix = ".".join(parts[: len(parts) - (node.level - 1)])
+    if node.module:
+        return f"{prefix}.{node.module}" if prefix else node.module
+    return prefix
+
+
+def _import_reaches_coerce(node: ast.AST, package: str) -> bool:
+    """Whether an import statement makes cc_dump.core.coerce reachable.
+
+    The import is the only gateway to the coerce helpers — a module cannot call
+    ``coerce_int`` (bare, attribute, or fully-qualified) without importing the
+    module first. Gating the import therefore covers every call site with no
+    provenance ambiguity, and no call-site scan means a ``coerce_x(...)`` mention
+    in a comment/string/docstring, a locally-defined ``def coerce_int``, or an
+    unrelated ``self.coerce_int(...)`` method cannot be a false positive. Every
+    static import spelling is covered: absolute, aliased, from-submodule,
+    from-parent, relative (resolved against ``package``), and star.
+    """
+    if isinstance(node, ast.Import):
+        # `import cc_dump.core.coerce [as ...]`
+        return any(alias.name == COERCE_MODULE for alias in node.names)
+    if isinstance(node, ast.ImportFrom):
+        base = _resolve_from_base(node, package)
+        if base == COERCE_MODULE:
+            # `from cc_dump.core.coerce import <anything>` (incl. `*`)
+            return True
+        if base == COERCE_PARENT:
+            # `from cc_dump.core import coerce` or `from cc_dump.core import *`
+            return any(alias.name in (COERCE_NAME, "*") for alias in node.names)
+        return False
+    return False
+
+
+def collect_forbidden_tui_coerce_usage(
+    tui_dir: Path = TUI_DIR, repo_root: Path = REPO_ROOT
+) -> list[str]:
+    """Collect forbidden cc_dump.core.coerce imports within TUI modules.
+
+    Returns ``"path:lineno:text"`` for every offending import, sorted by path then
+    line number. Detection is import-based and AST-driven, so it flags the module
+    import (the necessary chokepoint) and never a call site — only real import
+    statements match, not text mentions. The scanned root is a parameter so the
+    rule is testable against fixtures rather than only the live tree.
+
+    // [LAW:single-enforcer] This gate is the sole policy enforcer for the restriction.
+    // [LAW:types-are-the-program] Gate the necessary gateway (the import), so
+    //   call-site false positives are unrepresentable rather than filtered.
+    // [LAW:effects-at-boundaries] Pure filesystem read; no external tool dependency.
+    """
+    offenses: list[tuple[str, int, str]] = []
+    for path in sorted(tui_dir.rglob("*.py")):
+        rel = path.relative_to(repo_root).as_posix()
+        package = _package_of(path, repo_root)
+        source = path.read_text(encoding="utf-8")
+        lines = source.splitlines()
+        # ast.parse raises SyntaxError on a broken file — surface it loudly.
+        tree = ast.parse(source, filename=str(path))
+        for node in ast.walk(tree):
+            if _import_reaches_coerce(node, package):
+                lineno = getattr(node, "lineno", 0)
+                text = lines[lineno - 1].strip() if lineno else ""
+                offenses.append((rel, lineno, text))
+    return [f"{rel}:{lineno}:{text}" for rel, lineno, text in sorted(offenses)]
+
+
 def cmd_refresh(args: argparse.Namespace) -> int:
     baseline_dir = Path(args.baseline_dir)
     lint_counts = collect_lint_counts()
@@ -288,6 +386,18 @@ def cmd_check(args: argparse.Namespace) -> int:
             print(f"  - {key}: {score}")
         if len(new_complexity) > 50:
             print(f"  ... and {len(new_complexity) - 50} more")
+
+    forbidden_tui_coerce_usage = collect_forbidden_tui_coerce_usage()
+    if forbidden_tui_coerce_usage:
+        has_failure = True
+        print(
+            "\nFAIL: coercion helpers are forbidden in src/cc_dump/tui "
+            "(use explicit type validation/narrowing instead):"
+        )
+        for line in forbidden_tui_coerce_usage[:50]:
+            print(f"  - {line}")
+        if len(forbidden_tui_coerce_usage) > 50:
+            print(f"  ... and {len(forbidden_tui_coerce_usage) - 50} more")
 
     if has_failure:
         return 1
