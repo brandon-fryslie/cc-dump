@@ -45,12 +45,40 @@ gate = _load_gate()
         # `from cc_dump.core import coerce` — module string is `cc_dump.core`, so it
         # would slip a naive `module == "cc_dump.core.coerce"` check; caught here.
         "from cc_dump.core import coerce\n",
+        # Star imports that can pull the coerce module into scope.
+        "from cc_dump.core.coerce import *\n",
+        "from cc_dump.core import *\n",
     ],
 )
 def test_flags_forbidden_coerce_import(tmp_path: Path, source: str) -> None:
     (tmp_path / "offender.py").write_text(source, encoding="utf-8")
     result = gate.collect_forbidden_tui_coerce_usage(tui_dir=tmp_path, repo_root=tmp_path)
     assert result == [f"offender.py:1:{source.strip()}"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # Relative imports resolve against the file's package (cc_dump.tui) up to
+        # cc_dump.core.coerce — the same target as the absolute forms.
+        "from ..core.coerce import coerce_int\n",
+        "from ..core import coerce\n",
+    ],
+)
+def test_flags_relative_coerce_import(tmp_path: Path, source: str) -> None:
+    tui = tmp_path / "src" / "cc_dump" / "tui"
+    tui.mkdir(parents=True)
+    (tui / "widget.py").write_text(source, encoding="utf-8")
+    result = gate.collect_forbidden_tui_coerce_usage(tui_dir=tui, repo_root=tmp_path)
+    assert result == [f"src/cc_dump/tui/widget.py:1:{source.strip()}"]
+
+
+def test_ignores_unrelated_relative_import(tmp_path: Path) -> None:
+    """A relative import of a sibling that is not the coerce module is not flagged."""
+    tui = tmp_path / "src" / "cc_dump" / "tui"
+    tui.mkdir(parents=True)
+    (tui / "widget.py").write_text("from ..core import formatting\n", encoding="utf-8")
+    assert gate.collect_forbidden_tui_coerce_usage(tui_dir=tui, repo_root=tmp_path) == []
 
 
 def test_flags_the_import_not_the_call_site(tmp_path: Path) -> None:

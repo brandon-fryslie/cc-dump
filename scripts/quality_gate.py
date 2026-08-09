@@ -232,27 +232,60 @@ def check_complexity_regressions(
     return increased, new_too_complex
 
 
-def _imports_coerce_module(node: ast.AST) -> bool:
-    """Whether an AST node imports the cc_dump.core.coerce module.
+def _package_of(path: Path, repo_root: Path) -> str:
+    """Dotted package of a source file under ``repo_root/src``, or '' if outside it.
+
+    Needed to resolve relative imports (`from ..core.coerce import x`) to absolute
+    module names. Fixtures written outside a ``src`` root simply resolve to '' and
+    use absolute imports, which need no package context.
+    """
+    try:
+        rel = path.relative_to(repo_root / "src")
+    except ValueError:
+        return ""
+    return ".".join(rel.parent.parts)
+
+
+def _resolve_from_base(node: ast.ImportFrom, package: str) -> str:
+    """Absolute base module of a ``from ... import`` statement.
+
+    Absolute imports return their module verbatim; relative imports are resolved
+    against ``package`` — level 1 is the current package, each further level drops
+    one trailing component.
+    """
+    if not node.level:
+        return node.module or ""
+    parts = package.split(".") if package else []
+    prefix = ".".join(parts[: len(parts) - (node.level - 1)])
+    if node.module:
+        return f"{prefix}.{node.module}" if prefix else node.module
+    return prefix
+
+
+def _import_reaches_coerce(node: ast.AST, package: str) -> bool:
+    """Whether an import statement makes cc_dump.core.coerce reachable.
 
     The import is the only gateway to the coerce helpers — a module cannot call
-    ``coerce_int`` (bare, attribute, or fully-qualified) without first importing
-    the module by one of these forms. Gating the import therefore covers every
-    call site with no provenance ambiguity, and no call-site scan means a
-    ``coerce_x(...)`` mention in a comment/string/docstring, a locally-defined
-    ``def coerce_int``, or an unrelated ``self.coerce_int(...)`` method cannot be
-    a false positive.
+    ``coerce_int`` (bare, attribute, or fully-qualified) without importing the
+    module first. Gating the import therefore covers every call site with no
+    provenance ambiguity, and no call-site scan means a ``coerce_x(...)`` mention
+    in a comment/string/docstring, a locally-defined ``def coerce_int``, or an
+    unrelated ``self.coerce_int(...)`` method cannot be a false positive. Every
+    static import spelling is covered: absolute, aliased, from-submodule,
+    from-parent, relative (resolved against ``package``), and star.
     """
-    if isinstance(node, ast.ImportFrom):
-        # `from cc_dump.core.coerce import X`  or  `from cc_dump.core import coerce`
-        if node.module == COERCE_MODULE:
-            return True
-        if node.module == COERCE_PARENT:
-            return any(alias.name == COERCE_NAME for alias in node.names)
-        return False
     if isinstance(node, ast.Import):
         # `import cc_dump.core.coerce [as ...]`
         return any(alias.name == COERCE_MODULE for alias in node.names)
+    if isinstance(node, ast.ImportFrom):
+        base = _resolve_from_base(node, package)
+        if base == COERCE_MODULE:
+            # `from cc_dump.core.coerce import <anything>` (incl. `*`)
+            return True
+        if base == COERCE_PARENT:
+            # `from cc_dump.core import coerce` or `from cc_dump.core import *`
+            return any(alias.name in (COERCE_NAME, "*") for alias in node.names)
+        return False
     return False
 
 
@@ -275,12 +308,13 @@ def collect_forbidden_tui_coerce_usage(
     offenses: list[tuple[str, int, str]] = []
     for path in sorted(tui_dir.rglob("*.py")):
         rel = path.relative_to(repo_root).as_posix()
+        package = _package_of(path, repo_root)
         source = path.read_text(encoding="utf-8")
         lines = source.splitlines()
         # ast.parse raises SyntaxError on a broken file — surface it loudly.
         tree = ast.parse(source, filename=str(path))
         for node in ast.walk(tree):
-            if _imports_coerce_module(node):
+            if _import_reaches_coerce(node, package):
                 lineno = getattr(node, "lineno", 0)
                 text = lines[lineno - 1].strip() if lineno else ""
                 offenses.append((rel, lineno, text))
