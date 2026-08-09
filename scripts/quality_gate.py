@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import ast
 import json
-import re
 import subprocess
 import sys
 from collections import Counter
@@ -30,9 +29,8 @@ BASELINE_SCHEMA_VERSION = 1
 # [LAW:types-are-the-program] The seam, not a coercion helper, is where narrowing belongs.
 TUI_DIR = REPO_ROOT / "src" / "cc_dump" / "tui"
 COERCE_MODULE = "cc_dump.core.coerce"
-# A coercion-helper call is `coerce_<name>(...)` — never the underscore-prefixed
-# `_coerce_...` local helpers that legitimately narrow at a boundary.
-COERCE_CALL_RE = re.compile(r"^coerce_[A-Za-z0-9_]+$")
+COERCE_PARENT = "cc_dump.core"
+COERCE_NAME = "coerce"
 
 
 @dataclass(frozen=True)
@@ -234,39 +232,47 @@ def check_complexity_regressions(
     return increased, new_too_complex
 
 
-def _is_forbidden_coerce_node(node: ast.AST) -> bool:
-    """Whether an AST node is a forbidden cc_dump.core.coerce import or helper call."""
+def _imports_coerce_module(node: ast.AST) -> bool:
+    """Whether an AST node imports the cc_dump.core.coerce module.
+
+    The import is the only gateway to the coerce helpers — a module cannot call
+    ``coerce_int`` (bare, attribute, or fully-qualified) without first importing
+    the module by one of these forms. Gating the import therefore covers every
+    call site with no provenance ambiguity, and no call-site scan means a
+    ``coerce_x(...)`` mention in a comment/string/docstring, a locally-defined
+    ``def coerce_int``, or an unrelated ``self.coerce_int(...)`` method cannot be
+    a false positive.
+    """
     if isinstance(node, ast.ImportFrom):
-        return node.module == COERCE_MODULE
+        # `from cc_dump.core.coerce import X`  or  `from cc_dump.core import coerce`
+        if node.module == COERCE_MODULE:
+            return True
+        if node.module == COERCE_PARENT:
+            return any(alias.name == COERCE_NAME for alias in node.names)
+        return False
     if isinstance(node, ast.Import):
+        # `import cc_dump.core.coerce [as ...]`
         return any(alias.name == COERCE_MODULE for alias in node.names)
-    if isinstance(node, ast.Call):
-        func = node.func
-        name = func.id if isinstance(func, ast.Name) else (
-            func.attr if isinstance(func, ast.Attribute) else None
-        )
-        return name is not None and COERCE_CALL_RE.match(name) is not None
     return False
 
 
 def collect_forbidden_tui_coerce_usage(
     tui_dir: Path = TUI_DIR, repo_root: Path = REPO_ROOT
 ) -> list[str]:
-    """Collect forbidden coercion-helper usage within TUI modules.
+    """Collect forbidden cc_dump.core.coerce imports within TUI modules.
 
-    Returns ``"path:lineno:text"`` for every offending line, sorted by path then
-    line number. The scan is AST-based, so a ``coerce_x(...)`` mention inside a
-    comment, docstring, or string literal is not a violation — only real code is.
-    The scanned root is a parameter so the rule is testable against fixtures rather
-    than only the live tree.
+    Returns ``"path:lineno:text"`` for every offending import, sorted by path then
+    line number. Detection is import-based and AST-driven, so it flags the module
+    import (the necessary chokepoint) and never a call site — only real import
+    statements match, not text mentions. The scanned root is a parameter so the
+    rule is testable against fixtures rather than only the live tree.
 
     // [LAW:single-enforcer] This gate is the sole policy enforcer for the restriction.
-    // [LAW:types-are-the-program] Match code structure, not text; text-context
-    //   false positives are unrepresentable by construction.
+    // [LAW:types-are-the-program] Gate the necessary gateway (the import), so
+    //   call-site false positives are unrepresentable rather than filtered.
     // [LAW:effects-at-boundaries] Pure filesystem read; no external tool dependency.
     """
-    offenses: set[tuple[str, int]] = set()
-    line_text: dict[tuple[str, int], str] = {}
+    offenses: list[tuple[str, int, str]] = []
     for path in sorted(tui_dir.rglob("*.py")):
         rel = path.relative_to(repo_root).as_posix()
         source = path.read_text(encoding="utf-8")
@@ -274,12 +280,11 @@ def collect_forbidden_tui_coerce_usage(
         # ast.parse raises SyntaxError on a broken file — surface it loudly.
         tree = ast.parse(source, filename=str(path))
         for node in ast.walk(tree):
-            if _is_forbidden_coerce_node(node):
+            if _imports_coerce_module(node):
                 lineno = getattr(node, "lineno", 0)
-                key = (rel, lineno)
-                offenses.add(key)
-                line_text.setdefault(key, lines[lineno - 1].strip() if lineno else "")
-    return [f"{rel}:{lineno}:{line_text[(rel, lineno)]}" for rel, lineno in sorted(offenses)]
+                text = lines[lineno - 1].strip() if lineno else ""
+                offenses.append((rel, lineno, text))
+    return [f"{rel}:{lineno}:{text}" for rel, lineno, text in sorted(offenses)]
 
 
 def cmd_refresh(args: argparse.Namespace) -> int:

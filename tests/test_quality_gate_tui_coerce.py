@@ -1,7 +1,9 @@
 """Behavioral tests for the quality gate's TUI coercion-helper ban.
 
-The gate forbids `cc_dump.core.coerce` usage inside `src/cc_dump/tui` so that TUI
-code narrows types explicitly at the seam. These tests assert *what the rule flags*
+The gate forbids importing `cc_dump.core.coerce` inside `src/cc_dump/tui` so that
+TUI code narrows types explicitly at the seam. Detection is import-based: the import
+is the necessary gateway to the coerce helpers, so flagging it covers every call
+site without scanning call sites at all. These tests assert *what the rule flags*
 (the contract), not how it scans — a different implementation of the same contract
 must still pass.
 
@@ -36,28 +38,43 @@ gate = _load_gate()
 @pytest.mark.parametrize(
     "source",
     [
+        # Every import form that grants access to the coerce helpers is flagged.
         "from cc_dump.core.coerce import coerce_int\n",
         "import cc_dump.core.coerce\n",
-        "value = coerce_int(raw)\n",
-        "value = coerce_non_negative_int(raw, default=0)\n",
+        "import cc_dump.core.coerce as c\n",
+        # `from cc_dump.core import coerce` — module string is `cc_dump.core`, so it
+        # would slip a naive `module == "cc_dump.core.coerce"` check; caught here.
+        "from cc_dump.core import coerce\n",
     ],
 )
-def test_flags_forbidden_coerce_usage(tmp_path: Path, source: str) -> None:
+def test_flags_forbidden_coerce_import(tmp_path: Path, source: str) -> None:
     (tmp_path / "offender.py").write_text(source, encoding="utf-8")
     result = gate.collect_forbidden_tui_coerce_usage(tui_dir=tmp_path, repo_root=tmp_path)
     assert result == [f"offender.py:1:{source.strip()}"]
 
 
+def test_flags_the_import_not_the_call_site(tmp_path: Path) -> None:
+    """A qualified coerce call is caught via its import, and only the import line."""
+    (tmp_path / "multi.py").write_text(
+        "from cc_dump.core import coerce\nvalue = coerce.coerce_int(raw)\n",
+        encoding="utf-8",
+    )
+    result = gate.collect_forbidden_tui_coerce_usage(tui_dir=tmp_path, repo_root=tmp_path)
+    assert result == ["multi.py:1:from cc_dump.core import coerce"]
+
+
 @pytest.mark.parametrize(
     "source",
     [
-        # Underscore-prefixed helper: `_coerce_...` is a legitimate local narrower,
-        # not a cc_dump.core.coerce call. This is why the live TUI tree passes.
+        # Underscore-prefixed helper: a legitimate local narrower, no coerce import.
         "def _coerce_non_negative_int(raw):\n    return int(raw)\n",
         "value = self._coerce_non_negative_int(raw)\n",
         "coerce = 5\n",
         "from cc_dump.core.other import helper\n",
-        # A coerce *call* is defined; referencing it without calling is not usage.
+        # Parent-package import of a *different* name — not the coerce module.
+        "from cc_dump.core import formatting\n",
+        # A bare coerce-shaped call with no import is not a coerce-module dependency.
+        "value = coerce_int(raw)\n",
         "handler = coerce_int\n",
     ],
 )
@@ -66,22 +83,39 @@ def test_ignores_lookalikes(tmp_path: Path, source: str) -> None:
     assert gate.collect_forbidden_tui_coerce_usage(tui_dir=tmp_path, repo_root=tmp_path) == []
 
 
+def test_ignores_local_coerce_method_without_import(tmp_path: Path) -> None:
+    """A local `coerce_int` method on a widget (no coerce import) is not flagged.
+
+    Guards the exact false positive a call-site scan would produce: `self.coerce_int`
+    names a method, not the banned module helper.
+    """
+    (tmp_path / "widget.py").write_text(
+        "class Widget:\n"
+        "    def coerce_int(self, raw):\n"
+        "        return int(raw)\n"
+        "\n"
+        "    def use(self, raw):\n"
+        "        return self.coerce_int(raw)\n",
+        encoding="utf-8",
+    )
+    assert gate.collect_forbidden_tui_coerce_usage(tui_dir=tmp_path, repo_root=tmp_path) == []
+
+
 @pytest.mark.parametrize(
     "source",
     [
-        # The exact false-positive class the AST scan rules out by construction:
-        # a coerce call pattern appearing only in text, never executed.
+        # A coerce mention in text is never an import, so it is never a violation.
         "# Consider coerce_int(raw) but narrow explicitly instead\n",
-        '"""Narrow explicitly rather than calling coerce_str_object_dict(value)."""\n',
-        'x = "coerce_int(y)"\n',
+        '"""Narrow explicitly rather than importing cc_dump.core.coerce."""\n',
+        'x = "from cc_dump.core.coerce import coerce_int"\n',
         'label = f"coerce_int({value}) is banned"\n',
     ],
 )
 def test_ignores_coerce_in_comments_and_strings(tmp_path: Path, source: str) -> None:
-    """A coerce call mentioned in a comment/docstring/string literal is not usage.
+    """A coerce mention in a comment/docstring/string literal is not an import.
 
     Regression guard for the code-vs-text distinction: a raw-text scan would flag
-    these; an AST scan correctly does not, because no ``Call`` node exists.
+    these; an AST import scan correctly does not, because no import node exists.
     """
     (tmp_path / "documented.py").write_text(source, encoding="utf-8")
     assert gate.collect_forbidden_tui_coerce_usage(tui_dir=tmp_path, repo_root=tmp_path) == []
@@ -89,10 +123,12 @@ def test_ignores_coerce_in_comments_and_strings(tmp_path: Path, source: str) -> 
 
 def test_reports_sorted_across_files(tmp_path: Path) -> None:
     (tmp_path / "b.py").write_text("import cc_dump.core.coerce\n", encoding="utf-8")
-    (tmp_path / "a.py").write_text("value = coerce_int(raw)\n", encoding="utf-8")
+    (tmp_path / "a.py").write_text(
+        "from cc_dump.core.coerce import coerce_int\n", encoding="utf-8"
+    )
     result = gate.collect_forbidden_tui_coerce_usage(tui_dir=tmp_path, repo_root=tmp_path)
     assert result == [
-        "a.py:1:value = coerce_int(raw)",
+        "a.py:1:from cc_dump.core.coerce import coerce_int",
         "b.py:1:import cc_dump.core.coerce",
     ]
 
