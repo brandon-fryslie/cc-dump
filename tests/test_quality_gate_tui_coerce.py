@@ -48,6 +48,10 @@ gate = _load_gate()
         # Star imports that can pull the coerce module into scope.
         "from cc_dump.core.coerce import *\n",
         "from cc_dump.core import *\n",
+        # Multi-name forms: `coerce` among several names, first and not-first, so
+        # the check must scan all aliases (not just names[0]).
+        "from cc_dump.core import coerce, formatting\n",
+        "from cc_dump.core import formatting, coerce\n",
     ],
 )
 def test_flags_forbidden_coerce_import(tmp_path: Path, source: str) -> None:
