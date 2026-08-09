@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -22,6 +23,16 @@ DEFAULT_BASELINE_DIR = REPO_ROOT / ".quality_gate"
 LINT_BASELINE_FILE = "lint_baseline.json"
 COMPLEXITY_BASELINE_FILE = "complexity_baseline.json"
 BASELINE_SCHEMA_VERSION = 1
+
+# TUI code must narrow types explicitly rather than lean on cc_dump.core.coerce
+# helpers, so illegal states are rejected at the seam instead of laundered downstream.
+# [LAW:types-are-the-program] The seam, not a coercion helper, is where narrowing belongs.
+TUI_DIR = REPO_ROOT / "src" / "cc_dump" / "tui"
+FORBIDDEN_TUI_COERCE_PATTERNS = (
+    re.compile(r"\bfrom cc_dump\.core\.coerce import\b"),
+    re.compile(r"\bimport cc_dump\.core\.coerce\b"),
+    re.compile(r"\bcoerce_[A-Za-z0-9_]+\("),
+)
 
 
 @dataclass(frozen=True)
@@ -223,6 +234,28 @@ def check_complexity_regressions(
     return increased, new_too_complex
 
 
+def collect_forbidden_tui_coerce_usage(
+    tui_dir: Path = TUI_DIR, repo_root: Path = REPO_ROOT
+) -> list[str]:
+    """Collect forbidden coercion-helper usage within TUI modules.
+
+    Returns ``"path:lineno:text"`` for every offending line, sorted. The scanned
+    root is a parameter so the rule is testable against fixtures rather than only
+    the live tree.
+
+    // [LAW:single-enforcer] This gate is the sole policy enforcer for the restriction.
+    // [LAW:effects-at-boundaries] Pure filesystem read; no external tool dependency.
+    """
+    violations: list[str] = []
+    for path in sorted(tui_dir.rglob("*.py")):
+        rel = path.relative_to(repo_root).as_posix()
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for lineno, line in enumerate(lines, start=1):
+            if any(pattern.search(line) for pattern in FORBIDDEN_TUI_COERCE_PATTERNS):
+                violations.append(f"{rel}:{lineno}:{line.strip()}")
+    return sorted(violations)
+
+
 def cmd_refresh(args: argparse.Namespace) -> int:
     baseline_dir = Path(args.baseline_dir)
     lint_counts = collect_lint_counts()
@@ -288,6 +321,18 @@ def cmd_check(args: argparse.Namespace) -> int:
             print(f"  - {key}: {score}")
         if len(new_complexity) > 50:
             print(f"  ... and {len(new_complexity) - 50} more")
+
+    forbidden_tui_coerce_usage = collect_forbidden_tui_coerce_usage()
+    if forbidden_tui_coerce_usage:
+        has_failure = True
+        print(
+            "\nFAIL: coercion helpers are forbidden in src/cc_dump/tui "
+            "(use explicit type validation/narrowing instead):"
+        )
+        for line in forbidden_tui_coerce_usage[:50]:
+            print(f"  - {line}")
+        if len(forbidden_tui_coerce_usage) > 50:
+            print(f"  ... and {len(forbidden_tui_coerce_usage) - 50} more")
 
     if has_failure:
         return 1
