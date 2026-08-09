@@ -7,6 +7,7 @@ This gate is designed to allow pre-existing debt while preventing new debt.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import subprocess
@@ -28,11 +29,10 @@ BASELINE_SCHEMA_VERSION = 1
 # helpers, so illegal states are rejected at the seam instead of laundered downstream.
 # [LAW:types-are-the-program] The seam, not a coercion helper, is where narrowing belongs.
 TUI_DIR = REPO_ROOT / "src" / "cc_dump" / "tui"
-FORBIDDEN_TUI_COERCE_PATTERNS = (
-    re.compile(r"\bfrom cc_dump\.core\.coerce import\b"),
-    re.compile(r"\bimport cc_dump\.core\.coerce\b"),
-    re.compile(r"\bcoerce_[A-Za-z0-9_]+\("),
-)
+COERCE_MODULE = "cc_dump.core.coerce"
+# A coercion-helper call is `coerce_<name>(...)` — never the underscore-prefixed
+# `_coerce_...` local helpers that legitimately narrow at a boundary.
+COERCE_CALL_RE = re.compile(r"^coerce_[A-Za-z0-9_]+$")
 
 
 @dataclass(frozen=True)
@@ -234,26 +234,52 @@ def check_complexity_regressions(
     return increased, new_too_complex
 
 
+def _is_forbidden_coerce_node(node: ast.AST) -> bool:
+    """Whether an AST node is a forbidden cc_dump.core.coerce import or helper call."""
+    if isinstance(node, ast.ImportFrom):
+        return node.module == COERCE_MODULE
+    if isinstance(node, ast.Import):
+        return any(alias.name == COERCE_MODULE for alias in node.names)
+    if isinstance(node, ast.Call):
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else (
+            func.attr if isinstance(func, ast.Attribute) else None
+        )
+        return name is not None and COERCE_CALL_RE.match(name) is not None
+    return False
+
+
 def collect_forbidden_tui_coerce_usage(
     tui_dir: Path = TUI_DIR, repo_root: Path = REPO_ROOT
 ) -> list[str]:
     """Collect forbidden coercion-helper usage within TUI modules.
 
-    Returns ``"path:lineno:text"`` for every offending line, sorted. The scanned
-    root is a parameter so the rule is testable against fixtures rather than only
-    the live tree.
+    Returns ``"path:lineno:text"`` for every offending line, sorted by path then
+    line number. The scan is AST-based, so a ``coerce_x(...)`` mention inside a
+    comment, docstring, or string literal is not a violation — only real code is.
+    The scanned root is a parameter so the rule is testable against fixtures rather
+    than only the live tree.
 
     // [LAW:single-enforcer] This gate is the sole policy enforcer for the restriction.
+    // [LAW:types-are-the-program] Match code structure, not text; text-context
+    //   false positives are unrepresentable by construction.
     // [LAW:effects-at-boundaries] Pure filesystem read; no external tool dependency.
     """
-    violations: list[str] = []
+    offenses: set[tuple[str, int]] = set()
+    line_text: dict[tuple[str, int], str] = {}
     for path in sorted(tui_dir.rglob("*.py")):
         rel = path.relative_to(repo_root).as_posix()
-        lines = path.read_text(encoding="utf-8").splitlines()
-        for lineno, line in enumerate(lines, start=1):
-            if any(pattern.search(line) for pattern in FORBIDDEN_TUI_COERCE_PATTERNS):
-                violations.append(f"{rel}:{lineno}:{line.strip()}")
-    return sorted(violations)
+        source = path.read_text(encoding="utf-8")
+        lines = source.splitlines()
+        # ast.parse raises SyntaxError on a broken file — surface it loudly.
+        tree = ast.parse(source, filename=str(path))
+        for node in ast.walk(tree):
+            if _is_forbidden_coerce_node(node):
+                lineno = getattr(node, "lineno", 0)
+                key = (rel, lineno)
+                offenses.add(key)
+                line_text.setdefault(key, lines[lineno - 1].strip() if lineno else "")
+    return [f"{rel}:{lineno}:{line_text[(rel, lineno)]}" for rel, lineno in sorted(offenses)]
 
 
 def cmd_refresh(args: argparse.Namespace) -> int:

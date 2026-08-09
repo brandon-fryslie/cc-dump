@@ -51,17 +51,39 @@ def test_flags_forbidden_coerce_usage(tmp_path: Path, source: str) -> None:
 @pytest.mark.parametrize(
     "source",
     [
-        # Underscore-prefixed method: no word boundary before `coerce`, so it is
-        # NOT a forbidden `coerce_...(` call. This is why the live TUI tree passes.
+        # Underscore-prefixed helper: `_coerce_...` is a legitimate local narrower,
+        # not a cc_dump.core.coerce call. This is why the live TUI tree passes.
         "def _coerce_non_negative_int(raw):\n    return int(raw)\n",
         "value = self._coerce_non_negative_int(raw)\n",
-        "# coercion happens elsewhere\n",
         "coerce = 5\n",
         "from cc_dump.core.other import helper\n",
+        # A coerce *call* is defined; referencing it without calling is not usage.
+        "handler = coerce_int\n",
     ],
 )
 def test_ignores_lookalikes(tmp_path: Path, source: str) -> None:
     (tmp_path / "clean.py").write_text(source, encoding="utf-8")
+    assert gate.collect_forbidden_tui_coerce_usage(tui_dir=tmp_path, repo_root=tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # The exact false-positive class the AST scan rules out by construction:
+        # a coerce call pattern appearing only in text, never executed.
+        "# Consider coerce_int(raw) but narrow explicitly instead\n",
+        '"""Narrow explicitly rather than calling coerce_str_object_dict(value)."""\n',
+        'x = "coerce_int(y)"\n',
+        'label = f"coerce_int({value}) is banned"\n',
+    ],
+)
+def test_ignores_coerce_in_comments_and_strings(tmp_path: Path, source: str) -> None:
+    """A coerce call mentioned in a comment/docstring/string literal is not usage.
+
+    Regression guard for the code-vs-text distinction: a raw-text scan would flag
+    these; an AST scan correctly does not, because no ``Call`` node exists.
+    """
+    (tmp_path / "documented.py").write_text(source, encoding="utf-8")
     assert gate.collect_forbidden_tui_coerce_usage(tui_dir=tmp_path, repo_root=tmp_path) == []
 
 
