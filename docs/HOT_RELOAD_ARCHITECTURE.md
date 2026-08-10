@@ -147,7 +147,7 @@ def get_state(self) -> dict:
 ### How to Add a New Reloadable Module
 
 1. **Create the module** in `src/cc_dump/core/`, `src/cc_dump/tui/`, `src/cc_dump/app/`, or `src/cc_dump/pipeline/`. Reloadable is the default — you only make it stable if it has an H1 or H2 hazard.
-2. **Add it to `_RELOAD_ORDER`** in `app/hot_reload.py`. Place it near its dependencies (leaves first) to keep the list readable — the order is cosmetic, not load-bearing. Skipping this step fails the completeness gate in CI, so it can't be silently forgotten.
+2. **Add it to `_RELOAD_ORDER`** in `app/hot_reload.py`. Place it after its dependencies (leaves first). Ordering rarely affects correctness — the alias-refresh pass heals references regardless — but see "Why Dependency Order?" for the one exception (import-time-computed values). Skipping this step fails the completeness gate in CI, so it can't be silently forgotten.
 3. **Test the reload**: Make a change and verify it reloads without errors
 
 Example:
@@ -241,7 +241,7 @@ This guarantees the new code is used while preserving user-visible state.
 
 ### Why Dependency Order?
 
-Mostly readability. `_RELOAD_ORDER` lists leaves before dependents so it reads as a dependency graph, but the alias-refresh pass rebinds references across all modules after the reload completes, so a wrong order wouldn't leave stale definitions — it would just make the list harder to follow.
+Mostly readability. `_RELOAD_ORDER` lists leaves before dependents so it reads as a dependency graph, and the alias-refresh pass rebinds function and class references across all modules after the reload completes, so for ordinary code a wrong order costs nothing but legibility. The one exception is a module that computes a module-level value from a dependency at import time (`MY_VAL = dependency.compute()`): reload re-runs that line, and if the dependency hasn't reloaded yet the value captures the old result. The alias pass can't fix it — a freshly computed value was never one of the dependency's exports, and if it's a scalar or container the pass skips it anyway. No current reloadable module has this pattern, so ordering is effectively free today; keep placing new modules after their dependencies so it stays that way.
 
 ### Why Exclude proxy.py and app.py?
 
@@ -283,7 +283,7 @@ Excluded files that developers might edit are tracked in `_STALENESS_WATCHLIST`.
 The hot-reload system is built on three principles:
 
 1. **A module reloads unless reloading it breaks the live session** — the running proxy and App, boundary-crossing types (H1), and module-level live state (H2) stay stable; everything else reloads.
-2. **Reload order is cosmetic** — the alias-refresh pass fixes references globally, so `_RELOAD_ORDER` is ordered leaves-first only for readability.
+2. **Reload order rarely matters** — the alias-refresh pass heals references globally, so `_RELOAD_ORDER` is ordered leaves-first mainly for readability; order affects correctness only for a module that computes a value from a dependency at import time (see "Why Dependency Order?").
 3. **Widgets hot-swap via state transfer** — old-instance state is captured and restored onto a fresh instance built from the reloaded class.
 
 Classify new modules reloadable-or-stable (the completeness gate enforces it), implement the widget protocol, and your code reloads without losing state.
