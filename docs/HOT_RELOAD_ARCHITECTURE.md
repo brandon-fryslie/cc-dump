@@ -18,21 +18,22 @@ Every module reloads by default. A module is stable only for one of four reasons
 
 ### 1. Stable Boundary (NEVER reload)
 
-A module stays stable only if reloading it would break the live session. There are exactly four reasons for that, and every stable entry is one of them:
+A module stays stable only if reloading it would break the live session — or if it sits directly on the proxy's import boundary, where reloading buys nothing. In practice every stable entry has one of these reasons:
 
 - **Live instance.** The module *is* a running object that can't be recreated in place — the HTTP proxy server thread or the Textual App. Reloading it would kill the server or destroy the UI.
 - **Entry point.** The module already executed and isn't meaningful to re-run at runtime (`cli.py`, `__main__.py`, the reloader itself).
 - **H1 — boundary-crossing type.** The module defines a class the stable proxy instantiates and other code `isinstance`-checks. `importlib.reload` gives the class a new identity, so an object built before the reload no longer matches the reloaded class and the check silently returns False.
 - **H2 — module-level live state.** The module holds a module-level mutable singleton that other live objects reference. Reload re-runs the module body and resets that singleton, leaving old holders pointed at the pre-reload copy — split-brain.
+- **Proxy boundary.** The module is imported directly by the never-reloaded proxy and driven on the live request path (`response_assembler`). It has no hard hazard of its own — it's kept inside the boundary by convention rather than necessity.
 
-H1 and H2 are the *only* reasons to make a boundary module stable; a module with neither hazard that isn't itself a live instance or entry point reloads. The stable modules split across two sets in `app/hot_reload.py`, each entry carrying its reason as an inline comment.
+H1 and H2 are the hazards that force a boundary module stable; a module with neither hazard that isn't a live instance, entry point, or direct proxy-boundary import reloads. The stable modules split across two sets in `app/hot_reload.py`, each entry carrying its reason as an inline comment (the four `.1` added name H1/H2 explicitly; the older entries state the reason in prose).
 
 **Excluded files** (`_EXCLUDED_FILES`):
 
 | Module | Reason | Why |
 |--------|--------|-----|
 | `pipeline/proxy.py` | live instance | HTTP server thread serving the current session |
-| `pipeline/response_assembler.py` | live instance | Imported and driven by the running proxy |
+| `pipeline/response_assembler.py` | proxy boundary | Imported and driven by the never-reloaded proxy on the live request path; no hazard of its own |
 | `pipeline/event_types.py` | H1 | Boundary types the proxy builds and other code `isinstance`-checks |
 | `pipeline/proxy_call.py` | H1 + H2 | `proxy.py` does `isinstance(planned, RefusedCall)`; also holds the live `RequestPipeline` from `cli.py` |
 | `pipeline/forward_proxy_tls.py` | H2 | Holds live TLS/crypto state |

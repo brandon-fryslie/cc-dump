@@ -110,7 +110,7 @@ Everything else reloads. There is no import-spelling rule: after each reload, th
 To discover which modules are stable vs reloadable, check `app/hot_reload.py`:
 ```bash
 grep -A 20 '_RELOAD_ORDER' src/cc_dump/app/hot_reload.py    # reloadable modules, in dependency order
-grep -A 10 '_EXCLUDED_FILES' src/cc_dump/app/hot_reload.py   # stable boundaries, with the H1/H2 reason per module
+grep -A 10 '_EXCLUDED_FILES' src/cc_dump/app/hot_reload.py   # stable boundaries, with the stability reason per module
 grep -A 10 '_EXCLUDED_MODULES' src/cc_dump/app/hot_reload.py # stable live-instance modules (app, controller)
 ```
 
