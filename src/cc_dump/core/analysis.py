@@ -467,9 +467,6 @@ class ModelPricing(NamedTuple):
     output: float
 
 
-# Normalization unit: 1 Haiku base input token = 1 unit
-HAIKU_BASE_UNIT = 1.0  # $/MTok
-
 MODEL_PRICING: dict[str, ModelPricing] = {
     # Anthropic models
     "opus": ModelPricing(
