@@ -114,7 +114,7 @@ grep -A 10 '_EXCLUDED_FILES' src/cc_dump/app/hot_reload.py   # stable boundaries
 grep -A 10 '_EXCLUDED_MODULES' src/cc_dump/app/hot_reload.py # stable live-instance modules (app, controller)
 ```
 
-When adding a module, classify it reloadable or stable — H1 and H2 are the only reasons to pick stable. The completeness gate (`unclassified_modules()`, wired into `scripts/quality_gate.py`) fails CI if you leave it in neither set.
+When adding a module, classify it reloadable or stable — H1 and H2 are the hazards that force stability; see `HOT_RELOAD_ARCHITECTURE.md` for the full set of stable-module reasons (live instance, entry point, and the legacy proxy-boundary case). The completeness gate (`unclassified_modules()`, wired into `scripts/quality_gate.py`) fails CI if you leave it in neither set.
 
 ## Key Types
 

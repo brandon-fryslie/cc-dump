@@ -14,7 +14,7 @@ The hot-reload system allows you to modify formatting, rendering, and widget cod
 
 ## Module Categories
 
-Every module reloads by default. A module is stable only for one of four reasons, listed below.
+Every module reloads by default. A module is stable only for the reasons listed below.
 
 ### 1. Stable Boundary (NEVER reload)
 
