@@ -888,6 +888,8 @@ class TestHotReloadModuleStructure:
         from cc_dump.app.hot_reload import (
             _EXCLUDED_FILES,
             _EXCLUDED_MODULES,
+            _EXPERIMENTS_PREFIX,
+            _OUT_OF_SCOPE_MARKERS,
             _reloadable_rel_paths_from_order,
             unclassified_modules,
         )
@@ -899,7 +901,7 @@ class TestHotReloadModuleStructure:
         both = []
         for path in src.rglob("*.py"):
             rel = path.relative_to(src).as_posix()
-            if rel.endswith(("__init__.py", "__main__.py")) or rel.startswith("experiments/"):
+            if rel.endswith(_OUT_OF_SCOPE_MARKERS) or rel.startswith(_EXPERIMENTS_PREFIX):
                 continue
             is_reload = rel in reload_rel
             # hot_reload.py is excluded via its bare filename, not its package path.
