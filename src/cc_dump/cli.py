@@ -167,16 +167,6 @@ def _active_provider_specs(
     return (default_provider_spec, *optional_specs)
 
 
-def _create_forward_proxy_ca(
-    active_specs: tuple[cc_dump.providers.ProviderSpec, ...],
-):
-    has_forward_proxy = any(spec.proxy_type == "forward" for spec in active_specs)
-    if not has_forward_proxy:
-        return None
-    from cc_dump.pipeline.forward_proxy_tls import ForwardProxyCertificateAuthority
-    return ForwardProxyCertificateAuthority(ca_dir=None)
-
-
 def _provider_bind_port(
     args: argparse.Namespace,
     spec: cc_dump.providers.ProviderSpec,
@@ -191,7 +181,7 @@ def _provider_target(
 ) -> str:
     attr_name = "target" if spec.key == cc_dump.providers.DEFAULT_PROVIDER_KEY else f"{spec.key}_target"
     raw_target = str(getattr(args, attr_name))
-    return raw_target.rstrip("/") if spec.proxy_type == "reverse" else ""
+    return raw_target.rstrip("/")
 
 
 def _start_proxy_server(host, port, handler_class):
@@ -208,15 +198,12 @@ def _start_provider_binding(
     args: argparse.Namespace,
     spec: cc_dump.providers.ProviderSpec,
     event_q: queue.Queue[PipelineEvent],
-    forward_proxy_ca,
 ) -> ProviderProxyBinding:
     provider_target = _provider_target(args, spec)
-    provider_ca = forward_proxy_ca if spec.proxy_type == "forward" else None
     handler = make_handler_class(
         provider=spec.key,
-        target_host=provider_target if spec.proxy_type == "reverse" else None,
+        target_host=provider_target,
         event_queue=event_q,
-        forward_proxy_ca=provider_ca,
     )
     server, port, _thread = _start_proxy_server(
         args.host,
@@ -227,10 +214,6 @@ def _start_provider_binding(
         spec.key,
         proxy_url=f"http://{args.host}:{port}",
         target=provider_target,
-        proxy_mode=spec.proxy_type,
-        forward_proxy_ca_cert_path=(
-            str(provider_ca.ca_cert_path) if provider_ca is not None else ""
-        ),
     )
     return ProviderProxyBinding(
         spec=spec,
@@ -248,14 +231,12 @@ def _build_proxy_runtime(
     event_q: queue.Queue[PipelineEvent],
 ) -> ProxyRuntime:
     active_specs = _active_provider_specs(args, default_provider_spec)
-    forward_proxy_ca = _create_forward_proxy_ca(active_specs)
     # [LAW:dataflow-not-control-flow] Binding order is fixed; variability lives in active_specs.
     bindings = tuple(
         _start_provider_binding(
             args=args,
             spec=spec,
             event_q=event_q,
-            forward_proxy_ca=forward_proxy_ca,
         )
         for spec in active_specs
     )
