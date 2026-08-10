@@ -881,41 +881,50 @@ class TestHotReloadModuleStructure:
         """Every in-scope cc_dump module is reloadable XOR stable — never both, never neither.
 
         In-scope excludes __init__.py, __main__.py, and experiments/ (per the epic).
-        This is this ticket's Done criterion; the generic completeness gate for future
-        modules is dump-hot-reload-1i4.2.
+        The "never neither" half is the completeness gate (dump-hot-reload-1i4.2), so it
+        delegates to unclassified_modules — one source of truth. This test adds the
+        "never both" half, which the gate does not own.
         """
         from cc_dump.app.hot_reload import (
             _EXCLUDED_FILES,
             _EXCLUDED_MODULES,
-            _RELOAD_ORDER,
+            _EXPERIMENTS_PREFIX,
+            _OUT_OF_SCOPE_MARKERS,
+            _reloadable_rel_paths_from_order,
+            unclassified_modules,
         )
 
         src = Path(__file__).parent.parent / "src" / "cc_dump"
-        reload_rel = {
-            m.removeprefix("cc_dump.").replace(".", "/") + ".py" for m in _RELOAD_ORDER
-        }
+        reload_rel = _reloadable_rel_paths_from_order()
         stable = set(_EXCLUDED_FILES) | set(_EXCLUDED_MODULES)
 
-        def in_scope(rel: str) -> bool:
-            if rel.endswith(("__init__.py", "__main__.py")):
-                return False
-            return not rel.startswith("experiments/")
-
-        both, neither = [], []
+        both = []
         for path in src.rglob("*.py"):
             rel = path.relative_to(src).as_posix()
-            if not in_scope(rel):
+            if rel.endswith(_OUT_OF_SCOPE_MARKERS) or rel.startswith(_EXPERIMENTS_PREFIX):
                 continue
             is_reload = rel in reload_rel
             # hot_reload.py is excluded via its bare filename, not its package path.
             is_stable = rel in stable or path.name in stable
             if is_reload and is_stable:
                 both.append(rel)
-            if not is_reload and not is_stable:
-                neither.append(rel)
 
         assert not both, f"Classified as BOTH reloadable and stable: {both}"
-        assert not neither, f"Unclassified (silent crack): {neither}"
+        assert not unclassified_modules(src), (
+            f"Unclassified (silent crack): {unclassified_modules(src)}"
+        )
+
+    def test_completeness_gate_reports_no_unclassified_modules(self):
+        """The CI completeness gate: no in-scope cc_dump module is left unclassified.
+
+        This is the machine-checkable Done criterion for dump-hot-reload-1i4.2 — the
+        same call scripts/quality_gate.py makes, so a new module that hot-reload would
+        silently ignore fails the build.
+        """
+        from cc_dump.app.hot_reload import unclassified_modules
+
+        src = Path(__file__).parent.parent / "src" / "cc_dump"
+        assert unclassified_modules(src) == []
 
     def test_excluded_modules_contain_live_instances(self):
         from cc_dump.app.hot_reload import _EXCLUDED_MODULES

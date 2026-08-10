@@ -28,6 +28,7 @@ BASELINE_SCHEMA_VERSION = 1
 # helpers, so illegal states are rejected at the seam instead of laundered downstream.
 # [LAW:types-are-the-program] The seam, not a coercion helper, is where narrowing belongs.
 TUI_DIR = REPO_ROOT / "src" / "cc_dump" / "tui"
+PACKAGE_DIR = REPO_ROOT / "src" / "cc_dump"
 COERCE_MODULE = "cc_dump.core.coerce"
 COERCE_PARENT = "cc_dump.core"
 COERCE_NAME = "coerce"
@@ -398,6 +399,24 @@ def cmd_check(args: argparse.Namespace) -> int:
             print(f"  - {line}")
         if len(forbidden_tui_coerce_usage) > 50:
             print(f"  ... and {len(forbidden_tui_coerce_usage) - 50} more")
+
+    # [LAW:one-source-of-truth] The classification lives in hot_reload.py; the gate
+    #   derives from it rather than re-encoding which modules reload. Local import
+    #   keeps this script's other checks free of the cc_dump dependency.
+    from cc_dump.app.hot_reload import unclassified_modules
+
+    unclassified = unclassified_modules(PACKAGE_DIR)
+    if unclassified:
+        has_failure = True
+        print(
+            "\nFAIL: cc_dump modules classified as neither reloadable nor stable "
+            "(add each to _RELOAD_ORDER or _EXCLUDED_FILES/_EXCLUDED_MODULES in "
+            "src/cc_dump/app/hot_reload.py):"
+        )
+        for rel in unclassified[:50]:
+            print(f"  - {rel}")
+        if len(unclassified) > 50:
+            print(f"  ... and {len(unclassified) - 50} more")
 
     if has_failure:
         return 1
