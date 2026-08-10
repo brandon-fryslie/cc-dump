@@ -118,7 +118,6 @@ _EXCLUDED_FILES = {
     # so editing one warns a restart is needed instead of failing silently.
     "pipeline/proxy_call.py",  # H1: proxy.py isinstance(planned, RefusedCall); H2: live RequestPipeline held from cli.py
     "providers.py",  # H2: _PROVIDERS registry mutated at runtime by --upstream, read on the proxy path
-    "pipeline/copilot_translate.py",  # H2: proxy drives live CopilotSSEParser/TranslationState across an in-flight SSE stream
     "io/logging_setup.py",  # H2: _RUNTIME guards global logging handlers; reload loses log-path + risks double-attach
     "__init__.py",  # module init
     "__main__.py",  # entry point
@@ -136,7 +135,7 @@ _STALENESS_WATCHLIST = {
     # from _EXCLUDED_FILES
     "pipeline/proxy.py", "pipeline/forward_proxy_tls.py", "cli.py", "pipeline/event_types.py", "pipeline/response_assembler.py",
     "app/tmux_controller.py", "io/stderr_tee.py",
-    "pipeline/proxy_call.py", "providers.py", "pipeline/copilot_translate.py", "io/logging_setup.py",
+    "pipeline/proxy_call.py", "providers.py", "io/logging_setup.py",
     # from _EXCLUDED_MODULES
     "tui/app.py", "tui/hot_reload_controller.py",
 }

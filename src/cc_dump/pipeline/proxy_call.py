@@ -38,7 +38,6 @@ from typing import TYPE_CHECKING
 
 import truststore
 
-import cc_dump.pipeline.copilot_translate
 import cc_dump.pipeline.proxy_flow
 import cc_dump.providers
 from cc_dump.pipeline.event_types import (
@@ -128,30 +127,8 @@ def _identity_translate_request(body: dict, url: str) -> tuple[dict, str]:
     return body, url
 
 
-def _openai_responses_translate_request(body: dict, url: str) -> tuple[dict, str]:
-    translated = cc_dump.pipeline.copilot_translate.anthropic_to_copilot_request(body)
-    from urllib.parse import urlparse
-    parsed = urlparse(url)
-    upstream_url = cc_dump.pipeline.copilot_translate.copilot_upstream_url(
-        f"{parsed.scheme}://{parsed.netloc}"
-    )
-    return translated, upstream_url
-
-
-def _openai_chat_translate_request(body: dict, url: str) -> tuple[dict, str]:
-    translated = cc_dump.pipeline.copilot_translate.anthropic_to_chat_completions_request(body)
-    from urllib.parse import urlparse
-    parsed = urlparse(url)
-    upstream_url = cc_dump.pipeline.copilot_translate.copilot_chat_completions_url(
-        f"{parsed.scheme}://{parsed.netloc}"
-    )
-    return translated, upstream_url
-
-
 REQUEST_TRANSLATORS: dict[UpstreamFormat, Callable[[dict, str], tuple[dict, str]]] = {
     "anthropic": _identity_translate_request,
-    "openai-responses": _openai_responses_translate_request,
-    "openai-chat": _openai_chat_translate_request,
 }
 
 
@@ -163,47 +140,18 @@ def _passthrough_headers(
     )
 
 
-def _openai_responses_headers(
-    raw_headers: Mapping[str, str], body_bytes: bytes
-) -> dict[str, str]:
-    token = cc_dump.pipeline.copilot_translate.read_copilot_token()
-    return cc_dump.pipeline.copilot_translate.copilot_upstream_headers(
-        {}, token, len(body_bytes),
-    )
-
-
-def _openai_chat_headers(
-    raw_headers: Mapping[str, str], body_bytes: bytes
-) -> dict[str, str]:
-    token = cc_dump.pipeline.copilot_translate.read_copilot_token()
-    messages: list = []
-    try:
-        body = json.loads(body_bytes)
-        messages = body.get("messages", [])
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        pass
-    return cc_dump.pipeline.copilot_translate.copilot_chat_headers(
-        messages, token, len(body_bytes),
-    )
-
-
 HeaderBuilder = Callable[[Mapping[str, str], bytes], dict[str, str]]
 
 HEADER_BUILDERS: dict[UpstreamFormat, HeaderBuilder] = {
     "anthropic": _passthrough_headers,
-    "openai-responses": _openai_responses_headers,
-    "openai-chat": _openai_chat_headers,
 }
 
 
 # // [LAW:dataflow-not-control-flow] upstream_format -> SSE-translation method
 # //   on the proxy handler. None means "no translation, default fan-out".
-# // [LAW:no-mode-explosion] Adding a new format requires adding a row here;
-# //   no `if upstream_fmt == "new"` branch elsewhere.
+# //   Anthropic is passthrough-only, so the sole row is None.
 TRANSLATION_STREAM_HANDLERS: dict[UpstreamFormat, str | None] = {
     "anthropic": None,
-    "openai-responses": "_stream_translated_response",
-    "openai-chat": "_stream_chat_translated_response",
 }
 
 
@@ -387,21 +335,15 @@ class TracedResponseEventEmitter(ResponseEventEmitter):
     def streaming_extra_sinks(self, event_queue) -> list[StreamSink]:
         # Imported lazily to avoid a circular import with proxy.py.
         from cc_dump.pipeline.proxy import EventQueueSink
-        from cc_dump.pipeline.response_assembler import OpenAiChatResponseAssembler
 
-        family = cc_dump.providers.get_provider_spec(self._provider).protocol_family
-        assembler_cls = (
-            ResponseAssembler if family == "anthropic" else OpenAiChatResponseAssembler
-        )
         # The streaming headers event uses seq=0 of the response side. The
         # EventQueueSink starts at seq_start=1 so the first ResponseProgress
         # event is seq=1, leaving room for the headers event at seq=0.
         #
-        # ResponseAssembler / OpenAiChatResponseAssembler implement the
-        # StreamSink protocol structurally (on_raw/on_event/on_done) but don't
-        # inherit from StreamSink — adding that inheritance edge would
-        # introduce an import cycle with proxy.py. The list-item ignore is
-        # the minimum-site acknowledgement of the structural conformance.
+        # ResponseAssembler implements the StreamSink protocol structurally
+        # (on_raw/on_event/on_done) but doesn't inherit from StreamSink —
+        # adding that inheritance edge would introduce an import cycle with
+        # proxy.py. The list-item ignore acknowledges the structural conformance.
         return [
             EventQueueSink(
                 event_queue,
@@ -409,7 +351,7 @@ class TracedResponseEventEmitter(ResponseEventEmitter):
                 seq_start=1,
                 provider=self._provider,
             ),
-            assembler_cls(),  # type: ignore[list-item]
+            ResponseAssembler(),  # type: ignore[list-item]
         ]
 
     def streaming_finalize(
