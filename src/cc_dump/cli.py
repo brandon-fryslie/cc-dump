@@ -71,7 +71,6 @@ def _detect_run_subcommand(
             "\n\nExamples:"
             "\n  cc-dump run claude"
             "\n  cc-dump run claude --port 5000"
-            "\n  cc-dump --upstream copilot run claude"
             "\n  cc-dump run haiku --port 5000 -- --continue"
         )
         sys.exit(0)
@@ -169,15 +168,13 @@ def _active_provider_specs(
 
 
 def _create_forward_proxy_ca(
-    args: argparse.Namespace,
     active_specs: tuple[cc_dump.providers.ProviderSpec, ...],
 ):
     has_forward_proxy = any(spec.proxy_type == "forward" for spec in active_specs)
     if not has_forward_proxy:
         return None
     from cc_dump.pipeline.forward_proxy_tls import ForwardProxyCertificateAuthority
-    ca_dir = Path(args.forward_proxy_ca_dir) if args.forward_proxy_ca_dir else None
-    return ForwardProxyCertificateAuthority(ca_dir=ca_dir)
+    return ForwardProxyCertificateAuthority(ca_dir=None)
 
 
 def _provider_bind_port(
@@ -251,7 +248,7 @@ def _build_proxy_runtime(
     event_q: queue.Queue[PipelineEvent],
 ) -> ProxyRuntime:
     active_specs = _active_provider_specs(args, default_provider_spec)
-    forward_proxy_ca = _create_forward_proxy_ca(args, active_specs)
+    forward_proxy_ca = _create_forward_proxy_ca(active_specs)
     # [LAW:dataflow-not-control-flow] Binding order is fixed; variability lives in active_specs.
     bindings = tuple(
         _start_provider_binding(
@@ -386,73 +383,7 @@ def _build_cli_parser(
         default=False,
         help="Preview recording cleanup without deleting files.",
     )
-    parser.add_argument(
-        "--forward-proxy-ca-dir",
-        type=str,
-        default=None,
-        help="Directory for forward proxy CA key/cert (default: ~/.cc-dump/forward-proxy-ca/)",
-    )
-    for spec in cc_dump.providers.optional_proxy_provider_specs():
-        parser.add_argument(
-            f"--{spec.key}-port",
-            type=int,
-            default=0,
-            help=f"Bind port for {spec.display_name} proxy (default: 0, OS-assigned)",
-        )
-        parser.add_argument(
-            f"--{spec.key}-target",
-            type=str,
-            default=(
-                os.environ.get(spec.base_url_env, spec.default_target)
-                if spec.proxy_type == "reverse"
-                else spec.default_target
-            ),
-            help=(
-                f"Upstream {spec.display_name} API URL (default: {spec.default_target}). "
-                f"Env: {spec.base_url_env}"
-            ),
-        )
-        parser.add_argument(
-            f"--no-{spec.key}",
-            action="store_true",
-            default=False,
-            help=f"Disable the {spec.display_name} proxy server",
-        )
-    # Convenience alias: --upstream copilot sets target + upstream_format on the default provider
-    parser.add_argument(
-        "--upstream",
-        type=str,
-        default=None,
-        choices=list(_UPSTREAM_PRESETS.keys()),
-        help="Convenience preset for upstream target + format (e.g., --upstream copilot)",
-    )
     return parser
-
-
-# // [LAW:one-source-of-truth] Upstream presets live here, not scattered across argparse.
-_UPSTREAM_PRESETS: dict[str, tuple[str, str]] = {
-    # name → (target_url, upstream_format)
-    "copilot": ("https://api.individual.githubcopilot.com", "openai-chat"),
-}
-
-
-def _apply_upstream_preset(
-    args: argparse.Namespace,
-    default_provider_spec: "cc_dump.providers.ProviderSpec",
-) -> "cc_dump.providers.ProviderSpec":
-    """Apply --upstream preset (if any) to args.target + default provider spec.
-
-    // [LAW:single-enforcer] One place decides how a preset name maps onto
-    //   (target, upstream_format). Callers never branch on the preset shape.
-    """
-    if args.upstream is None:
-        return default_provider_spec
-    from dataclasses import replace
-    preset_target, preset_format = _UPSTREAM_PRESETS[args.upstream]
-    args.target = preset_target
-    updated = replace(default_provider_spec, upstream_format=preset_format)
-    cc_dump.providers.update_provider_spec(updated)
-    return updated
 
 
 def _handle_recording_admin_commands(args: argparse.Namespace) -> bool:
@@ -628,9 +559,6 @@ def main():
     default_provider_spec = cc_dump.providers.get_provider_spec(default_provider_key)
     parser = _build_cli_parser(default_provider_spec)
     args = parser.parse_args(_argv)
-
-    # Apply upstream preset — overrides target + upstream_format on default provider
-    default_provider_spec = _apply_upstream_preset(args, default_provider_spec)
 
     auto_launch_config = _resolve_auto_launch_config_name(auto_launch_config)
 
