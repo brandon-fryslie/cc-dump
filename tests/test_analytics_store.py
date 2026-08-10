@@ -193,94 +193,6 @@ def test_store_handles_multiple_tools():
 # ─── Query Method Tests ────────────────────────────────────────────────────────
 
 
-def test_get_session_stats_empty():
-    """Empty store returns zeros."""
-    store = AnalyticsStore()
-    stats = store.get_session_stats()
-
-    assert stats["input_tokens"] == 0
-    assert stats["output_tokens"] == 0
-    assert stats["cache_read_tokens"] == 0
-    assert stats["cache_creation_tokens"] == 0
-
-
-def test_get_session_stats_with_data():
-    """Session stats sum across all turns."""
-    store = AnalyticsStore()
-
-    # Create turns with different token counts
-    store._turns = [
-        TurnRecord(
-            sequence_num=1,
-            model="claude-sonnet-4",
-            stop_reason="end_turn",
-            input_tokens=100,
-            output_tokens=50,
-            cache_read_tokens=200,
-            cache_creation_tokens=50,
-            request_json="{}",
-        ),
-        TurnRecord(
-            sequence_num=2,
-            model="claude-sonnet-4",
-            stop_reason="end_turn",
-            input_tokens=150,
-            output_tokens=75,
-            cache_read_tokens=300,
-            cache_creation_tokens=25,
-            request_json="{}",
-        ),
-    ]
-
-    stats = store.get_session_stats()
-
-    assert stats["input_tokens"] == 250
-    assert stats["output_tokens"] == 125
-    assert stats["cache_read_tokens"] == 500
-    assert stats["cache_creation_tokens"] == 75
-
-
-def test_get_latest_turn_stats_empty():
-    """Empty store returns None."""
-    store = AnalyticsStore()
-    assert store.get_latest_turn_stats() is None
-
-
-def test_get_latest_turn_stats_with_data():
-    """Latest turn stats returns most recent turn."""
-    store = AnalyticsStore()
-
-    store._turns = [
-        TurnRecord(
-            sequence_num=1,
-            model="claude-sonnet-4",
-            stop_reason="end_turn",
-            input_tokens=100,
-            output_tokens=50,
-            cache_read_tokens=200,
-            cache_creation_tokens=50,
-            request_json="{}",
-        ),
-        TurnRecord(
-            sequence_num=2,
-            model="claude-haiku-4",
-            stop_reason="end_turn",
-            input_tokens=150,
-            output_tokens=75,
-            cache_read_tokens=300,
-            cache_creation_tokens=25,
-            request_json="{}",
-        ),
-    ]
-
-    latest = store.get_latest_turn_stats()
-
-    assert latest["sequence_num"] == 2
-    assert latest["model"] == "claude-haiku-4"
-    assert latest["input_tokens"] == 150
-    assert latest["output_tokens"] == 75
-
-
 # ─── Unified Analytics Dashboard Snapshot Tests ───────────────────────────────
 
 
@@ -365,7 +277,7 @@ def test_get_dashboard_snapshot_merges_current_turn():
     assert tail["input_total"] == 500
 
 
-# ─── Tool Economics Query Tests ────────────────────────────────────────────────
+# ─── Shared multi-turn test store ─────────────────────────────────────────────
 
 
 def setup_test_store() -> AnalyticsStore:
@@ -426,88 +338,6 @@ def setup_test_store() -> AnalyticsStore:
     )
 
     return store
-
-
-def test_get_tool_economics_empty():
-    """Empty store returns empty list."""
-    store = AnalyticsStore()
-    assert store.get_tool_economics() == []
-
-
-def test_get_tool_economics_aggregation():
-    """Test basic aggregation of tool invocations."""
-    store = setup_test_store()
-    rows = store.get_tool_economics()
-
-    # Should have 3 distinct tools
-    assert len(rows) == 3
-
-    # Find each tool in results
-    read_row = next((r for r in rows if r.name == "Read"), None)
-    bash_row = next((r for r in rows if r.name == "Bash"), None)
-    write_row = next((r for r in rows if r.name == "Write"), None)
-
-    assert read_row is not None
-    assert bash_row is not None
-    assert write_row is not None
-
-    # Check basic counts
-    assert read_row.calls == 1
-    assert read_row.input_tokens == 600
-    assert read_row.result_tokens == 1000
-
-    assert bash_row.calls == 1
-    assert bash_row.input_tokens == 400
-    assert bash_row.result_tokens == 500
-
-    assert write_row.calls == 1
-    assert write_row.input_tokens == 500
-    assert write_row.result_tokens == 200
-
-
-def test_get_tool_economics_cache_attribution():
-    """Test proportional cache attribution."""
-    store = setup_test_store()
-    rows = store.get_tool_economics()
-
-    # Find tools from turn 1 (which has cache_read_tokens = 2000)
-    read_row = next((r for r in rows if r.name == "Read"), None)
-    bash_row = next((r for r in rows if r.name == "Bash"), None)
-
-    # Read: 600 input / 1000 total = 60% share of cache
-    # Expected cache: 2000 * 0.6 = 1200
-    assert read_row.cache_read_tokens == 1200
-
-    # Bash: 400 input / 1000 total = 40% share of cache
-    # Expected cache: 2000 * 0.4 = 800
-    assert bash_row.cache_read_tokens == 800
-
-    # Write is from turn 2 (cache_read_tokens = 1000, single tool gets all)
-    write_row = next((r for r in rows if r.name == "Write"), None)
-    assert write_row.cache_read_tokens == 1000
-
-
-def test_get_tool_economics_sorting():
-    """Results should be sorted by norm_cost descending."""
-    store = setup_test_store()
-    rows = store.get_tool_economics()
-
-    # Costs should be descending
-    for i in range(len(rows) - 1):
-        assert rows[i].norm_cost >= rows[i + 1].norm_cost
-
-
-def test_get_tool_economics_breakdown_mode():
-    """Breakdown mode groups by (tool, model)."""
-    store = setup_test_store()
-    rows = store.get_tool_economics(group_by_model=True)
-
-    # Should have 3 rows (each tool appears once per model)
-    assert len(rows) == 3
-
-    # Check each row has a model field
-    for row in rows:
-        assert row.model is not None
 
 
 # ─── State Management Tests ────────────────────────────────────────────────────
@@ -692,8 +522,8 @@ def test_openai_tool_correlation_in_analytics():
     assert turn.tool_invocations[0].tool_name == "get_weather"
 
 
-def test_turn_metrics_snapshot_has_versioned_schema_and_linkage_keys():
-    """Per-turn metrics snapshot exposes stable schema + request/session linkage."""
+def test_turn_record_captures_linkage_and_retry_metadata():
+    """Ingestion records request/session linkage, retry, and command metadata on the turn."""
     store = AnalyticsStore()
     request_id = "req-metrics"
     request = {
@@ -754,29 +584,24 @@ def test_turn_metrics_snapshot_has_versioned_schema_and_linkage_keys():
         )
     )
 
-    snapshot = store.get_turn_metrics_snapshot()
-    assert snapshot["schema"] == "cc_dump.per_turn_metrics"
-    assert snapshot["version"] == 1
-    assert len(snapshot["records"]) == 1
-
-    record = snapshot["records"][0]
-    assert record["request_id"] == request_id
-    assert record["session_id"] == "11111111-2222-3333-4444-555555555555"
-    assert record["sequence_num"] == 1
-    assert record["provider"] == "anthropic"
-    assert record["purpose"] == "primary"
-    assert record["transport_retry_count"] == 2
-    assert record["retry_ordinal"] == 0
-    assert record["is_retry"] is False
-    assert record["was_interrupted"] is True
-    assert record["latency_ms"] == pytest.approx(5.1)
-    assert record["tool_invocation_count"] == 1
-    assert record["tool_names"] == ["Bash"]
-    assert record["command_count"] == 1
-    assert record["command_families"] == ["git"]
+    assert len(store._turns) == 1
+    turn = store._turns[0]
+    assert turn.request_id == request_id
+    assert turn.session_id == "11111111-2222-3333-4444-555555555555"
+    assert turn.sequence_num == 1
+    assert turn.provider == "anthropic"
+    assert turn.purpose == "primary"
+    assert turn.transport_retry_count == 2
+    assert turn.retry_ordinal == 0
+    assert turn.was_interrupted is True
+    assert turn.latency_ms == pytest.approx(5.1)
+    assert len(turn.tool_invocations) == 1
+    assert turn.tool_invocations[0].tool_name == "Bash"
+    assert turn.command_count == 1
+    assert list(turn.command_families) == ["git"]
 
 
-def test_turn_metrics_snapshot_derives_retry_ordinal_from_request_fingerprint():
+def test_retry_ordinal_derives_from_request_fingerprint():
     """Repeated identical requests increment retry ordinal deterministically."""
     store = AnalyticsStore()
     request = {
@@ -810,13 +635,11 @@ def test_turn_metrics_snapshot_derives_retry_ordinal_from_request_fingerprint():
         )
     )
 
-    records = store.get_turn_metrics_snapshot()["records"]
-    assert len(records) == 2
-    assert records[0]["retry_ordinal"] == 0
-    assert records[0]["is_retry"] is False
-    assert records[1]["retry_ordinal"] == 1
-    assert records[1]["is_retry"] is True
-    assert records[0]["retry_key"] == records[1]["retry_key"]
+    turns = store._turns
+    assert len(turns) == 2
+    assert turns[0].retry_ordinal == 0
+    assert turns[1].retry_ordinal == 1
+    assert turns[0].retry_key == turns[1].retry_key
 
 
 def test_request_meta_prunes_unmatched_header_entries(monkeypatch):

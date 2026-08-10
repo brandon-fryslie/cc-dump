@@ -113,8 +113,7 @@ def test_m1_live_proxy_analytics_budget_tokens_present():
     ):
         store.on_event(event)
 
-    latest = store.get_latest_turn_stats()
-    assert latest is not None
+    latest = store.get_dashboard_snapshot()["timeline"][-1]
     assert latest["model"] == "claude-sonnet-4"
     assert latest["output_tokens"] > 0
 
@@ -178,8 +177,7 @@ def test_m3_replay_parity_matches_live_analytics_projection():
     for event in replay_events:
         replay_store.on_event(event)
 
-    assert replay_store.get_session_stats() == live_store.get_session_stats()
-    assert replay_store.get_latest_turn_stats() == live_store.get_latest_turn_stats()
+    assert replay_store.get_dashboard_snapshot() == live_store.get_dashboard_snapshot()
 
 
 def test_m4_tmux_event_subscriber_is_noop():
