@@ -256,7 +256,6 @@ class TestBuildLaunchProfile:
                 cc_dump.providers.DEFAULT_PROVIDER_KEY,
                 proxy_url="http://127.0.0.1:3344",
                 target="https://api.anthropic.com",
-                proxy_mode="reverse",
             )
         }
         profile = build_launch_profile(config, provider_endpoints=endpoints, session_id="")

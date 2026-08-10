@@ -961,18 +961,13 @@ class CcDumpApp(App):
                     "name": spec.display_name,
                     "proxy_url": provider.endpoint.proxy_url,
                     "target": provider.endpoint.target or "",
-                    "proxy_mode": provider.endpoint.proxy_mode,
                     "base_url_env": spec.base_url_env,
                     "client_hint": spec.client_hint,
                 }
             )
-        provider_modes = [p.endpoint.proxy_mode for p in self._providers.all()]
-        unique_modes = set(provider_modes)
-        proxy_mode = provider_modes[0] if len(unique_modes) == 1 and provider_modes else "mixed"
 
         info = {
             "proxy_url": proxy_url,
-            "proxy_mode": proxy_mode,
             "target": primary_target,
             "providers": provider_rows,
             "session_id": default.last_notified_session,

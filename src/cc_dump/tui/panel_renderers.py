@@ -297,7 +297,6 @@ def render_info_panel(info: dict) -> Text:
     Args:
         info: Dict with server info fields:
             - proxy_url: Full proxy URL (e.g., "http://127.0.0.1:12345")
-            - proxy_mode: "reverse", "forward", or "mixed"
             - target: Upstream target URL (or None)
             - session_id: Session ID hex string (or None)
             - recording_path: HAR recording path (or None)

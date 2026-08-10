@@ -451,7 +451,6 @@ def plan_proxy_call(
     body_bytes: bytes,
     provider: str,
     target_host: str | None,
-    required_origin: str | None,
     request_pipeline: RequestPipeline,
 ) -> PlannedCall:
     """Resolve everything about an incoming proxy request into typed data.
@@ -469,10 +468,9 @@ def plan_proxy_call(
     spec = cc_dump.providers.get_provider_spec(provider)
 
     # Step 1: resolve upstream URL (or refuse).
-    target = cc_dump.pipeline.proxy_flow.resolve_proxy_target_for_origin(
+    target = cc_dump.pipeline.proxy_flow.resolve_proxy_target(
         path,
         target_host,
-        required_origin=required_origin,
     )
     if target.error_reason:
         request_id = new_request_id()
