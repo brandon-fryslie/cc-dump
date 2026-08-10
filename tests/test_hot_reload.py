@@ -811,7 +811,7 @@ class TestHotReloadModuleStructure:
             assert exc in _EXCLUDED_FILES, f"Expected {exc} to be excluded"
 
     def test_verified_stable_modules_are_excluded_and_watched(self):
-        """The 4 verified-stable modules stay out of reload AND warn on edit.
+        """The 3 verified-stable modules stay out of reload AND warn on edit.
 
         Each carries an H1 (boundary type the stable proxy isinstance-checks) or H2
         (runtime-mutated module singleton other live objects hold) hazard, so reloading
@@ -828,7 +828,6 @@ class TestHotReloadModuleStructure:
         stable = [
             "pipeline/proxy_call.py",
             "providers.py",
-            "pipeline/copilot_translate.py",
             "io/logging_setup.py",
         ]
         reload_mods = set(_RELOAD_ORDER)
