@@ -145,6 +145,56 @@ _reloadable_rel_paths: set[str] = set()
 logger = logging.getLogger(__name__)
 
 
+# In-scope classification excludes package markers and throwaway experiments
+# (per epic dump-hot-reload-1i4): only these files are exempt from the reloadable-or-stable
+# requirement the completeness gate enforces.
+_OUT_OF_SCOPE_MARKERS = ("__init__.py", "__main__.py")
+_EXPERIMENTS_PREFIX = "experiments/"
+
+
+def _reloadable_rel_paths_from_order() -> set[str]:
+    """Package-relative source path of every module in _RELOAD_ORDER.
+
+    e.g. "cc_dump.core.palette" -> "core/palette.py", "cc_dump.tui.rendering" -> "tui/rendering.py".
+
+    // [LAW:one-source-of-truth] The module-name -> relpath mapping lives here alone;
+    //   both init()'s watch set and unclassified_modules()'s gate derive from it.
+    """
+    return {name.removeprefix("cc_dump.").replace(".", "/") + ".py" for name in _RELOAD_ORDER}
+
+
+def unclassified_modules(package_dir: str | Path) -> list[str]:
+    """In-scope cc_dump modules classified as neither reloadable nor stable.
+
+    An empty list means every module on disk is accounted for: reloadable (in
+    _RELOAD_ORDER) or stable (in _EXCLUDED_FILES ∪ _EXCLUDED_MODULES). A non-empty
+    list is the silent-drift crack reopening — a new module that hot-reload would
+    ignore without warning. Sorted for deterministic gate output.
+
+    Stable entries mix package-relative paths ("pipeline/proxy.py") with bare
+    filenames ("hot_reload.py"), so membership is checked both ways. Bare-name
+    matching is unambiguous only because in-scope basenames are unique; the sole
+    duplicated basename, __init__.py, is out of scope.
+
+    // [LAW:no-silent-failure] This is the check that makes a forgotten module fail
+    //   loudly at build time instead of no-op'ing at runtime.
+    """
+    reloadable = _reloadable_rel_paths_from_order()
+    stable = _EXCLUDED_FILES | _EXCLUDED_MODULES
+    root = Path(package_dir)
+
+    offenders: list[str] = []
+    for path in root.rglob("*.py"):
+        rel = path.relative_to(root).as_posix()
+        if rel.endswith(_OUT_OF_SCOPE_MARKERS) or rel.startswith(_EXPERIMENTS_PREFIX):
+            continue
+        is_reloadable_module = rel in reloadable
+        is_stable_module = rel in stable or path.name in stable
+        if not is_reloadable_module and not is_stable_module:
+            offenders.append(rel)
+    return sorted(offenders)
+
+
 def init(package_dir: str) -> None:
     """Initialize watcher with the package source directory.
 
@@ -160,13 +210,8 @@ def init(package_dir: str) -> None:
 
     _scan_excluded_hashes()
 
-    # Build reloadable path set from _RELOAD_ORDER
-    # e.g. "cc_dump.core.palette" → "palette.py", "cc_dump.tui.rendering" → "tui/rendering.py"
     _reloadable_rel_paths.clear()
-    for mod_name in _RELOAD_ORDER:
-        # Strip "cc_dump." prefix, convert dots to slashes, add .py
-        rel = mod_name.removeprefix("cc_dump.").replace(".", "/") + ".py"
-        _reloadable_rel_paths.add(rel)
+    _reloadable_rel_paths.update(_reloadable_rel_paths_from_order())
 
 
 def get_watch_paths() -> list[str]:
