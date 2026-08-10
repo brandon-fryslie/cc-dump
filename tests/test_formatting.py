@@ -1494,17 +1494,6 @@ class TestFormatOpenAIRequest:
         assert msg_blocks[2].role == "user"
 
 
-class TestProviderDispatchFormatting:
-    def test_copilot_uses_openai_family_formatter(self):
-        body = {
-            "model": "gpt-4o",
-            "messages": [{"role": "user", "content": "Hello"}],
-        }
-        blocks = format_request_for_provider("copilot", body, _fresh_openai_state())
-        headers = _find_blocks(blocks, HeaderBlock)
-        assert any("Copilot" in h.label for h in headers)
-
-
 class TestFormatOpenAICompleteResponse:
     """Tests for format_openai_complete_response block generation."""
 

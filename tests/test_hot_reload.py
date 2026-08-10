@@ -311,22 +311,21 @@ class TestHotReloadMultiSessionTabs:
             assert tabs.active == default.tab_id
             assert app._sessions.active().domain_store is default.domain_store
 
-    async def test_hot_reload_preserves_distinct_provider_tab_ids(self):
-        """Multi-provider tabs survive hot-reload without a duplicate widget id.
+    async def test_hot_reload_preserves_distinct_session_tab_ids(self):
+        """Multiple session tabs survive hot-reload without a duplicate widget id.
 
-        A non-default provider (openai) gets its own tab + ConversationView with a
-        distinct id ("conversation-view-1"). Hot-reload re-mounts every conversation
-        at once, so any two sessions sharing a conv_id would crash here with
-        Textual's DuplicateIds. This asserts the reachable multi-tab path stays
-        collision-free. Regression for lit-9ccff100-f42bde59.
+        A second session gets its own tab + ConversationView with a distinct id
+        ("conversation-view-1"). Hot-reload re-mounts every conversation at once, so
+        any two sessions sharing a conv_id would crash here with Textual's
+        DuplicateIds. This asserts the reachable multi-tab path stays collision-free.
+        Regression for lit-9ccff100-f42bde59.
         """
-        from cc_dump import providers
         from cc_dump.tui import hot_reload_controller as hr
         from cc_dump.tui.widget_factory import ConversationView
         from tests.harness import run_app
 
         async with run_app() as (pilot, app):
-            app._ensure_session(providers.provider_session_key("openai"))
+            app._ensure_session("session-alpha")
             await pilot.pause()
 
             # Two conversation views, each with a distinct id, both mounted. (A
@@ -370,7 +369,6 @@ class TestHotReloadMultiSessionTabs:
         would not expose the bug. Minting without registering is the only way to
         isolate it.
         """
-        from cc_dump import providers
         from tests.harness import run_app
 
         def _index(widget_id: str) -> int:
@@ -383,8 +381,8 @@ class TestHotReloadMultiSessionTabs:
 
             # _build_session is the id-minting factory; call it directly so no session
             # is registered — len(sessions) is identical for both calls.
-            first = app._build_session(providers.provider_session_key("openai"))
-            second = app._build_session(providers.provider_session_key("copilot"))
+            first = app._build_session("session-alpha")
+            second = app._build_session("session-beta")
 
             assert len(app._sessions.all()) == count_before  # nothing registered
 

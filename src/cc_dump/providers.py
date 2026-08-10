@@ -81,38 +81,6 @@ _PROVIDERS: dict[str, ProviderSpec] = {
         client_hint="claude",
         upstream_format="anthropic",
     ),
-    "openai": ProviderSpec(
-        key="openai",
-        display_name="OpenAI",
-        tab_title="OpenAI",
-        tab_short_prefix="OAI",
-        protocol_family="openai",
-        api_paths=("/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses"),
-        har_request_url="https://api.openai.com/v1/chat/completions",
-        base_url_env="OPENAI_BASE_URL",
-        proxy_type="reverse",
-        default_target="https://api.openai.com/v1",
-        optional_proxy=True,
-        url_markers=("api.openai.com",),
-        client_hint="openai-api",
-        upstream_format="openai-chat",
-    ),
-    "copilot": ProviderSpec(
-        key="copilot",
-        display_name="Copilot",
-        tab_title="Copilot",
-        tab_short_prefix="CPL",
-        protocol_family="openai",
-        api_paths=("/chat/completions", "/v1/chat/completions"),
-        har_request_url="https://api.githubcopilot.com/chat/completions",
-        base_url_env="COPILOT_PROXY_URL",
-        proxy_type="forward",
-        default_target="https://api.githubcopilot.com",
-        optional_proxy=True,
-        url_markers=("api.githubcopilot.com", "githubcopilot.com"),
-        forward_proxy_hosts=("api.githubcopilot.com",),
-        upstream_format="openai-chat",
-    ),
 }
 
 def build_provider_endpoint(
@@ -333,13 +301,16 @@ def _normalize_connect_host(host: str) -> str:
 def infer_provider_from_complete_message(message: dict[str, object]) -> str | None:
     """Best-effort provider inference from complete response shape.
 
-    Returns None when message shape does not identify a known provider family.
+    Returns None when the message shape does not identify a registered provider
+    family, so callers fall back to the default provider.
     """
     # // [LAW:dataflow-not-control-flow] Provider family is derived from response markers.
+    # // [LAW:one-source-of-truth] The registry is the single authority on which
+    # //   providers exist. cc-dump is Anthropic-only, so an anthropic message
+    # //   identifies the sole provider and every other shape resolves to None —
+    # //   never a key get_provider_spec can no longer resolve.
     if message.get("type") == "message":
         return "anthropic"
-    if message.get("object") == "chat.completion":
-        return "openai"
     return None
 
 
