@@ -123,29 +123,19 @@ def _recording_path(recordings_dir: Path, timestamp: str) -> str:
 
 
 @dataclass(frozen=True)
-class ProviderProxyBinding:
-    """Runtime proxy binding for one provider.
+class ProxyRuntime:
+    """Runtime-owned proxy binding for the Anthropic endpoint.
 
-    // [LAW:one-type-per-behavior] One binding type owns server, handler, and endpoint state.
+    // [LAW:no-mode-explosion] One provider means one server/handler/endpoint,
+    //   not a tuple of bindings keyed by provider.
+    // [LAW:one-source-of-truth] The active proxy topology is one value.
     """
 
-    spec: cc_dump.providers.ProviderSpec
     server: http.server.ThreadingHTTPServer
     handler_class: type[ProxyHandler]
     port: int
     endpoint: cc_dump.providers.ProviderEndpoint
-
-
-@dataclass(frozen=True)
-class ProxyRuntime:
-    """Runtime-owned provider bindings and derived state.
-
-    // [LAW:one-source-of-truth] Active provider topology is owned by one value.
-    """
-
-    bindings: tuple[ProviderProxyBinding, ...]
-    provider_endpoints: cc_dump.providers.ProviderEndpointMap
-    provider_states: dict[str, "ProviderRuntimeState"]
+    state: "ProviderRuntimeState"
 
 
 ProviderRuntimeState = cc_dump.core.formatting_impl.ProviderRuntimeState
@@ -153,35 +143,6 @@ ProviderRuntimeState = cc_dump.core.formatting_impl.ProviderRuntimeState
 
 def _new_provider_state() -> ProviderRuntimeState:
     return ProviderRuntimeState()
-
-
-def _active_provider_specs(
-    args: argparse.Namespace,
-    default_provider_spec: cc_dump.providers.ProviderSpec,
-) -> tuple[cc_dump.providers.ProviderSpec, ...]:
-    optional_specs = tuple(
-        spec
-        for spec in cc_dump.providers.optional_proxy_provider_specs()
-        if not getattr(args, f"no_{spec.key}")
-    )
-    return (default_provider_spec, *optional_specs)
-
-
-def _provider_bind_port(
-    args: argparse.Namespace,
-    spec: cc_dump.providers.ProviderSpec,
-) -> int:
-    attr_name = "port" if spec.key == cc_dump.providers.DEFAULT_PROVIDER_KEY else f"{spec.key}_port"
-    return int(getattr(args, attr_name))
-
-
-def _provider_target(
-    args: argparse.Namespace,
-    spec: cc_dump.providers.ProviderSpec,
-) -> str:
-    attr_name = "target" if spec.key == cc_dump.providers.DEFAULT_PROVIDER_KEY else f"{spec.key}_target"
-    raw_target = str(getattr(args, attr_name))
-    return raw_target.rstrip("/")
 
 
 def _start_proxy_server(host, port, handler_class):
@@ -193,57 +154,24 @@ def _start_proxy_server(host, port, handler_class):
     return srv, ap, t
 
 
-def _start_provider_binding(
+def _build_proxy_runtime(
     *,
     args: argparse.Namespace,
-    spec: cc_dump.providers.ProviderSpec,
     event_q: queue.Queue[PipelineEvent],
-) -> ProviderProxyBinding:
-    provider_target = _provider_target(args, spec)
+) -> ProxyRuntime:
+    provider_target = str(args.target).rstrip("/")
     handler = make_handler_class(
-        provider=spec.key,
         target_host=provider_target,
         event_queue=event_q,
     )
-    server, port, _thread = _start_proxy_server(
-        args.host,
-        _provider_bind_port(args, spec),
-        handler,
-    )
-    endpoint = cc_dump.providers.build_provider_endpoint(
-        spec.key,
-        proxy_url=f"http://{args.host}:{port}",
-        target=provider_target,
-    )
-    return ProviderProxyBinding(
-        spec=spec,
+    server, port, _thread = _start_proxy_server(args.host, int(args.port), handler)
+    endpoint = cc_dump.providers.default_provider_endpoint(args.host, port, provider_target)
+    return ProxyRuntime(
         server=server,
         handler_class=handler,
         port=port,
         endpoint=endpoint,
-    )
-
-
-def _build_proxy_runtime(
-    *,
-    args: argparse.Namespace,
-    default_provider_spec: cc_dump.providers.ProviderSpec,
-    event_q: queue.Queue[PipelineEvent],
-) -> ProxyRuntime:
-    active_specs = _active_provider_specs(args, default_provider_spec)
-    # [LAW:dataflow-not-control-flow] Binding order is fixed; variability lives in active_specs.
-    bindings = tuple(
-        _start_provider_binding(
-            args=args,
-            spec=spec,
-            event_q=event_q,
-        )
-        for spec in active_specs
-    )
-    return ProxyRuntime(
-        bindings=bindings,
-        provider_endpoints={binding.spec.key: binding.endpoint for binding in bindings},
-        provider_states={binding.spec.key: _new_provider_state() for binding in bindings},
+        state=_new_provider_state(),
     )
 
 
@@ -267,16 +195,16 @@ def _app_store_context(base_context: dict[str, object], app: CcDumpApp) -> dict[
     }
 
 
-def _shutdown_binding(binding: ProviderProxyBinding, *, timeout: float) -> None:
-    shutdown_thread = threading.Thread(target=binding.server.shutdown, daemon=True)
+def _shutdown_proxy(proxy_runtime: ProxyRuntime, *, timeout: float) -> None:
+    shutdown_thread = threading.Thread(target=proxy_runtime.server.shutdown, daemon=True)
     shutdown_thread.start()
     try:
         shutdown_thread.join(timeout=timeout)
     except KeyboardInterrupt:
         pass
     if shutdown_thread.is_alive():
-        logger.warning("Timeout during shutdown for %s - forcing close", binding.spec.key)
-    binding.server.server_close()
+        logger.warning("Timeout during shutdown - forcing close")
+    proxy_runtime.server.server_close()
 
 
 def _existing_path(path: str | None) -> str | None:
@@ -496,7 +424,7 @@ def _shutdown_runtime(
     *,
     app: CcDumpApp,
     tmux_ctrl,
-    bindings: tuple[ProviderProxyBinding, ...],
+    proxy_runtime: ProxyRuntime,
     router: EventRouter,
     har_recorders: list[cc_dump.pipeline.har_recorder.HARRecordingSubscriber],
     actual_port: int,
@@ -513,10 +441,8 @@ def _shutdown_runtime(
     if tmux_ctrl:
         tmux_ctrl.cleanup()
     # Graceful shutdown with timeout for in-flight requests
-    if bindings:
-        logger.info("Shutting down gracefully (press Ctrl+C again to force quit)...")
-    for binding in bindings:
-        _shutdown_binding(binding, timeout=3.0)
+    logger.info("Shutting down gracefully (press Ctrl+C again to force quit)...")
+    _shutdown_proxy(proxy_runtime, timeout=3.0)
 
     # Clean up other resources
     router.stop()
@@ -573,23 +499,18 @@ def main():
     # // [LAW:one-type-per-behavior] All providers share ProxyHandler, parameterized by factory.
     proxy_runtime = _build_proxy_runtime(
         args=args,
-        default_provider_spec=default_provider_spec,
         event_q=event_q,
     )
-    bindings = proxy_runtime.bindings
-    provider_endpoints = proxy_runtime.provider_endpoints
-    provider_states = proxy_runtime.provider_states
-    default_binding = bindings[0]
-    actual_port = default_binding.port
-    default_target = default_binding.endpoint.target
+    actual_port = proxy_runtime.port
+    default_target = proxy_runtime.endpoint.target
+    state = proxy_runtime.state
+    # // [LAW:one-source-of-truth] Single-entry endpoint map feeds the launcher /
+    # //   tmux path (slice .5 collapses that path to the bare endpoint).
+    provider_endpoints = {default_provider_key: proxy_runtime.endpoint}
 
     print("🚀 cc-dump proxy started")
-    for binding in bindings:
-        endpoint = binding.endpoint
-        for line in cc_dump.providers.build_provider_endpoint_detail_lines(endpoint):
-            print(f"   {line}")
-    # [LAW:one-source-of-truth] Default-state alias points at canonical per-provider state.
-    state = provider_states[default_provider_key]
+    for line in cc_dump.providers.build_provider_endpoint_detail_lines(proxy_runtime.endpoint):
+        print(f"   {line}")
 
     # Set up event router with subscribers
     router = EventRouter(event_q)
@@ -620,9 +541,8 @@ def main():
     pipeline = RequestPipeline(
         interceptors=[cc_dump.pipeline.sentinel.make_interceptor(tmux_ctrl)],
     )
-    # // [LAW:single-enforcer] One shared request pipeline is applied at every provider handler boundary.
-    for binding in bindings:
-        binding.handler_class.request_pipeline = pipeline
+    # // [LAW:single-enforcer] One shared request pipeline is applied at the handler boundary.
+    proxy_runtime.handler_class.request_pipeline = pipeline
 
     router.start()
 
@@ -651,7 +571,6 @@ def main():
         display_sub.queue,
         state,
         router=router,
-        provider_states=provider_states,
         analytics_store=analytics_store,
         host=args.host,
         port=actual_port,
@@ -664,7 +583,6 @@ def main():
         view_store=view_store,
         domain_store=domain_store,
         store_context=store_context,
-        provider_endpoints=provider_endpoints,
         auto_launch_config=auto_launch_config,
         auto_launch_extra_args=auto_launch_extra_args,
     )
@@ -676,7 +594,7 @@ def main():
         _shutdown_runtime(
             app=app,
             tmux_ctrl=tmux_ctrl,
-            bindings=bindings,
+            proxy_runtime=proxy_runtime,
             router=router,
             har_recorders=har_recorders,
             actual_port=actual_port,

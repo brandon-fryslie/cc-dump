@@ -16,9 +16,9 @@ lifecycle as data, so the proxy interior becomes a straight pipe.
 //   The same operations execute in the same order on every request; the
 //   values carry the differences.
 //
-// // [LAW:one-source-of-truth] upstream_format -> translator/header-builder
-//   dispatch tables live here, with explicit identity rows. No `.get(...)`
-//   silent-default lookups elsewhere in the proxy.
+// // [LAW:no-mode-explosion] Anthropic is passthrough-only: request headers are
+//   built by one function, and there is no body/SSE translation, so no
+//   format-keyed dispatch tables remain.
 //
 // // [LAW:one-type-per-behavior] Origin-resolution failure and interceptor
 //   short-circuit are both "this call refuses to contact upstream and brings
@@ -56,7 +56,7 @@ from cc_dump.pipeline.event_types import (
     sse_progress_payload,
 )
 from cc_dump.pipeline.response_assembler import ResponseAssembler
-from cc_dump.providers import ProviderSpec, UpstreamFormat
+from cc_dump.providers import ProviderSpec
 
 if TYPE_CHECKING:
     from cc_dump.pipeline.proxy import StreamSink
@@ -117,19 +117,10 @@ class RequestPipeline:
         return body, url, None
 
 
-# ─── Per-format dispatch tables ──────────────────────────────────────────────
-# // [LAW:dataflow-not-control-flow] Each upstream_format has exactly one row.
-# // [LAW:one-type-per-behavior] Identity translation is a function, not a
-# //   missing key. The proxy never branches on `if translator is None`.
-
-
-def _identity_translate_request(body: dict, url: str) -> tuple[dict, str]:
-    return body, url
-
-
-REQUEST_TRANSLATORS: dict[UpstreamFormat, Callable[[dict, str], tuple[dict, str]]] = {
-    "anthropic": _identity_translate_request,
-}
+# ─── Upstream request shaping ────────────────────────────────────────────────
+# // [LAW:no-mode-explosion] Anthropic is passthrough-only: no request-body
+# //   translation and no SSE translation, so there is one header builder and
+# //   no keyed dispatch.
 
 
 def _passthrough_headers(
@@ -138,21 +129,6 @@ def _passthrough_headers(
     return cc_dump.pipeline.proxy_flow.build_upstream_headers(
         raw_headers, content_length=len(body_bytes),
     )
-
-
-HeaderBuilder = Callable[[Mapping[str, str], bytes], dict[str, str]]
-
-HEADER_BUILDERS: dict[UpstreamFormat, HeaderBuilder] = {
-    "anthropic": _passthrough_headers,
-}
-
-
-# // [LAW:dataflow-not-control-flow] upstream_format -> SSE-translation method
-# //   on the proxy handler. None means "no translation, default fan-out".
-# //   Anthropic is passthrough-only, so the sole row is None.
-TRANSLATION_STREAM_HANDLERS: dict[UpstreamFormat, str | None] = {
-    "anthropic": None,
-}
 
 
 # ─── UpstreamResult: typed outcome of execute_upstream ───────────────────────
@@ -213,11 +189,10 @@ class ResponseEventEmitter:
     events is data, not a branch.
     """
 
-    # // [LAW:dataflow-not-control-flow] These class-level fields make the
-    # //   emitter usable without isinstance checks: the proxy reads them
+    # // [LAW:dataflow-not-control-flow] This class-level field makes the
+    # //   emitter usable without isinstance checks: the proxy reads it
     # //   uniformly on traced and non-traced calls.
     request_id: str = ""
-    translation_handler_name: str | None = None
 
     def emit_unary(
         self, upstream: UnaryUpstream
@@ -255,15 +230,9 @@ class TracedResponseEventEmitter(ResponseEventEmitter):
     // [LAW:single-enforcer] Response-side event construction lives here only.
     """
 
-    def __init__(
-        self, *, request_id: str, provider: str, upstream_format: UpstreamFormat
-    ) -> None:
+    def __init__(self, *, request_id: str, provider: str) -> None:
         self.request_id = request_id
         self._provider = provider
-        # // [LAW:dataflow-not-control-flow] Translation strategy is data,
-        # //   resolved once at construction. The proxy never re-asks the
-        # //   provider/format question.
-        self.translation_handler_name = TRANSLATION_STREAM_HANDLERS[upstream_format]
 
     def _envelope(self, seq: int) -> dict:
         return event_envelope(
@@ -516,13 +485,11 @@ def plan_proxy_call(
     request_id = new_request_id()
     safe_req_headers = safe_headers(raw_headers)
 
-    # Translate request body+URL by upstream_format.
-    translator = REQUEST_TRANSLATORS[spec.upstream_format]
-    translated_body, translated_url = translator(parsed_body, target.upstream_url)
-
+    # // [LAW:no-mode-explosion] Anthropic is passthrough: the parsed body and
+    # //   target URL go straight into the request pipeline, no translation step.
     # Run the request pipeline (default = empty = identity).
     final_body, final_url, intercept_response = request_pipeline.process(
-        translated_body, translated_url,
+        parsed_body, target.upstream_url,
     )
     upstream_body_bytes = json.dumps(final_body).encode()
 
@@ -553,9 +520,7 @@ def plan_proxy_call(
             request_events=request_events,
         )
 
-    # Build upstream headers using the format-keyed dispatch.
-    header_builder = HEADER_BUILDERS[spec.upstream_format]
-    upstream_headers = header_builder(raw_headers, upstream_body_bytes)
+    upstream_headers = _passthrough_headers(raw_headers, upstream_body_bytes)
 
     return TracedCall(
         provider=provider,
@@ -570,7 +535,6 @@ def plan_proxy_call(
         emitter=TracedResponseEventEmitter(
             request_id=request_id,
             provider=provider,
-            upstream_format=spec.upstream_format,
         ),
     )
 

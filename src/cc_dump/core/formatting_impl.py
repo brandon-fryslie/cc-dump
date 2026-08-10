@@ -13,7 +13,6 @@ from enum import Enum
 from typing import NamedTuple
 
 import cc_dump.core.segmentation
-import cc_dump.providers
 from cc_dump.core.analysis import (
     TurnBudget,
     compute_turn_budget,
@@ -1373,14 +1372,6 @@ def format_response_headers(status_code: int, headers_dict: dict) -> list:
 #   cc-dump is Anthropic-only, so each table holds a single row.
 
 
-_CompleteResponseFormatter = Callable[[object], list]
-
-
-_COMPLETE_RESPONSE_FORMATTERS_BY_FAMILY: dict[str, _CompleteResponseFormatter] = {
-    "anthropic": format_complete_response,
-}
-
-
 def _update_tool_descriptions(state: ProviderRuntimeState, body) -> None:
     """Extract tool descriptions from request body into state."""
     tools = body.get("tools", []) if isinstance(body, dict) else []
@@ -1426,9 +1417,10 @@ def format_request_for_provider(provider: str, body, state: ProviderRuntimeState
 
 
 def format_complete_response_for_provider(provider: str, complete_message) -> list:
-    """Dispatch complete response formatting by provider."""
-    # [LAW:no-silent-failure] Loud lookup: an unregistered family raises here
-    #   rather than silently formatting under the Anthropic default.
-    spec = cc_dump.providers.get_provider_spec(provider)
-    formatter = _COMPLETE_RESPONSE_FORMATTERS_BY_FAMILY[spec.protocol_family]
-    return formatter(complete_message)
+    """Format a complete response.
+
+    // [LAW:no-mode-explosion] Anthropic is the only provider family, so response
+    //   formatting is unconditional. The `provider` argument is vestigial (see
+    //   providers.get_provider_spec).
+    """
+    return format_complete_response(complete_message)

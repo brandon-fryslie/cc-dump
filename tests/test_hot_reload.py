@@ -811,7 +811,7 @@ class TestHotReloadModuleStructure:
             assert exc in _EXCLUDED_FILES, f"Expected {exc} to be excluded"
 
     def test_verified_stable_modules_are_excluded_and_watched(self):
-        """The 3 verified-stable modules stay out of reload AND warn on edit.
+        """The verified-stable modules stay out of reload AND warn on edit.
 
         Each carries an H1 (boundary type the stable proxy isinstance-checks) or H2
         (runtime-mutated module singleton other live objects hold) hazard, so reloading
@@ -827,7 +827,6 @@ class TestHotReloadModuleStructure:
 
         stable = [
             "pipeline/proxy_call.py",
-            "providers.py",
             "io/logging_setup.py",
         ]
         reload_mods = set(_RELOAD_ORDER)
@@ -836,6 +835,19 @@ class TestHotReloadModuleStructure:
             assert rel in _STALENESS_WATCHLIST, f"{rel} must warn on edit"
             mod_name = "cc_dump." + rel.removesuffix(".py").replace("/", ".")
             assert mod_name not in reload_mods, f"{rel} must not be in _RELOAD_ORDER"
+
+    def test_providers_is_reloadable(self):
+        """providers.py reloads: it is now pure constants + functions.
+
+        Once the multi-provider abstraction collapsed to one hardcoded Anthropic
+        spec (dump-providers-ajb.4), the H2 hazard disappeared — there is no
+        runtime-mutated `_PROVIDERS` registry any live object holds. So it leaves
+        the stable set and joins _RELOAD_ORDER (dump-providers-ajb.4).
+        """
+        from cc_dump.app.hot_reload import _EXCLUDED_FILES, _RELOAD_ORDER
+
+        assert "cc_dump.providers" in _RELOAD_ORDER
+        assert "providers.py" not in _EXCLUDED_FILES
 
     def test_silent_reload_crack_is_filled(self):
         """The 22 verified-safe modules that were in NEITHER set now reload.

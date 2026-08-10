@@ -79,27 +79,28 @@ _RELOAD_ORDER = [
     # flow. Reload is SAFE and refreshes module-level code; full pickup of method
     # changes on a held instance still needs a restart or a swap. Strictly better than
     # the previous silent no-op.
+    "cc_dump.providers",  # depends on: nothing (pure constants + functions; runtime-mutated registry removed)
     "cc_dump.core.special_content",  # no deps within project
     "cc_dump.core.token_counter",  # depends on: analysis
     "cc_dump.io.perf_logging",  # no deps within project
     "cc_dump.io.settings",  # depends on: formatting
-    "cc_dump.io.sessions",  # depends on: providers (stable)
+    "cc_dump.io.sessions",  # depends on: providers (reloadable)
     "cc_dump.app.analytics_store",  # depends on: analysis, formatting, token_counter
-    "cc_dump.app.launcher_registry",  # depends on: providers (stable)
+    "cc_dump.app.launcher_registry",  # depends on: providers (reloadable)
     "cc_dump.app.memory_stats",  # no deps within project
     "cc_dump.cli_presentation",  # depends on: io.sessions
     "cc_dump.pipeline.sentinel",  # depends on: tmux_controller (stable)
     "cc_dump.pipeline.proxy_flow",  # no deps within project
-    "cc_dump.pipeline.har_recorder",  # depends on: event_types, providers (stable)
-    "cc_dump.pipeline.har_replayer",  # depends on: event_types, providers (stable)
+    "cc_dump.pipeline.har_recorder",  # depends on: event_types, providers (reloadable)
+    "cc_dump.pipeline.har_replayer",  # depends on: event_types, providers (reloadable)
     "cc_dump.serve",  # no deps within project
     "cc_dump.tui.protocols",  # no deps within project
     "cc_dump.tui.prefix_sum_tree",  # no deps within project
     "cc_dump.tui.location_navigation",  # no deps within project
     "cc_dump.tui.request_registry",  # no deps within project
     "cc_dump.tui.view_overrides",  # depends on: formatting
-    "cc_dump.tui.provider_registry",  # depends on: formatting_impl, providers (stable)
-    "cc_dump.tui.session_registry",  # depends on: domain_store, providers (stable)
+    "cc_dump.tui.provider_registry",  # depends on: formatting_impl, providers (reloadable)
+    "cc_dump.tui.session_registry",  # depends on: domain_store, providers (reloadable)
     "cc_dump.tui.panel_sync",  # depends on: launch_config, panel widgets, widget_factory
 ]
 
@@ -116,7 +117,6 @@ _EXCLUDED_FILES = {
     # session, so they stay out of _RELOAD_ORDER AND join _STALENESS_WATCHLIST below
     # so editing one warns a restart is needed instead of failing silently.
     "pipeline/proxy_call.py",  # H1: proxy.py isinstance(planned, RefusedCall); H2: live RequestPipeline held from cli.py
-    "providers.py",  # H2: _PROVIDERS registry mutated at runtime by --upstream, read on the proxy path
     "io/logging_setup.py",  # H2: _RUNTIME guards global logging handlers; reload loses log-path + risks double-attach
     "__init__.py",  # module init
     "__main__.py",  # entry point
@@ -134,7 +134,7 @@ _STALENESS_WATCHLIST = {
     # from _EXCLUDED_FILES
     "pipeline/proxy.py", "cli.py", "pipeline/event_types.py", "pipeline/response_assembler.py",
     "app/tmux_controller.py", "io/stderr_tee.py",
-    "pipeline/proxy_call.py", "providers.py", "io/logging_setup.py",
+    "pipeline/proxy_call.py", "io/logging_setup.py",
     # from _EXCLUDED_MODULES
     "tui/app.py", "tui/hot_reload_controller.py",
 }
