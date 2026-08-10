@@ -1,8 +1,12 @@
 """Hot-reload watcher for non-proxy modules.
 
 This module monitors Python source files and reloads them when changes are detected.
-Only pure-function modules are reloaded (formatting, rendering, analysis, palette).
-Live instances (tui/app.py) and stable boundaries (proxy.py) are never reloaded.
+A module reloads unless reloading it would break the live session: the running proxy
+and Textual App stay stable because they are the live instances, and a boundary module
+stays stable only for hazard H1 (a boundary-crossing type the proxy isinstance-checks)
+or H2 (module-level live state other live objects hold). Both hazards are annotated
+inline on the entries in _EXCLUDED_FILES. Everything else is in _RELOAD_ORDER, and
+unclassified_modules() fails CI if a new module lands in neither set.
 
 File change detection is handled externally (watchfiles in hot_reload_controller).
 This module owns: module classification, reload execution, staleness tracking.
