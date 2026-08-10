@@ -61,6 +61,42 @@ _RELOAD_ORDER = [
     "cc_dump.tui.theme_controller",  # depends on: rendering
     "cc_dump.tui.action_handlers",  # depends on: formatting, action_config, rendering, widget_factory
     "cc_dump.tui.lifecycle_controller",  # depends on: rendering
+    # [LAW:no-silent-failure] These modules were in NEITHER set: silently not reloaded
+    # and not on the staleness watchlist, so editing one during a live session did
+    # nothing and gave no warning. They are verified reload-safe (no boundary type the
+    # stable proxy isinstance-checks; no runtime-mutated module singleton other live
+    # objects hold). Ordering here is leaves-before-consumers for readability only —
+    # the post-reload _refresh_top_level_import_aliases pass heals stale aliases
+    # globally, so correctness does not depend on it.
+    #
+    # Caveat (honesty, not a hazard): for app/widget-held singletons (analytics_store,
+    # har_recorder, the tui registries) importlib.reload redefines the class, but the
+    # LIVE instance keeps its old methods until re-instantiated via the widget-swap
+    # flow. Reload is SAFE and refreshes module-level code; full pickup of method
+    # changes on a held instance still needs a restart or a swap. Strictly better than
+    # the previous silent no-op.
+    "cc_dump.core.special_content",  # no deps within project
+    "cc_dump.core.token_counter",  # depends on: analysis
+    "cc_dump.io.perf_logging",  # no deps within project
+    "cc_dump.io.settings",  # depends on: formatting
+    "cc_dump.io.sessions",  # depends on: providers (stable)
+    "cc_dump.app.analytics_store",  # depends on: analysis, formatting, token_counter
+    "cc_dump.app.launcher_registry",  # depends on: providers (stable)
+    "cc_dump.app.memory_stats",  # no deps within project
+    "cc_dump.cli_presentation",  # depends on: io.sessions
+    "cc_dump.pipeline.sentinel",  # depends on: tmux_controller (stable)
+    "cc_dump.pipeline.proxy_flow",  # no deps within project
+    "cc_dump.pipeline.har_recorder",  # depends on: event_types, providers (stable)
+    "cc_dump.pipeline.har_replayer",  # depends on: event_types, providers (stable)
+    "cc_dump.serve",  # no deps within project
+    "cc_dump.tui.protocols",  # no deps within project
+    "cc_dump.tui.prefix_sum_tree",  # no deps within project
+    "cc_dump.tui.location_navigation",  # no deps within project
+    "cc_dump.tui.request_registry",  # no deps within project
+    "cc_dump.tui.view_overrides",  # depends on: formatting
+    "cc_dump.tui.provider_registry",  # depends on: formatting_impl, providers (stable)
+    "cc_dump.tui.session_registry",  # depends on: domain_store, providers (stable)
+    "cc_dump.tui.panel_sync",  # depends on: launch_config, panel widgets, widget_factory
 ]
 
 # Files to explicitly exclude from watching
@@ -73,6 +109,13 @@ _EXCLUDED_FILES = {
     "pipeline/response_assembler.py",  # stable boundary, imported by proxy.py
     "app/tmux_controller.py",  # stable boundary, holds live pane refs
     "io/stderr_tee.py",  # stable boundary, holds live sys.stderr ref
+    # [LAW:no-silent-failure] Verified-stable: reloading these would break the live
+    # session, so they stay out of _RELOAD_ORDER AND join _STALENESS_WATCHLIST below
+    # so editing one warns a restart is needed instead of failing silently.
+    "pipeline/proxy_call.py",  # H1: proxy.py isinstance(planned, RefusedCall); H2: live RequestPipeline held from cli.py
+    "providers.py",  # H2: _PROVIDERS registry mutated at runtime by --upstream, read on the proxy path
+    "pipeline/copilot_translate.py",  # H2: proxy drives live CopilotSSEParser/TranslationState across an in-flight SSE stream
+    "io/logging_setup.py",  # H2: _RUNTIME guards global logging handlers; reload loses log-path + risks double-attach
     "__init__.py",  # module init
     "__main__.py",  # entry point
 }
@@ -89,6 +132,7 @@ _STALENESS_WATCHLIST = {
     # from _EXCLUDED_FILES
     "pipeline/proxy.py", "pipeline/forward_proxy_tls.py", "cli.py", "pipeline/event_types.py", "pipeline/response_assembler.py",
     "app/tmux_controller.py", "io/stderr_tee.py",
+    "pipeline/proxy_call.py", "providers.py", "pipeline/copilot_translate.py", "io/logging_setup.py",
     # from _EXCLUDED_MODULES
     "tui/app.py", "tui/hot_reload_controller.py",
 }

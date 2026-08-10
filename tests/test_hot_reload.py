@@ -812,6 +812,111 @@ class TestHotReloadModuleStructure:
         for exc in required_exclusions:
             assert exc in _EXCLUDED_FILES, f"Expected {exc} to be excluded"
 
+    def test_verified_stable_modules_are_excluded_and_watched(self):
+        """The 4 verified-stable modules stay out of reload AND warn on edit.
+
+        Each carries an H1 (boundary type the stable proxy isinstance-checks) or H2
+        (runtime-mutated module singleton other live objects hold) hazard, so reloading
+        them would corrupt the live session. They must be excluded from reload and on
+        the staleness watchlist so editing one warns a restart is needed rather than
+        failing silently (dump-hot-reload-1i4.1).
+        """
+        from cc_dump.app.hot_reload import (
+            _EXCLUDED_FILES,
+            _RELOAD_ORDER,
+            _STALENESS_WATCHLIST,
+        )
+
+        stable = [
+            "pipeline/proxy_call.py",
+            "providers.py",
+            "pipeline/copilot_translate.py",
+            "io/logging_setup.py",
+        ]
+        reload_mods = set(_RELOAD_ORDER)
+        for rel in stable:
+            assert rel in _EXCLUDED_FILES, f"{rel} must be excluded from reload"
+            assert rel in _STALENESS_WATCHLIST, f"{rel} must warn on edit"
+            mod_name = "cc_dump." + rel.removesuffix(".py").replace("/", ".")
+            assert mod_name not in reload_mods, f"{rel} must not be in _RELOAD_ORDER"
+
+    def test_silent_reload_crack_is_filled(self):
+        """The 22 verified-safe modules that were in NEITHER set now reload.
+
+        These were silently not reloaded and not watched — editing one during a live
+        session did nothing and gave no warning. Assert membership (behavior), not list
+        position; ordering is readability-only (dump-hot-reload-1i4.1).
+        """
+        from cc_dump.app.hot_reload import _RELOAD_ORDER
+
+        newly_reloadable = [
+            "cc_dump.core.special_content",
+            "cc_dump.core.token_counter",
+            "cc_dump.io.perf_logging",
+            "cc_dump.io.settings",
+            "cc_dump.io.sessions",
+            "cc_dump.app.analytics_store",
+            "cc_dump.app.launcher_registry",
+            "cc_dump.app.memory_stats",
+            "cc_dump.cli_presentation",
+            "cc_dump.pipeline.sentinel",
+            "cc_dump.pipeline.proxy_flow",
+            "cc_dump.pipeline.har_recorder",
+            "cc_dump.pipeline.har_replayer",
+            "cc_dump.serve",
+            "cc_dump.tui.protocols",
+            "cc_dump.tui.prefix_sum_tree",
+            "cc_dump.tui.location_navigation",
+            "cc_dump.tui.request_registry",
+            "cc_dump.tui.view_overrides",
+            "cc_dump.tui.provider_registry",
+            "cc_dump.tui.session_registry",
+            "cc_dump.tui.panel_sync",
+        ]
+        reload_set = set(_RELOAD_ORDER)
+        missing = [m for m in newly_reloadable if m not in reload_set]
+        assert not missing, f"Expected these modules to reload: {missing}"
+
+    def test_in_scope_modules_classified_exactly_once(self):
+        """Every in-scope cc_dump module is reloadable XOR stable — never both, never neither.
+
+        In-scope excludes __init__.py, __main__.py, and experiments/ (per the epic).
+        This is this ticket's Done criterion; the generic completeness gate for future
+        modules is dump-hot-reload-1i4.2.
+        """
+        from cc_dump.app.hot_reload import (
+            _EXCLUDED_FILES,
+            _EXCLUDED_MODULES,
+            _RELOAD_ORDER,
+        )
+
+        src = Path(__file__).parent.parent / "src" / "cc_dump"
+        reload_rel = {
+            m.removeprefix("cc_dump.").replace(".", "/") + ".py" for m in _RELOAD_ORDER
+        }
+        stable = set(_EXCLUDED_FILES) | set(_EXCLUDED_MODULES)
+
+        def in_scope(rel: str) -> bool:
+            if rel.endswith(("__init__.py", "__main__.py")):
+                return False
+            return not rel.startswith("experiments/")
+
+        both, neither = [], []
+        for path in src.rglob("*.py"):
+            rel = path.relative_to(src).as_posix()
+            if not in_scope(rel):
+                continue
+            is_reload = rel in reload_rel
+            # hot_reload.py is excluded via its bare filename, not its package path.
+            is_stable = rel in stable or path.name in stable
+            if is_reload and is_stable:
+                both.append(rel)
+            if not is_reload and not is_stable:
+                neither.append(rel)
+
+        assert not both, f"Classified as BOTH reloadable and stable: {both}"
+        assert not neither, f"Unclassified (silent crack): {neither}"
+
     def test_excluded_modules_contain_live_instances(self):
         from cc_dump.app.hot_reload import _EXCLUDED_MODULES
 
