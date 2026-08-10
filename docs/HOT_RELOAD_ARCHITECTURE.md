@@ -26,7 +26,7 @@ A module stays stable only if reloading it would break the live session — or i
 - **H2 — module-level live state.** The module holds a module-level mutable singleton that other live objects reference. Reload re-runs the module body and resets that singleton, leaving old holders pointed at the pre-reload copy — split-brain.
 - **Proxy boundary.** The module is imported directly by the never-reloaded proxy and driven on the live request path (`response_assembler`). It has no hard hazard of its own — it's kept inside the boundary by convention rather than necessity.
 
-H1 and H2 are the hazards that force a boundary module stable; a module with neither hazard that isn't a live instance, entry point, or direct proxy-boundary import reloads. The stable modules split across two sets in `app/hot_reload.py`, each entry carrying its reason as an inline comment (the four `.1` added name H1/H2 explicitly; the older entries state the reason in prose).
+H1 and H2 are the hazards that force a boundary module stable; a module with neither hazard that isn't a live instance, entry point, or direct proxy-boundary import reloads. The stable modules split across two sets in `app/hot_reload.py`, each entry carrying its reason as an inline comment (some name H1/H2 explicitly, others state the reason in prose).
 
 **Excluded files** (`_EXCLUDED_FILES`):
 
