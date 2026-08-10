@@ -1,42 +1,38 @@
-"""Provider registry shared across proxy, formatting, replay, and UI layers.
+"""Provider metadata shared across proxy, formatting, replay, and UI layers.
 
-// [LAW:one-source-of-truth] Provider metadata and normalization live here.
-// [LAW:single-enforcer] Provider-family shape checks are enforced here.
+cc-dump is Anthropic-only. There is exactly one provider, so its metadata is a
+single module constant rather than a keyed registry.
+
+// [LAW:one-source-of-truth] The single provider spec lives here as ANTHROPIC.
+// [LAW:no-mode-explosion] One provider means no keyed lookup: the registry that
+//   parameterized over N providers collapsed to the N==1 constant.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
-
-ProtocolFamily: TypeAlias = Literal["anthropic", "openai"]
-UpstreamFormat: TypeAlias = Literal["anthropic", "openai-chat", "openai-responses"]
+from typing import TypeAlias
 
 
 @dataclass(frozen=True)
 class ProviderSpec:
-    """Canonical metadata for one provider integration."""
+    """Canonical metadata for the provider integration."""
 
     key: str
     display_name: str
     tab_title: str
     tab_short_prefix: str
-    protocol_family: ProtocolFamily
     api_paths: tuple[str, ...]
     har_request_url: str
     base_url_env: str
     default_target: str
-    optional_proxy: bool
     url_markers: tuple[str, ...]
     client_hint: str = "<your-tool>"
-    # // [LAW:one-source-of-truth] upstream_format describes the shape the upstream
-    # API expects. When it differs from protocol_family, the proxy translates.
-    upstream_format: UpstreamFormat = "anthropic"
 
 
 @dataclass(frozen=True)
 class ProviderEndpoint:
-    """Resolved proxy endpoint metadata for one active provider."""
+    """Resolved proxy endpoint metadata for the active provider."""
 
     provider_key: str
     proxy_url: str
@@ -50,24 +46,20 @@ DEFAULT_PROVIDER_KEY = "anthropic"
 DEFAULT_SESSION_KEY = "__default__"
 
 
-# // [LAW:one-source-of-truth] All supported providers are declared in this registry.
-_PROVIDERS: dict[str, ProviderSpec] = {
-    "anthropic": ProviderSpec(
-        key="anthropic",
-        display_name="Anthropic",
-        tab_title="Claude",
-        tab_short_prefix="ANT",
-        protocol_family="anthropic",
-        api_paths=("/v1/messages",),
-        har_request_url="https://api.anthropic.com/v1/messages",
-        base_url_env="ANTHROPIC_BASE_URL",
-        default_target="https://api.anthropic.com",
-        optional_proxy=False,
-        url_markers=("api.anthropic.com",),
-        client_hint="claude",
-        upstream_format="anthropic",
-    ),
-}
+# // [LAW:one-source-of-truth] The sole provider. All spec reads resolve here.
+ANTHROPIC = ProviderSpec(
+    key="anthropic",
+    display_name="Anthropic",
+    tab_title="Claude",
+    tab_short_prefix="ANT",
+    api_paths=("/v1/messages",),
+    har_request_url="https://api.anthropic.com/v1/messages",
+    base_url_env="ANTHROPIC_BASE_URL",
+    default_target="https://api.anthropic.com",
+    url_markers=("api.anthropic.com",),
+    client_hint="claude",
+)
+
 
 def build_provider_endpoint(
     provider: str,
@@ -75,7 +67,7 @@ def build_provider_endpoint(
     proxy_url: str,
     target: str,
 ) -> ProviderEndpoint:
-    """Build normalized endpoint metadata for one provider.
+    """Build normalized endpoint metadata for the provider.
 
     // [LAW:single-enforcer] Endpoint normalization lives at this boundary so
     // CLI, TUI, and launchers consume one typed shape.
@@ -127,28 +119,18 @@ def normalize_provider(provider: str) -> str:
 
 
 def is_known_provider(provider: str) -> bool:
-    return normalize_provider(provider) in _PROVIDERS
+    return normalize_provider(provider) == DEFAULT_PROVIDER_KEY
 
 
 def get_provider_spec(provider: str) -> ProviderSpec:
-    """Return provider spec from the canonical registry."""
-    return _PROVIDERS[normalize_provider(provider)]
+    """Return the provider spec.
 
-
-def update_provider_spec(spec: ProviderSpec) -> None:
-    """Replace a provider spec in the registry.
-
-    // [LAW:single-enforcer] Runtime overrides (e.g., --upstream preset) go through here.
+    // [LAW:one-source-of-truth] ANTHROPIC is the only spec, so every provider key
+    //   resolves to it. The `provider` argument is vestigial — it survives only
+    //   because callers still thread a (constant) provider field through the
+    //   event/HAR/session records; slice .5 removes the field and this argument.
     """
-    _PROVIDERS[normalize_provider(spec.key)] = spec
-
-
-def all_provider_specs() -> tuple[ProviderSpec, ...]:
-    return tuple(_PROVIDERS.values())
-
-
-def optional_proxy_provider_specs() -> tuple[ProviderSpec, ...]:
-    return tuple(spec for spec in _PROVIDERS.values() if spec.optional_proxy)
+    return ANTHROPIC
 
 
 def provider_session_key(provider: str) -> str:
@@ -167,28 +149,17 @@ def session_provider(session_key: str) -> str:
     is_provider_session = (
         sep == ":"
         and suffix == DEFAULT_SESSION_KEY
-        and prefix in _PROVIDERS
+        and prefix == DEFAULT_PROVIDER_KEY
     )
     return prefix if is_provider_session else DEFAULT_PROVIDER_KEY
-
-
-def infer_provider_from_url(url: str) -> str:
-    """Best-effort provider inference from request URL."""
-    # [LAW:one-source-of-truth] Unknown URLs collapse to default provider at this boundary.
-    return provider_from_url_marker(url) or DEFAULT_PROVIDER_KEY
 
 
 def provider_from_url_marker(url: str) -> str | None:
     """Match provider key from URL markers, returning None when unknown."""
     url_lc = url.strip().lower()
-    return next(
-        (
-            spec.key
-            for spec in _PROVIDERS.values()
-            if any(marker in url_lc for marker in spec.url_markers)
-        ),
-        None,
-    )
+    if any(marker in url_lc for marker in ANTHROPIC.url_markers):
+        return ANTHROPIC.key
+    return None
 
 
 def detect_provider_from_har_entry(
@@ -242,24 +213,21 @@ def _provider_proxy_env_items(endpoint: ProviderEndpoint) -> tuple[tuple[str, st
 def infer_provider_from_complete_message(message: dict[str, object]) -> str | None:
     """Best-effort provider inference from complete response shape.
 
-    Returns None when the message shape does not identify a registered provider
-    family, so callers fall back to the default provider.
+    Returns None when the message shape does not identify the provider family, so
+    callers fall back to the default provider.
     """
     # // [LAW:dataflow-not-control-flow] Provider family is derived from response markers.
-    # // [LAW:one-source-of-truth] The registry is the single authority on which
-    # //   providers exist. cc-dump is Anthropic-only, so an anthropic message
-    # //   identifies the sole provider and every other shape resolves to None —
-    # //   never a key get_provider_spec can no longer resolve.
+    # // [LAW:one-source-of-truth] cc-dump is Anthropic-only, so an anthropic message
+    # //   identifies the sole provider and every other shape resolves to None.
     if message.get("type") == "message":
         return "anthropic"
     return None
 
 
 def is_complete_response_for_provider(provider: str, message: dict[str, object]) -> bool:
-    """Validate complete-response shape for the provider family."""
-    family = get_provider_spec(provider).protocol_family
-    checks = {
-        "anthropic": message.get("type") == "message",
-        "openai": message.get("object") == "chat.completion",
-    }
-    return checks.get(family, False)
+    """Validate complete-response shape for the provider family.
+
+    // [LAW:dataflow-not-control-flow] One family means one shape check, not a
+    //   keyed dispatch. The `provider` argument is vestigial (see get_provider_spec).
+    """
+    return message.get("type") == "message"

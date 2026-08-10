@@ -257,7 +257,6 @@ class CcDumpApp(App):
         event_queue,
         state,
         router,
-        provider_states: dict[str, cc_dump.core.formatting_impl.ProviderRuntimeState] | None = None,
         analytics_store=None,
         host: str = "127.0.0.1",
         port: int = 3344,
@@ -270,18 +269,15 @@ class CcDumpApp(App):
         view_store=None,
         domain_store=None,
         store_context=None,
-        provider_endpoints: cc_dump.providers.ProviderEndpointMap | None = None,
         auto_launch_config: str | None = None,
         auto_launch_extra_args: list[str] | None = None,
     ):
         super().__init__()
         self._event_queue = event_queue
         # [LAW:single-enforcer] Provider runtime state + endpoint + per-provider
-        # session tracking all live on Provider records in the registry.
+        # session tracking all live on the Provider record in the registry.
         self._providers = cc_dump.tui.provider_registry.build_registry(
-            provider_states=provider_states,
             default_state=state,
-            provider_endpoints=provider_endpoints,
             host=host,
             port=port,
             target=target,

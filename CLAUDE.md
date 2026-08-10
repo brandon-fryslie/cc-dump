@@ -101,7 +101,7 @@ See `HOT_RELOAD_ARCHITECTURE.md` for full details. The critical rule:
 
 **A module reloads unless reloading it would break the live session.** The proxy and the running Textual App never reload — they are the live instances that may be serving the very session you're editing. A boundary module they touch stays stable only if it hits one of two hazards:
 - **H1 — boundary-crossing type:** a class the stable proxy instantiates and other code `isinstance`-checks. Reload gives the class a new identity, so the check silently returns False (e.g. `event_types`; `RefusedCall` in `proxy_call`).
-- **H2 — module-level live state:** a module-level mutable singleton other live objects hold. Reload re-runs the module body and resets it, splitting brain between old and new holders (e.g. `stderr_tee`, `tmux_controller`, the `providers` registry, `logging_setup._RUNTIME`).
+- **H2 — module-level live state:** a module-level mutable singleton other live objects hold. Reload re-runs the module body and resets it, splitting brain between old and new holders (e.g. `stderr_tee`, `tmux_controller`, `logging_setup._RUNTIME`).
 
 Everything else reloads. There is no import-spelling rule: after each reload, the alias-refresh pass rebinds stale `from x import y` aliases automatically, so `import cc_dump.x` and `from cc_dump.x import y` behave identically.
 
