@@ -482,16 +482,82 @@ def test_roundtrip_har_load_and_convert(tmp_path):
 # ─── Provider Detection Tests ────────────────────────────────────────────────
 
 
+def test_load_har_skips_unregistered_provider_shape_without_crash(tmp_path):
+    """A response shape whose provider family was removed is skipped, not crashed.
+
+    Regression: with openai removed from the registry, inferring "openai" from a
+    chat.completion-shaped response used to reach get_provider_spec("openai") and
+    raise an uncaught KeyError in load_har. Inference now yields the default
+    provider for unregistered families, so the entry is skipped like any other
+    unrecognized message while valid entries still load.
+    """
+    har_path = tmp_path / "mixed.har"
+    valid_anthropic = {
+        "request": {
+            "method": "POST",
+            "url": "https://api.anthropic.com/v1/messages",
+            "headers": [{"name": "content-type", "value": "application/json"}],
+            "postData": {"text": json.dumps({"model": "claude-3-opus-20240229"})},
+        },
+        "response": {
+            "status": 200,
+            "headers": [{"name": "content-type", "value": "application/json"}],
+            "content": {
+                "text": json.dumps({
+                    "id": "msg_ok",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Hi"}],
+                    "model": "claude-3-opus-20240229",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                }),
+            },
+        },
+    }
+    openai_shaped = {
+        "request": {
+            "method": "POST",
+            "url": "https://api.openai.com/v1/chat/completions",
+            "headers": [],
+            "postData": {"text": json.dumps({"model": "gpt-4o"})},
+        },
+        "response": {
+            "status": 200,
+            "headers": [],
+            "content": {
+                "text": json.dumps({
+                    "object": "chat.completion",
+                    "model": "gpt-4o",
+                    "choices": [{"message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
+                    "usage": {},
+                }),
+            },
+        },
+    }
+    with open(har_path, "w") as f:
+        json.dump({"log": {"entries": [valid_anthropic, openai_shaped]}}, f)
+
+    # Does not raise KeyError; the openai-shaped entry is skipped, anthropic loads.
+    pairs = load_har(str(har_path))
+    assert len(pairs) == 1
+    assert pairs[0].provider == "anthropic"
+
+
 def test_convert_to_events_passes_provider():
-    """convert_to_events passes provider to all events."""
+    """convert_to_events passes the provider string through to all events verbatim.
+
+    The value is opaque here — convert_to_events never resolves it against the
+    registry — so a clearly synthetic token documents that and avoids implying a
+    removed provider is still supported.
+    """
     events = convert_to_events(ReplayPair(
         request_headers={},
         request_body={"model": "gpt-4o"},
         response_status=200,
         response_headers={},
         complete_message={"object": "chat.completion", "choices": []},
-        provider="openai",
+        provider="test-fake-provider",
     ))
 
     for event in events:
-        assert event.provider == "openai"
+        assert event.provider == "test-fake-provider"

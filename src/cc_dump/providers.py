@@ -301,13 +301,16 @@ def _normalize_connect_host(host: str) -> str:
 def infer_provider_from_complete_message(message: dict[str, object]) -> str | None:
     """Best-effort provider inference from complete response shape.
 
-    Returns None when message shape does not identify a known provider family.
+    Returns None when the message shape does not identify a registered provider
+    family, so callers fall back to the default provider.
     """
     # // [LAW:dataflow-not-control-flow] Provider family is derived from response markers.
+    # // [LAW:one-source-of-truth] The registry is the single authority on which
+    # //   providers exist. cc-dump is Anthropic-only, so an anthropic message
+    # //   identifies the sole provider and every other shape resolves to None —
+    # //   never a key get_provider_spec can no longer resolve.
     if message.get("type") == "message":
         return "anthropic"
-    if message.get("object") == "chat.completion":
-        return "openai"
     return None
 
 
