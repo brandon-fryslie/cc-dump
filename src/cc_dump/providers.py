@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
 ProtocolFamily: TypeAlias = Literal["anthropic", "openai"]
-ProxyMode: TypeAlias = Literal["reverse", "forward"]
 UpstreamFormat: TypeAlias = Literal["anthropic", "openai-chat", "openai-responses"]
 
 
@@ -26,11 +25,9 @@ class ProviderSpec:
     api_paths: tuple[str, ...]
     har_request_url: str
     base_url_env: str
-    proxy_type: ProxyMode
     default_target: str
     optional_proxy: bool
     url_markers: tuple[str, ...]
-    forward_proxy_hosts: tuple[str, ...] = ()
     client_hint: str = "<your-tool>"
     # // [LAW:one-source-of-truth] upstream_format describes the shape the upstream
     # API expects. When it differs from protocol_family, the proxy translates.
@@ -44,16 +41,6 @@ class ProviderEndpoint:
     provider_key: str
     proxy_url: str
     target: str
-    proxy_mode: ProxyMode
-    forward_proxy_ca_cert_path: str = ""
-
-
-@dataclass(frozen=True)
-class ForwardProxyConnectRoute:
-    """Resolved upstream route for one validated CONNECT tunnel."""
-
-    provider_key: str
-    upstream_origin: str
 
 
 ProviderEndpointMap: TypeAlias = dict[str, ProviderEndpoint]
@@ -74,7 +61,6 @@ _PROVIDERS: dict[str, ProviderSpec] = {
         api_paths=("/v1/messages",),
         har_request_url="https://api.anthropic.com/v1/messages",
         base_url_env="ANTHROPIC_BASE_URL",
-        proxy_type="reverse",
         default_target="https://api.anthropic.com",
         optional_proxy=False,
         url_markers=("api.anthropic.com",),
@@ -88,8 +74,6 @@ def build_provider_endpoint(
     *,
     proxy_url: str,
     target: str,
-    proxy_mode: ProxyMode,
-    forward_proxy_ca_cert_path: str = "",
 ) -> ProviderEndpoint:
     """Build normalized endpoint metadata for one provider.
 
@@ -97,14 +81,10 @@ def build_provider_endpoint(
     // CLI, TUI, and launchers consume one typed shape.
     """
     spec = get_provider_spec(provider)
-    normalized_target = target.strip() if proxy_mode == "reverse" else ""
-    normalized_ca_path = forward_proxy_ca_cert_path.strip() if proxy_mode == "forward" else ""
     return ProviderEndpoint(
         provider_key=spec.key,
         proxy_url=proxy_url.strip(),
-        target=normalized_target,
-        proxy_mode=proxy_mode,
-        forward_proxy_ca_cert_path=normalized_ca_path,
+        target=target.strip(),
     )
 
 
@@ -114,7 +94,6 @@ def default_provider_endpoint(host: str, port: int, target: str) -> ProviderEndp
         DEFAULT_PROVIDER_KEY,
         proxy_url=f"http://{host}:{port}",
         target=target,
-        proxy_mode=get_provider_spec(DEFAULT_PROVIDER_KEY).proxy_type,
     )
 
 
@@ -136,34 +115,11 @@ def build_provider_usage_hint(endpoint: ProviderEndpoint) -> str:
 def build_provider_endpoint_detail_lines(endpoint: ProviderEndpoint) -> tuple[str, ...]:
     """Build human-facing detail lines for one provider endpoint."""
     spec = get_provider_spec(endpoint.provider_key)
-    details = [f"{spec.display_name} endpoint ({endpoint.proxy_mode}): {endpoint.proxy_url}"]
-    if endpoint.proxy_mode == "reverse" and endpoint.target:
+    details = [f"{spec.display_name} endpoint: {endpoint.proxy_url}"]
+    if endpoint.target:
         details.append(f"  Target: {endpoint.target}")
     details.append(f"  Usage: {build_provider_usage_hint(endpoint)}")
     return tuple(details)
-
-
-def resolve_forward_proxy_connect_route(
-    provider: str,
-    *,
-    host: str,
-    port: int,
-) -> ForwardProxyConnectRoute | None:
-    """Resolve and validate CONNECT routing for a forward-proxy provider.
-
-    // [LAW:single-enforcer] CONNECT host validation lives at the provider boundary.
-    """
-    spec = get_provider_spec(provider)
-    if spec.proxy_type != "forward":
-        return None
-    normalized_host = _normalize_connect_host(host)
-    if normalized_host not in spec.forward_proxy_hosts:
-        return None
-    authority_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
-    return ForwardProxyConnectRoute(
-        provider_key=spec.key,
-        upstream_origin=f"https://{authority_host}" + (f":{port}" if port != 443 else ""),
-    )
 
 
 def normalize_provider(provider: str) -> str:
@@ -280,22 +236,7 @@ def _provider_proxy_env_items(endpoint: ProviderEndpoint) -> tuple[tuple[str, st
     if not endpoint.proxy_url:
         return ()
     spec = get_provider_spec(endpoint.provider_key)
-    if endpoint.proxy_mode == "forward":
-        node_extra_ca = (
-            (("NODE_EXTRA_CA_CERTS", endpoint.forward_proxy_ca_cert_path),)
-            if endpoint.forward_proxy_ca_cert_path
-            else ()
-        )
-        return (
-            ("HTTP_PROXY", endpoint.proxy_url),
-            ("HTTPS_PROXY", endpoint.proxy_url),
-            *node_extra_ca,
-        )
     return ((spec.base_url_env, endpoint.proxy_url),)
-
-
-def _normalize_connect_host(host: str) -> str:
-    return str(host or "").strip().strip("[]").rstrip(".").lower()
 
 
 def infer_provider_from_complete_message(message: dict[str, object]) -> str | None:

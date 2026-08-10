@@ -35,16 +35,11 @@ def test_detect_provider_from_har_entry_returns_none_when_unknown_complete_shape
     )
 
 
-def test_provider_proxy_type_defaults():
-    assert providers.get_provider_spec("anthropic").proxy_type == "reverse"
-
-
-def test_build_provider_proxy_env_uses_endpoint_mode():
+def test_build_provider_proxy_env_sets_base_url_env():
     endpoint = providers.build_provider_endpoint(
         providers.DEFAULT_PROVIDER_KEY,
         proxy_url="http://127.0.0.1:3344",
         target="https://api.anthropic.com",
-        proxy_mode="reverse",
     )
     assert providers.build_provider_proxy_env(endpoint) == {
         "ANTHROPIC_BASE_URL": "http://127.0.0.1:3344",
