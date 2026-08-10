@@ -99,18 +99,22 @@ proxy.py (HTTP intercept, emits events)
 
 See `HOT_RELOAD_ARCHITECTURE.md` for full details. The critical rule:
 
-**Stable boundary modules** must use `import cc_dump.module` — never `from cc_dump.module import func`. Direct imports create stale references that won't update on reload.
+**A module reloads unless reloading it would break the live session.** The proxy and the running Textual App never reload — they are the live instances that may be serving the very session you're editing. A boundary module they touch stays stable only if it hits one of two hazards:
+- **H1 — boundary-crossing type:** a class the stable proxy instantiates and other code `isinstance`-checks. Reload gives the class a new identity, so the check silently returns False (e.g. `event_types`; `RefusedCall` in `proxy_call`).
+- **H2 — module-level live state:** a module-level mutable singleton other live objects hold. Reload re-runs the module body and resets it, splitting brain between old and new holders (e.g. `stderr_tee`, `tmux_controller`, the `providers` registry, `logging_setup._RUNTIME`).
+
+Everything else reloads. There is no import-spelling rule: after each reload, the alias-refresh pass rebinds stale `from x import y` aliases automatically, so `import cc_dump.x` and `from cc_dump.x import y` behave identically.
 
 **Any file change triggers full reload + widget replacement.** This is intentional — the reload is fast and eliminates partial-reload complexity.
 
-To discover which modules are stable vs reloadable, check `hot_reload.py`:
+To discover which modules are stable vs reloadable, check `app/hot_reload.py`:
 ```bash
-grep -A 20 '_RELOAD_ORDER' src/cc_dump/hot_reload.py    # reloadable modules, in dependency order
-grep -A 10 '_EXCLUDED_FILES' src/cc_dump/hot_reload.py   # stable boundaries (never reload)
-grep -A 10 '_EXCLUDED_MODULES' src/cc_dump/hot_reload.py # stable TUI modules (never reload)
+grep -A 20 '_RELOAD_ORDER' src/cc_dump/app/hot_reload.py    # reloadable modules, in dependency order
+grep -A 10 '_EXCLUDED_FILES' src/cc_dump/app/hot_reload.py   # stable boundaries, with the H1/H2 reason per module
+grep -A 10 '_EXCLUDED_MODULES' src/cc_dump/app/hot_reload.py # stable live-instance modules (app, controller)
 ```
 
-When adding new modules, classify them as stable or reloadable and follow the corresponding import pattern.
+When adding a module, classify it reloadable or stable — H1 and H2 are the only reasons to pick stable. The completeness gate (`unclassified_modules()`, wired into `scripts/quality_gate.py`) fails CI if you leave it in neither set.
 
 ## Key Types
 

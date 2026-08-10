@@ -14,65 +14,53 @@ The hot-reload system allows you to modify formatting, rendering, and widget cod
 
 ## Module Categories
 
-All code modules fall into one of three categories:
+Every module reloads by default. A module is stable only for one of four reasons, listed below.
 
 ### 1. Stable Boundary (NEVER reload)
 
-These modules contain live instances or entry points that cannot be safely reloaded at runtime. They are split across two sets in `app/hot_reload.py`:
+A module stays stable only if reloading it would break the live session. There are exactly four reasons for that, and every stable entry is one of them:
+
+- **Live instance.** The module *is* a running object that can't be recreated in place — the HTTP proxy server thread or the Textual App. Reloading it would kill the server or destroy the UI.
+- **Entry point.** The module already executed and isn't meaningful to re-run at runtime (`cli.py`, `__main__.py`, the reloader itself).
+- **H1 — boundary-crossing type.** The module defines a class the stable proxy instantiates and other code `isinstance`-checks. `importlib.reload` gives the class a new identity, so an object built before the reload no longer matches the reloaded class and the check silently returns False.
+- **H2 — module-level live state.** The module holds a module-level mutable singleton that other live objects reference. Reload re-runs the module body and resets that singleton, leaving old holders pointed at the pre-reload copy — split-brain.
+
+H1 and H2 are the *only* reasons to make a boundary module stable; a module with neither hazard that isn't itself a live instance or entry point reloads. The stable modules split across two sets in `app/hot_reload.py`, each entry carrying its reason as an inline comment.
 
 **Excluded files** (`_EXCLUDED_FILES`):
 
-| Module | Reason |
-|--------|--------|
-| `pipeline/proxy.py` | HTTP server thread, must stay running |
-| `pipeline/forward_proxy_tls.py` | Holds crypto state |
-| `pipeline/event_types.py` | Stable type definitions |
-| `pipeline/response_assembler.py` | Imported by proxy.py |
-| `app/tmux_controller.py` | Holds live pane refs |
-| `io/stderr_tee.py` | Holds live sys.stderr ref |
-| `cli.py` | Entry point, already executed |
-| `app/hot_reload.py` | The reloader itself |
-| `__init__.py` / `__main__.py` | Module init / entry point |
+| Module | Reason | Why |
+|--------|--------|-----|
+| `pipeline/proxy.py` | live instance | HTTP server thread serving the current session |
+| `pipeline/response_assembler.py` | live instance | Imported and driven by the running proxy |
+| `pipeline/event_types.py` | H1 | Boundary types the proxy builds and other code `isinstance`-checks |
+| `pipeline/proxy_call.py` | H1 + H2 | `proxy.py` does `isinstance(planned, RefusedCall)`; also holds the live `RequestPipeline` from `cli.py` |
+| `pipeline/forward_proxy_tls.py` | H2 | Holds live TLS/crypto state |
+| `pipeline/copilot_translate.py` | H2 | Proxy drives a live SSE parser / translation state across an in-flight stream |
+| `providers.py` | H2 | `_PROVIDERS` registry mutated at runtime by `--upstream`, read on the proxy path |
+| `io/logging_setup.py` | H2 | `_RUNTIME` guards global logging handlers; reload loses the log path and risks double-attach |
+| `app/tmux_controller.py` | H2 | Holds live tmux pane references |
+| `io/stderr_tee.py` | H2 | Holds the live `sys.stderr` reference |
+| `cli.py` | entry point | Already executed; not re-runnable at runtime |
+| `app/hot_reload.py` | entry point | The reloader itself |
+| `__init__.py` / `__main__.py` | entry point | Package init / entry point |
 
 **Excluded modules** (`_EXCLUDED_MODULES`):
 
-| Module | Reason |
-|--------|--------|
-| `tui/app.py` | Live Textual App instance, holds widget references |
-| `tui/hot_reload_controller.py` | Accesses live app/widget state for replacement |
+| Module | Reason | Why |
+|--------|--------|-----|
+| `tui/app.py` | live instance | The running Textual App; holds every widget reference |
+| `tui/hot_reload_controller.py` | live instance | Drives the swap; accesses live app/widget state |
 
-**Critical Rule**: Stable boundary modules MUST use module-level imports for all reloadable code:
-
-```python
-# CORRECT - module-level import in stable boundary
-import cc_dump.core.formatting
-import cc_dump.tui.widget_factory
-
-def handler():
-    block = cc_dump.core.formatting.format_request(...)
-    widget = cc_dump.tui.widget_factory.create_conversation_view()
-```
-
-```python
-# WRONG - direct import creates stale reference
-from cc_dump.core.formatting import format_request
-from cc_dump.tui.widget_factory import create_conversation_view
-
-def handler():
-    block = format_request(...)  # STALE - won't update on hot-reload!
-    widget = create_conversation_view()  # STALE
-```
-
-**Note**: The hot-reload system includes an alias-refresh pass (`_refresh_top_level_import_aliases`) that attempts to fix stale `from ... import` bindings across all loaded `cc_dump.*` modules after reload. This is a safety net, not a license to use `from` imports in stable boundaries.
+**Import spelling doesn't matter.** After every reload, `_refresh_top_level_import_aliases` walks all loaded `cc_dump.*` modules and rebinds any stale `from x import y` alias to the reloaded object, so a stable boundary can import reloadable code either way. An earlier version of this doc required `import cc_dump.x` over `from cc_dump.x import y`; that rule was moot and has been removed. The pass rebinds functions and classes but skips plain data exports (ints, strings, dicts, sets) — not a real gap, because any reloadable module exporting module-level mutable state for others to hold would itself be an H2 stable module.
 
 ### 2. Reloadable (Always reload on change)
 
-These modules contain pure functions and class definitions. They can be safely reloaded because:
-- They don't hold long-lived state
-- They're imported via module references from stable boundaries
-- They're reloaded in dependency order
+Everything without an H1 or H2 hazard — and that isn't a live instance or entry point — is reloadable, which is the large majority of the codebase: formatting, rendering, the panels and widgets, the analytics store, the HAR recorder/replayer, the registries.
 
-The authoritative list is `_RELOAD_ORDER` in `app/hot_reload.py` (currently 64 modules). A representative subset:
+**Honesty caveat.** Reloading refreshes a module's code, but a live instance the App or a widget already holds keeps its old methods until it is re-created — `importlib.reload` redefines the class, yet existing objects still point at the old one. The widget hot-swap (below) re-instantiates widgets so they pick up new methods; a singleton the App merely holds gets new module-level code but not new instance methods until a restart or swap. Reloading it is still safe — strictly better than the previous silent no-op — it just doesn't fully take effect on the held instance.
+
+The authoritative list is `_RELOAD_ORDER` in `app/hot_reload.py`. A representative subset:
 
 | Module | Dependencies | Purpose |
 |--------|--------------|---------|
@@ -158,10 +146,8 @@ def get_state(self) -> dict:
 
 ### How to Add a New Reloadable Module
 
-1. **Create the module** in `src/cc_dump/core/`, `src/cc_dump/tui/`, `src/cc_dump/app/`, or `src/cc_dump/pipeline/`
-2. **Update reload order** in `app/hot_reload.py:_RELOAD_ORDER`:
-   - If it has no project dependencies, add it near the top
-   - If it depends on other reloadable modules, add it after them
+1. **Create the module** in `src/cc_dump/core/`, `src/cc_dump/tui/`, `src/cc_dump/app/`, or `src/cc_dump/pipeline/`. Reloadable is the default — you only make it stable if it has an H1 or H2 hazard.
+2. **Add it to `_RELOAD_ORDER`** in `app/hot_reload.py`. Place it near its dependencies (leaves first) to keep the list readable — the order is cosmetic, not load-bearing. Skipping this step fails the completeness gate in CI, so it can't be silently forgotten.
 3. **Test the reload**: Make a change and verify it reloads without errors
 
 Example:
@@ -220,8 +206,8 @@ _RELOAD_ORDER = [
 - Watch stderr for `[hot-reload]` messages
 
 **Stale References?**
-- Check that stable boundaries use `import module`, not `from module import func`
-- The alias-refresh pass will catch many cases, but module-level imports are the correct fix
+- The alias-refresh pass rebinds `from ... import` aliases after every reload, so stale function/class references heal automatically — import spelling is not the cause.
+- If behavior still looks stale, it's almost always a live instance holding old methods (see the honesty caveat under Reloadable). Restart or trigger a widget swap.
 
 **Widget State Lost?**
 - Verify `get_state()` returns all critical data
@@ -231,17 +217,17 @@ _RELOAD_ORDER = [
 **Type Errors?**
 - Ensure widgets implement `get_state()` and `restore_state()` -- `validate_widget_protocol()` will catch missing methods at runtime
 
-## Import Validation
+## Classification Enforcement
 
-The test `test_hot_reload.py::TestHotReloadIntegration::test_reloadable_modules_prefer_top_level_from_imports` enforces that certain reloadable modules use `from ... import` style (not bare `import cc_dump.X`) for intra-project dependencies, since reloadable modules are themselves reloaded and can use direct imports.
+Every module must be classified reloadable (in `_RELOAD_ORDER`) or stable (in `_EXCLUDED_FILES` / `_EXCLUDED_MODULES`). `unclassified_modules()` in `app/hot_reload.py` walks the package and returns any in-scope module in neither set; `scripts/quality_gate.py` and `test_hot_reload.py` both fail on a non-empty result. This closes the drift that once left 36 modules silently unreloaded and off the staleness watchlist — a new module now fails CI until you classify it.
 
-**Stable boundary** modules (in `_EXCLUDED_FILES` / `_EXCLUDED_MODULES`) should use module-level `import cc_dump.X` to avoid stale references.
+A separate style test, `test_reloadable_modules_prefer_top_level_from_imports`, keeps a few reloadable modules on `from ... import`. It is cosmetic only: the alias-refresh pass means import spelling has no effect on reload correctness either way.
 
 ## Design Rationale
 
-### Why Module-Level Imports?
+### Why Import Spelling Doesn't Matter
 
-When you write `from module import func`, Python binds `func` to the function object at import time. Even if the module is reloaded, the old binding remains. Module-level imports (`import module`) keep a reference to the module object itself, which gets updated on reload.
+`from module import func` binds `func` to the function object at import time, so a naive reload would leave that old binding in place. cc-dump handles it with the alias-refresh pass: after every reload it rebinds those stale aliases to the reloaded objects across all loaded `cc_dump.*` modules. That is why there is no rule about `import module` versus `from module import func` — either works.
 
 ### Why Widget Hot-Swap Instead of Instance Reload?
 
@@ -255,14 +241,14 @@ This guarantees the new code is used while preserving user-visible state.
 
 ### Why Dependency Order?
 
-If module A depends on module B, and B is reloaded first, A still has references to old B definitions. Reloading A after B ensures A gets the new B definitions.
+Mostly readability. `_RELOAD_ORDER` lists leaves before dependents so it reads as a dependency graph, but the alias-refresh pass rebinds references across all modules after the reload completes, so a wrong order wouldn't leave stale definitions — it would just make the list harder to follow.
 
 ### Why Exclude proxy.py and app.py?
 
 - `pipeline/proxy.py` is running an HTTP server thread. Reloading it would kill the server.
 - `tui/app.py` is the Textual app instance. Reloading it would destroy the entire UI.
 
-Both are stable boundaries that orchestrate reloadable code via module references.
+Both are live instances — the "live instance" reason in the decision procedure above.
 
 ## Staleness Detection
 
@@ -296,8 +282,8 @@ Excluded files that developers might edit are tracked in `_STALENESS_WATCHLIST`.
 
 The hot-reload system is built on three principles:
 
-1. **Stable boundaries never reload** - they use module references to access reloadable code
-2. **Reloadable modules reload in dependency order** - dependents after dependencies
-3. **Widgets hot-swap via state transfer** - old instance state dict transferred to new instance
+1. **A module reloads unless reloading it breaks the live session** — the running proxy and App, boundary-crossing types (H1), and module-level live state (H2) stay stable; everything else reloads.
+2. **Reload order is cosmetic** — the alias-refresh pass fixes references globally, so `_RELOAD_ORDER` is ordered leaves-first only for readability.
+3. **Widgets hot-swap via state transfer** — old-instance state is captured and restored onto a fresh instance built from the reloaded class.
 
-Follow the import patterns, implement the protocol, and your code will be instantly reloadable without losing state.
+Classify new modules reloadable-or-stable (the completeness gate enforces it), implement the widget protocol, and your code reloads without losing state.

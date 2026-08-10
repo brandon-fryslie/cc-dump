@@ -2,9 +2,6 @@
 
 Manages a general-purpose JSON settings file at XDG_CONFIG_HOME/cc-dump/settings.json.
 Built-in filterset defaults and theme/settings persistence.
-
-This module is a STABLE BOUNDARY — not hot-reloadable.
-Import as: import cc_dump.io.settings
 """
 
 import json
