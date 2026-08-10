@@ -37,7 +37,6 @@ H1 and H2 are the hazards that force a boundary module stable; a module with nei
 | `pipeline/event_types.py` | H1 | Boundary types the proxy builds and other code `isinstance`-checks |
 | `pipeline/proxy_call.py` | H1 + H2 | `proxy.py` does `isinstance(planned, RefusedCall)`; also holds the live `RequestPipeline` from `cli.py` |
 | `pipeline/forward_proxy_tls.py` | H2 | Holds live TLS/crypto state |
-| `pipeline/copilot_translate.py` | H2 | Proxy drives a live SSE parser / translation state across an in-flight stream |
 | `providers.py` | H2 | `_PROVIDERS` registry mutated at runtime by `--upstream`, read on the proxy path |
 | `io/logging_setup.py` | H2 | `_RUNTIME` guards global logging handlers; reload loses the log path and risks double-attach |
 | `app/tmux_controller.py` | H2 | Holds live tmux pane references |

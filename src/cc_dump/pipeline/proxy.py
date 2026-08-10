@@ -19,8 +19,6 @@ import cc_dump.providers
 from cc_dump.pipeline.event_types import (
     LogEvent,
     PipelineEvent,
-    ResponseCompleteEvent,
-    ResponseDoneEvent,
     ResponseProgressEvent,
     event_envelope,
     parse_sse_event,
@@ -39,7 +37,6 @@ from cc_dump.pipeline.proxy_call import (
     execute_upstream,
     plan_proxy_call,
 )
-from cc_dump.pipeline.response_assembler import ResponseAssembler
 
 # Re-export RequestPipeline so existing imports (`from cc_dump.pipeline.proxy
 # import RequestPipeline` in cli.py) keep working.
@@ -203,41 +200,6 @@ def _sse_line(event: dict) -> bytes:
     return b"data: " + json.dumps(event).encode() + b"\n\n"
 
 
-def _iter_chat_sse_chunks(resp):
-    """Parse an SSE byte stream into decoded JSON chunks.
-
-    // [LAW:single-enforcer] One place owns SSE line buffering + JSON decode.
-    //   Callers receive already-decoded dicts and never branch on framing.
-    """
-    buf = b""
-    for raw in resp:
-        buf += raw
-        while b"\n" in buf:
-            line, buf = buf.split(b"\n", 1)
-            text = line.decode("utf-8", errors="replace").strip()
-            if not text.startswith("data: "):
-                continue
-            data_str = text[6:]
-            if data_str == "[DONE]":
-                continue
-            try:
-                yield json.loads(data_str)
-            except json.JSONDecodeError:
-                continue
-
-
-def _call_sink(fn, label: str) -> None:
-    """Run a sink callable inside a logged error boundary.
-
-    // [LAW:single-enforcer] Error isolation shape lives here, not scattered
-    //   as try/except pellets at each sink callsite.
-    """
-    try:
-        fn()
-    except Exception as exc:
-        logger.warning("%s: %s", label, exc)
-
-
 class StreamSink:
     """Consumer of an SSE stream. Each method is called in its own error boundary."""
 
@@ -273,8 +235,10 @@ class EventQueueSink(StreamSink):
 
     def on_event(self, event_type, event):
         # [LAW:dataflow-not-control-flow] Provider family selects extraction strategy.
+        # [LAW:no-silent-failure] Loud lookup: an unregistered family raises here
+        #   rather than silently mis-parsing under a fallback extractor.
         family = cc_dump.providers.get_provider_spec(self._provider).protocol_family
-        extract = _PROGRESS_EXTRACTORS_BY_FAMILY.get(family, _extract_openai_chat_progress)
+        extract = _PROGRESS_EXTRACTORS_BY_FAMILY[family]
         payload = extract(event_type, event)
         if payload is None:
             return
@@ -307,54 +271,9 @@ def _extract_anthropic_progress(event_type: str, event: dict) -> dict[str, objec
     return sse_progress_payload(sse)
 
 
-def _openai_chat_model_payload(event: dict) -> dict[str, object] | None:
-    model = event.get("model")
-    return {"model": model} if isinstance(model, str) and model else None
-
-
-def _openai_chat_first_choice(event: dict) -> dict | None:
-    choices = event.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return None
-    first_choice = choices[0]
-    return first_choice if isinstance(first_choice, dict) else None
-
-
-def _openai_chat_delta_text_payload(choice: dict) -> dict[str, object] | None:
-    delta = choice.get("delta", {})
-    if not isinstance(delta, dict):
-        return None
-    content = delta.get("content")
-    return {"delta_text": content} if isinstance(content, str) and content else None
-
-
-def _openai_chat_finish_reason_payload(choice: dict) -> dict[str, object] | None:
-    finish_reason = choice.get("finish_reason")
-    return (
-        {"stop_reason": finish_reason}
-        if isinstance(finish_reason, str) and finish_reason
-        else None
-    )
-
-
-def _extract_openai_chat_progress(_event_type: str, event: dict) -> dict[str, object] | None:
-    """Extract progress payload from OpenAI SSE event (stub).
-
-    OpenAI SSE format: {"id":"...","choices":[{"index":0,"delta":{"content":"..."}}]}
-    """
-    choice = _openai_chat_first_choice(event)
-    candidate_payloads = (
-        _openai_chat_delta_text_payload(choice or {}),
-        _openai_chat_finish_reason_payload(choice or {}),
-        _openai_chat_model_payload(event),
-    )
-    return next((payload for payload in candidate_payloads if payload is not None), None)
-
-
 # [LAW:dataflow-not-control-flow] Protocol family → progress extraction strategy.
 _PROGRESS_EXTRACTORS_BY_FAMILY: dict[str, Callable[[str, dict], dict[str, object] | None]] = {
     "anthropic": _extract_anthropic_progress,
-    "openai": _extract_openai_chat_progress,
 }
 
 
@@ -538,139 +457,6 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         sinks: list = [ClientSink(self.wfile), *extra_sinks]
         _fan_out_sse(upstream.body_source, sinks)
         self._emit_events(planned.emitter.streaming_finalize(extra_sinks))
-
-    def _stream_translated_response(self, resp, request_id: str = ""):
-        """Stream Copilot (OpenAI Responses API) SSE, translating to Anthropic format.
-
-        Reads Copilot SSE events from upstream, translates each to Anthropic SSE events,
-        writes Anthropic-format bytes to client, and feeds Anthropic events to the
-        TUI pipeline (EventQueueSink + ResponseAssembler).
-
-        // [LAW:dataflow-not-control-flow] Same sink pipeline as _stream_response —
-        // the translation happens before events enter the sinks.
-        // [LAW:single-enforcer] Copilot→Anthropic SSE translation is here only.
-        """
-        parser = cc_dump.pipeline.copilot_translate.CopilotSSEParser()
-        state = cc_dump.pipeline.copilot_translate.TranslationState()
-        assembler = ResponseAssembler()
-        event_sink = EventQueueSink(self.event_queue, request_id=request_id, provider=self.provider)
-
-        try:
-            for raw_line in resp:
-                parsed_events = parser.feed(raw_line)
-                for copilot_event_type, copilot_data in parsed_events:
-                    anthropic_events = cc_dump.pipeline.copilot_translate.copilot_sse_to_anthropic_events(
-                        copilot_event_type, copilot_data, state,
-                    )
-                    for anth_event in anthropic_events:
-                        # Write Anthropic SSE bytes to client
-                        anth_bytes = cc_dump.pipeline.copilot_translate.anthropic_sse_line(anth_event)
-                        try:
-                            self.wfile.write(anth_bytes)
-                            self.wfile.flush()
-                        except Exception as exc:
-                            logger.warning("Client write failure: %s", exc)
-
-                        # Feed to TUI pipeline sinks
-                        anth_type = anth_event.get("type", "")
-                        try:
-                            event_sink.on_event(anth_type, anth_event)
-                        except Exception as exc:
-                            logger.warning("EventQueueSink failure: %s", exc)
-                        try:
-                            assembler.on_event(anth_type, anth_event)
-                        except Exception as exc:
-                            logger.warning("ResponseAssembler failure: %s", exc)
-        finally:
-            # [LAW:no-silent-failure] Isolate sink finalizers from each other, but report
-            # failures — a swallowed on_done() error previously vanished without a trace.
-            try:
-                event_sink.on_done()
-            except Exception as exc:
-                logger.warning("EventQueueSink on_done failure: %s", exc)
-            try:
-                assembler.on_done()
-            except Exception as exc:
-                logger.warning("ResponseAssembler on_done failure: %s", exc)
-
-        seq = event_sink.seq
-        if assembler.result is not None:
-            seq += 1
-            self.event_queue.put(ResponseCompleteEvent(
-                body=assembler.result,
-                **event_envelope(
-                    request_id=request_id,
-                    seq=seq,
-                    provider=self.provider,
-                ),
-            ))
-        seq += 1
-        self.event_queue.put(ResponseDoneEvent(
-            **event_envelope(
-                request_id=request_id,
-                seq=seq,
-                provider=self.provider,
-            ),
-        ))
-
-    def _emit_translated_event(self, anth_event: dict, event_sink, assembler) -> None:
-        """Fan one Anthropic-shaped event to client + sinks with per-sink boundaries.
-
-        // [LAW:dataflow-not-control-flow] Fan-out is a straight sequence, each
-        //   sink call isolated by one `_call_sink` wrapper.
-        """
-        anth_bytes = cc_dump.pipeline.copilot_translate.anthropic_sse_line(anth_event)
-
-        def _write_to_client() -> None:
-            self.wfile.write(anth_bytes)
-            self.wfile.flush()
-
-        _call_sink(_write_to_client, "Client write failure")
-        anth_type = anth_event.get("type", "")
-        _call_sink(lambda: event_sink.on_event(anth_type, anth_event),
-                   "EventQueueSink failure")
-        _call_sink(lambda: assembler.on_event(anth_type, anth_event),
-                   "ResponseAssembler failure")
-
-    def _stream_chat_translated_response(self, resp, request_id: str = ""):
-        """Stream Chat Completions SSE, translating to Anthropic format.
-
-        // [LAW:single-enforcer] Chat Completions→Anthropic SSE translation is here only.
-        """
-        state = cc_dump.pipeline.copilot_translate.ChatTranslationState()
-        assembler = ResponseAssembler()
-        event_sink = EventQueueSink(self.event_queue, request_id=request_id, provider=self.provider)
-
-        try:
-            for chunk in _iter_chat_sse_chunks(resp):
-                anthropic_events = cc_dump.pipeline.copilot_translate.chat_chunk_to_anthropic_events(
-                    chunk, state,
-                )
-                for anth_event in anthropic_events:
-                    self._emit_translated_event(anth_event, event_sink, assembler)
-        finally:
-            _call_sink(event_sink.on_done, "EventQueueSink.on_done failure")
-            _call_sink(assembler.on_done, "ResponseAssembler.on_done failure")
-
-        seq = event_sink.seq
-        if assembler.result is not None:
-            seq += 1
-            self.event_queue.put(ResponseCompleteEvent(
-                body=assembler.result,
-                **event_envelope(
-                    request_id=request_id,
-                    seq=seq,
-                    provider=self.provider,
-                ),
-            ))
-        seq += 1
-        self.event_queue.put(ResponseDoneEvent(
-            **event_envelope(
-                request_id=request_id,
-                seq=seq,
-                provider=self.provider,
-            ),
-        ))
 
     def do_CONNECT(self):
         """Handle HTTPS CONNECT tunneling with forward-proxy TLS interception."""
