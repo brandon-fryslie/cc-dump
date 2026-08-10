@@ -3607,14 +3607,6 @@ def _add_gutter_to_strips(
     return result_strips
 
 
-# ─── Region-part renderer dispatch ─────────────────────────────────────────────
-# // [LAW:dataflow-not-control-flow] Dispatch table for block-type-specific region renderers.
-# Blocks not in this table use the default _render_region_parts (XML-based).
-_REGION_PART_RENDERERS: dict[str, Callable] = {
-    # Intentionally empty for now: tool defs are represented by ToolDefBlock instances.
-}
-
-
 # ─── Recursive tree rendering context ─────────────────────────────────────────
 
 
@@ -3779,13 +3771,11 @@ def _search_state_for_block(
 
 def _render_region_block_strips(
     block: FormattedBlock,
-    block_type: str,
     ctx: _RenderContext,
     vis: VisState,
     search_hash: str | None,
 ) -> list[Strip]:
-    region_renderer = _REGION_PART_RENDERERS.get(block_type, _render_region_parts)
-    region_parts = region_renderer(block, overrides=ctx.overrides)
+    region_parts = _render_region_parts(block, overrides=ctx.overrides)
 
     def _region_expanded(region) -> bool | None:
         # // [LAW:one-source-of-truth] Region expanded state comes from ViewOverrides.
@@ -4001,7 +3991,7 @@ def _render_block_tree(block: FormattedBlock, ctx: _RenderContext) -> None:
         )
 
     block_strips = (
-        _render_region_block_strips(block, block_type, ctx, vis, search_hash)
+        _render_region_block_strips(block, ctx, vis, search_hash)
         if use_region_rendering
         else _render_standard_block_strips(block, cast(ConsoleRenderable, renderable), ctx, vis, search_hash)
     )

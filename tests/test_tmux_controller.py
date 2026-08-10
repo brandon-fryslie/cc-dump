@@ -41,7 +41,12 @@ def make_controller():
         for k, v in overrides.items():
             setattr(ctrl, k, v)
         if command_override is not None:
-            ctrl.set_launch_command(command_override)
+            ctrl.configure_launcher(
+                command=command_override,
+                process_names=ctrl._process_names,
+                launch_env=ctrl._launch_env,
+                launcher_label=ctrl._launcher_label,
+            )
         return ctrl
 
     return _factory
@@ -258,12 +263,6 @@ class TestConfigurableCommand:
     def test_custom_command_via_override(self, make_controller):
         ctrl = make_controller(_launch_command="my-claude")
         assert ctrl._launch_command == "my-claude"
-
-    def test_set_launch_command(self, make_controller):
-        ctrl = make_controller()
-        ctrl.set_launch_command("custom-claude")
-        assert ctrl._launch_command == "custom-claude"
-
 
 # ─── open_log_tail ──────────────────────────────────────────────────────────
 

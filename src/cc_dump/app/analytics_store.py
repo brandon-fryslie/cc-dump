@@ -15,8 +15,6 @@ from dataclasses import dataclass, field
 from typing import TypedDict
 
 from cc_dump.core.analysis import (
-    HAIKU_BASE_UNIT,
-    ToolEconomicsRow,
     classify_model,
     compute_session_cost,
     correlate_tools,
@@ -33,10 +31,6 @@ from cc_dump.pipeline.event_types import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-TURN_METRICS_SCHEMA = "cc_dump.per_turn_metrics"
-TURN_METRICS_VERSION = 1
 
 
 _RETRY_HEADER_KEYS = (
@@ -160,38 +154,6 @@ class DashboardSummary(TypedDict):
     cache_savings_usd: float
     active_model_count: int
     latest_model_label: str
-
-
-class TurnMetricRecord(TypedDict):
-    sequence_num: int
-    request_id: str
-    session_id: str
-    provider: str
-    purpose: str
-    model: str
-    stop_reason: str
-    input_tokens: int
-    output_tokens: int
-    cache_read_tokens: int
-    cache_creation_tokens: int
-    request_recv_ns: int
-    response_recv_ns: int
-    latency_ms: float
-    retry_key: str
-    retry_ordinal: int
-    transport_retry_count: int
-    is_retry: bool
-    was_interrupted: bool
-    tool_invocation_count: int
-    tool_names: list[str]
-    command_count: int
-    command_families: list[str]
-
-
-class TurnMetricSnapshot(TypedDict):
-    schema: str
-    version: int
-    records: list[TurnMetricRecord]
 
 
 def _extract_session_id(request_body: dict) -> str:
@@ -581,116 +543,6 @@ class AnalyticsStore:
 
     # ─── Query methods (translated from db_queries.py SQL) ─────────────────
 
-    def get_session_stats(self, current_turn: dict | None = None) -> dict:
-        """Query cumulative token counts for the session.
-
-        Args:
-            current_turn: Optional dict with in-progress turn data to merge
-                         Expected keys: input_tokens, output_tokens,
-                         cache_read_tokens, cache_creation_tokens
-
-        Returns:
-            Dict with keys: input_tokens, output_tokens, cache_read_tokens,
-            cache_creation_tokens
-        """
-        # [LAW:dataflow-not-control-flow] Sum across all turns
-        stats = {
-            "input_tokens": sum(t.input_tokens for t in self._turns),
-            "output_tokens": sum(t.output_tokens for t in self._turns),
-            "cache_read_tokens": sum(t.cache_read_tokens for t in self._turns),
-            "cache_creation_tokens": sum(t.cache_creation_tokens for t in self._turns),
-        }
-
-        # Merge current incomplete turn if provided
-        if current_turn:
-            stats["input_tokens"] += current_turn.get("input_tokens", 0)
-            stats["output_tokens"] += current_turn.get("output_tokens", 0)
-            stats["cache_read_tokens"] += current_turn.get("cache_read_tokens", 0)
-            stats["cache_creation_tokens"] += current_turn.get(
-                "cache_creation_tokens", 0
-            )
-
-        return stats
-
-    def get_latest_turn_stats(self) -> dict | None:
-        """Query the most recent turn's token counts and model.
-
-        Returns:
-            Dict with keys: sequence_num, input_tokens, output_tokens,
-            cache_read_tokens, cache_creation_tokens, model
-            Returns None if no turns exist.
-        """
-        if not self._turns:
-            return None
-
-        t = self._turns[-1]
-        return {
-            "sequence_num": t.sequence_num,
-            "input_tokens": t.input_tokens,
-            "output_tokens": t.output_tokens,
-            "cache_read_tokens": t.cache_read_tokens,
-            "cache_creation_tokens": t.cache_creation_tokens,
-            "model": t.model,
-        }
-
-    def get_turn_timeline(self) -> list[dict]:
-        """Query turn timeline data for the session.
-
-        Returns:
-            List of dicts with keys: sequence_num, input_tokens, output_tokens,
-            cache_read_tokens, cache_creation_tokens, request_json, model
-        """
-        return [
-            {
-                "sequence_num": t.sequence_num,
-                "model": t.model,
-                "input_tokens": t.input_tokens,
-                "output_tokens": t.output_tokens,
-                "cache_read_tokens": t.cache_read_tokens,
-                "cache_creation_tokens": t.cache_creation_tokens,
-                "request_json": t.request_json,
-            }
-            for t in self._turns
-        ]
-
-    def get_turn_metrics_snapshot(self) -> TurnMetricSnapshot:
-        """Return deterministic per-turn metric records with explicit schema/version."""
-        # [LAW:one-source-of-truth] Per-turn metrics derive from canonical TurnRecord rows.
-        records: list[TurnMetricRecord] = []
-        for turn in self._turns:
-            records.append(
-                {
-                    "sequence_num": turn.sequence_num,
-                    "request_id": turn.request_id,
-                    "session_id": turn.session_id,
-                    "provider": turn.provider,
-                    "purpose": turn.purpose,
-                    "model": turn.model,
-                    "stop_reason": turn.stop_reason,
-                    "input_tokens": turn.input_tokens,
-                    "output_tokens": turn.output_tokens,
-                    "cache_read_tokens": turn.cache_read_tokens,
-                    "cache_creation_tokens": turn.cache_creation_tokens,
-                    "request_recv_ns": turn.request_recv_ns,
-                    "response_recv_ns": turn.response_recv_ns,
-                    "latency_ms": turn.latency_ms,
-                    "retry_key": turn.retry_key,
-                    "retry_ordinal": turn.retry_ordinal,
-                    "transport_retry_count": turn.transport_retry_count,
-                    "is_retry": turn.retry_ordinal > 0,
-                    "was_interrupted": turn.was_interrupted,
-                    "tool_invocation_count": len(turn.tool_invocations),
-                    "tool_names": sorted({inv.tool_name for inv in turn.tool_invocations if inv.tool_name}),
-                    "command_count": turn.command_count,
-                    "command_families": list(turn.command_families),
-                }
-            )
-        return {
-            "schema": TURN_METRICS_SCHEMA,
-            "version": TURN_METRICS_VERSION,
-            "records": records,
-        }
-
     def get_dashboard_snapshot(self, current_turn: dict | None = None) -> dict[str, object]:
         """Build canonical analytics dashboard data from real API usage fields only.
 
@@ -851,115 +703,6 @@ class AnalyticsStore:
             "timeline": timeline_rows,
             "models": model_rows,
         }
-
-    def get_tool_economics(self, group_by_model: bool = False) -> list[ToolEconomicsRow]:
-        """Query per-tool economics with estimated token counts and cache attribution.
-
-        Args:
-            group_by_model: If False (default), aggregate by tool name only.
-                           If True, group by (tool_name, model) for breakdown view.
-
-        Returns:
-            List of ToolEconomicsRow with:
-            - Estimated token counts from tool_invocations (input_tokens, result_tokens)
-            - Proportional cache attribution from parent turn
-            - Normalized cost using model pricing
-            - model field: None for aggregate mode, model string for breakdown mode
-        """
-        if not self._turns:
-            return []
-
-        # Aggregate by (tool_name, model) or just tool_name
-        if group_by_model:
-            by_key: dict[tuple[str, str], dict] = {}
-        else:
-            by_name: dict[str, dict] = {}
-
-        for turn in self._turns:
-            if not turn.tool_invocations:
-                continue
-
-            # Compute proportional cache attribution
-            turn_tool_total = sum(inv.input_tokens for inv in turn.tool_invocations)
-
-            for inv in turn.tool_invocations:
-                # Proportional cache contribution
-                if turn_tool_total > 0 and turn.cache_read_tokens > 0:
-                    proportion = inv.input_tokens / turn_tool_total
-                    cache_contrib = int(proportion * turn.cache_read_tokens)
-                else:
-                    cache_contrib = 0
-
-                # Normalized cost
-                _, pricing = classify_model(turn.model)
-                inv_norm_cost = inv.input_tokens * (
-                    pricing.base_input / HAIKU_BASE_UNIT
-                ) + inv.result_tokens * (pricing.output / HAIKU_BASE_UNIT)
-
-                if group_by_model:
-                    key = (inv.tool_name, turn.model or "")
-                    if key not in by_key:
-                        by_key[key] = {
-                            "calls": 0,
-                            "input_tokens": 0,
-                            "result_tokens": 0,
-                            "cache_read": 0,
-                            "norm_cost": 0.0,
-                        }
-                    agg = by_key[key]
-                else:
-                    name = inv.tool_name
-                    if name not in by_name:
-                        by_name[name] = {
-                            "calls": 0,
-                            "input_tokens": 0,
-                            "result_tokens": 0,
-                            "cache_read": 0,
-                            "norm_cost": 0.0,
-                        }
-                    agg = by_name[name]
-
-                agg["calls"] += 1
-                agg["input_tokens"] += inv.input_tokens
-                agg["result_tokens"] += inv.result_tokens
-                agg["cache_read"] += cache_contrib
-                agg["norm_cost"] += inv_norm_cost
-
-        # Build result list sorted by norm_cost descending
-        result = []
-
-        if group_by_model:
-            for (name, model), agg in sorted(
-                by_key.items(), key=lambda x: (-x[1]["norm_cost"], x[0][0], x[0][1])
-            ):
-                result.append(
-                    ToolEconomicsRow(
-                        name=name,
-                        calls=agg["calls"],
-                        input_tokens=agg["input_tokens"],
-                        result_tokens=agg["result_tokens"],
-                        cache_read_tokens=agg["cache_read"],
-                        norm_cost=agg["norm_cost"],
-                        model=model if model else None,
-                    )
-                )
-        else:
-            for name, agg in sorted(
-                by_name.items(), key=lambda x: x[1]["norm_cost"], reverse=True
-            ):
-                result.append(
-                    ToolEconomicsRow(
-                        name=name,
-                        calls=agg["calls"],
-                        input_tokens=agg["input_tokens"],
-                        result_tokens=agg["result_tokens"],
-                        cache_read_tokens=agg["cache_read"],
-                        norm_cost=agg["norm_cost"],
-                        model=None,
-                    )
-                )
-
-        return result
 
     # ─── State management for hot-reload ───────────────────────────────────
 
