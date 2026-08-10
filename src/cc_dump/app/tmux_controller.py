@@ -199,33 +199,6 @@ class TmuxController:
         self._launch_env = dict(launch_env or {})
         self._launcher_label = str(launcher_label or "").strip() or "tool"
 
-    def set_launch_command(self, command: str) -> None:
-        """Update the launcher command while preserving env/matchers."""
-        self.configure_launcher(
-            command=command,
-            process_names=self._process_names,
-            launch_env=self._launch_env,
-            launcher_label=self._launcher_label,
-        )
-
-    def set_launch_env(self, launch_env: dict[str, str]) -> None:
-        """Update launch environment while preserving command/matchers."""
-        self.configure_launcher(
-            command=self._launch_command,
-            process_names=self._process_names,
-            launch_env=launch_env,
-            launcher_label=self._launcher_label,
-        )
-
-    def set_process_names(self, process_names: tuple[str, ...]) -> None:
-        """Update pane-adoption matchers while preserving command/env."""
-        self.configure_launcher(
-            command=self._launch_command,
-            process_names=process_names,
-            launch_env=self._launch_env,
-            launcher_label=self._launcher_label,
-        )
-
     def _validate_tool_pane(self) -> bool:
         """// [LAW:single-enforcer] Sole pane liveness check.
 
