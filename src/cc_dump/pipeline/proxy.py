@@ -11,9 +11,7 @@ import json
 import logging
 import queue
 import uuid
-from collections.abc import Callable
 
-import cc_dump.providers
 from cc_dump.pipeline.event_types import (
     LogEvent,
     PipelineEvent,
@@ -180,12 +178,8 @@ class EventQueueSink(StreamSink):
         self._provider = provider
 
     def on_event(self, event_type, event):
-        # [LAW:dataflow-not-control-flow] Provider family selects extraction strategy.
-        # [LAW:no-silent-failure] Loud lookup: an unregistered family raises here
-        #   rather than silently mis-parsing under a fallback extractor.
-        family = cc_dump.providers.get_provider_spec(self._provider).protocol_family
-        extract = _PROGRESS_EXTRACTORS_BY_FAMILY[family]
-        payload = extract(event_type, event)
+        # [LAW:no-mode-explosion] One provider family, one extractor — no keyed dispatch.
+        payload = _extract_anthropic_progress(event_type, event)
         if payload is None:
             return
         self._seq += 1
@@ -215,12 +209,6 @@ def _extract_anthropic_progress(event_type: str, event: dict) -> dict[str, objec
     except ValueError:
         return None
     return sse_progress_payload(sse)
-
-
-# [LAW:dataflow-not-control-flow] Protocol family → progress extraction strategy.
-_PROGRESS_EXTRACTORS_BY_FAMILY: dict[str, Callable[[str, dict], dict[str, object] | None]] = {
-    "anthropic": _extract_anthropic_progress,
-}
 
 
 def _fan_out_sse(resp, sinks):
@@ -277,7 +265,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
     # //   pipeline, NOT None. The proxy never asks "if request_pipeline is
     # //   not None"; the absence of work is encoded as empty lists.
     request_pipeline: RequestPipeline = _IDENTITY_REQUEST_PIPELINE
-    provider: str = "anthropic"  # set by factory for multi-provider support
+    provider: str = "anthropic"  # constant provider; feeds event/log records (slice .5 removes the field)
 
     def log_message(self, fmt, *args):
         self.event_queue.put(LogEvent(method=self.command, path=self.path, status=args[0] if args else "", provider=self.provider))
@@ -381,18 +369,9 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         # Response-headers event (empty tuple for ForwardOnly).
         self._emit_events(planned.emitter.emit_streaming_headers(upstream))
 
-        # // [LAW:dataflow-not-control-flow] One load-bearing branch:
-        # //   translated SSE protocols vs passthrough fan-out. The strategy
-        # //   name lives on the emitter (None for ForwardOnly + anthropic),
-        # //   so the proxy never asks "is this traced?" or "what format?".
-        translation_handler = planned.emitter.translation_handler_name
-        if translation_handler is not None:
-            getattr(self, translation_handler)(
-                upstream.body_source, planned.emitter.request_id,
-            )
-            return
-
-        # Default fan-out: client + emitter-supplied sinks ([] for ForwardOnly).
+        # // [LAW:dataflow-not-control-flow] Anthropic is passthrough-only, so
+        # //   every streaming response takes the same fan-out path: client sink
+        # //   plus whatever extra sinks the emitter supplies ([] for ForwardOnly).
         extra_sinks = planned.emitter.streaming_extra_sinks(self.event_queue)
         sinks: list = [ClientSink(self.wfile), *extra_sinks]
         _fan_out_sse(upstream.body_source, sinks)
@@ -413,27 +392,22 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 
 
 def make_handler_class(
-    provider: str,
     target_host: str | None,
     event_queue: queue.Queue[PipelineEvent],
     request_pipeline: RequestPipeline = _IDENTITY_REQUEST_PIPELINE,
 ) -> type[ProxyHandler]:
-    """Create a configured ProxyHandler subclass for a specific provider.
+    """Create a configured ProxyHandler subclass.
 
-    // [LAW:one-type-per-behavior] All providers share one handler type,
-    // parameterized by class attributes set here.
     // [LAW:dataflow-not-control-flow] Default request_pipeline is a module
     //   identity pipeline — never None, so the proxy interior is forbidden
     //   from asking "is the pipeline configured?". The default instance is
     //   treated as read-only by callers (RequestPipeline lists are not
     //   mutated after construction; they are replaced wholesale).
     """
-    spec = cc_dump.providers.get_provider_spec(provider)
     return type(
-        f"ProxyHandler_{spec.key}",
+        "ProxyHandler_anthropic",
         (ProxyHandler,),
         {
-            "provider": spec.key,
             "target_host": target_host.rstrip("/") if target_host else None,
             "event_queue": event_queue,
             "request_pipeline": request_pipeline,
